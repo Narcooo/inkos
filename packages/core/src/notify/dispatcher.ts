@@ -20,7 +20,7 @@ export async function dispatchNotification(
       switch (channel.type) {
         case "telegram":
           await sendTelegram(
-            { botToken: channel.botToken, chatId: channel.chatId },
+            { botToken: channel.botToken, chatId: channel.chatId, proxy: channel.proxy },
             fullText,
           );
           break;

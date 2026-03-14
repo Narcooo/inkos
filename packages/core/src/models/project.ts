@@ -18,6 +18,7 @@ export const NotifyChannelSchema = z.discriminatedUnion("type", [
     type: z.literal("telegram"),
     botToken: z.string().min(1),
     chatId: z.string().min(1),
+    proxy: z.string().optional(),
   }),
   z.object({
     type: z.literal("wechat-work"),
