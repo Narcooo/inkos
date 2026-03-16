@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import Anthropic from "@anthropic-ai/sdk";
 import type { LLMConfig } from "../models/project.js";
+import { withRetry } from "./retry.js";
 
 // === Shared Types ===
 
@@ -127,27 +128,29 @@ export async function chatCompletion(
     readonly webSearch?: boolean;
   },
 ): Promise<LLMResponse> {
-  try {
-    const resolved = {
-      temperature: options?.temperature ?? client.defaults.temperature,
-      maxTokens: options?.maxTokens ?? client.defaults.maxTokens,
-    };
-    if (client.provider === "anthropic") {
+  return withRetry(async () => {
+    try {
+      const resolved = {
+        temperature: options?.temperature ?? client.defaults.temperature,
+        maxTokens: options?.maxTokens ?? client.defaults.maxTokens,
+      };
+      if (client.provider === "anthropic") {
+        return client.stream
+          ? await chatCompletionAnthropic(client._anthropic!, model, messages, resolved, client.defaults.thinkingBudget)
+          : await chatCompletionAnthropicSync(client._anthropic!, model, messages, resolved, client.defaults.thinkingBudget);
+      }
+      if (client.apiFormat === "responses") {
+        return client.stream
+          ? await chatCompletionOpenAIResponses(client._openai!, model, messages, resolved, options?.webSearch)
+          : await chatCompletionOpenAIResponsesSync(client._openai!, model, messages, resolved, options?.webSearch);
+      }
       return client.stream
-        ? await chatCompletionAnthropic(client._anthropic!, model, messages, resolved, client.defaults.thinkingBudget)
-        : await chatCompletionAnthropicSync(client._anthropic!, model, messages, resolved, client.defaults.thinkingBudget);
+        ? await chatCompletionOpenAIChat(client._openai!, model, messages, resolved, options?.webSearch)
+        : await chatCompletionOpenAIChatSync(client._openai!, model, messages, resolved, options?.webSearch);
+    } catch (error) {
+      throw wrapLLMError(error);
     }
-    if (client.apiFormat === "responses") {
-      return client.stream
-        ? await chatCompletionOpenAIResponses(client._openai!, model, messages, resolved, options?.webSearch)
-        : await chatCompletionOpenAIResponsesSync(client._openai!, model, messages, resolved, options?.webSearch);
-    }
-    return client.stream
-      ? await chatCompletionOpenAIChat(client._openai!, model, messages, resolved, options?.webSearch)
-      : await chatCompletionOpenAIChatSync(client._openai!, model, messages, resolved, options?.webSearch);
-  } catch (error) {
-    throw wrapLLMError(error);
-  }
+  });
 }
 
 // === Tool-calling Chat (used by agent loop) ===
@@ -162,22 +165,24 @@ export async function chatWithTools(
     readonly maxTokens?: number;
   },
 ): Promise<ChatWithToolsResult> {
-  try {
-    const resolved = {
-      temperature: options?.temperature ?? client.defaults.temperature,
-      maxTokens: options?.maxTokens ?? client.defaults.maxTokens,
-    };
-    // Tool-calling always uses streaming (only used by agent loop, not by writer/auditor)
-    if (client.provider === "anthropic") {
-      return await chatWithToolsAnthropic(client._anthropic!, model, messages, tools, resolved, client.defaults.thinkingBudget);
+  return withRetry(async () => {
+    try {
+      const resolved = {
+        temperature: options?.temperature ?? client.defaults.temperature,
+        maxTokens: options?.maxTokens ?? client.defaults.maxTokens,
+      };
+      // Tool-calling always uses streaming (only used by agent loop, not by writer/auditor)
+      if (client.provider === "anthropic") {
+        return await chatWithToolsAnthropic(client._anthropic!, model, messages, tools, resolved, client.defaults.thinkingBudget);
+      }
+      if (client.apiFormat === "responses") {
+        return await chatWithToolsOpenAIResponses(client._openai!, model, messages, tools, resolved);
+      }
+      return await chatWithToolsOpenAIChat(client._openai!, model, messages, tools, resolved);
+    } catch (error) {
+      throw wrapLLMError(error);
     }
-    if (client.apiFormat === "responses") {
-      return await chatWithToolsOpenAIResponses(client._openai!, model, messages, tools, resolved);
-    }
-    return await chatWithToolsOpenAIChat(client._openai!, model, messages, tools, resolved);
-  } catch (error) {
-    throw wrapLLMError(error);
-  }
+  });
 }
 
 // === OpenAI Chat Completions API Implementation (default) ===
