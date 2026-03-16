@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import Anthropic from "@anthropic-ai/sdk";
 import type { LLMConfig } from "../models/project.js";
+import { withRetry } from "./retry.js";
 
 // === Streaming Monitor Types ===
 
@@ -215,56 +216,58 @@ export async function chatCompletion(
     readonly onStreamProgress?: OnStreamProgress;
   },
 ): Promise<LLMResponse> {
-  const resolved = {
-    temperature: options?.temperature ?? client.defaults.temperature,
-    maxTokens: options?.maxTokens ?? client.defaults.maxTokens,
-  };
-  const onStreamProgress = options?.onStreamProgress;
-  const errorCtx = { baseUrl: client._openai?.baseURL ?? "(anthropic)", model };
+  return withRetry(async () => {
+    const resolved = {
+      temperature: options?.temperature ?? client.defaults.temperature,
+      maxTokens: options?.maxTokens ?? client.defaults.maxTokens,
+    };
+    const onStreamProgress = options?.onStreamProgress;
+    const errorCtx = { baseUrl: client._openai?.baseURL ?? "(anthropic)", model };
 
-  try {
-    if (client.provider === "anthropic") {
+    try {
+      if (client.provider === "anthropic") {
+        return client.stream
+          ? await chatCompletionAnthropic(client._anthropic!, model, messages, resolved, client.defaults.thinkingBudget, onStreamProgress)
+          : await chatCompletionAnthropicSync(client._anthropic!, model, messages, resolved, client.defaults.thinkingBudget);
+      }
+      if (client.apiFormat === "responses") {
+        return client.stream
+          ? await chatCompletionOpenAIResponses(client._openai!, model, messages, resolved, options?.webSearch, onStreamProgress)
+          : await chatCompletionOpenAIResponsesSync(client._openai!, model, messages, resolved, options?.webSearch);
+      }
       return client.stream
-        ? await chatCompletionAnthropic(client._anthropic!, model, messages, resolved, client.defaults.thinkingBudget, onStreamProgress)
-        : await chatCompletionAnthropicSync(client._anthropic!, model, messages, resolved, client.defaults.thinkingBudget);
-    }
-    if (client.apiFormat === "responses") {
-      return client.stream
-        ? await chatCompletionOpenAIResponses(client._openai!, model, messages, resolved, options?.webSearch, onStreamProgress)
-        : await chatCompletionOpenAIResponsesSync(client._openai!, model, messages, resolved, options?.webSearch);
-    }
-    return client.stream
-      ? await chatCompletionOpenAIChat(client._openai!, model, messages, resolved, options?.webSearch, onStreamProgress)
-      : await chatCompletionOpenAIChatSync(client._openai!, model, messages, resolved, options?.webSearch);
-  } catch (error) {
-    // Stream interrupted but partial content is usable — return truncated response
-    if (error instanceof PartialResponseError) {
-      return {
-        content: error.partialContent,
-        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
-      };
-    }
+        ? await chatCompletionOpenAIChat(client._openai!, model, messages, resolved, options?.webSearch, onStreamProgress)
+        : await chatCompletionOpenAIChatSync(client._openai!, model, messages, resolved, options?.webSearch);
+    } catch (error) {
+      // Stream interrupted but partial content is usable — return truncated response
+      if (error instanceof PartialResponseError) {
+        return {
+          content: error.partialContent,
+          usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+        };
+      }
 
-    // Auto-fallback: if streaming failed, retry with sync (many proxies don't support SSE)
-    if (client.stream) {
-      const isStreamRelated = isLikelyStreamError(error);
-      if (isStreamRelated) {
-        try {
-          if (client.provider === "anthropic") {
-            return await chatCompletionAnthropicSync(client._anthropic!, model, messages, resolved, client.defaults.thinkingBudget);
+      // Auto-fallback: if streaming failed, retry with sync (many proxies don't support SSE)
+      if (client.stream) {
+        const isStreamRelated = isLikelyStreamError(error);
+        if (isStreamRelated) {
+          try {
+            if (client.provider === "anthropic") {
+              return await chatCompletionAnthropicSync(client._anthropic!, model, messages, resolved, client.defaults.thinkingBudget);
+            }
+            if (client.apiFormat === "responses") {
+              return await chatCompletionOpenAIResponsesSync(client._openai!, model, messages, resolved, options?.webSearch);
+            }
+            return await chatCompletionOpenAIChatSync(client._openai!, model, messages, resolved, options?.webSearch);
+          } catch (syncError) {
+            throw wrapLLMError(syncError, errorCtx);
           }
-          if (client.apiFormat === "responses") {
-            return await chatCompletionOpenAIResponsesSync(client._openai!, model, messages, resolved, options?.webSearch);
-          }
-          return await chatCompletionOpenAIChatSync(client._openai!, model, messages, resolved, options?.webSearch);
-        } catch (syncError) {
-          throw wrapLLMError(syncError, errorCtx);
         }
       }
-    }
 
-    throw wrapLLMError(error, errorCtx);
-  }
+      throw wrapLLMError(error, errorCtx);
+    }
+  });
 }
 
 function isLikelyStreamError(error: unknown): boolean {
@@ -297,22 +300,24 @@ export async function chatWithTools(
     readonly maxTokens?: number;
   },
 ): Promise<ChatWithToolsResult> {
-  try {
-    const resolved = {
-      temperature: options?.temperature ?? client.defaults.temperature,
-      maxTokens: options?.maxTokens ?? client.defaults.maxTokens,
-    };
-    // Tool-calling always uses streaming (only used by agent loop, not by writer/auditor)
-    if (client.provider === "anthropic") {
-      return await chatWithToolsAnthropic(client._anthropic!, model, messages, tools, resolved, client.defaults.thinkingBudget);
+  return withRetry(async () => {
+    try {
+      const resolved = {
+        temperature: options?.temperature ?? client.defaults.temperature,
+        maxTokens: options?.maxTokens ?? client.defaults.maxTokens,
+      };
+      // Tool-calling always uses streaming (only used by agent loop, not by writer/auditor)
+      if (client.provider === "anthropic") {
+        return await chatWithToolsAnthropic(client._anthropic!, model, messages, tools, resolved, client.defaults.thinkingBudget);
+      }
+      if (client.apiFormat === "responses") {
+        return await chatWithToolsOpenAIResponses(client._openai!, model, messages, tools, resolved);
+      }
+      return await chatWithToolsOpenAIChat(client._openai!, model, messages, tools, resolved);
+    } catch (error) {
+      throw wrapLLMError(error);
     }
-    if (client.apiFormat === "responses") {
-      return await chatWithToolsOpenAIResponses(client._openai!, model, messages, tools, resolved);
-    }
-    return await chatWithToolsOpenAIChat(client._openai!, model, messages, tools, resolved);
-  } catch (error) {
-    throw wrapLLMError(error);
-  }
+  });
 }
 
 // === OpenAI Chat Completions API Implementation (default) ===
