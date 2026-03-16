@@ -41,6 +41,9 @@ importers:
       openai:
         specifier: ^4.80.0
         version: 4.104.0(zod@3.25.76)
+      undici:
+        specifier: ^7.24.2
+        version: 7.24.2
       zod:
         specifier: ^3.24.0
         version: 3.25.76
@@ -715,6 +718,10 @@ packages:
   undici-types@6.21.0:
     resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
 
+  undici@7.24.2:
+    resolution: {integrity: sha512-P9J1HWYV/ajFr8uCqk5QixwiRKmB1wOamgS0e+o2Z4A44Ej2+thFVRLG/eA7qprx88XXhnV5Bl8LHXTURpzB3Q==}
+    engines: {node: '>=20.18.1'}
+
   vite-node@3.2.4:
     resolution: {integrity: sha512-EbKSKh+bh1E1IFxeO0pg1n4dvoOTt0UDiXMd/qn++r98+jPO1xtJilvXldeuQ8giIB5IkpjCgMleHMNEsGH6pg==}
     engines: {node: ^18.0.0 || ^20.0.0 || >=22.0.0}
@@ -1332,6 +1339,8 @@ snapshots:
   undici-types@5.26.5: {}
 
   undici-types@6.21.0: {}
+
+  undici@7.24.2: {}
 
   vite-node@3.2.4(@types/node@22.19.15):
     dependencies:

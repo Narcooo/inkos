@@ -34,6 +34,7 @@
     "@anthropic-ai/sdk": "^0.78.0",
     "js-yaml": "^4.1.1",
     "openai": "^4.80.0",
+    "undici": "^7.24.2",
     "zod": "^3.24.0"
   },
   "devDependencies": {
