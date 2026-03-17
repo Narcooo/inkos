@@ -20,19 +20,40 @@ export const NotifyChannelSchema = z.discriminatedUnion("type", [
     botToken: z.string().min(1),
     chatId: z.string().min(1),
   }),
+
   z.object({
     type: z.literal("wechat-work"),
     webhookUrl: z.string().url(),
   }),
+
   z.object({
     type: z.literal("feishu"),
     webhookUrl: z.string().url(),
   }),
+
   z.object({
     type: z.literal("webhook"),
     url: z.string().url(),
     secret: z.string().optional(),
     events: z.array(z.string()).default([]),
+  }),
+
+  z.object({
+    type: z.literal("serverchan"),
+    sendUrl: z.string().url(),
+  }),
+
+  z.object({
+    type: z.literal("bark"),
+    serverUrl: z.string().url().default("https://api.day.app"),
+    deviceKey: z.string().min(1),
+    group: z.string().optional(),
+    url: z.string().min(1).optional(),
+    sound: z.string().optional(),
+    icon: z.string().url().optional(),
+    level: z
+      .enum(["active", "timeSensitive", "passive", "critical"])
+      .optional(),
   }),
 ]);
 
@@ -77,37 +98,44 @@ export const ProjectConfigSchema = z.object({
   notify: z.array(NotifyChannelSchema).default([]),
   detection: DetectionConfigSchema.optional(),
   modelOverrides: z.record(z.string(), ModelOverrideValueSchema).optional(),
-  daemon: z.object({
-    schedule: z.object({
-      radarCron: z.string().default("0 */6 * * *"),
-      writeCron: z.string().default("*/15 * * * *"),
+  daemon: z
+    .object({
+      schedule: z
+        .object({
+          radarCron: z.string().default("0 */6 * * *"),
+          writeCron: z.string().default("*/15 * * * *"),
+        })
+        .default({
+          radarCron: "0 */6 * * *",
+          writeCron: "*/15 * * * *",
+        }),
+      maxConcurrentBooks: z.number().int().min(1).default(3),
+      chaptersPerCycle: z.number().int().min(1).max(20).default(1),
+      retryDelayMs: z.number().int().min(0).default(30_000),
+      cooldownAfterChapterMs: z.number().int().min(0).default(10_000),
+      maxChaptersPerDay: z.number().int().min(1).default(50),
+      qualityGates: QualityGatesSchema.default({
+        maxAuditRetries: 2,
+        pauseAfterConsecutiveFailures: 3,
+        retryTemperatureStep: 0.1,
+      }),
+    })
+    .default({
+      schedule: {
+        radarCron: "0 */6 * * *",
+        writeCron: "*/15 * * * *",
+      },
+      maxConcurrentBooks: 3,
+      chaptersPerCycle: 1,
+      retryDelayMs: 30_000,
+      cooldownAfterChapterMs: 10_000,
+      maxChaptersPerDay: 50,
+      qualityGates: {
+        maxAuditRetries: 2,
+        pauseAfterConsecutiveFailures: 3,
+        retryTemperatureStep: 0.1,
+      },
     }),
-    maxConcurrentBooks: z.number().int().min(1).default(3),
-    chaptersPerCycle: z.number().int().min(1).max(20).default(1),
-    retryDelayMs: z.number().int().min(0).default(30_000),
-    cooldownAfterChapterMs: z.number().int().min(0).default(10_000),
-    maxChaptersPerDay: z.number().int().min(1).default(50),
-    qualityGates: QualityGatesSchema.default({
-      maxAuditRetries: 2,
-      pauseAfterConsecutiveFailures: 3,
-      retryTemperatureStep: 0.1,
-    }),
-  }).default({
-    schedule: {
-      radarCron: "0 */6 * * *",
-      writeCron: "*/15 * * * *",
-    },
-    maxConcurrentBooks: 3,
-    chaptersPerCycle: 1,
-    retryDelayMs: 30_000,
-    cooldownAfterChapterMs: 10_000,
-    maxChaptersPerDay: 50,
-    qualityGates: {
-      maxAuditRetries: 2,
-      pauseAfterConsecutiveFailures: 3,
-      retryTemperatureStep: 0.1,
-    },
-  }),
 });
 
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;

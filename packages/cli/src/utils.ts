@@ -2,7 +2,13 @@ import { readFile, access } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { config as loadEnv } from "dotenv";
-import { createLLMClient, StateManager, type ProjectConfig, ProjectConfigSchema, type PipelineConfig } from "@actalk/inkos-core";
+import {
+  createLLMClient,
+  StateManager,
+  type ProjectConfig,
+  ProjectConfigSchema,
+  type PipelineConfig,
+} from "@actalk/inkos-core";
 
 export const GLOBAL_CONFIG_DIR = join(homedir(), ".inkos");
 export const GLOBAL_ENV_PATH = join(GLOBAL_CONFIG_DIR, ".env");
@@ -12,9 +18,11 @@ export async function resolveContext(opts: {
   readonly contextFile?: string;
 }): Promise<string | undefined> {
   if (opts.context) return opts.context;
+
   if (opts.contextFile) {
     return readFile(resolve(opts.contextFile), "utf-8");
   }
+
   // Read from stdin if piped (non-TTY)
   if (!process.stdin.isTTY) {
     const chunks: Buffer[] = [];
@@ -24,6 +32,7 @@ export async function resolveContext(opts: {
     const text = Buffer.concat(chunks).toString("utf-8").trim();
     if (text.length > 0) return text;
   }
+
   return undefined;
 }
 
@@ -56,29 +65,67 @@ export async function loadConfig(): Promise<ProjectConfig> {
   try {
     config = JSON.parse(raw);
   } catch {
-    throw new Error(`inkos.json in ${root} is not valid JSON. Check the file for syntax errors.`);
+    throw new Error(
+      `inkos.json in ${root} is not valid JSON.\nCheck the file for syntax errors.`,
+    );
   }
 
   // .env overrides inkos.json for LLM settings
   const env = process.env;
   const llm = (config.llm ?? {}) as Record<string, unknown>;
+
   if (env.INKOS_LLM_PROVIDER) llm.provider = env.INKOS_LLM_PROVIDER;
   if (env.INKOS_LLM_BASE_URL) llm.baseUrl = env.INKOS_LLM_BASE_URL;
   if (env.INKOS_LLM_MODEL) llm.model = env.INKOS_LLM_MODEL;
-  if (env.INKOS_LLM_TEMPERATURE) llm.temperature = parseFloat(env.INKOS_LLM_TEMPERATURE);
-  if (env.INKOS_LLM_MAX_TOKENS) llm.maxTokens = parseInt(env.INKOS_LLM_MAX_TOKENS, 10);
-  if (env.INKOS_LLM_THINKING_BUDGET) llm.thinkingBudget = parseInt(env.INKOS_LLM_THINKING_BUDGET, 10);
+  if (env.INKOS_LLM_TEMPERATURE) {
+    llm.temperature = parseFloat(env.INKOS_LLM_TEMPERATURE);
+  }
+  if (env.INKOS_LLM_MAX_TOKENS) {
+    llm.maxTokens = parseInt(env.INKOS_LLM_MAX_TOKENS, 10);
+  }
+  if (env.INKOS_LLM_THINKING_BUDGET) {
+    llm.thinkingBudget = parseInt(env.INKOS_LLM_THINKING_BUDGET, 10);
+  }
   if (env.INKOS_LLM_API_FORMAT) llm.apiFormat = env.INKOS_LLM_API_FORMAT;
+
   config.llm = llm;
 
   // API key ONLY from env — never stored in inkos.json
   const apiKey = env.INKOS_LLM_API_KEY;
   if (!apiKey) {
     throw new Error(
-      "INKOS_LLM_API_KEY not set. Run 'inkos config set-global' or add it to project .env file.",
+      "INKOS_LLM_API_KEY not set.\nRun 'inkos config set-global' or add it to project .env file.",
     );
   }
   llm.apiKey = apiKey;
+
+  // Build notify channels from env and append them to inkos.json notify[]
+  const envNotify: unknown[] = [];
+
+  if (env.INKOS_SERVERCHAN_SEND_URL) {
+    envNotify.push({
+      type: "serverchan",
+      sendUrl: env.INKOS_SERVERCHAN_SEND_URL,
+    });
+  }
+
+  if (env.INKOS_BARK_DEVICE_KEY) {
+    envNotify.push({
+      type: "bark",
+      serverUrl: env.INKOS_BARK_SERVER_URL ?? "https://api.day.app",
+      deviceKey: env.INKOS_BARK_DEVICE_KEY,
+      group: env.INKOS_BARK_GROUP || "InkOS",
+      level: env.INKOS_BARK_LEVEL ?? "active",
+      sound: env.INKOS_BARK_SOUND || undefined,
+      icon: env.INKOS_BARK_ICON || undefined,
+      url: env.INKOS_BARK_URL || undefined,
+    });
+  }
+
+  config.notify = [
+    ...(((config.notify ?? []) as unknown[]) || []),
+    ...envNotify,
+  ];
 
   return ProjectConfigSchema.parse(config);
 }
@@ -90,7 +137,7 @@ export function createClient(config: ProjectConfig) {
 export function buildPipelineConfig(
   config: ProjectConfig,
   root: string,
-  extra?: Partial<Pick<PipelineConfig, "notifyChannels" | "radarSources" | "externalContext">>,
+  extra?: Partial<PipelineConfig>,
 ): PipelineConfig {
   return {
     client: createLLMClient(config.llm),
@@ -135,12 +182,14 @@ export async function resolveBookId(
 
   if (books.length === 0) {
     throw new Error(
-      "No books found. Create one first:\n  inkos book create --title '...' --genre xuanhuan",
+      "No books found.\nCreate one first:\n  inkos book create --title '...' --genre xuanhuan",
     );
   }
+
   if (books.length === 1) {
     return books[0]!;
   }
+
   throw new Error(
     `Multiple books found: ${books.join(", ")}\nPlease specify a book-id.`,
   );
