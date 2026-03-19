@@ -58,6 +58,10 @@ const DIMENSION_MAP: Record<number, string> = {
   31: "番外伏笔隔离",
   32: "读者期待管理",
   33: "大纲偏离检测",
+  34: "角色还原度",
+  35: "世界规则遵守",
+  36: "关系动态",
+  37: "正典事件一致性",
 };
 
 function buildDimensionList(
@@ -113,6 +117,14 @@ function buildDimensionList(
     activeIds.add(31); // 番外伏笔隔离
   }
 
+  // Fanfic dimensions — activated when fanficMode is set
+  if (bookRules?.fanficMode) {
+    activeIds.add(34); // 角色还原度
+    activeIds.add(35); // 世界规则遵守
+    activeIds.add(36); // 关系动态
+    activeIds.add(37); // 正典事件一致性
+  }
+
   const dims: Array<{ id: number; name: string; note: string }> = [];
 
   for (const id of [...activeIds].sort((a, b) => a - b)) {
@@ -164,6 +176,28 @@ function buildDimensionList(
     if (id === 33) {
       note = "对照 volume_outline：本章内容是否对应卷纲中当前章节范围的剧情节点？是否跳过了节点或提前消耗了后续节点？剧情推进速度是否与卷纲规划的章节跨度匹配？如果卷纲规划某段剧情跨N章但实际1-2章就讲完→critical";
     }
+    // Fanfic dimension notes — severity depends on mode
+    if (id === 34) {
+      const mode = bookRules?.fanficMode ?? "canon";
+      const severity = mode === "ooc" ? "info（OOC模式允许偏离）" : "critical";
+      note = `对照 fanfic_canon.md 角色档案：角色行为/语气/动机是否符合原作设定。严重度：${severity}`;
+    }
+    if (id === 35) {
+      const mode = bookRules?.fanficMode ?? "canon";
+      const severity = mode === "au" ? "warning（AU模式允许世界观偏离）" : "critical";
+      note = `对照 fanfic_canon.md 世界规则：魔法体系/科技水平/社会结构是否符合原作。严重度：${severity}`;
+    }
+    if (id === 36) {
+      const mode = bookRules?.fanficMode ?? "canon";
+      const severity = mode === "cp" ? "critical（CP模式重点审查）" : "warning";
+      note = `对照 fanfic_canon.md 关系表：角色间关系变化是否有合理铺垫。严重度：${severity}`;
+    }
+    if (id === 37) {
+      const mode = bookRules?.fanficMode ?? "canon";
+      const severity = mode === "au" ? "info（AU模式允许偏离）"
+        : mode === "canon" ? "critical" : "warning";
+      note = `对照 fanfic_canon.md 事件时间线：是否与原作已发生事件矛盾。严重度：${severity}`;
+    }
 
     dims.push({ id, name, note });
   }
@@ -183,7 +217,7 @@ export class ContinuityAuditor extends BaseAgent {
     genre?: string,
     options?: { temperature?: number },
   ): Promise<AuditResult> {
-    const [currentState, ledger, hooks, styleGuideRaw, subplotBoard, emotionalArcs, characterMatrix, chapterSummaries, parentCanon, volumeOutline] =
+    const [currentState, ledger, hooks, styleGuideRaw, subplotBoard, emotionalArcs, characterMatrix, chapterSummaries, parentCanon, volumeOutline, fanficCanon] =
       await Promise.all([
         this.readFileSafe(join(bookDir, "story/current_state.md")),
         this.readFileSafe(join(bookDir, "story/particle_ledger.md")),
@@ -195,6 +229,7 @@ export class ContinuityAuditor extends BaseAgent {
         this.readFileSafe(join(bookDir, "story/chapter_summaries.md")),
         this.readFileSafe(join(bookDir, "story/parent_canon.md")),
         this.readFileSafe(join(bookDir, "story/volume_outline.md")),
+        this.readFileSafe(join(bookDir, "story/fanfic_canon.md")),
       ]);
 
     const hasParentCanon = parentCanon !== "(文件不存在)";
@@ -268,6 +303,11 @@ ${dimList}
       ? `\n## 正传正典参照（番外审查专用）\n${parentCanon}\n`
       : "";
 
+    const hasFanficCanon = fanficCanon !== "(文件不存在)";
+    const fanficCanonBlock = hasFanficCanon
+      ? `\n## 同人正典参照（同人审查专用）\n${fanficCanon}\n`
+      : "";
+
     const outlineBlock = volumeOutline !== "(文件不存在)"
       ? `\n## 卷纲（用于大纲偏离检测）\n${volumeOutline}\n`
       : "";
@@ -283,7 +323,7 @@ ${currentState}
 ${ledgerBlock}
 ## 伏笔池
 ${hooks}
-${subplotBlock}${emotionalBlock}${matrixBlock}${summariesBlock}${canonBlock}${outlineBlock}${prevChapterBlock}
+${subplotBlock}${emotionalBlock}${matrixBlock}${summariesBlock}${canonBlock}${fanficCanonBlock}${outlineBlock}${prevChapterBlock}
 ## 文风指南
 ${styleGuide}
 
@@ -306,42 +346,100 @@ ${chapterContent}`;
   }
 
   private parseAuditResult(content: string): AuditResult {
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
+    // Strategy 1: Find balanced JSON object (not greedy)
+    const balanced = this.extractBalancedJson(content);
+    if (balanced) {
+      const result = this.tryParseAuditJson(balanced);
+      if (result) return result;
+    }
+
+    // Strategy 2: Try the whole content as JSON (some models output pure JSON)
+    const trimmed = content.trim();
+    if (trimmed.startsWith("{")) {
+      const result = this.tryParseAuditJson(trimmed);
+      if (result) return result;
+    }
+
+    // Strategy 3: Look for ```json code blocks
+    const codeBlockMatch = content.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+    if (codeBlockMatch) {
+      const result = this.tryParseAuditJson(codeBlockMatch[1]!.trim());
+      if (result) return result;
+    }
+
+    // Strategy 4: Try to extract individual fields via regex (last resort fallback)
+    const passedMatch = content.match(/"passed"\s*:\s*(true|false)/);
+    const issuesMatch = content.match(/"issues"\s*:\s*\[([\s\S]*?)\]/);
+    const summaryMatch = content.match(/"summary"\s*:\s*"([^"]*)"/);
+    if (passedMatch) {
+      const issues: AuditIssue[] = [];
+      if (issuesMatch) {
+        // Try to parse individual issue objects
+        const issuePattern = /\{[^{}]*"severity"\s*:\s*"[^"]*"[^{}]*\}/g;
+        let match: RegExpExecArray | null;
+        while ((match = issuePattern.exec(issuesMatch[1]!)) !== null) {
+          try {
+            const issue = JSON.parse(match[0]);
+            issues.push({
+              severity: issue.severity ?? "warning",
+              category: issue.category ?? "未分类",
+              description: issue.description ?? "",
+              suggestion: issue.suggestion ?? "",
+            });
+          } catch {
+            // skip malformed individual issue
+          }
+        }
+      }
       return {
-        passed: false,
-        issues: [
-          {
-            severity: "critical",
-            category: "系统错误",
-            description: "审稿输出格式异常，无法解析",
-            suggestion: "重新运行审稿",
-          },
-        ],
-        summary: "审稿输出解析失败",
+        passed: passedMatch[1] === "true",
+        issues,
+        summary: summaryMatch?.[1] ?? "",
       };
     }
 
+    return {
+      passed: false,
+      issues: [{
+        severity: "critical",
+        category: "系统错误",
+        description: "审稿输出格式异常，无法解析为 JSON",
+        suggestion: "可能是模型不支持结构化输出。尝试换一个更大的模型，或检查 API 返回格式。",
+      }],
+      summary: "审稿输出解析失败",
+    };
+  }
+
+  private extractBalancedJson(text: string): string | null {
+    const start = text.indexOf("{");
+    if (start === -1) return null;
+    let depth = 0;
+    for (let i = start; i < text.length; i++) {
+      if (text[i] === "{") depth++;
+      if (text[i] === "}") depth--;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
+    return null;
+  }
+
+  private tryParseAuditJson(json: string): AuditResult | null {
     try {
-      const parsed = JSON.parse(jsonMatch[0]);
+      const parsed = JSON.parse(json);
+      if (typeof parsed.passed !== "boolean" && parsed.passed !== undefined) return null;
       return {
-        passed: Boolean(parsed.passed),
-        issues: Array.isArray(parsed.issues) ? parsed.issues : [],
+        passed: Boolean(parsed.passed ?? false),
+        issues: Array.isArray(parsed.issues)
+          ? parsed.issues.map((i: Record<string, unknown>) => ({
+              severity: (i.severity as string) ?? "warning",
+              category: (i.category as string) ?? "未分类",
+              description: (i.description as string) ?? "",
+              suggestion: (i.suggestion as string) ?? "",
+            }))
+          : [],
         summary: String(parsed.summary ?? ""),
       };
     } catch {
-      return {
-        passed: false,
-        issues: [
-          {
-            severity: "critical",
-            category: "系统错误",
-            description: "审稿 JSON 解析失败",
-            suggestion: "重新运行审稿",
-          },
-        ],
-        summary: "审稿 JSON 解析失败",
-      };
+      return null;
     }
   }
 
@@ -356,14 +454,6 @@ ${chapterContent}`;
       return await readFile(join(chaptersDir, prevFile), "utf-8");
     } catch {
       return "";
-    }
-  }
-
-  private async readFileSafe(path: string): Promise<string> {
-    try {
-      return await readFile(path, "utf-8");
-    } catch {
-      return "(文件不存在)";
     }
   }
 }

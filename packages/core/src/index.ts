@@ -31,6 +31,7 @@ export { ChapterAnalyzerAgent, type AnalyzeChapterInput, type AnalyzeChapterOutp
 export { parseWriterOutput, parseCreativeOutput, type ParsedWriterOutput, type CreativeOutput } from "./agents/writer-parser.js";
 export { buildSettlerSystemPrompt, buildSettlerUserPrompt } from "./agents/settler-prompts.js";
 export { parseSettlementOutput, type SettlementOutput } from "./agents/settler-parser.js";
+export { FanficCanonImporter } from "./agents/fanfic-canon-importer.js";
 
 // Utils
 export { fetchUrl } from "./utils/web-search.js";

@@ -73,6 +73,7 @@ const ModelOverrideValueSchema = z.union([z.string(), AgentLLMOverrideSchema]);
 export const ProjectConfigSchema = z.object({
   name: z.string().min(1),
   version: z.literal("0.1.0"),
+  language: z.enum(["zh", "en"]).default("zh"),
   llm: LLMConfigSchema,
   notify: z.array(NotifyChannelSchema).default([]),
   detection: DetectionConfigSchema.optional(),

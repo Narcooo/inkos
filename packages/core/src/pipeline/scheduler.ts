@@ -6,6 +6,8 @@ import type { QualityGates, DetectionConfig } from "../models/project.js";
 import { dispatchWebhookEvent } from "../notify/dispatcher.js";
 import { detectChapter, detectAndRewrite } from "./detection-runner.js";
 import type { Logger } from "../utils/logger.js";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { join } from "node:path";
 
 export interface SchedulerConfig extends PipelineConfig {
   readonly radarCron: string;
@@ -28,6 +30,21 @@ interface ScheduledTask {
   timer?: ReturnType<typeof setInterval>;
 }
 
+// ─── Forma persistida del estado del scheduler ───
+
+interface PersistedSchedulerState {
+  /** bookId → número de fallos consecutivos */
+  consecutiveFailures: Record<string, number>;
+  /** bookIds pausados */
+  pausedBooks: string[];
+  /** bookId → (dimensión → contador) */
+  failureDimensions: Record<string, Record<string, number>>;
+  /** "YYYY-MM-DD" → contador */
+  dailyChapterCount: Record<string, number>;
+  /** Timestamp de última persistencia */
+  savedAt: string;
+}
+
 export class Scheduler {
   private readonly pipeline: PipelineRunner;
   private readonly state: StateManager;
@@ -35,25 +52,29 @@ export class Scheduler {
   private tasks: ScheduledTask[] = [];
   private running = false;
 
-  // Quality gate tracking (per book)
+  // Quality gate tracking (per book) — ahora respaldados por disco
   private consecutiveFailures = new Map<string, number>();
   private pausedBooks = new Set<string>();
-  // Failure clustering: bookId → (dimension → count)
   private failureDimensions = new Map<string, Map<string, number>>();
-  // Daily chapter counter: "YYYY-MM-DD" → count
   private dailyChapterCount = new Map<string, number>();
 
   private readonly log?: Logger;
+  private readonly statePath: string;
 
   constructor(config: SchedulerConfig) {
     this.config = config;
     this.pipeline = new PipelineRunner(config);
     this.state = new StateManager(config.projectRoot);
     this.log = config.logger?.child("scheduler");
+    this.statePath = join(config.projectRoot, "scheduler_state.json");
   }
 
   async start(): Promise<void> {
     if (this.running) return;
+
+    // Restaura estado previo desde disco
+    await this.loadState();
+
     this.running = true;
 
     // Run write cycle immediately on start, then schedule
@@ -99,10 +120,11 @@ export class Scheduler {
   }
 
   /** Resume a paused book. */
-  resumeBook(bookId: string): void {
+  async resumeBook(bookId: string): Promise<void> {
     this.pausedBooks.delete(bookId);
     this.consecutiveFailures.delete(bookId);
     this.failureDimensions.delete(bookId);
+    await this.persistState();
   }
 
   /** Check if a book is paused. */
@@ -126,7 +148,7 @@ export class Scheduler {
   }
 
   /** Increment daily chapter counter. */
-  private recordChapterWritten(): void {
+  private async recordChapterWritten(): Promise<void> {
     const today = new Date().toISOString().slice(0, 10);
     const count = this.dailyChapterCount.get(today) ?? 0;
     this.dailyChapterCount.set(today, count + 1);
@@ -135,6 +157,7 @@ export class Scheduler {
     for (const key of this.dailyChapterCount.keys()) {
       if (key !== today) this.dailyChapterCount.delete(key);
     }
+    await this.persistState();
   }
 
   private async runWriteCycle(): Promise<void> {
@@ -203,7 +226,7 @@ export class Scheduler {
 
       if (result.status === "ready-for-review") {
         this.consecutiveFailures.delete(bookId);
-        this.recordChapterWritten();
+        await this.recordChapterWritten();
 
         // Auto-detection loop after successful audit
         if (this.config.detection?.enabled) {
@@ -284,6 +307,7 @@ export class Scheduler {
 
     if (failures <= gates.maxAuditRetries) {
       this.log?.warn(`${bookId} audit failed (${failures}/${gates.maxAuditRetries}), will retry`);
+      await this.persistState();
       return;
     }
 
@@ -304,6 +328,8 @@ export class Scheduler {
         });
       }
     }
+
+    await this.persistState();
   }
 
   private async runRadarScan(): Promise<void> {
@@ -333,9 +359,77 @@ export class Scheduler {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // State persistence — garantiza que reinicios no pierden estado crítico
+  // ---------------------------------------------------------------------------
+
+  /** Persiste el estado actual del scheduler a disco. */
+  private async persistState(): Promise<void> {
+    const data: PersistedSchedulerState = {
+      consecutiveFailures: Object.fromEntries(this.consecutiveFailures),
+      pausedBooks: [...this.pausedBooks],
+      failureDimensions: Object.fromEntries(
+        [...this.failureDimensions].map(([bookId, dimMap]) => [
+          bookId,
+          Object.fromEntries(dimMap),
+        ]),
+      ),
+      dailyChapterCount: Object.fromEntries(this.dailyChapterCount),
+      savedAt: new Date().toISOString(),
+    };
+
+    try {
+      await mkdir(join(this.config.projectRoot), { recursive: true });
+      await writeFile(this.statePath, JSON.stringify(data, null, 2), "utf-8");
+    } catch (e) {
+      this.log?.error(`Failed to persist scheduler state: ${e}`);
+    }
+  }
+
+  /** Restaura el estado del scheduler desde disco. */
+  private async loadState(): Promise<void> {
+    try {
+      const raw = await readFile(this.statePath, "utf-8");
+      const data: PersistedSchedulerState = JSON.parse(raw);
+
+      // Restaura failures
+      this.consecutiveFailures = new Map(Object.entries(data.consecutiveFailures ?? {}));
+
+      // Restaura pausas
+      this.pausedBooks = new Set(data.pausedBooks ?? []);
+
+      // Restaura dimensiones de fallo
+      this.failureDimensions = new Map(
+        Object.entries(data.failureDimensions ?? {}).map(([bookId, dims]) => [
+          bookId,
+          new Map(Object.entries(dims)),
+        ]),
+      );
+
+      // Restaura contador diario (descarta fechas que no sean hoy)
+      const today = new Date().toISOString().slice(0, 10);
+      this.dailyChapterCount = new Map();
+      for (const [date, count] of Object.entries(data.dailyChapterCount ?? {})) {
+        if (date === today) {
+          this.dailyChapterCount.set(date, count);
+        }
+      }
+
+      const pauseCount = this.pausedBooks.size;
+      const failCount = this.consecutiveFailures.size;
+      const dailyCount = this.dailyChapterCount.get(today) ?? 0;
+
+      this.log?.info(
+        `Scheduler state restored: ${pauseCount} paused, ${failCount} with failures, ${dailyCount} written today`,
+      );
+    } catch {
+      // Primer arranque o archivo corrupto — estado en blanco
+      this.log?.info("No previous scheduler state found, starting fresh");
+    }
+  }
+
   private async readChapterContent(bookDir: string, chapterNumber: number): Promise<string> {
-    const { readFile, readdir } = await import("node:fs/promises");
-    const { join } = await import("node:path");
+    const { readdir } = await import("node:fs/promises");
     const chaptersDir = join(bookDir, "chapters");
     const files = await readdir(chaptersDir);
     const paddedNum = String(chapterNumber).padStart(4, "0");

@@ -1,5 +1,6 @@
 import { chatWithTools, type AgentMessage, type ToolDefinition } from "../llm/provider.js";
 import { PipelineRunner, type PipelineConfig } from "./runner.js";
+import { AgentError } from "../agents/agent-error.js";
 import type { Platform, Genre } from "../models/book.js";
 import type { ReviseMode } from "../agents/reviser.js";
 
@@ -155,6 +156,19 @@ const TOOLS: ReadonlyArray<ToolDefinition> = [
       required: ["bookId", "text"],
     },
   },
+  {
+    name: "write_truth_file",
+    description: "直接修改书的真相文件（如 volume_outline.md、story_bible.md、book_rules.md、current_state.md 等）。用于扩展大纲、修改世界观、调整规则等操作。",
+    parameters: {
+      type: "object",
+      properties: {
+        bookId: { type: "string", description: "书籍ID" },
+        fileName: { type: "string", description: "文件名（如 volume_outline.md、story_bible.md、book_rules.md、current_state.md、pending_hooks.md）" },
+        content: { type: "string", description: "新的完整文件内容" },
+      },
+      required: ["bookId", "fileName", "content"],
+    },
+  },
 ];
 
 export interface AgentLoopOptions {
@@ -195,6 +209,7 @@ export async function runAgentLoop(
 | import_style | 从参考文本生成文风指南（统计+LLM分析） |
 | import_canon | 从正传导入正典参照，启用番外模式 |
 | import_chapters | 导入已有章节，反推所有真相文件，支持续写 |
+| write_truth_file | 直接修改真相文件（大纲、世界观、规则、状态等），用于扩展/调整设定 |
 
 ## 长期记忆
 
@@ -254,7 +269,15 @@ export async function runAgentLoop(
         options?.onToolCall?.(toolCall.name, args);
         toolResult = await executeTool(pipeline, state, config, toolCall.name, args);
       } catch (e) {
-        toolResult = JSON.stringify({ error: String(e) });
+        toolResult = e instanceof AgentError
+          ? JSON.stringify({
+              error: e.message,
+              agent: e.agent,
+              bookId: e.bookId,
+              chapterNumber: e.chapterNumber,
+              retryable: e.retryable,
+            })
+          : JSON.stringify({ error: String(e) });
       }
 
       options?.onToolResult?.(toolCall.name, toolResult);
@@ -415,6 +438,39 @@ async function executeTool(
         chapters: [...chapters],
       });
       return JSON.stringify(result);
+    }
+
+    case "write_truth_file": {
+      const bookId = args.bookId as string;
+      const fileName = args.fileName as string;
+      const content = args.content as string;
+
+      // Whitelist allowed truth files
+      const ALLOWED_FILES = [
+        "story_bible.md", "volume_outline.md", "book_rules.md",
+        "current_state.md", "particle_ledger.md", "pending_hooks.md",
+        "chapter_summaries.md", "subplot_board.md", "emotional_arcs.md",
+        "character_matrix.md", "style_guide.md",
+      ];
+
+      if (!ALLOWED_FILES.includes(fileName)) {
+        return JSON.stringify({ error: `不允许修改文件 "${fileName}"。允许的文件：${ALLOWED_FILES.join(", ")}` });
+      }
+
+      const { writeFile, mkdir } = await import("node:fs/promises");
+      const { join } = await import("node:path");
+      const { StateManager } = await import("../state/manager.js");
+      const bookDir = new StateManager(config.projectRoot).bookDir(bookId);
+      const storyDir = join(bookDir, "story");
+      await mkdir(storyDir, { recursive: true });
+      await writeFile(join(storyDir, fileName), content, "utf-8");
+
+      return JSON.stringify({
+        bookId,
+        file: `story/${fileName}`,
+        written: true,
+        size: content.length,
+      });
     }
 
     default:

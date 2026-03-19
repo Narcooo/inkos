@@ -5,12 +5,15 @@ import type { BookRules } from "../models/book-rules.js";
 import { buildWriterSystemPrompt } from "./writer-prompts.js";
 import { buildSettlerSystemPrompt, buildSettlerUserPrompt } from "./settler-prompts.js";
 import { parseSettlementOutput } from "./settler-parser.js";
-import { readGenreProfile, readBookRules } from "./rules-reader.js";
 import { validatePostWrite, type PostWriteViolation } from "./post-write-validator.js";
 import { analyzeAITells } from "./ai-tells.js";
 import { parseCreativeOutput } from "./writer-parser.js";
-import { readFile, writeFile, mkdir, readdir } from "node:fs/promises";
+import { buildWriterContext } from "./writer-context.js";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
+
+/** Presupuesto de tokens por defecto para el prompt del Writer (deja ~28k para output) */
+const DEFAULT_CONTEXT_BUDGET = 100_000;
 
 export interface WriteChapterInput {
   readonly book: BookConfig;
@@ -54,64 +57,43 @@ export class WriterAgent extends BaseAgent {
   async writeChapter(input: WriteChapterInput): Promise<WriteChapterOutput> {
     const { book, bookDir, chapterNumber } = input;
 
-    const [
-      storyBible, volumeOutline, styleGuide, currentState, ledger, hooks,
-      chapterSummaries, subplotBoard, emotionalArcs, characterMatrix, styleProfileRaw,
-      parentCanon,
-    ] = await Promise.all([
-        this.readFileOrDefault(join(bookDir, "story/story_bible.md")),
-        this.readFileOrDefault(join(bookDir, "story/volume_outline.md")),
-        this.readFileOrDefault(join(bookDir, "story/style_guide.md")),
-        this.readFileOrDefault(join(bookDir, "story/current_state.md")),
-        this.readFileOrDefault(join(bookDir, "story/particle_ledger.md")),
-        this.readFileOrDefault(join(bookDir, "story/pending_hooks.md")),
-        this.readFileOrDefault(join(bookDir, "story/chapter_summaries.md")),
-        this.readFileOrDefault(join(bookDir, "story/subplot_board.md")),
-        this.readFileOrDefault(join(bookDir, "story/emotional_arcs.md")),
-        this.readFileOrDefault(join(bookDir, "story/character_matrix.md")),
-        this.readFileOrDefault(join(bookDir, "story/style_profile.json")),
-        this.readFileOrDefault(join(bookDir, "story/parent_canon.md")),
-      ]);
+    // ── Ensamblar contexto (lectura de archivos + presupuesto) ──
+    const writerCtx = await buildWriterContext(
+      this.ctx.projectRoot, book, bookDir, chapterNumber,
+      {
+        externalContext: input.externalContext,
+        contextBudget: DEFAULT_CONTEXT_BUDGET,
+        logger: this.ctx.logger,
+      },
+    );
 
-    const recentChapters = await this.loadRecentChapters(bookDir, chapterNumber);
-
-    // Load genre profile + book rules
-    const { profile: genreProfile, body: genreBody } =
-      await readGenreProfile(this.ctx.projectRoot, book.genre);
-    const parsedBookRules = await readBookRules(bookDir);
-    const bookRules = parsedBookRules?.rules ?? null;
-    const bookRulesBody = parsedBookRules?.body ?? "";
-
-    const styleFingerprint = this.buildStyleFingerprint(styleProfileRaw);
-
-    const dialogueFingerprints = this.extractDialogueFingerprints(recentChapters, storyBible);
-    const relevantSummaries = this.findRelevantSummaries(chapterSummaries, volumeOutline, chapterNumber);
-
-    const hasParentCanon = parentCanon !== "(文件尚未创建)";
+    const { derived, budget } = writerCtx;
+    const { genreProfile, genreBody, bookRules, bookRulesBody, styleFingerprint } = derived;
+    const b = budget.blocks;
 
     // ── Phase 1: Creative writing (temperature 0.7) ──
     const creativeSystemPrompt = buildWriterSystemPrompt(
-      book, genreProfile, bookRules, bookRulesBody, genreBody, styleGuide, styleFingerprint,
-      chapterNumber, "creative",
+      book, genreProfile, bookRules, bookRulesBody, genreBody, writerCtx.raw.styleGuide, styleFingerprint,
+      chapterNumber, "creative", book.language,
     );
 
     const creativeUserPrompt = this.buildUserPrompt({
       chapterNumber,
-      storyBible,
-      volumeOutline,
-      currentState,
-      ledger: genreProfile.numericalSystem ? ledger : "",
-      hooks,
-      recentChapters,
+      storyBible: b["story_bible"] ?? "",
+      volumeOutline: b["volume_outline"] ?? "",
+      currentState: b["current_state"] ?? "",
+      ledger: b["ledger"] ?? "",
+      hooks: b["pending_hooks"] ?? "",
+      recentChapters: b["recent_chapters"] ?? "",
       wordCount: input.wordCountOverride ?? book.chapterWordCount,
-      externalContext: input.externalContext,
-      chapterSummaries,
-      subplotBoard,
-      emotionalArcs,
-      characterMatrix,
-      dialogueFingerprints,
-      relevantSummaries,
-      parentCanon: hasParentCanon ? parentCanon : undefined,
+      externalContext: b["external_context"],
+      chapterSummaries: b["chapter_summaries"] ?? "",
+      subplotBoard: b["subplot_board"] ?? "",
+      emotionalArcs: b["emotional_arcs"] ?? "",
+      characterMatrix: b["character_matrix"] ?? "",
+      dialogueFingerprints: b["dialogue_fingerprints"] ?? "",
+      relevantSummaries: b["relevant_summaries"] ?? "",
+      parentCanon: b["parent_canon"] || undefined,
     });
 
     const creativeTemperature = input.temperatureOverride ?? 0.7;
@@ -143,14 +125,14 @@ export class WriterAgent extends BaseAgent {
       chapterNumber,
       title: creative.title,
       content: creative.content,
-      currentState,
-      ledger: genreProfile.numericalSystem ? ledger : "",
-      hooks,
-      chapterSummaries,
-      subplotBoard,
-      emotionalArcs,
-      characterMatrix,
-      volumeOutline,
+      currentState: writerCtx.raw.currentState,
+      ledger: genreProfile.numericalSystem ? writerCtx.raw.ledger : "",
+      hooks: writerCtx.raw.hooks,
+      chapterSummaries: writerCtx.raw.chapterSummaries,
+      subplotBoard: writerCtx.raw.subplotBoard,
+      emotionalArcs: writerCtx.raw.emotionalArcs,
+      characterMatrix: writerCtx.raw.characterMatrix,
+      volumeOutline: writerCtx.raw.volumeOutline,
     });
     const settlement = settleResult.settlement;
     const settleUsage = settleResult.usage;
@@ -375,40 +357,7 @@ ${params.volumeOutline}
 - 只需输出 PRE_WRITE_CHECK、CHAPTER_TITLE、CHAPTER_CONTENT 三个区块`;
   }
 
-  private async loadRecentChapters(
-    bookDir: string,
-    currentChapter: number,
-  ): Promise<string> {
-    const chaptersDir = join(bookDir, "chapters");
-    try {
-      const files = await readdir(chaptersDir);
-      const mdFiles = files
-        .filter((f) => f.endsWith(".md") && !f.startsWith("index"))
-        .sort()
-        .slice(-1);
 
-      if (mdFiles.length === 0) return "";
-
-      const contents = await Promise.all(
-        mdFiles.map(async (f) => {
-          const content = await readFile(join(chaptersDir, f), "utf-8");
-          return content;
-        }),
-      );
-
-      return contents.join("\n\n---\n\n");
-    } catch {
-      return "";
-    }
-  }
-
-  private async readFileOrDefault(path: string): Promise<string> {
-    try {
-      return await readFile(path, "utf-8");
-    } catch {
-      return "(文件尚未创建)";
-    }
-  }
 
   /** Save new truth files (summaries, subplots, emotional arcs, character matrix). */
   async saveNewTruthFiles(bookDir: string, output: WriteChapterOutput): Promise<void> {
@@ -459,143 +408,7 @@ ${params.volumeOutline}
     }
   }
 
-  private buildStyleFingerprint(styleProfileRaw: string): string | undefined {
-    if (!styleProfileRaw || styleProfileRaw === "(文件尚未创建)") return undefined;
-    try {
-      const profile = JSON.parse(styleProfileRaw);
-      const lines: string[] = [];
-      if (profile.avgSentenceLength) lines.push(`- 平均句长：${profile.avgSentenceLength}字`);
-      if (profile.sentenceLengthStdDev) lines.push(`- 句长标准差：${profile.sentenceLengthStdDev}`);
-      if (profile.avgParagraphLength) lines.push(`- 平均段落长度：${profile.avgParagraphLength}字`);
-      if (profile.paragraphLengthRange) lines.push(`- 段落长度范围：${profile.paragraphLengthRange.min}-${profile.paragraphLengthRange.max}字`);
-      if (profile.vocabularyDiversity) lines.push(`- 词汇多样性(TTR)：${profile.vocabularyDiversity}`);
-      if (profile.topPatterns?.length > 0) lines.push(`- 高频句式：${profile.topPatterns.join("、")}`);
-      if (profile.rhetoricalFeatures?.length > 0) lines.push(`- 修辞特征：${profile.rhetoricalFeatures.join("、")}`);
-      return lines.length > 0 ? lines.join("\n") : undefined;
-    } catch {
-      return undefined;
-    }
-  }
 
-
-  /**
-   * Extract dialogue fingerprints from recent chapters.
-   * For each character with multiple dialogue lines, compute speaking style markers.
-   */
-  private extractDialogueFingerprints(recentChapters: string, _storyBible: string): string {
-    if (!recentChapters) return "";
-
-    // Match dialogue patterns: "speaker said" or dialogue in quotes
-    // Chinese dialogue typically uses "" or 「」
-    const dialogueRegex = /(?:(.{1,6})(?:说道|道|喝道|冷声道|笑道|怒道|低声道|大声道|喝骂道|冷笑道|沉声道|喊道|叫道|问道|答道)\s*[：:]\s*["""「]([^"""」]+)["""」])|["""「]([^"""」]{2,})["""」]/g;
-
-    const characterDialogues = new Map<string, string[]>();
-    let match: RegExpExecArray | null;
-
-    while ((match = dialogueRegex.exec(recentChapters)) !== null) {
-      const speaker = match[1]?.trim();
-      const line = match[2] ?? match[3] ?? "";
-      if (speaker && line.length > 1) {
-        const existing = characterDialogues.get(speaker) ?? [];
-        characterDialogues.set(speaker, [...existing, line]);
-      }
-    }
-
-    // Only include characters with >=2 dialogue lines
-    const fingerprints: string[] = [];
-    for (const [character, lines] of characterDialogues) {
-      if (lines.length < 2) continue;
-
-      const avgLen = Math.round(lines.reduce((sum, l) => sum + l.length, 0) / lines.length);
-      const isShort = avgLen < 15;
-
-      // Find frequent words/phrases (2+ occurrences)
-      const wordCounts = new Map<string, number>();
-      for (const line of lines) {
-        // Extract 2-3 char segments as "words"
-        for (let i = 0; i < line.length - 1; i++) {
-          const bigram = line.slice(i, i + 2);
-          wordCounts.set(bigram, (wordCounts.get(bigram) ?? 0) + 1);
-        }
-      }
-      const frequentWords = [...wordCounts.entries()]
-        .filter(([, count]) => count >= 2)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 3)
-        .map(([w]) => `「${w}」`);
-
-      // Detect style markers
-      const markers: string[] = [];
-      if (isShort) markers.push("短句为主");
-      else markers.push("长句为主");
-
-      const questionCount = lines.filter((l) => l.includes("？") || l.includes("?")).length;
-      if (questionCount > lines.length * 0.3) markers.push("反问多");
-
-      if (frequentWords.length > 0) markers.push(`常用${frequentWords.join("")}`);
-
-      fingerprints.push(`${character}：${markers.join("，")}`);
-    }
-
-    return fingerprints.length > 0 ? fingerprints.join("；") : "";
-  }
-
-  /**
-   * Find relevant chapter summaries based on volume outline context.
-   * Extracts character names and hook IDs from the current volume's outline,
-   * then searches chapter summaries for matching entries.
-   */
-  private findRelevantSummaries(
-    chapterSummaries: string,
-    volumeOutline: string,
-    chapterNumber: number,
-  ): string {
-    if (!chapterSummaries || chapterSummaries === "(文件尚未创建)") return "";
-    if (!volumeOutline || volumeOutline === "(文件尚未创建)") return "";
-
-    // Extract character names from volume outline (Chinese name patterns)
-    const nameRegex = /[\u4e00-\u9fff]{2,4}(?=[，、。：]|$)/g;
-    const outlineNames = new Set<string>();
-    let nameMatch: RegExpExecArray | null;
-    while ((nameMatch = nameRegex.exec(volumeOutline)) !== null) {
-      outlineNames.add(nameMatch[0]);
-    }
-
-    // Extract hook IDs from volume outline
-    const hookRegex = /H\d{2,}/g;
-    const hookIds = new Set<string>();
-    let hookMatch: RegExpExecArray | null;
-    while ((hookMatch = hookRegex.exec(volumeOutline)) !== null) {
-      hookIds.add(hookMatch[0]);
-    }
-
-    if (outlineNames.size === 0 && hookIds.size === 0) return "";
-
-    // Search chapter summaries for matching rows
-    const rows = chapterSummaries.split("\n").filter((line) =>
-      line.startsWith("|") && !line.startsWith("| 章节") && !line.startsWith("|--") && !line.startsWith("| -"),
-    );
-
-    const matchedRows = rows.filter((row) => {
-      for (const name of outlineNames) {
-        if (row.includes(name)) return true;
-      }
-      for (const hookId of hookIds) {
-        if (row.includes(hookId)) return true;
-      }
-      return false;
-    });
-
-    // Skip only the last chapter (its full text is already in context via loadRecentChapters)
-    const filteredRows = matchedRows.filter((row) => {
-      const chNumMatch = row.match(/\|\s*(\d+)\s*\|/);
-      if (!chNumMatch) return true;
-      const num = parseInt(chNumMatch[1]!, 10);
-      return num < chapterNumber - 1;
-    });
-
-    return filteredRows.length > 0 ? filteredRows.join("\n") : "";
-  }
 
   private sanitizeFilename(title: string): string {
     return title

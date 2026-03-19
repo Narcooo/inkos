@@ -3,29 +3,112 @@ import { join } from "node:path";
 import type { BookConfig } from "../models/book.js";
 import type { ChapterMeta } from "../models/chapter.js";
 
+/** Duración máxima de un lock antes de considerarlo stale (30 min por defecto). */
+const DEFAULT_STALE_LOCK_MS = 30 * 60 * 1000;
+
 export class StateManager {
   constructor(private readonly projectRoot: string) {}
 
-  async acquireBookLock(bookId: string): Promise<() => Promise<void>> {
+  /**
+   * Adquiere un lock exclusivo para un libro.
+   *
+   * Usa `writeFile` con flag `wx` (O_CREAT | O_EXCL) para creación atómica:
+   * si el archivo ya existe, falla inmediatamente — sin ventana de carrera.
+   *
+   * También detecta locks stale: si el PID del lock ya no corre, o si el lock
+   * supera `staleLockMs`, se elimina automáticamente y se reintenta.
+   */
+  async acquireBookLock(
+    bookId: string,
+    staleLockMs = DEFAULT_STALE_LOCK_MS,
+  ): Promise<() => Promise<void>> {
     const lockPath = join(this.bookDir(bookId), ".write.lock");
+    const lockData = `pid:${process.pid} ts:${Date.now()}`;
+
+    // Asegurar que el directorio del libro existe
+    await mkdir(this.bookDir(bookId), { recursive: true });
+
     try {
-      await stat(lockPath);
-      const lockData = await readFile(lockPath, "utf-8");
-      throw new Error(
-        `Book "${bookId}" is locked by another process (${lockData}). ` +
-          `If this is stale, delete ${lockPath}`,
-      );
-    } catch (e) {
-      if (e instanceof Error && e.message.includes("is locked")) throw e;
+      // Intento atómico: flag 'wx' = O_CREAT | O_EXCL — falla si ya existe
+      await writeFile(lockPath, lockData, { encoding: "utf-8", flag: "wx" });
+    } catch (createError) {
+      // El archivo ya existe — verificar si es stale
+      if (isFileExistsError(createError)) {
+        const cleaned = await this.tryCleanStaleLock(lockPath, bookId, staleLockMs);
+        if (cleaned) {
+          // Lock stale eliminado — reintentar creación atómica
+          try {
+            await writeFile(lockPath, lockData, { encoding: "utf-8", flag: "wx" });
+          } catch (retryError) {
+            if (isFileExistsError(retryError)) {
+              throw new Error(
+                `Book "${bookId}" is locked by another process (race on retry). ` +
+                  `If this is stale, delete ${lockPath}`,
+              );
+            }
+            throw retryError;
+          }
+        } else {
+          // Lock activo de otro proceso
+          let existingLockInfo = "(unknown)";
+          try {
+            existingLockInfo = await readFile(lockPath, "utf-8");
+          } catch { /* archivo podría haber sido eliminado entre medias */ }
+          throw new Error(
+            `Book "${bookId}" is locked by another process (${existingLockInfo}). ` +
+              `If this is stale, delete ${lockPath}`,
+          );
+        }
+      } else {
+        throw createError;
+      }
     }
-    await writeFile(lockPath, `pid:${process.pid} ts:${Date.now()}`, "utf-8");
+
     return async () => {
       try {
         await unlink(lockPath);
       } catch {
-        // ignore
+        // Archivo ya eliminado — ignorar
       }
     };
+  }
+
+  /**
+   * Intenta limpiar un lock stale. Retorna true si se eliminó.
+   *
+   * Un lock es stale si:
+   * 1. El PID registrado ya no tiene un proceso corriendo, O
+   * 2. El timestamp supera staleLockMs.
+   */
+  private async tryCleanStaleLock(
+    lockPath: string,
+    bookId: string,
+    staleLockMs: number,
+  ): Promise<boolean> {
+    try {
+      const raw = await readFile(lockPath, "utf-8");
+      const pidMatch = raw.match(/pid:(\d+)/);
+      const tsMatch = raw.match(/ts:(\d+)/);
+
+      const lockPid = pidMatch ? Number(pidMatch[1]) : 0;
+      const lockTs = tsMatch ? Number(tsMatch[1]) : 0;
+
+      // Condición 1: PID muerto
+      const pidDead = lockPid > 0 && !isProcessAlive(lockPid);
+
+      // Condición 2: Lock demasiado viejo
+      const tooOld = lockTs > 0 && (Date.now() - lockTs) > staleLockMs;
+
+      if (pidDead || tooOld) {
+        await unlink(lockPath);
+        return true;
+      }
+
+      return false;
+    } catch {
+      // No se pudo leer/eliminar — considerar como no stale
+      return false;
+    }
   }
 
   get booksDir(): string {
@@ -173,5 +256,27 @@ export class StateManager {
     } catch {
       return false;
     }
+  }
+}
+
+// --- Helpers del módulo ---
+
+/** Verifica si un error de fs es EEXIST (archivo ya existe — lanzado por flag 'wx'). */
+function isFileExistsError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    (error as NodeJS.ErrnoException).code === "EEXIST"
+  );
+}
+
+/** Verifica si un proceso con el PID dado sigue corriendo. */
+function isProcessAlive(pid: number): boolean {
+  try {
+    // process.kill(pid, 0) no envía señal — solo verifica existencia
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
   }
 }

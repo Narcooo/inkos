@@ -2,6 +2,8 @@
 // Reintenta errores transitorios de red/API (429, 502, 503, ECONNRESET, etc.)
 // sin reintentar errores del cliente (401, 403, 400) que no se resolverán con reintentos.
 
+import type { Logger } from "../utils/logger.js";
+
 export interface RetryOptions {
   /** Número máximo de reintentos (por defecto: 3) */
   readonly maxRetries?: number;
@@ -13,6 +15,8 @@ export interface RetryOptions {
   readonly retryableCheck?: (error: unknown) => boolean;
   /** Función de retardo inyectable para testing (por defecto: setTimeout) */
   readonly delayFn?: (ms: number) => Promise<void>;
+  /** Logger opcional — si se provee, los mensajes de reintento se envían al logger en vez de stderr */
+  readonly logger?: Logger;
 }
 
 const DEFAULT_MAX_RETRIES = 3;
@@ -118,9 +122,12 @@ export async function withRetry<T>(
       if (!checkRetryable(error)) break;
 
       const delayMs = computeBackoffDelay(attempt, baseDelayMs, maxDelayMs);
-      process.stderr.write(
-        `[llm-retry] Attempt ${attempt + 1}/${maxRetries} failed, retrying in ${delayMs}ms: ${String(error).slice(0, 120)}\n`,
-      );
+      const retryMsg = `Attempt ${attempt + 1}/${maxRetries} failed, retrying in ${delayMs}ms: ${String(error).slice(0, 120)}`;
+      if (options?.logger) {
+        options.logger.warn(retryMsg, { attempt: attempt + 1, maxRetries, delayMs });
+      } else {
+        process.stderr.write(`[llm-retry] ${retryMsg}\n`);
+      }
       await delay(delayMs);
     }
   }

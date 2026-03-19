@@ -69,9 +69,14 @@ describe("BookConfigSchema", () => {
     ).toThrow();
   });
 
-  it("rejects invalid genre", () => {
+  it("accepts custom genre strings", () => {
+    const result = BookConfigSchema.parse({ ...validBook, genre: "romance" });
+    expect(result.genre).toBe("romance");
+  });
+
+  it("rejects empty genre", () => {
     expect(() =>
-      BookConfigSchema.parse({ ...validBook, genre: "romance" }),
+      BookConfigSchema.parse({ ...validBook, genre: "" }),
     ).toThrow();
   });
 
@@ -126,14 +131,17 @@ describe("GenreSchema", () => {
     "urban",
     "horror",
     "other",
+    "litrpg",
+    "progression",
+    "cozy",
   ] as const;
 
   it.each(validGenres)("accepts '%s'", (value) => {
     expect(GenreSchema.parse(value)).toBe(value);
   });
 
-  it("rejects unknown genre", () => {
-    expect(() => GenreSchema.parse("scifi")).toThrow();
+  it("rejects empty genre string", () => {
+    expect(() => GenreSchema.parse("")).toThrow();
   });
 });
 
@@ -246,19 +254,21 @@ describe("ChapterStatusSchema", () => {
     "auditing",
     "audit-passed",
     "audit-failed",
+    "audit-skipped",
     "revising",
     "ready-for-review",
     "approved",
     "rejected",
     "published",
+    "imported",
   ] as const;
 
   it.each(allStatuses)("accepts '%s'", (value) => {
     expect(ChapterStatusSchema.parse(value)).toBe(value);
   });
 
-  it("has exactly 12 valid statuses", () => {
-    expect(ChapterStatusSchema.options).toHaveLength(12);
+  it("has exactly 13 valid statuses", () => {
+    expect(ChapterStatusSchema.options).toHaveLength(13);
   });
 
   it("rejects unknown status", () => {

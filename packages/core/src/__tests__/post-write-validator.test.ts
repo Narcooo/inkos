@@ -5,6 +5,7 @@ import type { GenreProfile } from "../models/genre-profile.js";
 const baseProfile: GenreProfile = {
   id: "test",
   name: "测试",
+  language: "zh",
   chapterTypes: [],
   fatigueWords: [],
   pacingRule: "",
@@ -118,6 +119,7 @@ describe("validatePostWrite", () => {
       fatigueWordsOverride: [],
       additionalAuditDimensions: [],
       enableFullCastTracking: false,
+      allowedDeviations: [],
     };
     const content = "他一脸跪舔的样子让人恶心。";
     const result = validatePostWrite(content, baseProfile, bookRules);
@@ -129,5 +131,113 @@ describe("validatePostWrite", () => {
     const content = `他站起来，环顾四周。窗外的月光洒在地板上，像一层薄薄的霜。\n\n\u201c走吧。\u201d她转身推开门。冷风从缝隙里钻进来，她裹紧了衣服。`;
     const result = validatePostWrite(content, baseProfile, null);
     expect(result).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// English language tests
+// ---------------------------------------------------------------------------
+
+const enProfile: GenreProfile = {
+  id: "litrpg",
+  name: "LitRPG",
+  language: "en",
+  chapterTypes: [],
+  fatigueWords: ["suddenly"],
+  pacingRule: "",
+  numericalSystem: false,
+  powerScaling: false,
+  eraResearch: false,
+  auditDimensions: [],
+  satisfactionTypes: [],
+};
+
+describe("validatePostWrite (English)", () => {
+  it("returns no violations for clean EN content", () => {
+    const content = "He walked through the door and set his bag on the table. The rain outside had stopped.";
+    const result = validatePostWrite(content, enProfile, null);
+    expect(result).toHaveLength(0);
+  });
+
+  it("does NOT fire Chinese rules for EN books", () => {
+    // Contains Chinese dash and 不是…而是… — should be ignored for EN
+    const content = "This is not a test——but rather a demonstration. 不是测试，而是展示。";
+    const result = validatePostWrite(content, enProfile, null);
+    // Should NOT have 禁止句式 or 禁止破折号
+    expect(result.find(v => v.rule === "禁止句式")).toBeUndefined();
+    expect(result.find(v => v.rule === "禁止破折号")).toBeUndefined();
+  });
+
+  it("detects AI filler phrases", () => {
+    const content = "He couldn't help but smile. A wave of relief washed over him. A surge of energy filled the room. It was as if time stopped.";
+    const result = validatePostWrite(content, enProfile, null);
+    expect(result.find(v => v.rule === "filler_density")).toBeDefined();
+  });
+
+  it("detects EN meta-narration", () => {
+    const content = "Our story continues with the hero entering the castle. Little did he know what awaited inside.";
+    const result = validatePostWrite(content, enProfile, null);
+    expect(result.find(v => v.rule === "meta_narration")).toBeDefined();
+  });
+
+  it("detects EN report terms", () => {
+    const content = "His core motivation was simple. The narrative tension grew as he considered the plot device before him.";
+    const result = validatePostWrite(content, enProfile, null);
+    const v = result.find(r => r.rule === "report_terms");
+    expect(v).toBeDefined();
+    expect(v!.severity).toBe("error");
+  });
+
+  it("detects EN sermon words", () => {
+    const content = "Obviously, the plan had failed. Needless to say, they would have to start over.";
+    const result = validatePostWrite(content, enProfile, null);
+    expect(result.find(v => v.rule === "author_sermon")).toBeDefined();
+  });
+
+  it("detects EN collective shock", () => {
+    const content = "Everyone in the room gasped. The entire crowd fell silent.";
+    const result = validatePostWrite(content, enProfile, null);
+    expect(result.find(v => v.rule === "collective_shock")).toBeDefined();
+  });
+
+  it("detects repetitive sentence starts", () => {
+    const content = "He walked forward. He stopped. He looked around. He sighed. He turned back.";
+    const result = validatePostWrite(content, enProfile, null);
+    expect(result.find(v => v.rule === "repetitive_starts")).toBeDefined();
+  });
+
+  it("detects EN fatigue words", () => {
+    const content = "He suddenly turned. She suddenly stopped. They suddenly realized.";
+    const result = validatePostWrite(content, enProfile, null);
+    expect(result.find(v => v.rule === "fatigue_word")).toBeDefined();
+  });
+
+  it("detects EN book prohibitions (case insensitive)", () => {
+    const bookRules = {
+      version: "1",
+      prohibitions: ["murder"],
+      chapterTypesOverride: [],
+      fatigueWordsOverride: [],
+      additionalAuditDimensions: [],
+      enableFullCastTracking: false,
+      allowedDeviations: [],
+    };
+    const content = "He committed Murder in the dark alley.";
+    const result = validatePostWrite(content, enProfile, bookRules);
+    expect(result.find(v => v.rule === "book_prohibition")).toBeDefined();
+  });
+
+  it("allows clean EN content with varied sentence structure", () => {
+    const filler = "The old house stood at the edge of town, its windows dark. Sarah pulled her coat tighter against the wind. ";
+    const content = filler.repeat(10);
+    const result = validatePostWrite(content, enProfile, null);
+    expect(result).toHaveLength(0);
+  });
+
+  it("respects language override parameter", () => {
+    // Use a ZH profile but override language to EN — should use EN rules
+    const content = "He couldn't help but smile. A wave of relief washed over him. A surge of energy filled the room. It was as if time stopped.";
+    const result = validatePostWrite(content, baseProfile, null, "en");
+    expect(result.find(v => v.rule === "filler_density")).toBeDefined();
   });
 });

@@ -3,7 +3,6 @@ import type { GenreProfile } from "../models/genre-profile.js";
 import type { BookRules } from "../models/book-rules.js";
 import type { AuditIssue } from "./continuity.js";
 import { readGenreProfile, readBookRules } from "./rules-reader.js";
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 export type ReviseMode = "polish" | "rewrite" | "rework" | "anti-detect" | "spot-fix";
@@ -53,6 +52,7 @@ export class ReviserAgent extends BaseAgent {
     issues: ReadonlyArray<AuditIssue>,
     mode: ReviseMode = "rewrite",
     genre?: string,
+    extraContext?: string,
   ): Promise<ReviseOutput> {
     const [currentState, ledger, hooks, styleGuideRaw, volumeOutline, storyBible, characterMatrix, chapterSummaries] = await Promise.all([
       this.readFileSafe(join(bookDir, "story/current_state.md")),
@@ -130,11 +130,15 @@ ${gp.numericalSystem ? "\n=== UPDATED_LEDGER ===\n(更新后的完整资源账�
       ? `\n## 章节摘要\n${chapterSummaries}\n`
       : "";
 
+    const extraContextBlock = extraContext?.trim()
+      ? `\n## 本次额外修订要求\n${extraContext.trim()}\n`
+      : "";
+
     const userPrompt = `请修正第${chapterNumber}章。
 
 ## 审稿问题
 ${issueList}
-
+${extraContextBlock}
 ## 当前状态卡
 ${currentState}
 ${ledgerBlock}
@@ -186,13 +190,5 @@ ${chapterContent}`;
         : "",
       updatedHooks: extract("UPDATED_HOOKS") || "(伏笔池未更新)",
     };
-  }
-
-  private async readFileSafe(path: string): Promise<string> {
-    try {
-      return await readFile(path, "utf-8");
-    } catch {
-      return "(文件不存在)";
-    }
   }
 }

@@ -11,6 +11,7 @@ export interface CreativeOutput {
 export function parseCreativeOutput(
   chapterNumber: number,
   content: string,
+  language?: string,
 ): CreativeOutput {
   const extract = (tag: string): string => {
     const regex = new RegExp(
@@ -30,7 +31,7 @@ export function parseCreativeOutput(
 
   let title = extract("CHAPTER_TITLE");
   if (!title) {
-    title = fallbackExtractTitle(content, chapterNumber);
+    title = fallbackExtractTitle(content, chapterNumber, language);
   }
 
   return {
@@ -47,8 +48,8 @@ export function parseCreativeOutput(
  * stripping metadata and returning the longest prose block.
  */
 function fallbackExtractContent(raw: string): string {
-  // Try markdown heading: # 第N章 ... followed by content
-  const headingMatch = raw.match(/^#\s*第\d+章[^\n]*\n+([\s\S]+)/m);
+  // Try markdown heading: # 第N章 ... or # Chapter N ... followed by content
+  const headingMatch = raw.match(/^#\s*(?:第\d+章|Chapter\s+\d+)[^\n]*\n+([\s\S]+)/mi);
   if (headingMatch) {
     return headingMatch[1]!.trim();
   }
@@ -76,18 +77,23 @@ function fallbackExtractContent(raw: string): string {
 /**
  * Fallback title extraction when === CHAPTER_TITLE === tag is missing.
  */
-function fallbackExtractTitle(raw: string, chapterNumber: number): string {
+function fallbackExtractTitle(raw: string, chapterNumber: number, language?: string): string {
   // Try: # 第N章 Title
-  const headingMatch = raw.match(/^#\s*第\d+章\s*(.+)/m);
-  if (headingMatch) {
-    return headingMatch[1]!.trim();
+  const zhHeading = raw.match(/^#\s*第\d+章\s*(.+)/m);
+  if (zhHeading) {
+    return zhHeading[1]!.trim();
+  }
+  // Try: # Chapter N: Title or # Chapter N Title
+  const enHeading = raw.match(/^#\s*Chapter\s+\d+[:\s]+(.+)/mi);
+  if (enHeading) {
+    return enHeading[1]!.trim();
   }
   // Try: 章节标题：Title or CHAPTER_TITLE: Title (without === delimiters)
   const labelMatch = raw.match(/(?:章节标题|CHAPTER_TITLE)[：:]\s*(.+)/);
   if (labelMatch) {
     return labelMatch[1]!.trim();
   }
-  return `第${chapterNumber}章`;
+  return language === "en" ? `Chapter ${chapterNumber}` : `第${chapterNumber}章`;
 }
 
 export type ParsedWriterOutput = Omit<WriteChapterOutput, "postWriteErrors" | "postWriteWarnings">;
@@ -113,7 +119,7 @@ export function parseWriterOutput(
 
   return {
     chapterNumber,
-    title: extract("CHAPTER_TITLE") || `第${chapterNumber}章`,
+    title: extract("CHAPTER_TITLE") || (genreProfile.language === "en" ? `Chapter ${chapterNumber}` : `第${chapterNumber}章`),
     content: chapterContent,
     wordCount: chapterContent.length,
     preWriteCheck: extract("PRE_WRITE_CHECK"),

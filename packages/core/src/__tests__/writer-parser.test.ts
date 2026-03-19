@@ -5,6 +5,7 @@ import type { GenreProfile } from "../models/genre-profile.js";
 const defaultGenreProfile: GenreProfile = {
   name: "测试",
   id: "test",
+  language: "zh",
   chapterTypes: [],
   fatigueWords: [],
   numericalSystem: true,

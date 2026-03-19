@@ -3,7 +3,6 @@ import type { BookConfig } from "../models/book.js";
 import type { GenreProfile } from "../models/genre-profile.js";
 import { readGenreProfile, readBookRules } from "./rules-reader.js";
 import { parseWriterOutput, type ParsedWriterOutput } from "./writer-parser.js";
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 export interface AnalyzeChapterInput {
@@ -30,15 +29,15 @@ export class ChapterAnalyzerAgent extends BaseAgent {
       chapterSummaries, subplotBoard, emotionalArcs, characterMatrix,
       storyBible, volumeOutline,
     ] = await Promise.all([
-      this.readFileOrDefault(join(bookDir, "story/current_state.md")),
-      this.readFileOrDefault(join(bookDir, "story/particle_ledger.md")),
-      this.readFileOrDefault(join(bookDir, "story/pending_hooks.md")),
-      this.readFileOrDefault(join(bookDir, "story/chapter_summaries.md")),
-      this.readFileOrDefault(join(bookDir, "story/subplot_board.md")),
-      this.readFileOrDefault(join(bookDir, "story/emotional_arcs.md")),
-      this.readFileOrDefault(join(bookDir, "story/character_matrix.md")),
-      this.readFileOrDefault(join(bookDir, "story/story_bible.md")),
-      this.readFileOrDefault(join(bookDir, "story/volume_outline.md")),
+      this.readFileSafe(join(bookDir, "story/current_state.md"), "(文件尚未创建)"),
+      this.readFileSafe(join(bookDir, "story/particle_ledger.md"), "(文件尚未创建)"),
+      this.readFileSafe(join(bookDir, "story/pending_hooks.md"), "(文件尚未创建)"),
+      this.readFileSafe(join(bookDir, "story/chapter_summaries.md"), "(文件尚未创建)"),
+      this.readFileSafe(join(bookDir, "story/subplot_board.md"), "(文件尚未创建)"),
+      this.readFileSafe(join(bookDir, "story/emotional_arcs.md"), "(文件尚未创建)"),
+      this.readFileSafe(join(bookDir, "story/character_matrix.md"), "(文件尚未创建)"),
+      this.readFileSafe(join(bookDir, "story/story_bible.md"), "(文件尚未创建)"),
+      this.readFileSafe(join(bookDir, "story/volume_outline.md"), "(文件尚未创建)"),
     ]);
 
     const { profile: genreProfile, body: genreBody } =
@@ -237,13 +236,5 @@ ${params.storyBible}
 ${params.volumeOutline}
 
 请严格按照 === TAG === 格式输出分析结果。`;
-  }
-
-  private async readFileOrDefault(path: string): Promise<string> {
-    try {
-      return await readFile(path, "utf-8");
-    } catch {
-      return "(文件尚未创建)";
-    }
   }
 }

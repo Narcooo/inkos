@@ -1,6 +1,7 @@
 import type { BookConfig } from "../models/book.js";
 import type { GenreProfile } from "../models/genre-profile.js";
 import type { BookRules } from "../models/book-rules.js";
+import { buildEnglishCoreRules, buildEnglishAntiAIRules, buildEnglishCharacterMethod, buildEnglishPreWriteChecklist, buildEnglishGenreIntro } from "./en-prompt-sections.js";
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -16,30 +17,47 @@ export function buildWriterSystemPrompt(
   styleFingerprint?: string,
   chapterNumber?: number,
   mode: "full" | "creative" = "full",
+  languageOverride?: "zh" | "en",
 ): string {
+  const isEnglish = (languageOverride ?? genreProfile.language) === "en";
+
   const outputSection = mode === "creative"
     ? buildCreativeOutputFormat(book, genreProfile)
     : buildOutputFormat(book, genreProfile);
 
-  const sections = [
-    buildGenreIntro(book, genreProfile),
-    buildCoreRules(book),
-    buildAntiAIExamples(),
-    buildCharacterPsychologyMethod(),
-    buildSupportingCharacterMethod(),
-    buildReaderPsychologyMethod(),
-    buildEmotionalPacingMethod(),
-    buildImmersionTechniques(),
-    buildGoldenChaptersRules(chapterNumber),
-    bookRules?.enableFullCastTracking ? buildFullCastTracking() : "",
-    buildGenreRules(genreProfile, genreBody),
-    buildProtagonistRules(bookRules),
-    buildBookRulesBody(bookRulesBody),
-    buildStyleGuide(styleGuide),
-    buildStyleFingerprint(styleFingerprint),
-    buildPreWriteChecklist(book, genreProfile),
-    outputSection,
-  ];
+  const sections = isEnglish
+    ? [
+        buildEnglishGenreIntro(book, genreProfile),
+        buildEnglishCoreRules(book),
+        buildEnglishAntiAIRules(),
+        buildEnglishCharacterMethod(),
+        buildGenreRules(genreProfile, genreBody),
+        buildProtagonistRules(bookRules),
+        buildBookRulesBody(bookRulesBody),
+        buildStyleGuide(styleGuide),
+        buildStyleFingerprint(styleFingerprint),
+        buildEnglishPreWriteChecklist(book, genreProfile),
+        outputSection,
+      ]
+    : [
+        buildGenreIntro(book, genreProfile),
+        buildCoreRules(book),
+        buildAntiAIExamples(),
+        buildCharacterPsychologyMethod(),
+        buildSupportingCharacterMethod(),
+        buildReaderPsychologyMethod(),
+        buildEmotionalPacingMethod(),
+        buildImmersionTechniques(),
+        buildGoldenChaptersRules(chapterNumber),
+        bookRules?.enableFullCastTracking ? buildFullCastTracking() : "",
+        buildGenreRules(genreProfile, genreBody),
+        buildProtagonistRules(bookRules),
+        buildBookRulesBody(bookRulesBody),
+        buildStyleGuide(styleGuide),
+        buildStyleFingerprint(styleFingerprint),
+        buildPreWriteChecklist(book, genreProfile),
+        outputSection,
+      ];
 
   return sections.filter(Boolean).join("\n\n");
 }

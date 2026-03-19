@@ -34,6 +34,8 @@ export const BookRulesSchema = z.object({
   fatigueWordsOverride: z.array(z.string()).default([]),
   additionalAuditDimensions: z.array(z.union([z.number(), z.string()])).default([]),
   enableFullCastTracking: z.boolean().default(false),
+  fanficMode: z.enum(["canon", "au", "ooc", "cp"]).optional(),
+  allowedDeviations: z.array(z.string()).default([]),
 });
 
 export type BookRules = z.infer<typeof BookRulesSchema>;
