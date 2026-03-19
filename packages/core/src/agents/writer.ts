@@ -280,6 +280,7 @@ export class WriterAgent extends BaseAgent {
     const chaptersDir = join(bookDir, "chapters");
     const storyDir = join(bookDir, "story");
     await mkdir(chaptersDir, { recursive: true });
+    await mkdir(storyDir, { recursive: true });
 
     const paddedNum = String(output.chapterNumber).padStart(4, "0");
     const filename = `${paddedNum}_${this.sanitizeFilename(output.title)}.md`;
