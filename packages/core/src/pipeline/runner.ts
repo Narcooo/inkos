@@ -580,10 +580,17 @@ export class PipelineRunner {
         book.genre,
       );
       totalUsage = PipelineRunner.addUsage(totalUsage, fixResult.tokenUsage);
-      if (fixResult.revisedContent.length > 0) {
+      // Guard: only accept spot-fix if word count is at least 50% of original
+      const minAcceptable = Math.floor(finalContent.length * 0.5);
+      if (fixResult.revisedContent.length >= minAcceptable) {
         finalContent = fixResult.revisedContent;
         finalWordCount = fixResult.wordCount;
         revised = true;
+      } else {
+        this.config.logger?.warn(
+          `Spot-fix output too short (${fixResult.revisedContent.length} chars vs original ${finalContent.length}), keeping original content`,
+        );
+        // Keep finalContent unchanged, skip the broken spot-fix
       }
     }
 
@@ -622,7 +629,9 @@ export class PipelineRunner {
         );
         totalUsage = PipelineRunner.addUsage(totalUsage, reviseOutput.tokenUsage);
 
-        if (reviseOutput.revisedContent.length > 0) {
+        // Guard: only accept revision if word count is at least 50% of original
+        const minAcceptableLen = Math.floor(finalContent.length * 0.5);
+        if (reviseOutput.revisedContent.length >= minAcceptableLen) {
           // Guard: reject revision if AI markers increased
           const preMarkers = analyzeAITells(finalContent);
           const postMarkers = analyzeAITells(reviseOutput.revisedContent);
@@ -654,6 +663,10 @@ export class PipelineRunner {
             issues: [...reAudit.issues, ...reAITells.issues, ...reSensitive.issues],
             summary: reAudit.summary,
           };
+        } else if (reviseOutput.revisedContent.length > 0) {
+          this.config.logger?.warn(
+            `Revision output too short (${reviseOutput.revisedContent.length} chars vs original ${finalContent.length}), keeping original content`,
+          );
         }
       }
     }
@@ -1128,8 +1141,12 @@ ${matrix}`,
       chapterTitle: output.title,
     });
 
+    // Use finalContent directly instead of relying on LLM to "echo" it back
+    // This fixes the issue where Gemini truncates CHAPTER_CONTENT
     return {
       ...analyzed,
+      content: finalContent,
+      wordCount: finalContent.length,
       postWriteErrors: [],
       postWriteWarnings: [],
       tokenUsage: output.tokenUsage,

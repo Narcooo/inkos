@@ -38,7 +38,7 @@ const MODE_DESCRIPTIONS: Record<ReviseMode, string> = {
 7. 群像反应具体化：✗"全场震惊" → ✓"老陈的烟掉在裤子上，烫得他跳起来"
 8. 段落长度差异化：不再等长段落，有的段只有一句话，有的段七八行
 9. 消灭"不禁""仿佛""宛如"等AI标记词：换成具体感官描写`,
-  "spot-fix": "定点修复：只修改审稿意见指出的具体句子或段落，其余所有内容必须原封不动保留。修改范围限定在问题句子及其前后各一句。禁止改动无关段落",
+  "spot-fix": "定点修复：只修改审稿意见指出的具体句子或段落，其余所有内容必须原封不动保留。修改范围限定在问题句子及其前后各一句。禁止改动无关段落。【重要】REVISED_CONTENT 必须输出修改后的完整章节正文，不是只输出修改的部分",
 };
 
 export class ReviserAgent extends BaseAgent {
@@ -165,7 +165,8 @@ ${styleGuide}
 ## 待修正章节
 ${chapterContent}`;
 
-    const maxTokens = mode === "spot-fix" ? 8192 : 16384;
+    // spot-fix needs full chapter output, use same limit as other modes
+    const maxTokens = 16384;
 
     const response = await this.chat(
       [
