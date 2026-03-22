@@ -9,6 +9,7 @@ import { parseSettlementOutput } from "./settler-parser.js";
 import { readGenreProfile, readBookRules } from "./rules-reader.js";
 import { validatePostWrite, type PostWriteViolation } from "./post-write-validator.js";
 import { analyzeAITells } from "./ai-tells.js";
+import type { ChapterTrace, ContextPackage, RuleStack } from "../models/input-governance.js";
 import { filterHooks, filterSummaries, filterSubplots, filterEmotionalArcs, filterCharacterMatrix } from "../utils/context-filter.js";
 import { extractPOVFromOutline, filterMatrixByPOV, filterHooksByPOV } from "../utils/pov-filter.js";
 import { parseCreativeOutput } from "./writer-parser.js";
@@ -20,6 +21,10 @@ export interface WriteChapterInput {
   readonly bookDir: string;
   readonly chapterNumber: number;
   readonly externalContext?: string;
+  readonly chapterIntent?: string;
+  readonly contextPackage?: ContextPackage;
+  readonly ruleStack?: RuleStack;
+  readonly trace?: ChapterTrace;
   readonly wordCountOverride?: number;
   readonly temperatureOverride?: number;
 }
@@ -112,41 +117,53 @@ export class WriterAgent extends BaseAgent {
       chapterNumber, "creative", fanficContext, resolvedLanguage,
     );
 
-    // Smart context filtering: inject only relevant parts of truth files
-    const filteredHooks = filterHooks(hooks);
-    const filteredSummaries = filterSummaries(chapterSummaries, chapterNumber);
-    const filteredSubplots = filterSubplots(subplotBoard);
-    const filteredArcs = filterEmotionalArcs(emotionalArcs, chapterNumber);
-    const filteredMatrix = filterCharacterMatrix(characterMatrix, volumeOutline, bookRules?.protagonist?.name);
+    const creativeUserPrompt = input.chapterIntent && input.contextPackage && input.ruleStack
+      ? this.buildGovernedUserPrompt({
+          chapterNumber,
+          chapterIntent: input.chapterIntent,
+          contextPackage: input.contextPackage,
+          ruleStack: input.ruleStack,
+          trace: input.trace,
+          wordCount: input.wordCountOverride ?? book.chapterWordCount,
+          language: book.language ?? genreProfile.language,
+        })
+      : (() => {
+          // Smart context filtering: inject only relevant parts of truth files
+          const filteredHooks = filterHooks(hooks);
+          const filteredSummaries = filterSummaries(chapterSummaries, chapterNumber);
+          const filteredSubplots = filterSubplots(subplotBoard);
+          const filteredArcs = filterEmotionalArcs(emotionalArcs, chapterNumber);
+          const filteredMatrix = filterCharacterMatrix(characterMatrix, volumeOutline, bookRules?.protagonist?.name);
 
-    // POV-aware filtering: limit context to what the POV character knows
-    const povCharacter = extractPOVFromOutline(volumeOutline, chapterNumber);
-    const povFilteredMatrix = povCharacter
-      ? filterMatrixByPOV(filteredMatrix, povCharacter)
-      : filteredMatrix;
-    const povFilteredHooks = povCharacter
-      ? filterHooksByPOV(filteredHooks, povCharacter, chapterSummaries)
-      : filteredHooks;
+          // POV-aware filtering: limit context to what the POV character knows
+          const povCharacter = extractPOVFromOutline(volumeOutline, chapterNumber);
+          const povFilteredMatrix = povCharacter
+            ? filterMatrixByPOV(filteredMatrix, povCharacter)
+            : filteredMatrix;
+          const povFilteredHooks = povCharacter
+            ? filterHooksByPOV(filteredHooks, povCharacter, chapterSummaries)
+            : filteredHooks;
 
-    const creativeUserPrompt = this.buildUserPrompt({
-      chapterNumber,
-      storyBible,
-      volumeOutline,
-      currentState,
-      ledger: genreProfile.numericalSystem ? ledger : "",
-      hooks: povFilteredHooks,
-      recentChapters,
-      wordCount: input.wordCountOverride ?? book.chapterWordCount,
-      externalContext: input.externalContext,
-      chapterSummaries: filteredSummaries,
-      subplotBoard: filteredSubplots,
-      emotionalArcs: filteredArcs,
-      characterMatrix: povFilteredMatrix,
-      dialogueFingerprints,
-      relevantSummaries,
-      parentCanon: hasParentCanon ? parentCanon : undefined,
-      language: book.language ?? genreProfile.language,
-    });
+          return this.buildUserPrompt({
+            chapterNumber,
+            storyBible,
+            volumeOutline,
+            currentState,
+            ledger: genreProfile.numericalSystem ? ledger : "",
+            hooks: povFilteredHooks,
+            recentChapters,
+            wordCount: input.wordCountOverride ?? book.chapterWordCount,
+            externalContext: input.externalContext,
+            chapterSummaries: filteredSummaries,
+            subplotBoard: filteredSubplots,
+            emotionalArcs: filteredArcs,
+            characterMatrix: povFilteredMatrix,
+            dialogueFingerprints,
+            relevantSummaries,
+            parentCanon: hasParentCanon ? parentCanon : undefined,
+            language: book.language ?? genreProfile.language,
+          });
+        })();
 
     const creativeTemperature = input.temperatureOverride ?? 0.7;
 
@@ -455,6 +472,88 @@ ${params.volumeOutline}
 - 如果卷纲指定了某个事件/转折发生在第N章，不得提前到本章完成
 - 剧情推进速度必须与卷纲规划的章节跨度匹配：如果卷纲规划某段剧情跨5章，不得在1-2章内讲完
 - PRE_WRITE_CHECK中必须明确标注本章对应的卷纲节点
+
+要求：
+- 正文不少于${params.wordCount}字
+- 先输出写作自检表，再写正文
+      - 只需输出 PRE_WRITE_CHECK、CHAPTER_TITLE、CHAPTER_CONTENT 三个区块`;
+  }
+
+  private buildGovernedUserPrompt(params: {
+    readonly chapterNumber: number;
+    readonly chapterIntent: string;
+    readonly contextPackage: ContextPackage;
+    readonly ruleStack: RuleStack;
+    readonly trace?: ChapterTrace;
+    readonly wordCount: number;
+    readonly language?: "zh" | "en";
+  }): string {
+    const contextSections = params.contextPackage.selectedContext
+      .map((entry) => [
+        `### ${entry.source}`,
+        `- reason: ${entry.reason}`,
+        entry.excerpt ? `- excerpt: ${entry.excerpt}` : "",
+      ].filter(Boolean).join("\n"))
+      .join("\n\n");
+
+    const overrideLines = params.ruleStack.activeOverrides.length > 0
+      ? params.ruleStack.activeOverrides
+        .map((override) => `- ${override.from} -> ${override.to}: ${override.reason} (${override.target})`)
+        .join("\n")
+      : "- none";
+
+    const diagnosticLines = params.ruleStack.sections.diagnostic.length > 0
+      ? params.ruleStack.sections.diagnostic.join(", ")
+      : "none";
+
+    const traceNotes = params.trace && params.trace.notes.length > 0
+      ? params.trace.notes.map((note) => `- ${note}`).join("\n")
+      : "- none";
+
+    if (params.language === "en") {
+      return `Write chapter ${params.chapterNumber}.
+
+## Chapter Intent
+${params.chapterIntent}
+
+## Selected Context
+${contextSections || "(none)"}
+
+## Rule Stack
+- Hard: ${params.ruleStack.sections.hard.join(", ") || "(none)"}
+- Soft: ${params.ruleStack.sections.soft.join(", ") || "(none)"}
+- Diagnostic: ${diagnosticLines}
+
+## Active Overrides
+${overrideLines}
+
+## Trace Notes
+${traceNotes}
+
+Requirements:
+- Chapter body must be at least ${params.wordCount} words
+- Output PRE_WRITE_CHECK first, then the chapter
+- Output only PRE_WRITE_CHECK, CHAPTER_TITLE, and CHAPTER_CONTENT blocks`;
+    }
+
+    return `请续写第${params.chapterNumber}章。
+
+## 本章意图
+${params.chapterIntent}
+
+## 已选上下文
+${contextSections || "(无)"}
+
+## 规则栈
+- 硬护栏：${params.ruleStack.sections.hard.join("、") || "(无)"}
+- 软约束：${params.ruleStack.sections.soft.join("、") || "(无)"}
+- 诊断规则：${diagnosticLines}
+
+## 当前覆盖
+${overrideLines}
+
+## 追踪说明
+${traceNotes}
 
 要求：
 - 正文不少于${params.wordCount}字

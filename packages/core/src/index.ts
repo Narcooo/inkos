@@ -1,7 +1,7 @@
 // Models
 export { type BookConfig, type Platform, type Genre, type BookStatus, type FanficMode, BookConfigSchema, PlatformSchema, GenreSchema, BookStatusSchema, FanficModeSchema } from "./models/book.js";
 export { type ChapterMeta, type ChapterStatus, ChapterMetaSchema, ChapterStatusSchema } from "./models/chapter.js";
-export { type ProjectConfig, type LLMConfig, type NotifyChannel, type DetectionConfig, type QualityGates, type AgentLLMOverride, ProjectConfigSchema, LLMConfigSchema, AgentLLMOverrideSchema, DetectionConfigSchema, QualityGatesSchema } from "./models/project.js";
+export { type ProjectConfig, type LLMConfig, type NotifyChannel, type DetectionConfig, type QualityGates, type AgentLLMOverride, type InputGovernanceMode, ProjectConfigSchema, LLMConfigSchema, AgentLLMOverrideSchema, DetectionConfigSchema, QualityGatesSchema, InputGovernanceModeSchema } from "./models/project.js";
 export { type CurrentState, type ParticleLedger, type PendingHooks, type PendingHook, type LedgerEntry } from "./models/state.js";
 export { type GenreProfile, type ParsedGenreProfile, GenreProfileSchema, parseGenreProfile } from "./models/genre-profile.js";
 export { type BookRules, type ParsedBookRules, BookRulesSchema, parseBookRules } from "./models/book-rules.js";
@@ -16,6 +16,7 @@ export {
   type RuleLayer,
   type OverrideEdge,
   type ActiveOverride,
+  type RuleStackSections,
   type RuleStack,
   type ChapterTrace,
   ChapterConflictSchema,
@@ -26,9 +27,12 @@ export {
   RuleLayerSchema,
   OverrideEdgeSchema,
   ActiveOverrideSchema,
+  RuleStackSectionsSchema,
   RuleStackSchema,
   ChapterTraceSchema,
 } from "./models/input-governance.js";
+export { PlannerAgent, type PlanChapterInput, type PlanChapterOutput } from "./agents/planner.js";
+export { ComposerAgent, type ComposeChapterInput, type ComposeChapterOutput } from "./agents/composer.js";
 
 // LLM
 export { createLLMClient, chatCompletion, chatWithTools, createStreamMonitor, PartialResponseError, type LLMClient, type LLMResponse, type LLMMessage, type ToolDefinition, type ToolCall, type AgentMessage, type ChatWithToolsResult, type StreamProgress, type OnStreamProgress } from "./llm/provider.js";

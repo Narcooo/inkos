@@ -3,10 +3,12 @@ import { chatCompletion, createLLMClient } from "../llm/provider.js";
 import type { Logger } from "../utils/logger.js";
 import type { BookConfig, FanficMode } from "../models/book.js";
 import type { ChapterMeta } from "../models/chapter.js";
-import type { NotifyChannel, LLMConfig, AgentLLMOverride } from "../models/project.js";
+import type { NotifyChannel, LLMConfig, AgentLLMOverride, InputGovernanceMode } from "../models/project.js";
 import type { GenreProfile } from "../models/genre-profile.js";
 import { ArchitectAgent } from "../agents/architect.js";
-import { WriterAgent, type WriteChapterOutput } from "../agents/writer.js";
+import { PlannerAgent } from "../agents/planner.js";
+import { ComposerAgent } from "../agents/composer.js";
+import { WriterAgent, type WriteChapterInput, type WriteChapterOutput } from "../agents/writer.js";
 import { ChapterAnalyzerAgent } from "../agents/chapter-analyzer.js";
 import { ContinuityAuditor } from "../agents/continuity.js";
 import { ReviserAgent, type ReviseMode } from "../agents/reviser.js";
@@ -34,6 +36,7 @@ export interface PipelineConfig {
   readonly radarSources?: ReadonlyArray<RadarSource>;
   readonly externalContext?: string;
   readonly modelOverrides?: Record<string, string | AgentLLMOverride>;
+  readonly inputGovernanceMode?: InputGovernanceMode;
   readonly logger?: Logger;
   readonly onStreamProgress?: OnStreamProgress;
 }
@@ -270,6 +273,12 @@ export class PipelineRunner {
       const book = await this.state.loadBookConfig(bookId);
       const bookDir = this.state.bookDir(bookId);
       const chapterNumber = await this.state.getNextChapterNumber(bookId);
+      const writeInput = await this.prepareWriteInput(
+        book,
+        bookDir,
+        chapterNumber,
+        context ?? this.config.externalContext,
+      );
 
       const { profile: gp } = await this.loadGenreProfile(book.genre);
 
@@ -278,7 +287,7 @@ export class PipelineRunner {
         book,
         bookDir,
         chapterNumber,
-        externalContext: context ?? this.config.externalContext,
+        ...writeInput,
         ...(wordCount ? { wordCountOverride: wordCount } : {}),
       });
 
@@ -543,6 +552,12 @@ export class PipelineRunner {
     const book = await this.state.loadBookConfig(bookId);
     const bookDir = this.state.bookDir(bookId);
     const chapterNumber = await this.state.getNextChapterNumber(bookId);
+    const writeInput = await this.prepareWriteInput(
+      book,
+      bookDir,
+      chapterNumber,
+      this.config.externalContext,
+    );
     const { profile: gp } = await this.loadGenreProfile(book.genre);
 
     // 1. Write chapter
@@ -551,7 +566,7 @@ export class PipelineRunner {
       book,
       bookDir,
       chapterNumber,
-      externalContext: this.config.externalContext,
+      ...writeInput,
       ...(wordCount ? { wordCountOverride: wordCount } : {}),
       ...(temperatureOverride ? { temperatureOverride } : {}),
     });
@@ -1143,6 +1158,40 @@ ${matrix}`,
   // ---------------------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------------------
+
+  private async prepareWriteInput(
+    book: BookConfig,
+    bookDir: string,
+    chapterNumber: number,
+    externalContext?: string,
+  ): Promise<Pick<WriteChapterInput, "externalContext" | "chapterIntent" | "contextPackage" | "ruleStack" | "trace">> {
+    if ((this.config.inputGovernanceMode ?? "legacy") === "legacy") {
+      return { externalContext };
+    }
+
+    const planner = new PlannerAgent(this.agentCtxFor("planner", book.id));
+    const plan = await planner.planChapter({
+      book,
+      bookDir,
+      chapterNumber,
+      externalContext,
+    });
+
+    const composer = new ComposerAgent(this.agentCtxFor("composer", book.id));
+    const composed = await composer.composeChapter({
+      book,
+      bookDir,
+      chapterNumber,
+      plan,
+    });
+
+    return {
+      chapterIntent: plan.intentMarkdown,
+      contextPackage: composed.contextPackage,
+      ruleStack: composed.ruleStack,
+      trace: composed.trace,
+    };
+  }
 
   private async emitWebhook(
     event: WebhookEvent,
