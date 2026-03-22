@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -186,6 +186,69 @@ describe("CLI integration", () => {
     it("errors when no book exists", () => {
       const { exitCode } = runStderr(["analytics"]);
       expect(exitCode).not.toBe(0);
+    });
+  });
+
+  describe("inkos plan/compose", () => {
+    beforeAll(async () => {
+      const bookDir = join(projectDir, "books", "cli-book");
+      const storyDir = join(bookDir, "story");
+      await mkdir(join(storyDir, "runtime"), { recursive: true });
+
+      await writeFile(
+        join(bookDir, "book.json"),
+        JSON.stringify({
+          id: "cli-book",
+          title: "CLI Book",
+          platform: "tomato",
+          genre: "other",
+          status: "active",
+          targetChapters: 20,
+          chapterWordCount: 3000,
+          createdAt: "2026-03-22T00:00:00.000Z",
+          updatedAt: "2026-03-22T00:00:00.000Z",
+        }, null, 2),
+        "utf-8",
+      );
+      await writeFile(join(bookDir, "chapters", "index.json"), "[]", "utf-8").catch(async () => {
+        await mkdir(join(bookDir, "chapters"), { recursive: true });
+        await writeFile(join(bookDir, "chapters", "index.json"), "[]", "utf-8");
+      });
+
+      await Promise.all([
+        writeFile(join(storyDir, "author_intent.md"), "# Author Intent\n\nKeep the story centered on the mentor conflict.\n", "utf-8"),
+        writeFile(join(storyDir, "current_focus.md"), "# Current Focus\n\nBring focus back to the mentor conflict.\n", "utf-8"),
+        writeFile(join(storyDir, "story_bible.md"), "# Story Bible\n\n- The jade seal cannot be destroyed.\n", "utf-8"),
+        writeFile(join(storyDir, "volume_outline.md"), "# Volume Outline\n\n## Chapter 1\nTrack the merchant guild trail.\n", "utf-8"),
+        writeFile(join(storyDir, "book_rules.md"), "---\nprohibitions:\n  - Do not reveal the mastermind\n---\n\n# Book Rules\n", "utf-8"),
+        writeFile(join(storyDir, "current_state.md"), "# Current State\n\n- Lin Yue still hides the broken oath token.\n", "utf-8"),
+        writeFile(join(storyDir, "pending_hooks.md"), "# Pending Hooks\n\n- Why the mentor vanished after the trial.\n", "utf-8"),
+      ]);
+    });
+
+    it("runs plan chapter and returns the generated intent path in JSON mode", async () => {
+      const output = run(["plan", "chapter", "cli-book", "--json", "--context", "Ignore the guild chase and focus on the mentor conflict."]);
+      const data = JSON.parse(output);
+
+      expect(data.bookId).toBe("cli-book");
+      expect(data.chapterNumber).toBe(1);
+      expect(data.intentPath).toContain("story/runtime/chapter-0001.intent.md");
+      await expect(stat(join(projectDir, "books", "cli-book", data.intentPath))).resolves.toBeTruthy();
+    });
+
+    it("runs compose chapter and returns runtime artifact paths in JSON mode", async () => {
+      const output = run(["compose", "chapter", "cli-book", "--json"]);
+      const data = JSON.parse(output);
+
+      expect(data.bookId).toBe("cli-book");
+      expect(data.chapterNumber).toBe(1);
+      expect(data.contextPath).toContain("story/runtime/chapter-0001.context.json");
+      expect(data.ruleStackPath).toContain("story/runtime/chapter-0001.rule-stack.yaml");
+      expect(data.tracePath).toContain("story/runtime/chapter-0001.trace.json");
+
+      await expect(stat(join(projectDir, "books", "cli-book", data.contextPath))).resolves.toBeTruthy();
+      await expect(stat(join(projectDir, "books", "cli-book", data.ruleStackPath))).resolves.toBeTruthy();
+      await expect(stat(join(projectDir, "books", "cli-book", data.tracePath))).resolves.toBeTruthy();
     });
   });
 });

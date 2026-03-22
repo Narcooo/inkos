@@ -66,6 +66,20 @@ export interface DraftResult {
   readonly tokenUsage?: TokenUsageSummary;
 }
 
+export interface PlanChapterResult {
+  readonly bookId: string;
+  readonly chapterNumber: number;
+  readonly intentPath: string;
+  readonly goal: string;
+  readonly conflicts: ReadonlyArray<string>;
+}
+
+export interface ComposeChapterResult extends PlanChapterResult {
+  readonly contextPath: string;
+  readonly ruleStackPath: string;
+  readonly tracePath: string;
+}
+
 export interface ReviseResult {
   readonly chapterNumber: number;
   readonly wordCount: number;
@@ -335,6 +349,51 @@ export class PipelineRunner {
     } finally {
       await releaseLock();
     }
+  }
+
+  async planChapter(bookId: string, context?: string): Promise<PlanChapterResult> {
+    await this.state.ensureControlDocuments(bookId);
+    const book = await this.state.loadBookConfig(bookId);
+    const bookDir = this.state.bookDir(bookId);
+    const chapterNumber = await this.state.getNextChapterNumber(bookId);
+    const { plan } = await this.createGovernedArtifacts(
+      book,
+      bookDir,
+      chapterNumber,
+      context ?? this.config.externalContext,
+    );
+
+    return {
+      bookId,
+      chapterNumber,
+      intentPath: this.relativeToBookDir(bookDir, plan.runtimePath),
+      goal: plan.intent.goal,
+      conflicts: plan.intent.conflicts.map((conflict) => `${conflict.type}: ${conflict.resolution}`),
+    };
+  }
+
+  async composeChapter(bookId: string, context?: string): Promise<ComposeChapterResult> {
+    await this.state.ensureControlDocuments(bookId);
+    const book = await this.state.loadBookConfig(bookId);
+    const bookDir = this.state.bookDir(bookId);
+    const chapterNumber = await this.state.getNextChapterNumber(bookId);
+    const { plan, composed } = await this.createGovernedArtifacts(
+      book,
+      bookDir,
+      chapterNumber,
+      context ?? this.config.externalContext,
+    );
+
+    return {
+      bookId,
+      chapterNumber,
+      intentPath: this.relativeToBookDir(bookDir, plan.runtimePath),
+      goal: plan.intent.goal,
+      conflicts: plan.intent.conflicts.map((conflict) => `${conflict.type}: ${conflict.resolution}`),
+      contextPath: this.relativeToBookDir(bookDir, composed.contextPath),
+      ruleStackPath: this.relativeToBookDir(bookDir, composed.ruleStackPath),
+      tracePath: this.relativeToBookDir(bookDir, composed.tracePath),
+    };
   }
 
   /** Audit the latest (or specified) chapter. Read-only, no lock needed. */
@@ -1169,6 +1228,30 @@ ${matrix}`,
       return { externalContext };
     }
 
+    const { plan, composed } = await this.createGovernedArtifacts(
+      book,
+      bookDir,
+      chapterNumber,
+      externalContext,
+    );
+
+    return {
+      chapterIntent: plan.intentMarkdown,
+      contextPackage: composed.contextPackage,
+      ruleStack: composed.ruleStack,
+      trace: composed.trace,
+    };
+  }
+
+  private async createGovernedArtifacts(
+    book: BookConfig,
+    bookDir: string,
+    chapterNumber: number,
+    externalContext?: string,
+  ): Promise<{
+    plan: Awaited<ReturnType<PlannerAgent["planChapter"]>>;
+    composed: Awaited<ReturnType<ComposerAgent["composeChapter"]>>;
+  }> {
     const planner = new PlannerAgent(this.agentCtxFor("planner", book.id));
     const plan = await planner.planChapter({
       book,
@@ -1185,12 +1268,12 @@ ${matrix}`,
       plan,
     });
 
-    return {
-      chapterIntent: plan.intentMarkdown,
-      contextPackage: composed.contextPackage,
-      ruleStack: composed.ruleStack,
-      trace: composed.trace,
-    };
+    return { plan, composed };
+  }
+
+  private relativeToBookDir(bookDir: string, absolutePath: string): string {
+    const prefix = `${bookDir}/`;
+    return absolutePath.startsWith(prefix) ? absolutePath.slice(prefix.length) : absolutePath;
   }
 
   private async emitWebhook(

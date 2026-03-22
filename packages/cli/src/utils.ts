@@ -28,8 +28,8 @@ export function findProjectRoot(): string {
   return process.cwd();
 }
 
-export async function loadConfig(): Promise<ProjectConfig> {
-  return loadProjectConfig(findProjectRoot());
+export async function loadConfig(options?: { readonly requireApiKey?: boolean }): Promise<ProjectConfig> {
+  return loadProjectConfig(findProjectRoot(), options);
 }
 
 export function createClient(config: ProjectConfig) {
@@ -39,7 +39,7 @@ export function createClient(config: ProjectConfig) {
 export function buildPipelineConfig(
   config: ProjectConfig,
   root: string,
-  extra?: Partial<Pick<PipelineConfig, "notifyChannels" | "radarSources" | "externalContext">> & {
+  extra?: Partial<Pick<PipelineConfig, "notifyChannels" | "radarSources" | "externalContext" | "inputGovernanceMode">> & {
     readonly quiet?: boolean;
     readonly logFile?: NodeJS.WritableStream;
   },
@@ -71,6 +71,7 @@ export function buildPipelineConfig(
     projectRoot: root,
     defaultLLMConfig: config.llm,
     modelOverrides: config.modelOverrides,
+    inputGovernanceMode: extra?.inputGovernanceMode ?? config.inputGovernanceMode,
     notifyChannels: extra?.notifyChannels ?? config.notify,
     radarSources: extra?.radarSources,
     externalContext: extra?.externalContext,
