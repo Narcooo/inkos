@@ -65,8 +65,21 @@ export const ActiveOverrideSchema = z.object({
 
 export type ActiveOverride = z.infer<typeof ActiveOverrideSchema>;
 
+export const RuleStackSectionsSchema = z.object({
+  hard: z.array(z.string()).default([]),
+  soft: z.array(z.string()).default([]),
+  diagnostic: z.array(z.string()).default([]),
+});
+
+export type RuleStackSections = z.infer<typeof RuleStackSectionsSchema>;
+
 export const RuleStackSchema = z.object({
   layers: z.array(RuleLayerSchema).min(1),
+  sections: RuleStackSectionsSchema.default({
+    hard: [],
+    soft: [],
+    diagnostic: [],
+  }),
   overrideEdges: z.array(OverrideEdgeSchema).default([]),
   activeOverrides: z.array(ActiveOverrideSchema).default([]),
 });

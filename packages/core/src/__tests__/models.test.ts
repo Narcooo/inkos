@@ -10,6 +10,7 @@ import {
   ProjectConfigSchema,
   LLMConfigSchema,
   NotifyChannelSchema,
+  InputGovernanceModeSchema,
 } from "../models/project.js";
 import {
   ChapterIntentSchema,
@@ -318,6 +319,11 @@ describe("ProjectConfigSchema", () => {
     expect(result.notify).toEqual([]);
   });
 
+  it("defaults input governance mode to legacy", () => {
+    const result = ProjectConfigSchema.parse(validProject);
+    expect(result.inputGovernanceMode).toBe("legacy");
+  });
+
   it("rejects wrong version", () => {
     expect(() =>
       ProjectConfigSchema.parse({ ...validProject, version: "1.0.0" }),
@@ -334,6 +340,16 @@ describe("ProjectConfigSchema", () => {
     expect(() =>
       ProjectConfigSchema.parse({ name: "p", version: "0.1.0" }),
     ).toThrow();
+  });
+});
+
+describe("InputGovernanceModeSchema", () => {
+  it.each(["legacy", "v2"] as const)("accepts '%s'", (value) => {
+    expect(InputGovernanceModeSchema.parse(value)).toBe(value);
+  });
+
+  it("rejects unknown input governance modes", () => {
+    expect(() => InputGovernanceModeSchema.parse("planner")).toThrow();
   });
 });
 
@@ -537,6 +553,11 @@ describe("RuleStackSchema", () => {
         { id: "L3", name: "planning", precedence: 60, scope: "arc" },
         { id: "L4", name: "current_task", precedence: 70, scope: "local" },
       ],
+      sections: {
+        hard: ["story_bible"],
+        soft: ["author_intent", "current_focus"],
+        diagnostic: ["anti_ai_checks"],
+      },
       overrideEdges: [
         { from: "L4", to: "L3", allowed: true, scope: "current_chapter" },
         { from: "L4", to: "L2", allowed: false, scope: "current_chapter" },
@@ -552,6 +573,7 @@ describe("RuleStackSchema", () => {
     });
 
     expect(result.layers[0]?.id).toBe("L1");
+    expect(result.sections.hard).toContain("story_bible");
     expect(result.activeOverrides).toHaveLength(1);
   });
 
@@ -562,6 +584,11 @@ describe("RuleStackSchema", () => {
       ],
     });
 
+    expect(result.sections).toEqual({
+      hard: [],
+      soft: [],
+      diagnostic: [],
+    });
     expect(result.overrideEdges).toEqual([]);
     expect(result.activeOverrides).toEqual([]);
   });
