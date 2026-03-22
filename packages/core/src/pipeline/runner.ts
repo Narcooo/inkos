@@ -25,8 +25,8 @@ import type { WebhookEvent } from "../notify/webhook.js";
 import type { AgentContext } from "../agents/base.js";
 import type { AuditResult, AuditIssue } from "../agents/continuity.js";
 import type { RadarResult } from "../agents/radar.js";
-import type { LengthSpec } from "../models/length-governance.js";
-import { buildLengthSpec, countChapterLength, isOutsideSoftRange } from "../utils/length-metrics.js";
+import type { LengthSpec, LengthTelemetry } from "../models/length-governance.js";
+import { buildLengthSpec, countChapterLength, isOutsideHardRange, isOutsideSoftRange } from "../utils/length-metrics.js";
 import { readFile, readdir, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -57,6 +57,8 @@ export interface ChapterPipelineResult {
   readonly auditResult: AuditResult;
   readonly revised: boolean;
   readonly status: "ready-for-review" | "audit-failed";
+  readonly lengthWarnings?: ReadonlyArray<string>;
+  readonly lengthTelemetry?: LengthTelemetry;
   readonly tokenUsage?: TokenUsageSummary;
 }
 
@@ -66,6 +68,8 @@ export interface DraftResult {
   readonly title: string;
   readonly wordCount: number;
   readonly filePath: string;
+  readonly lengthWarnings?: ReadonlyArray<string>;
+  readonly lengthTelemetry?: LengthTelemetry;
   readonly tokenUsage?: TokenUsageSummary;
 }
 
@@ -87,6 +91,8 @@ export interface ReviseResult {
   readonly chapterNumber: number;
   readonly wordCount: number;
   readonly fixedIssues: ReadonlyArray<string>;
+  readonly lengthWarnings?: ReadonlyArray<string>;
+  readonly lengthTelemetry?: LengthTelemetry;
 }
 
 export interface TruthFiles {
@@ -312,6 +318,7 @@ export class PipelineRunner {
         lengthSpec,
         ...(wordCount ? { wordCountOverride: wordCount } : {}),
       });
+      const writerCount = countChapterLength(output.content, lengthSpec.countingMode);
       let totalUsage: TokenUsageSummary = output.tokenUsage ?? {
         promptTokens: 0,
         completionTokens: 0,
@@ -331,6 +338,21 @@ export class PipelineRunner {
         wordCount: normalizedDraft.wordCount,
         tokenUsage: totalUsage,
       };
+      const lengthWarnings = this.buildLengthWarnings(
+        chapterNumber,
+        draftOutput.wordCount,
+        lengthSpec,
+      );
+      const lengthTelemetry = this.buildLengthTelemetry({
+        lengthSpec,
+        writerCount,
+        postWriterNormalizeCount: normalizedDraft.wordCount,
+        postReviseCount: 0,
+        finalCount: draftOutput.wordCount,
+        normalizeApplied: normalizedDraft.applied,
+        lengthWarning: lengthWarnings.length > 0,
+      });
+      this.logLengthWarnings(lengthWarnings);
 
       // Save chapter file
       const chaptersDir = join(bookDir, "chapters");
@@ -360,6 +382,8 @@ export class PipelineRunner {
         createdAt: now,
         updatedAt: now,
         auditIssues: [],
+        lengthWarnings,
+        lengthTelemetry,
         ...(draftOutput.tokenUsage ? { tokenUsage: draftOutput.tokenUsage } : {}),
       };
       await this.state.saveChapterIndex(bookId, [...existingIndex, newEntry]);
@@ -377,6 +401,8 @@ export class PipelineRunner {
         title: draftOutput.title,
         wordCount: draftOutput.wordCount,
         filePath,
+        lengthWarnings,
+        lengthTelemetry,
         tokenUsage: draftOutput.tokenUsage,
       };
     } finally {
@@ -535,6 +561,22 @@ export class PipelineRunner {
         chapterContent: reviseOutput.revisedContent,
         lengthSpec,
       });
+      const revisionBaseCount = countChapterLength(content, lengthSpec.countingMode);
+      const lengthWarnings = this.buildLengthWarnings(
+        targetChapter,
+        normalizedRevision.wordCount,
+        lengthSpec,
+      );
+      const lengthTelemetry = this.buildLengthTelemetry({
+        lengthSpec,
+        writerCount: revisionBaseCount,
+        postWriterNormalizeCount: 0,
+        postReviseCount: normalizedRevision.wordCount,
+        finalCount: normalizedRevision.wordCount,
+        normalizeApplied: normalizedRevision.applied,
+        lengthWarning: lengthWarnings.length > 0,
+      });
+      this.logLengthWarnings(lengthWarnings);
 
       // Save revised chapter file
       const chaptersDir = join(bookDir, "chapters");
@@ -574,6 +616,8 @@ export class PipelineRunner {
               status: "ready-for-review" as ChapterMeta["status"],
               wordCount: normalizedRevision.wordCount,
               updatedAt: new Date().toISOString(),
+              lengthWarnings,
+              lengthTelemetry,
             }
           : ch,
       );
@@ -591,6 +635,8 @@ export class PipelineRunner {
         chapterNumber: targetChapter,
         wordCount: normalizedRevision.wordCount,
         fixedIssues: reviseOutput.fixedIssues,
+        lengthWarnings,
+        lengthTelemetry,
       };
     } finally {
       await releaseLock();
@@ -690,9 +736,12 @@ export class PipelineRunner {
       ...(wordCount ? { wordCountOverride: wordCount } : {}),
       ...(temperatureOverride ? { temperatureOverride } : {}),
     });
+    const writerCount = countChapterLength(output.content, lengthSpec.countingMode);
 
     // Token usage accumulator
     let totalUsage: TokenUsageSummary = output.tokenUsage ?? { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+    let postReviseCount = 0;
+    let normalizeApplied = false;
 
     // 2a. Post-write error gate: if deterministic rules found errors, auto-fix before LLM audit
     let finalContent = output.content;
@@ -740,6 +789,7 @@ export class PipelineRunner {
     totalUsage = PipelineRunner.addUsage(totalUsage, normalizedBeforeAudit.tokenUsage);
     finalContent = normalizedBeforeAudit.content;
     finalWordCount = normalizedBeforeAudit.wordCount;
+    normalizeApplied = normalizeApplied || normalizedBeforeAudit.applied;
 
     // 2b. LLM audit
     const auditor = new ContinuityAuditor(this.agentCtxFor("auditor", bookId));
@@ -790,6 +840,8 @@ export class PipelineRunner {
             chapterIntent: writeInput.chapterIntent,
           });
           totalUsage = PipelineRunner.addUsage(totalUsage, normalizedRevision.tokenUsage);
+          postReviseCount = normalizedRevision.wordCount;
+          normalizeApplied = normalizeApplied || normalizedRevision.applied;
 
           // Guard: reject revision if AI markers increased
           const preMarkers = analyzeAITells(finalContent);
@@ -836,6 +888,21 @@ export class PipelineRunner {
       finalContent,
     );
     finalWordCount = persistenceOutput.wordCount;
+    const lengthWarnings = this.buildLengthWarnings(
+      chapterNumber,
+      finalWordCount,
+      lengthSpec,
+    );
+    const lengthTelemetry = this.buildLengthTelemetry({
+      lengthSpec,
+      writerCount,
+      postWriterNormalizeCount: normalizedBeforeAudit.wordCount,
+      postReviseCount,
+      finalCount: finalWordCount,
+      normalizeApplied,
+      lengthWarning: lengthWarnings.length > 0,
+    });
+    this.logLengthWarnings(lengthWarnings);
     const pipelineLang = book.language ?? gp.language;
 
     // 4.1 Validate settler output before writing (non-blocking)
@@ -878,6 +945,8 @@ export class PipelineRunner {
       auditIssues: auditResult.issues.map(
         (i) => `[${i.severity}] ${i.description}`,
       ),
+      lengthWarnings,
+      lengthTelemetry,
       tokenUsage: totalUsage,
     };
     await this.state.saveChapterIndex(bookId, [...existingIndex, newEntry]);
@@ -949,6 +1018,8 @@ export class PipelineRunner {
       auditResult,
       revised,
       status: auditResult.passed ? "ready-for-review" : "audit-failed",
+      lengthWarnings,
+      lengthTelemetry,
       tokenUsage: totalUsage,
     };
   }
@@ -1234,6 +1305,7 @@ ${matrix}`,
           createdAt: now,
           updatedAt: now,
           auditIssues: [],
+          lengthWarnings: [],
         };
         // Replace if exists (resume case), otherwise append
         const existingIdx = existingIndex.findIndex((e) => e.number === chapterNumber);
@@ -1342,6 +1414,7 @@ ${matrix}`,
   }): Promise<{
     content: string;
     wordCount: number;
+    applied: boolean;
     tokenUsage?: TokenUsageSummary;
   }> {
     const writerCount = countChapterLength(
@@ -1352,6 +1425,7 @@ ${matrix}`,
       return {
         content: params.chapterContent,
         wordCount: writerCount,
+        applied: false,
       };
     }
 
@@ -1371,8 +1445,53 @@ ${matrix}`,
     return {
       content: normalized.normalizedContent,
       wordCount: normalized.finalCount,
+      applied: normalized.applied,
       tokenUsage: normalized.tokenUsage,
     };
+  }
+
+  private buildLengthWarnings(
+    chapterNumber: number,
+    finalCount: number,
+    lengthSpec: LengthSpec,
+  ): string[] {
+    if (!isOutsideHardRange(finalCount, lengthSpec)) {
+      return [];
+    }
+    return [
+      `Chapter ${chapterNumber} remains outside hard range (${lengthSpec.hardMin}-${lengthSpec.hardMax}, actual ${finalCount}) after a single normalization pass.`,
+    ];
+  }
+
+  private buildLengthTelemetry(params: {
+    lengthSpec: LengthSpec;
+    writerCount: number;
+    postWriterNormalizeCount: number;
+    postReviseCount: number;
+    finalCount: number;
+    normalizeApplied: boolean;
+    lengthWarning: boolean;
+  }): LengthTelemetry {
+    return {
+      target: params.lengthSpec.target,
+      softMin: params.lengthSpec.softMin,
+      softMax: params.lengthSpec.softMax,
+      hardMin: params.lengthSpec.hardMin,
+      hardMax: params.lengthSpec.hardMax,
+      countingMode: params.lengthSpec.countingMode,
+      writerCount: params.writerCount,
+      postWriterNormalizeCount: params.postWriterNormalizeCount,
+      postReviseCount: params.postReviseCount,
+      finalCount: params.finalCount,
+      normalizeApplied: params.normalizeApplied,
+      lengthWarning: params.lengthWarning,
+    };
+  }
+
+  private logLengthWarnings(lengthWarnings: ReadonlyArray<string>): void {
+    for (const warning of lengthWarnings) {
+      this.config.logger?.warn(warning);
+    }
   }
 
   private async createGovernedArtifacts(

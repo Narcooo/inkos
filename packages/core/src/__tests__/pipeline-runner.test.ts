@@ -638,6 +638,60 @@ describe("PipelineRunner", () => {
     }
   });
 
+  it("records a length warning when a single normalize pass still misses the hard range", async () => {
+    const { root, runner, state, bookId } = await createRunnerFixture();
+    const overlongDraft = "冗余句子。".repeat(60);
+    const stillOverHard = "仍然过长。".repeat(70);
+
+    vi.spyOn(WriterAgent.prototype, "writeChapter").mockResolvedValue(
+      createWriterOutput({
+        chapterNumber: 1,
+        content: overlongDraft,
+        wordCount: overlongDraft.length,
+      }),
+    );
+    const normalizeChapter = vi.mocked(
+      LengthNormalizerAgent.prototype.normalizeChapter,
+    ).mockResolvedValue({
+      normalizedContent: stillOverHard,
+      finalCount: stillOverHard.length,
+      applied: true,
+      mode: "compress",
+      tokenUsage: ZERO_USAGE,
+    });
+    vi.spyOn(ContinuityAuditor.prototype, "auditChapter").mockResolvedValue(
+      createAuditResult({
+        passed: true,
+        issues: [],
+        summary: "clean",
+      }),
+    );
+    vi.spyOn(ChapterAnalyzerAgent.prototype, "analyzeChapter").mockResolvedValue(
+      createAnalyzedOutput({
+        content: stillOverHard,
+        wordCount: stillOverHard.length,
+      }),
+    );
+
+    try {
+      const result = await runner.writeNextChapter(bookId, 220);
+      const chapterIndex = await state.loadChapterIndex(bookId);
+      const chapterMeta = chapterIndex.find((entry) => entry.number === 1);
+
+      expect(normalizeChapter).toHaveBeenCalledTimes(1);
+      expect((result as { lengthWarnings?: ReadonlyArray<string> }).lengthWarnings?.[0]).toContain(
+        "outside hard range",
+      );
+      expect((result as { lengthTelemetry?: { finalCount: number } }).lengthTelemetry?.finalCount).toBe(
+        stillOverHard.length,
+      );
+      expect(chapterMeta?.lengthWarnings?.[0]).toContain("outside hard range");
+      expect(chapterMeta?.lengthTelemetry?.lengthWarning).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("preserves the legacy fallback when input governance mode is legacy", async () => {
     const { root, runner, bookId } = await createRunnerFixture({
       inputGovernanceMode: "legacy",
@@ -808,6 +862,7 @@ describe("PipelineRunner", () => {
         createdAt: now,
         updatedAt: now,
         auditIssues: [],
+        lengthWarnings: [],
       },
       {
         number: 2,
@@ -817,6 +872,7 @@ describe("PipelineRunner", () => {
         createdAt: now,
         updatedAt: now,
         auditIssues: [],
+        lengthWarnings: [],
       },
     ];
     await state.saveChapterIndex(bookId, existingIndex);

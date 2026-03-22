@@ -218,6 +218,18 @@ describe("ChapterMetaSchema", () => {
     expect(result.auditIssues).toEqual([]);
   });
 
+  it("applies default empty lengthWarnings", () => {
+    const minimal = {
+      number: 1,
+      title: "Ch1",
+      status: "drafted",
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+    };
+    const result = ChapterMetaSchema.parse(minimal);
+    expect(result.lengthWarnings).toEqual([]);
+  });
+
   it("accepts optional reviewNote", () => {
     const withNote = { ...validChapter, reviewNote: "Looks good" };
     const result = ChapterMetaSchema.parse(withNote);

@@ -70,6 +70,7 @@ describe("StateManager", () => {
         createdAt: "2026-01-01T00:00:00Z",
         updatedAt: "2026-01-01T00:00:00Z",
         auditIssues: [],
+        lengthWarnings: [],
       },
       {
         number: 2,
@@ -79,6 +80,7 @@ describe("StateManager", () => {
         createdAt: "2026-01-02T00:00:00Z",
         updatedAt: "2026-01-02T00:00:00Z",
         auditIssues: ["pacing issue"],
+        lengthWarnings: [],
       },
     ];
 
@@ -122,6 +124,7 @@ describe("StateManager", () => {
           createdAt: "2026-01-01T00:00:00Z",
           updatedAt: "2026-01-01T00:00:00Z",
           auditIssues: [],
+          lengthWarnings: [],
         },
         {
           number: 5,
@@ -131,6 +134,7 @@ describe("StateManager", () => {
           createdAt: "2026-01-05T00:00:00Z",
           updatedAt: "2026-01-05T00:00:00Z",
           auditIssues: [],
+          lengthWarnings: [],
         },
         {
           number: 3,
@@ -140,6 +144,7 @@ describe("StateManager", () => {
           createdAt: "2026-01-03T00:00:00Z",
           updatedAt: "2026-01-03T00:00:00Z",
           auditIssues: [],
+          lengthWarnings: [],
         },
       ];
       await manager.saveChapterIndex("book-x", chapters);
@@ -157,6 +162,7 @@ describe("StateManager", () => {
           createdAt: "2026-01-01T00:00:00Z",
           updatedAt: "2026-01-01T00:00:00Z",
           auditIssues: [],
+          lengthWarnings: [],
         },
       ];
       await manager.saveChapterIndex("book-y", chapters);

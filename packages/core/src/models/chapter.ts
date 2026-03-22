@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { LengthTelemetrySchema } from "./length-governance.js";
 
 export const ChapterStatusSchema = z.enum([
   "card-generated",
@@ -24,10 +25,12 @@ export const ChapterMetaSchema = z.object({
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
   auditIssues: z.array(z.string()).default([]),
+  lengthWarnings: z.array(z.string()).default([]),
   reviewNote: z.string().optional(),
   detectionScore: z.number().min(0).max(1).optional(),
   detectionProvider: z.string().optional(),
   detectedAt: z.string().datetime().optional(),
+  lengthTelemetry: LengthTelemetrySchema.optional(),
   tokenUsage: z.object({
     promptTokens: z.number().int().default(0),
     completionTokens: z.number().int().default(0),
