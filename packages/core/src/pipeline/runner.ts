@@ -510,15 +510,31 @@ export class PipelineRunner {
       }
 
       const { profile: gp } = await this.loadGenreProfile(book.genre);
+      const lengthSpec = buildLengthSpec(
+        book.chapterWordCount,
+        book.language ?? gp.language,
+      );
 
       const reviser = new ReviserAgent(this.agentCtxFor("reviser", bookId));
       const reviseOutput = await reviser.reviseChapter(
-        bookDir, content, targetChapter, auditResult.issues, mode, book.genre,
+        bookDir,
+        content,
+        targetChapter,
+        auditResult.issues,
+        mode,
+        book.genre,
+        { lengthSpec },
       );
 
       if (reviseOutput.revisedContent.length === 0) {
         throw new Error("Reviser returned empty content");
       }
+      const normalizedRevision = await this.normalizeDraftLengthIfNeeded({
+        bookId,
+        chapterNumber: targetChapter,
+        chapterContent: reviseOutput.revisedContent,
+        lengthSpec,
+      });
 
       // Save revised chapter file
       const chaptersDir = join(bookDir, "chapters");
@@ -534,7 +550,7 @@ export class PipelineRunner {
         : `# 第${targetChapter}章 ${chapterMeta.title}`;
       await writeFile(
         join(chaptersDir, existingFile),
-        `${reviseHeading}\n\n${reviseOutput.revisedContent}`,
+        `${reviseHeading}\n\n${normalizedRevision.content}`,
         "utf-8",
       );
 
@@ -556,7 +572,7 @@ export class PipelineRunner {
           ? {
               ...ch,
               status: "ready-for-review" as ChapterMeta["status"],
-              wordCount: reviseOutput.wordCount,
+              wordCount: normalizedRevision.wordCount,
               updatedAt: new Date().toISOString(),
             }
           : ch,
@@ -567,13 +583,13 @@ export class PipelineRunner {
       await this.state.snapshotState(bookId, targetChapter);
 
       await this.emitWebhook("revision-complete", bookId, targetChapter, {
-        wordCount: reviseOutput.wordCount,
+        wordCount: normalizedRevision.wordCount,
         fixedCount: reviseOutput.fixedIssues.length,
       });
 
       return {
         chapterNumber: targetChapter,
-        wordCount: reviseOutput.wordCount,
+        wordCount: normalizedRevision.wordCount,
         fixedIssues: reviseOutput.fixedIssues,
       };
     } finally {
@@ -701,7 +717,10 @@ export class PipelineRunner {
         spotFixIssues,
         "spot-fix",
         book.genre,
-        reducedControlInput,
+        {
+          ...reducedControlInput,
+          lengthSpec,
+        },
       );
       totalUsage = PipelineRunner.addUsage(totalUsage, fixResult.tokenUsage);
       if (fixResult.revisedContent.length > 0) {
@@ -755,22 +774,34 @@ export class PipelineRunner {
           auditResult.issues,
           "spot-fix",
           book.genre,
-          reducedControlInput,
+          {
+            ...reducedControlInput,
+            lengthSpec,
+          },
         );
         totalUsage = PipelineRunner.addUsage(totalUsage, reviseOutput.tokenUsage);
 
         if (reviseOutput.revisedContent.length > 0) {
+          const normalizedRevision = await this.normalizeDraftLengthIfNeeded({
+            bookId,
+            chapterNumber,
+            chapterContent: reviseOutput.revisedContent,
+            lengthSpec,
+            chapterIntent: writeInput.chapterIntent,
+          });
+          totalUsage = PipelineRunner.addUsage(totalUsage, normalizedRevision.tokenUsage);
+
           // Guard: reject revision if AI markers increased
           const preMarkers = analyzeAITells(finalContent);
-          const postMarkers = analyzeAITells(reviseOutput.revisedContent);
+          const postMarkers = analyzeAITells(normalizedRevision.content);
           const preCount = preMarkers.issues.length;
           const postCount = postMarkers.issues.length;
 
           if (postCount > preCount) {
             // Revision made text MORE AI-like — discard it, keep original
           } else {
-            finalContent = reviseOutput.revisedContent;
-            finalWordCount = reviseOutput.wordCount;
+            finalContent = normalizedRevision.content;
+            finalWordCount = normalizedRevision.wordCount;
             revised = true;
           }
 

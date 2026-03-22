@@ -379,7 +379,7 @@ describe("PipelineRunner", () => {
     );
 
     try {
-      await runner.writeNextChapter(bookId);
+      await runner.writeNextChapter(bookId, 220);
 
       expect(planChapter).toHaveBeenCalledTimes(1);
       expect(composeChapter).toHaveBeenCalledTimes(1);
@@ -432,7 +432,7 @@ describe("PipelineRunner", () => {
     );
 
     try {
-      await runner.writeNextChapter(bookId);
+      await runner.writeNextChapter(bookId, 220);
 
       expect(auditChapter.mock.calls[0]?.[4]).toMatchObject({
         chapterIntent: expect.stringContaining("# Chapter Intent"),
@@ -451,7 +451,84 @@ describe("PipelineRunner", () => {
         ruleStack: expect.objectContaining({
           activeOverrides: expect.any(Array),
         }),
+        lengthSpec: expect.objectContaining({
+          target: 220,
+          softMin: 190,
+          softMax: 250,
+        }),
       });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("normalizes revised output once before re-audit when it leaves the target band", async () => {
+    const { root, runner, bookId } = await createRunnerFixture();
+    const writerDraft = "中段正文。".repeat(40);
+    const overlongRevision = "修订后正文。".repeat(60);
+    const normalizedRevision = "归一正文。".repeat(40);
+
+    vi.spyOn(WriterAgent.prototype, "writeChapter").mockResolvedValue(
+      createWriterOutput({
+        content: writerDraft,
+        wordCount: writerDraft.length,
+      }),
+    );
+    const auditChapter = vi.spyOn(ContinuityAuditor.prototype, "auditChapter")
+      .mockResolvedValueOnce(
+        createAuditResult({
+          passed: false,
+          issues: [CRITICAL_ISSUE],
+          summary: "needs revision",
+        }),
+      )
+      .mockResolvedValueOnce(
+        createAuditResult({
+          passed: true,
+          issues: [],
+          summary: "clean",
+        }),
+      );
+    const reviseChapter = vi.spyOn(ReviserAgent.prototype, "reviseChapter").mockResolvedValue(
+      createReviseOutput({
+        revisedContent: overlongRevision,
+        wordCount: overlongRevision.length,
+      }),
+    );
+    const normalizeChapter = vi.mocked(
+      LengthNormalizerAgent.prototype.normalizeChapter,
+    ).mockResolvedValue({
+      normalizedContent: normalizedRevision,
+      finalCount: normalizedRevision.length,
+      applied: true,
+      mode: "compress",
+      tokenUsage: ZERO_USAGE,
+    });
+    vi.spyOn(ChapterAnalyzerAgent.prototype, "analyzeChapter").mockResolvedValue(
+      createAnalyzedOutput({
+        content: normalizedRevision,
+        wordCount: normalizedRevision.length,
+      }),
+    );
+
+    try {
+      await runner.writeNextChapter(bookId, 220);
+
+      expect(reviseChapter.mock.calls[0]?.[6]).toMatchObject({
+        lengthSpec: expect.objectContaining({
+          target: 220,
+          softMin: 190,
+          softMax: 250,
+        }),
+      });
+      expect(normalizeChapter).toHaveBeenCalledTimes(1);
+      expect(normalizeChapter.mock.calls[0]?.[0]).toMatchObject({
+        chapterContent: overlongRevision,
+        lengthSpec: expect.objectContaining({
+          target: 220,
+        }),
+      });
+      expect(auditChapter.mock.calls[1]?.[1]).toBe(normalizedRevision);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
