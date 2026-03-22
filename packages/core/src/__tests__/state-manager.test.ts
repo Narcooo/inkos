@@ -383,4 +383,32 @@ describe("StateManager", () => {
       );
     });
   });
+
+  // -------------------------------------------------------------------------
+  // Input governance control docs
+  // -------------------------------------------------------------------------
+
+  describe("ensureControlDocuments", () => {
+    it("creates author intent, current focus, and runtime directory", async () => {
+      await manager.ensureControlDocuments(
+        "control-book",
+        "# Initial Brief\n\nKeep the focus on mentor conflict.\n",
+      );
+
+      const storyDir = join(manager.bookDir("control-book"), "story");
+      const authorIntent = await readFile(
+        join(storyDir, "author_intent.md"),
+        "utf-8",
+      );
+      const currentFocus = await readFile(
+        join(storyDir, "current_focus.md"),
+        "utf-8",
+      );
+      const runtimeStat = await stat(join(storyDir, "runtime"));
+
+      expect(authorIntent).toContain("mentor conflict");
+      expect(currentFocus).toContain("Current Focus");
+      expect(runtimeStat.isDirectory()).toBe(true);
+    });
+  });
 });

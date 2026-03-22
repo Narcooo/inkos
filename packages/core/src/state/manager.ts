@@ -6,6 +6,26 @@ import type { ChapterMeta } from "../models/chapter.js";
 export class StateManager {
   constructor(private readonly projectRoot: string) {}
 
+  async ensureControlDocuments(bookId: string, authorIntent?: string): Promise<void> {
+    const storyDir = join(this.bookDir(bookId), "story");
+    const runtimeDir = join(storyDir, "runtime");
+
+    await mkdir(storyDir, { recursive: true });
+    await mkdir(runtimeDir, { recursive: true });
+
+    await this.writeIfMissing(
+      join(storyDir, "author_intent.md"),
+      authorIntent?.trim()
+        ? authorIntent.trimEnd() + "\n"
+        : "# Author Intent\n\n(Describe the long-horizon vision for this book here.)\n",
+    );
+
+    await this.writeIfMissing(
+      join(storyDir, "current_focus.md"),
+      "# Current Focus\n\n## Active Focus\n\n(Describe what the next 1-3 chapters should prioritize.)\n",
+    );
+  }
+
   async acquireBookLock(bookId: string): Promise<() => Promise<void>> {
     await mkdir(this.bookDir(bookId), { recursive: true });
     const lockPath = join(this.bookDir(bookId), ".write.lock");
@@ -183,6 +203,14 @@ export class StateManager {
       return true;
     } catch {
       return false;
+    }
+  }
+
+  private async writeIfMissing(path: string, content: string): Promise<void> {
+    try {
+      await stat(path);
+    } catch {
+      await writeFile(path, content, "utf-8");
     }
   }
 }

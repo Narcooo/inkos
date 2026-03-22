@@ -206,6 +206,7 @@ export class PipelineRunner {
     const { profile: gp } = await this.loadGenreProfile(book.genre);
     const foundation = await architect.generateFoundation(book, this.config.externalContext);
     await architect.writeFoundationFiles(bookDir, foundation, gp.numericalSystem);
+    await this.state.ensureControlDocuments(book.id, this.config.externalContext);
 
     // Ensure chapters directory exists (prevents ENOENT if init was previously interrupted)
     await mkdir(join(bookDir, "chapters"), { recursive: true });
@@ -253,6 +254,7 @@ export class PipelineRunner {
     const { profile: gp } = await this.loadGenreProfile(book.genre);
     const foundation = await architect.generateFanficFoundation(book, fanficCanon, fanficMode);
     await architect.writeFoundationFiles(bookDir, foundation, gp.numericalSystem);
+    await this.state.ensureControlDocuments(book.id, this.config.externalContext);
 
     // Step 3: Initialize chapters directory + snapshot
     await mkdir(join(bookDir, "chapters"), { recursive: true });

@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PipelineRunner } from "../pipeline/runner.js";
 import { StateManager } from "../state/manager.js";
+import { ArchitectAgent } from "../agents/architect.js";
 import { WriterAgent, type WriteChapterOutput } from "../agents/writer.js";
 import { ContinuityAuditor, type AuditIssue, type AuditResult } from "../agents/continuity.js";
 import { ReviserAgent, type ReviseOutput } from "../agents/reviser.js";
@@ -196,6 +197,63 @@ describe("PipelineRunner", () => {
 
       if (previousKeyB === undefined) delete process.env.TEST_KEY_B;
       else process.env.TEST_KEY_B = previousKeyB;
+    }
+  });
+
+  it("initializes control documents during book creation", async () => {
+    const root = await mkdtemp(join(tmpdir(), "inkos-init-book-test-"));
+    const bookId = "bootstrap-book";
+    const brief = "# Author Intent\n\nKeep the narrative centered on mentor conflict.\n";
+    const now = "2026-03-22T00:00:00.000Z";
+    const book: BookConfig = {
+      id: bookId,
+      title: "Bootstrap Book",
+      platform: "tomato",
+      genre: "xuanhuan",
+      status: "outlining",
+      targetChapters: 10,
+      chapterWordCount: 3000,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const runner = new PipelineRunner({
+      client: {
+        provider: "openai",
+        apiFormat: "chat",
+        stream: false,
+        defaults: {
+          temperature: 0.7,
+          maxTokens: 4096,
+          thinkingBudget: 0,
+        },
+      } as ConstructorParameters<typeof PipelineRunner>[0]["client"],
+      model: "test-model",
+      projectRoot: root,
+      externalContext: brief,
+    });
+
+    vi.spyOn(ArchitectAgent.prototype, "generateFoundation").mockResolvedValue({
+      storyBible: "# Story Bible\n",
+      volumeOutline: "# Volume Outline\n",
+      bookRules: "---\nversion: \"1.0\"\n---\n\n# Book Rules\n",
+      currentState: "# Current State\n",
+      pendingHooks: "# Pending Hooks\n",
+    });
+
+    try {
+      await runner.initBook(book);
+
+      const storyDir = join(root, "books", bookId, "story");
+      const authorIntent = await readFile(join(storyDir, "author_intent.md"), "utf-8");
+      const currentFocus = await readFile(join(storyDir, "current_focus.md"), "utf-8");
+      const runtimeDir = await stat(join(storyDir, "runtime"));
+
+      expect(authorIntent).toContain("mentor conflict");
+      expect(currentFocus).toContain("Current Focus");
+      expect(runtimeDir.isDirectory()).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
     }
   });
 
