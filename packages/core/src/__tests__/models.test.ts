@@ -18,6 +18,11 @@ import {
   RuleStackSchema,
   ChapterTraceSchema,
 } from "../models/input-governance.js";
+import {
+  LengthSpecSchema,
+  LengthTelemetrySchema,
+  LengthWarningSchema,
+} from "../models/length-governance.js";
 
 // ---------------------------------------------------------------------------
 // BookConfig
@@ -633,5 +638,56 @@ describe("ChapterTraceSchema", () => {
     });
 
     expect(result.notes).toEqual([]);
+  });
+});
+
+describe("Length governance schemas", () => {
+  it("accepts a conservative length spec", () => {
+    const result = LengthSpecSchema.parse({
+      target: 2200,
+      softMin: 1900,
+      softMax: 2500,
+      hardMin: 1600,
+      hardMax: 2800,
+      countingMode: "zh_chars",
+      normalizeMode: "compress",
+    });
+
+    expect(result.target).toBe(2200);
+    expect(result.softMin).toBe(1900);
+    expect(result.normalizeMode).toBe("compress");
+  });
+
+  it("accepts telemetry for a chapter length pass", () => {
+    const result = LengthTelemetrySchema.parse({
+      target: 2200,
+      softMin: 1900,
+      softMax: 2500,
+      hardMin: 1600,
+      hardMax: 2800,
+      countingMode: "en_words",
+      writerCount: 2600,
+      postWriterNormalizeCount: 2450,
+      postReviseCount: 2480,
+      finalCount: 2480,
+      normalizeApplied: true,
+      lengthWarning: false,
+    });
+
+    expect(result.writerCount).toBe(2600);
+    expect(result.normalizeApplied).toBe(true);
+  });
+
+  it("accepts a warning when final length drifts outside the hard band", () => {
+    const result = LengthWarningSchema.parse({
+      chapter: 12,
+      target: 2200,
+      actual: 3100,
+      countingMode: "zh_chars",
+      reason: "chapter exceeded the hard max after one normalization pass",
+    });
+
+    expect(result.chapter).toBe(12);
+    expect(result.actual).toBe(3100);
   });
 });
