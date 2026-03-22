@@ -12,5 +12,6 @@ _tmp_*
 test-project/
 .venv*/
 .gstack/
+.worktrees/
 docs/
 novel-to-comic-research.docx
