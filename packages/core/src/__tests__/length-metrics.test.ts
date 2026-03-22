@@ -16,6 +16,20 @@ describe("length metrics", () => {
     expect(countChapterLength("He looked at the sky.", "en_words")).toBe(5);
   });
 
+  it("counts prose only for markdown-shaped Chinese chapters", () => {
+    const markdownChapter = [
+      "---",
+      "title: 第1章 归来",
+      "---",
+      "",
+      "# 第1章 归来",
+      "",
+      "陈风抬头看天。",
+    ].join("\n");
+
+    expect(countChapterLength(markdownChapter, "zh_chars")).toBe("陈风抬头看天。".length);
+  });
+
   it("builds a conservative length spec for Chinese chapters", () => {
     const spec = buildLengthSpec(2200, "zh");
 
