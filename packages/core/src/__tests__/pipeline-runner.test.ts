@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,11 +8,13 @@ import { ArchitectAgent } from "../agents/architect.js";
 import { PlannerAgent } from "../agents/planner.js";
 import { ComposerAgent } from "../agents/composer.js";
 import { WriterAgent, type WriteChapterOutput } from "../agents/writer.js";
+import { LengthNormalizerAgent } from "../agents/length-normalizer.js";
 import { ContinuityAuditor, type AuditIssue, type AuditResult } from "../agents/continuity.js";
 import { ReviserAgent, type ReviseOutput } from "../agents/reviser.js";
 import { ChapterAnalyzerAgent } from "../agents/chapter-analyzer.js";
 import type { BookConfig } from "../models/book.js";
 import type { ChapterMeta } from "../models/chapter.js";
+import { countChapterLength } from "../utils/length-metrics.js";
 
 const ZERO_USAGE = {
   promptTokens: 0,
@@ -135,6 +137,18 @@ async function createRunnerFixture(
 }
 
 describe("PipelineRunner", () => {
+  beforeEach(() => {
+    vi.spyOn(LengthNormalizerAgent.prototype, "normalizeChapter").mockImplementation(
+      async ({ chapterContent, lengthSpec }) => ({
+        normalizedContent: chapterContent,
+        finalCount: countChapterLength(chapterContent, lengthSpec.countingMode),
+        applied: false,
+        mode: "none",
+        tokenUsage: ZERO_USAGE,
+      }),
+    );
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -438,6 +452,110 @@ describe("PipelineRunner", () => {
           activeOverrides: expect.any(Array),
         }),
       });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("normalizes overlong writer output once before audit", async () => {
+    const { root, runner, bookId } = await createRunnerFixture();
+    const overlongDraft = "冗余句子。".repeat(60);
+    const normalizedDraft = "压缩后的正文。".repeat(12);
+
+    vi.spyOn(WriterAgent.prototype, "writeChapter").mockResolvedValue(
+      createWriterOutput({
+        chapterNumber: 1,
+        content: overlongDraft,
+        wordCount: overlongDraft.length,
+      }),
+    );
+    const normalizeChapter = vi.mocked(
+      LengthNormalizerAgent.prototype.normalizeChapter,
+    ).mockResolvedValue({
+      normalizedContent: normalizedDraft,
+      finalCount: normalizedDraft.length,
+      applied: true,
+      mode: "compress",
+      tokenUsage: ZERO_USAGE,
+    });
+    const auditChapter = vi.spyOn(
+      ContinuityAuditor.prototype,
+      "auditChapter",
+    ).mockResolvedValue(
+      createAuditResult({
+        passed: true,
+        issues: [],
+        summary: "clean",
+      }),
+    );
+    vi.spyOn(ChapterAnalyzerAgent.prototype, "analyzeChapter").mockResolvedValue(
+      createAnalyzedOutput({
+        content: normalizedDraft,
+        wordCount: normalizedDraft.length,
+      }),
+    );
+
+    try {
+      await runner.writeNextChapter(bookId, 220);
+
+      expect(normalizeChapter).toHaveBeenCalledTimes(1);
+      expect(auditChapter.mock.calls[0]?.[1]).toBe(normalizedDraft);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("normalizes short writer output once before audit", async () => {
+    const { root, runner, bookId } = await createRunnerFixture();
+    const shortDraft = "短句。".repeat(20);
+    const normalizedDraft = "补足后的正文。".repeat(15);
+
+    vi.spyOn(WriterAgent.prototype, "writeChapter").mockResolvedValue(
+      createWriterOutput({
+        chapterNumber: 1,
+        content: shortDraft,
+        wordCount: shortDraft.length,
+      }),
+    );
+    const normalizeChapter = vi.mocked(
+      LengthNormalizerAgent.prototype.normalizeChapter,
+    ).mockResolvedValue({
+      normalizedContent: normalizedDraft,
+      finalCount: normalizedDraft.length,
+      applied: true,
+      mode: "expand",
+      tokenUsage: ZERO_USAGE,
+    });
+    const auditChapter = vi.spyOn(
+      ContinuityAuditor.prototype,
+      "auditChapter",
+    ).mockResolvedValue(
+      createAuditResult({
+        passed: true,
+        issues: [],
+        summary: "clean",
+      }),
+    );
+    vi.spyOn(ChapterAnalyzerAgent.prototype, "analyzeChapter").mockResolvedValue(
+      createAnalyzedOutput({
+        content: normalizedDraft,
+        wordCount: normalizedDraft.length,
+      }),
+    );
+
+    try {
+      await runner.writeNextChapter(bookId, 220);
+
+      expect(normalizeChapter).toHaveBeenCalledTimes(1);
+      expect(normalizeChapter.mock.calls[0]?.[0]).toMatchObject({
+        chapterContent: shortDraft,
+        lengthSpec: expect.objectContaining({
+          target: 220,
+          softMin: 190,
+          softMax: 250,
+        }),
+      });
+      expect(auditChapter.mock.calls[0]?.[1]).toBe(normalizedDraft);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

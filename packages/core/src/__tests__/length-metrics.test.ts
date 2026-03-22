@@ -54,6 +54,15 @@ describe("length metrics", () => {
     expect(spec.hardMax).toBe(2800);
   });
 
+  it("scales the conservative bands for smaller targets", () => {
+    const spec = buildLengthSpec(220, "zh");
+
+    expect(spec.softMin).toBe(190);
+    expect(spec.softMax).toBe(250);
+    expect(spec.hardMin).toBe(160);
+    expect(spec.hardMax).toBe(280);
+  });
+
   it("detects soft and hard range drift", () => {
     const spec = buildLengthSpec(2200, "zh");
 

@@ -2,6 +2,7 @@ import type { LengthCountingMode, LengthNormalizeMode, LengthSpec } from "../mod
 
 export type LengthLanguage = "zh" | "en";
 
+const REFERENCE_TARGET = 2200;
 const SOFT_RANGE_DELTA = 300;
 const HARD_RANGE_DELTA = 600;
 
@@ -23,10 +24,12 @@ export function buildLengthSpec(
   target: number,
   language: LengthLanguage = "zh",
 ): LengthSpec {
-  const softMin = Math.max(1, target - SOFT_RANGE_DELTA);
-  const softMax = target + SOFT_RANGE_DELTA;
-  const hardMin = Math.max(1, target - HARD_RANGE_DELTA);
-  const hardMax = target + HARD_RANGE_DELTA;
+  const softDelta = scaleRangeDelta(target, SOFT_RANGE_DELTA);
+  const hardDelta = Math.max(softDelta, scaleRangeDelta(target, HARD_RANGE_DELTA));
+  const softMin = Math.max(1, target - softDelta);
+  const softMax = target + softDelta;
+  const hardMin = Math.max(1, target - hardDelta);
+  const hardMax = target + hardDelta;
 
   return {
     target,
@@ -37,6 +40,10 @@ export function buildLengthSpec(
     countingMode: language === "en" ? "en_words" : "zh_chars",
     normalizeMode: "none",
   };
+}
+
+function scaleRangeDelta(target: number, referenceDelta: number): number {
+  return Math.max(1, Math.floor((target * referenceDelta) / REFERENCE_TARGET));
 }
 
 export function isOutsideSoftRange(

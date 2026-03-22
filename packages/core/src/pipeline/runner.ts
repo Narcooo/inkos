@@ -9,6 +9,7 @@ import { ArchitectAgent } from "../agents/architect.js";
 import { PlannerAgent } from "../agents/planner.js";
 import { ComposerAgent } from "../agents/composer.js";
 import { WriterAgent, type WriteChapterInput, type WriteChapterOutput } from "../agents/writer.js";
+import { LengthNormalizerAgent } from "../agents/length-normalizer.js";
 import { ChapterAnalyzerAgent } from "../agents/chapter-analyzer.js";
 import { ContinuityAuditor } from "../agents/continuity.js";
 import { ReviserAgent, type ReviseMode } from "../agents/reviser.js";
@@ -24,6 +25,8 @@ import type { WebhookEvent } from "../notify/webhook.js";
 import type { AgentContext } from "../agents/base.js";
 import type { AuditResult, AuditIssue } from "../agents/continuity.js";
 import type { RadarResult } from "../agents/radar.js";
+import type { LengthSpec } from "../models/length-governance.js";
+import { buildLengthSpec, countChapterLength, isOutsideSoftRange } from "../utils/length-metrics.js";
 import { readFile, readdir, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -295,6 +298,10 @@ export class PipelineRunner {
       );
 
       const { profile: gp } = await this.loadGenreProfile(book.genre);
+      const lengthSpec = buildLengthSpec(
+        wordCount ?? book.chapterWordCount,
+        book.language ?? gp.language,
+      );
 
       const writer = new WriterAgent(this.agentCtxFor("writer", bookId));
       const output = await writer.writeChapter({
@@ -302,38 +309,58 @@ export class PipelineRunner {
         bookDir,
         chapterNumber,
         ...writeInput,
+        lengthSpec,
         ...(wordCount ? { wordCountOverride: wordCount } : {}),
       });
+      let totalUsage: TokenUsageSummary = output.tokenUsage ?? {
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+      };
+      const normalizedDraft = await this.normalizeDraftLengthIfNeeded({
+        bookId,
+        chapterNumber,
+        chapterContent: output.content,
+        lengthSpec,
+        chapterIntent: writeInput.chapterIntent,
+      });
+      totalUsage = PipelineRunner.addUsage(totalUsage, normalizedDraft.tokenUsage);
+      const draftOutput: WriteChapterOutput = {
+        ...output,
+        content: normalizedDraft.content,
+        wordCount: normalizedDraft.wordCount,
+        tokenUsage: totalUsage,
+      };
 
       // Save chapter file
       const chaptersDir = join(bookDir, "chapters");
       const paddedNum = String(chapterNumber).padStart(4, "0");
-      const sanitized = output.title.replace(/[/\\?%*:|"<>]/g, "").replace(/\s+/g, "_").slice(0, 50);
+      const sanitized = draftOutput.title.replace(/[/\\?%*:|"<>]/g, "").replace(/\s+/g, "_").slice(0, 50);
       const filename = `${paddedNum}_${sanitized}.md`;
       const filePath = join(chaptersDir, filename);
 
       const resolvedLang = book.language ?? gp.language;
       const heading = resolvedLang === "en"
-        ? `# Chapter ${chapterNumber}: ${output.title}`
-        : `# 第${chapterNumber}章 ${output.title}`;
-      await writeFile(filePath, `${heading}\n\n${output.content}`, "utf-8");
+        ? `# Chapter ${chapterNumber}: ${draftOutput.title}`
+        : `# 第${chapterNumber}章 ${draftOutput.title}`;
+      await writeFile(filePath, `${heading}\n\n${draftOutput.content}`, "utf-8");
 
       // Save truth files
-      await writer.saveChapter(bookDir, output, gp.numericalSystem, resolvedLang);
-      await writer.saveNewTruthFiles(bookDir, output);
+      await writer.saveChapter(bookDir, draftOutput, gp.numericalSystem, resolvedLang);
+      await writer.saveNewTruthFiles(bookDir, draftOutput);
 
       // Update index
       const existingIndex = await this.state.loadChapterIndex(bookId);
       const now = new Date().toISOString();
       const newEntry: ChapterMeta = {
         number: chapterNumber,
-        title: output.title,
+        title: draftOutput.title,
         status: "drafted",
-        wordCount: output.wordCount,
+        wordCount: draftOutput.wordCount,
         createdAt: now,
         updatedAt: now,
         auditIssues: [],
-        ...(output.tokenUsage ? { tokenUsage: output.tokenUsage } : {}),
+        ...(draftOutput.tokenUsage ? { tokenUsage: draftOutput.tokenUsage } : {}),
       };
       await this.state.saveChapterIndex(bookId, [...existingIndex, newEntry]);
 
@@ -341,11 +368,17 @@ export class PipelineRunner {
       await this.state.snapshotState(bookId, chapterNumber);
 
       await this.emitWebhook("chapter-complete", bookId, chapterNumber, {
-        title: output.title,
-        wordCount: output.wordCount,
+        title: draftOutput.title,
+        wordCount: draftOutput.wordCount,
       });
 
-      return { chapterNumber, title: output.title, wordCount: output.wordCount, filePath, tokenUsage: output.tokenUsage };
+      return {
+        chapterNumber,
+        title: draftOutput.title,
+        wordCount: draftOutput.wordCount,
+        filePath,
+        tokenUsage: draftOutput.tokenUsage,
+      };
     } finally {
       await releaseLock();
     }
@@ -625,6 +658,10 @@ export class PipelineRunner {
         }
       : undefined;
     const { profile: gp } = await this.loadGenreProfile(book.genre);
+    const lengthSpec = buildLengthSpec(
+      wordCount ?? book.chapterWordCount,
+      book.language ?? gp.language,
+    );
 
     // 1. Write chapter
     const writer = new WriterAgent(this.agentCtxFor("writer", bookId));
@@ -633,6 +670,7 @@ export class PipelineRunner {
       bookDir,
       chapterNumber,
       ...writeInput,
+      lengthSpec,
       ...(wordCount ? { wordCountOverride: wordCount } : {}),
       ...(temperatureOverride ? { temperatureOverride } : {}),
     });
@@ -672,6 +710,17 @@ export class PipelineRunner {
         revised = true;
       }
     }
+
+    const normalizedBeforeAudit = await this.normalizeDraftLengthIfNeeded({
+      bookId,
+      chapterNumber,
+      chapterContent: finalContent,
+      lengthSpec,
+      chapterIntent: writeInput.chapterIntent,
+    });
+    totalUsage = PipelineRunner.addUsage(totalUsage, normalizedBeforeAudit.tokenUsage);
+    finalContent = normalizedBeforeAudit.content;
+    finalWordCount = normalizedBeforeAudit.wordCount;
 
     // 2b. LLM audit
     const auditor = new ContinuityAuditor(this.agentCtxFor("auditor", bookId));
@@ -1250,6 +1299,48 @@ ${matrix}`,
       contextPackage: composed.contextPackage,
       ruleStack: composed.ruleStack,
       trace: composed.trace,
+    };
+  }
+
+  private async normalizeDraftLengthIfNeeded(params: {
+    bookId: string;
+    chapterNumber: number;
+    chapterContent: string;
+    lengthSpec: LengthSpec;
+    chapterIntent?: string;
+  }): Promise<{
+    content: string;
+    wordCount: number;
+    tokenUsage?: TokenUsageSummary;
+  }> {
+    const writerCount = countChapterLength(
+      params.chapterContent,
+      params.lengthSpec.countingMode,
+    );
+    if (!isOutsideSoftRange(writerCount, params.lengthSpec)) {
+      return {
+        content: params.chapterContent,
+        wordCount: writerCount,
+      };
+    }
+
+    const normalizer = new LengthNormalizerAgent(
+      this.agentCtxFor("length-normalizer", params.bookId),
+    );
+    const normalized = await normalizer.normalizeChapter({
+      chapterContent: params.chapterContent,
+      lengthSpec: params.lengthSpec,
+      chapterIntent: params.chapterIntent,
+    });
+
+    this.config.logger?.info(
+      `Length normalization before audit for chapter ${params.chapterNumber}: ${writerCount} -> ${normalized.finalCount}`,
+    );
+
+    return {
+      content: normalized.normalizedContent,
+      wordCount: normalized.finalCount,
+      tokenUsage: normalized.tokenUsage,
     };
   }
 
