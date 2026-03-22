@@ -176,6 +176,15 @@ inkos compose chapter my-book
 
 This generates `story/runtime/chapter-XXXX.intent.md`, `context.json`, `rule-stack.yaml`, and `trace.json`. `intent.md` is the human-readable contract; the others are execution/debug artifacts. `plan` / `compose` only compile local documents and state, so they can run before you finish API key setup.
 
+### Length Governance
+
+`draft`, `write next`, and `revise` now share the same conservative length governor:
+
+- `--words` sets a target band, not an exact hard promise
+- Chinese chapters default to `zh_chars`; English chapters default to `en_words`
+- If the chapter drifts outside the soft band, InkOS may run one corrective normalization pass (compress or expand) instead of hard-cutting prose
+- If the chapter still misses the hard range after that one pass, InkOS still saves it, but surfaces a visible length warning and telemetry in the result and chapter index
+
 ### Continuation Writing
 
 `inkos import chapters` imports existing novel text, auto reverse-engineers all 7 truth files (world state, character matrix, resource ledger, plot hooks, etc.), supports `Chapter N` and custom split patterns, and resumable import. After import, `inkos write next` seamlessly continues the story.
@@ -336,7 +345,7 @@ inkos agent "Create a progression fantasy about a mage who can only use one spel
 | `inkos analytics [id]` / `inkos stats [id]` | Book analytics (audit pass rate, top issues, chapter ranking, token usage) |
 | `inkos up / down` | Start/stop daemon (`-q` quiet mode, auto-writes `inkos.log`) |
 
-`[id]` is auto-detected when the project has only one book. All commands support `--json` for structured output. `draft` / `write next` / `plan chapter` / `compose chapter` accept `--context` for steering. `book create` supports `--brief <file>` to pass a creative brief — the Architect builds from your ideas instead of generating from scratch. `plan chapter` / `compose chapter` do not require a live LLM, so you can inspect governed inputs before finishing API setup.
+`[id]` is auto-detected when the project has only one book. All commands support `--json` for structured output. `draft` / `write next` / `plan chapter` / `compose chapter` accept `--context` for steering, and `--words` overrides the target chapter size. `book create` supports `--brief <file>` to pass a creative brief — the Architect builds from your ideas instead of generating from scratch. `plan chapter` / `compose chapter` do not require a live LLM, so you can inspect governed inputs before finishing API setup.
 
 ## Roadmap
 

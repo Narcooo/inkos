@@ -146,6 +146,15 @@ inkos compose chapter 吞天魔帝
 
 这会生成 `story/runtime/chapter-XXXX.intent.md`、`context.json`、`rule-stack.yaml`、`trace.json`。其中 `intent.md` 给人看，其他文件给系统执行和调试。`plan` / `compose` 只编译本地文档和状态，不依赖在线 LLM，可在没配好 API Key 前先验证控制输入。
 
+### 字数治理
+
+`draft`、`write next`、`revise` 现在共享同一套保守型字数治理：
+
+- `--words` 指定的是目标字数，系统会自动推导一个允许区间，不承诺逐字精确命中
+- 中文默认按 `zh_chars` 计数，英文默认按 `en_words` 计数
+- 如果正文超出允许区间，InkOS 最多只会追加 1 次纠偏归一化（压缩或补足），不会直接硬截断正文
+- 如果 1 次纠偏后仍然超出 hard range，章节照常保存，但会在结果和 chapter index 里留下长度 warning / telemetry
+
 ### 续写已有作品
 
 `inkos import chapters` 从已有小说文本导入章节，自动逆向工程 7 个真相文件（世界状态、角色矩阵、资源账本、伏笔钩子等），支持 `第X章` 和自定义分割模式、断点续导。导入后 `inkos write next` 无缝接续创作。
@@ -330,7 +339,7 @@ inkos agent "先扫描市场趋势，然后根据结果创建一本新书"
 | `inkos update` | 更新到最新版本 |
 | `inkos up / down` | 启动/停止守护进程（`-q` 静默模式，自动写入 `inkos.log`） |
 
-`[id]` 参数在项目只有一本书时可省略，自动检测。所有命令支持 `--json` 输出结构化数据。`draft` / `write next` / `plan chapter` / `compose chapter` 支持 `--context` 传入创作指导，`--words` 覆盖每章字数。`book create` 支持 `--brief <file>` 传入创作简报（你的脑洞/设定文档），Architect 会基于此生成设定而非凭空创作。`plan chapter` / `compose chapter` 不要求在线 LLM，可在配置 API Key 之前先检查输入治理结果。
+`[id]` 参数在项目只有一本书时可省略，自动检测。所有命令支持 `--json` 输出结构化数据。`draft` / `write next` / `plan chapter` / `compose chapter` 支持 `--context` 传入创作指导，`--words` 覆盖每章目标字数。`book create` 支持 `--brief <file>` 传入创作简报（你的脑洞/设定文档），Architect 会基于此生成设定而非凭空创作。`plan chapter` / `compose chapter` 不要求在线 LLM，可在配置 API Key 之前先检查输入治理结果。
 
 ## 路线图
 
