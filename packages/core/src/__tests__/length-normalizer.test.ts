@@ -165,4 +165,33 @@ describe("LengthNormalizerAgent", () => {
     expect(result.normalizedContent).not.toContain("我先压缩一下正文");
     expect(result.normalizedContent).not.toContain("```");
   });
+
+  it("falls back to the original chapter when the response contains only wrappers", async () => {
+    const agent = createAgent();
+    const chatSpy = vi.spyOn(BaseAgent.prototype as never, "chat").mockResolvedValue({
+      content: "我先压缩一下正文。",
+      usage: ZERO_USAGE,
+    });
+    const lengthSpec = LengthSpecSchema.parse({
+      target: 220,
+      softMin: 190,
+      softMax: 250,
+      hardMin: 160,
+      hardMax: 280,
+      countingMode: "zh_chars",
+      normalizeMode: "compress",
+    });
+    const draft = "开头。" + "冗余句子。".repeat(40) + "[[KEEP_ME]]";
+
+    const result = await agent.normalizeChapter({
+      chapterContent: draft,
+      lengthSpec,
+      chapterIntent: "Preserve [[KEEP_ME]] only.",
+      reducedControlBlock: "No extra commentary.",
+    });
+
+    expect(chatSpy).toHaveBeenCalledTimes(1);
+    expect(result.normalizedContent).toBe(draft);
+    expect(result.finalCount).toBe(countChapterLength(draft, "zh_chars"));
+  });
 });

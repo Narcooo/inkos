@@ -139,7 +139,7 @@ ${input.chapterContent}`;
 
     if (this.looksLikeResponseWrapper(trimmed)) {
       const stripped = this.stripCommonWrappers(trimmed);
-      if (stripped) return stripped;
+      return stripped || fallbackContent;
     }
 
     return trimmed;
