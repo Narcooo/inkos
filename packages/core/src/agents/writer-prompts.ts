@@ -1,8 +1,10 @@
 import type { BookConfig, FanficMode } from "../models/book.js";
 import type { GenreProfile } from "../models/genre-profile.js";
 import type { BookRules } from "../models/book-rules.js";
+import type { LengthSpec } from "../models/length-governance.js";
 import { buildFanficCanonSection, buildCharacterVoiceProfiles, buildFanficModeInstructions } from "./fanfic-prompt-sections.js";
 import { buildEnglishCoreRules, buildEnglishAntiAIRules, buildEnglishCharacterMethod, buildEnglishPreWriteChecklist, buildEnglishGenreIntro } from "./en-prompt-sections.js";
+import { buildLengthSpec } from "../utils/length-metrics.js";
 
 export interface FanficContext {
   readonly fanficCanon: string;
@@ -27,19 +29,22 @@ export function buildWriterSystemPrompt(
   fanficContext?: FanficContext,
   languageOverride?: "zh" | "en",
   inputProfile: "legacy" | "governed" = "legacy",
+  lengthSpec?: LengthSpec,
 ): string {
   const isEnglish = (languageOverride ?? genreProfile.language) === "en";
   const governed = inputProfile === "governed";
+  const resolvedLengthSpec = lengthSpec ?? buildLengthSpec(book.chapterWordCount, isEnglish ? "en" : "zh");
 
   const outputSection = mode === "creative"
-    ? buildCreativeOutputFormat(book, genreProfile)
-    : buildOutputFormat(book, genreProfile);
+    ? buildCreativeOutputFormat(book, genreProfile, resolvedLengthSpec)
+    : buildOutputFormat(book, genreProfile, resolvedLengthSpec);
 
   const sections = isEnglish
     ? [
         buildEnglishGenreIntro(book, genreProfile),
         buildEnglishCoreRules(book),
         buildGovernedInputContract("en", governed),
+        buildLengthGuidance(resolvedLengthSpec, "en"),
         !governed ? buildEnglishAntiAIRules() : "",
         !governed ? buildEnglishCharacterMethod() : "",
         buildGenreRules(genreProfile, genreBody),
@@ -55,8 +60,9 @@ export function buildWriterSystemPrompt(
       ]
     : [
         buildGenreIntro(book, genreProfile),
-        buildCoreRules(book),
+        buildCoreRules(resolvedLengthSpec),
         buildGovernedInputContract("zh", governed),
+        buildLengthGuidance(resolvedLengthSpec, "zh"),
         !governed ? buildAntiAIExamples() : "",
         !governed ? buildCharacterPsychologyMethod() : "",
         !governed ? buildSupportingCharacterMethod() : "",
@@ -108,15 +114,31 @@ function buildGovernedInputContract(language: "zh" | "en", governed: boolean): s
 - 真正不能突破的只有硬护栏：世界设定、连续性事实、显式禁令。`;
 }
 
+function buildLengthGuidance(lengthSpec: LengthSpec, language: "zh" | "en"): string {
+  if (language === "en") {
+    return `## Length Guidance
+
+- Target length: ${lengthSpec.target} words
+- Acceptable range: ${lengthSpec.softMin}-${lengthSpec.softMax} words
+- Hard range: ${lengthSpec.hardMin}-${lengthSpec.hardMax} words`;
+  }
+
+  return `## 字数治理
+
+- 目标字数：${lengthSpec.target}字
+- 允许区间：${lengthSpec.softMin}-${lengthSpec.softMax}字
+- 硬区间：${lengthSpec.hardMin}-${lengthSpec.hardMax}字`;
+}
+
 // ---------------------------------------------------------------------------
 // Core rules (~25 universal rules)
 // ---------------------------------------------------------------------------
 
-function buildCoreRules(book: BookConfig): string {
+function buildCoreRules(lengthSpec: LengthSpec): string {
   return `## 核心规则
 
 1. 以简体中文工作，句子长短交替，段落适合手机阅读（3-5行/段）
-2. 每章${book.chapterWordCount}字左右
+2. 目标字数：${lengthSpec.target}字，允许区间：${lengthSpec.softMin}-${lengthSpec.softMax}字
 3. 伏笔前后呼应，不留悬空线；所有埋下的伏笔都必须在后续收回
 4. 只读必要上下文，不机械重复已有内容
 
@@ -486,7 +508,7 @@ function buildPreWriteChecklist(book: BookConfig, gp: GenreProfile): string {
 // Creative-only output format (no settlement blocks)
 // ---------------------------------------------------------------------------
 
-function buildCreativeOutputFormat(book: BookConfig, gp: GenreProfile): string {
+function buildCreativeOutputFormat(book: BookConfig, gp: GenreProfile, lengthSpec: LengthSpec): string {
   const resourceRow = gp.numericalSystem
     ? "| 当前资源总量 | X | 与账本一致 |\n| 本章预计增量 | +X（来源） | 无增量写+0 |"
     : "";
@@ -511,7 +533,7 @@ ${preWriteTable}
 (章节标题，不含"第X章")
 
 === CHAPTER_CONTENT ===
-(正文内容，${book.chapterWordCount}字左右)
+(正文内容，目标${lengthSpec.target}字，允许区间${lengthSpec.softMin}-${lengthSpec.softMax}字)
 
 【重要】本次只需输出以上三个区块（PRE_WRITE_CHECK、CHAPTER_TITLE、CHAPTER_CONTENT）。
 状态卡、伏笔池、摘要等追踪文件将由后续结算阶段处理，请勿输出。`;
@@ -521,7 +543,7 @@ ${preWriteTable}
 // Output format
 // ---------------------------------------------------------------------------
 
-function buildOutputFormat(book: BookConfig, gp: GenreProfile): string {
+function buildOutputFormat(book: BookConfig, gp: GenreProfile, lengthSpec: LengthSpec): string {
   const resourceRow = gp.numericalSystem
     ? "| 当前资源总量 | X | 与账本一致 |\n| 本章预计增量 | +X（来源） | 无增量写+0 |"
     : "";
@@ -564,7 +586,7 @@ ${preWriteTable}
 (章节标题，不含"第X章")
 
 === CHAPTER_CONTENT ===
-(正文内容，${book.chapterWordCount}字左右)
+(正文内容，目标${lengthSpec.target}字，允许区间${lengthSpec.softMin}-${lengthSpec.softMax}字)
 
 ${postSettlement}
 

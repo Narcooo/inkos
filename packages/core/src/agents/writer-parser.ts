@@ -1,5 +1,7 @@
 import type { GenreProfile } from "../models/genre-profile.js";
+import type { LengthCountingMode } from "../models/length-governance.js";
 import type { WriteChapterOutput } from "./writer.js";
+import { countChapterLength } from "../utils/length-metrics.js";
 
 export interface CreativeOutput {
   readonly title: string;
@@ -11,6 +13,7 @@ export interface CreativeOutput {
 export function parseCreativeOutput(
   chapterNumber: number,
   content: string,
+  countingMode: LengthCountingMode = "zh_chars",
 ): CreativeOutput {
   const extract = (tag: string): string => {
     const regex = new RegExp(
@@ -36,7 +39,7 @@ export function parseCreativeOutput(
   return {
     title,
     content: chapterContent,
-    wordCount: chapterContent.length,
+    wordCount: countChapterLength(chapterContent, countingMode),
     preWriteCheck: extract("PRE_WRITE_CHECK"),
   };
 }
@@ -100,6 +103,7 @@ export function parseWriterOutput(
   chapterNumber: number,
   content: string,
   genreProfile: GenreProfile,
+  countingMode: LengthCountingMode = "zh_chars",
 ): ParsedWriterOutput {
   const extract = (tag: string): string => {
     const regex = new RegExp(
@@ -115,7 +119,7 @@ export function parseWriterOutput(
     chapterNumber,
     title: extract("CHAPTER_TITLE") || `第${chapterNumber}章`,
     content: chapterContent,
-    wordCount: chapterContent.length,
+    wordCount: countChapterLength(chapterContent, countingMode),
     preWriteCheck: extract("PRE_WRITE_CHECK"),
     postSettlement: extract("POST_SETTLEMENT"),
     updatedState: extract("UPDATED_STATE") || "(状态卡未更新)",

@@ -10,6 +10,8 @@ import { readGenreProfile, readBookRules } from "./rules-reader.js";
 import { validatePostWrite, type PostWriteViolation } from "./post-write-validator.js";
 import { analyzeAITells } from "./ai-tells.js";
 import type { ChapterTrace, ContextPackage, RuleStack } from "../models/input-governance.js";
+import type { LengthSpec } from "../models/length-governance.js";
+import { buildLengthSpec } from "../utils/length-metrics.js";
 import { filterHooks, filterSummaries, filterSubplots, filterEmotionalArcs, filterCharacterMatrix } from "../utils/context-filter.js";
 import { extractPOVFromOutline, filterMatrixByPOV, filterHooksByPOV } from "../utils/pov-filter.js";
 import { parseCreativeOutput } from "./writer-parser.js";
@@ -25,6 +27,7 @@ export interface WriteChapterInput {
   readonly contextPackage?: ContextPackage;
   readonly ruleStack?: RuleStack;
   readonly trace?: ChapterTrace;
+  readonly lengthSpec?: LengthSpec;
   readonly wordCountOverride?: number;
   readonly temperatureOverride?: number;
 }
@@ -100,6 +103,9 @@ export class WriterAgent extends BaseAgent {
 
     const hasParentCanon = parentCanon !== "(文件尚未创建)";
     const hasFanficCanon = fanficCanonRaw !== "(文件尚未创建)";
+    const resolvedLanguage = book.language ?? genreProfile.language;
+    const targetWords = input.lengthSpec?.target ?? input.wordCountOverride ?? book.chapterWordCount;
+    const resolvedLengthSpec = input.lengthSpec ?? buildLengthSpec(targetWords, resolvedLanguage);
 
     // Build fanfic context if fanfic_canon.md exists
     const fanficContext: FanficContext | undefined = hasFanficCanon && bookRules?.fanficMode
@@ -111,11 +117,11 @@ export class WriterAgent extends BaseAgent {
       : undefined;
 
     // ── Phase 1: Creative writing (temperature 0.7) ──
-    const resolvedLanguage = book.language ?? genreProfile.language;
     const creativeSystemPrompt = buildWriterSystemPrompt(
       book, genreProfile, bookRules, bookRulesBody, genreBody, styleGuide, styleFingerprint,
       chapterNumber, "creative", fanficContext, resolvedLanguage,
       input.chapterIntent ? "governed" : "legacy",
+      resolvedLengthSpec,
     );
 
     const creativeUserPrompt = input.chapterIntent && input.contextPackage && input.ruleStack
@@ -125,7 +131,7 @@ export class WriterAgent extends BaseAgent {
           contextPackage: input.contextPackage,
           ruleStack: input.ruleStack,
           trace: input.trace,
-          wordCount: input.wordCountOverride ?? book.chapterWordCount,
+          lengthSpec: resolvedLengthSpec,
           language: book.language ?? genreProfile.language,
         })
       : (() => {
@@ -153,7 +159,7 @@ export class WriterAgent extends BaseAgent {
             ledger: genreProfile.numericalSystem ? ledger : "",
             hooks: povFilteredHooks,
             recentChapters,
-            wordCount: input.wordCountOverride ?? book.chapterWordCount,
+            lengthSpec: resolvedLengthSpec,
             externalContext: input.externalContext,
             chapterSummaries: filteredSummaries,
             subplotBoard: filteredSubplots,
@@ -171,7 +177,6 @@ export class WriterAgent extends BaseAgent {
     this.ctx.logger?.info(`Phase 1: creative writing for chapter ${chapterNumber}`);
 
     // Scale maxTokens to chapter word count (Chinese ≈ 1.5 tokens/char)
-    const targetWords = input.wordCountOverride ?? book.chapterWordCount;
     const creativeMaxTokens = Math.max(8192, Math.ceil(targetWords * 2));
 
     const creativeResponse = await this.chat(
@@ -183,10 +188,11 @@ export class WriterAgent extends BaseAgent {
     );
     const creativeUsage = creativeResponse.usage;
 
-    const creative = parseCreativeOutput(chapterNumber, creativeResponse.content);
+    const creative = parseCreativeOutput(chapterNumber, creativeResponse.content, resolvedLengthSpec.countingMode);
 
     // ── Phase 2: State settlement (temperature 0.3) ──
-    this.ctx.logger?.info(`Phase 2: state settlement for chapter ${chapterNumber} (${creative.wordCount} chars)`);
+    const lengthUnit = resolvedLengthSpec.countingMode === "en_words" ? "words" : "chars";
+    this.ctx.logger?.info(`Phase 2: state settlement for chapter ${chapterNumber} (${creative.wordCount} ${lengthUnit})`);
 
     const settleResult = await this.settle({
       book,
@@ -372,7 +378,7 @@ export class WriterAgent extends BaseAgent {
     readonly ledger: string;
     readonly hooks: string;
     readonly recentChapters: string;
-    readonly wordCount: number;
+    readonly lengthSpec: LengthSpec;
     readonly externalContext?: string;
     readonly chapterSummaries: string;
     readonly subplotBoard: string;
@@ -420,6 +426,7 @@ export class WriterAgent extends BaseAgent {
 本书是番外作品。以下正典约束不可违反，角色不得引用超出其信息边界的信息。
 ${params.parentCanon}\n`
       : "";
+    const lengthRequirementBlock = this.buildLengthRequirementBlock(params.lengthSpec, params.language ?? "zh");
 
     if (params.language === "en") {
       return `Write chapter ${params.chapterNumber}.
@@ -445,8 +452,7 @@ ${params.volumeOutline}
 - Pacing must match the outline's chapter span: if 5 chapters are planned for an arc, do not compress into 1-2.
 - PRE_WRITE_CHECK must identify which outline node this chapter covers.
 
-Requirements:
-- Chapter body must be at least ${params.wordCount} words
+${lengthRequirementBlock}
 - Output PRE_WRITE_CHECK first, then the chapter
 - Output only PRE_WRITE_CHECK, CHAPTER_TITLE, and CHAPTER_CONTENT blocks`;
     }
@@ -474,8 +480,7 @@ ${params.volumeOutline}
 - 剧情推进速度必须与卷纲规划的章节跨度匹配：如果卷纲规划某段剧情跨5章，不得在1-2章内讲完
 - PRE_WRITE_CHECK中必须明确标注本章对应的卷纲节点
 
-要求：
-- 正文不少于${params.wordCount}字
+${lengthRequirementBlock}
 - 先输出写作自检表，再写正文
       - 只需输出 PRE_WRITE_CHECK、CHAPTER_TITLE、CHAPTER_CONTENT 三个区块`;
   }
@@ -486,7 +491,7 @@ ${params.volumeOutline}
     readonly contextPackage: ContextPackage;
     readonly ruleStack: RuleStack;
     readonly trace?: ChapterTrace;
-    readonly wordCount: number;
+    readonly lengthSpec: LengthSpec;
     readonly language?: "zh" | "en";
   }): string {
     const contextSections = params.contextPackage.selectedContext
@@ -510,6 +515,7 @@ ${params.volumeOutline}
     const traceNotes = params.trace && params.trace.notes.length > 0
       ? params.trace.notes.map((note) => `- ${note}`).join("\n")
       : "- none";
+    const lengthRequirementBlock = this.buildLengthRequirementBlock(params.lengthSpec, params.language ?? "zh");
 
     if (params.language === "en") {
       return `Write chapter ${params.chapterNumber}.
@@ -531,8 +537,7 @@ ${overrideLines}
 ## Trace Notes
 ${traceNotes}
 
-Requirements:
-- Chapter body must be at least ${params.wordCount} words
+${lengthRequirementBlock}
 - Output PRE_WRITE_CHECK first, then the chapter
 - Output only PRE_WRITE_CHECK, CHAPTER_TITLE, and CHAPTER_CONTENT blocks`;
     }
@@ -556,10 +561,21 @@ ${overrideLines}
 ## 追踪说明
 ${traceNotes}
 
-要求：
-- 正文不少于${params.wordCount}字
+${lengthRequirementBlock}
 - 先输出写作自检表，再写正文
 - 只需输出 PRE_WRITE_CHECK、CHAPTER_TITLE、CHAPTER_CONTENT 三个区块`;
+  }
+
+  private buildLengthRequirementBlock(lengthSpec: LengthSpec, language: "zh" | "en"): string {
+    if (language === "en") {
+      return `Requirements:
+- Target length: ${lengthSpec.target} words
+- Acceptable range: ${lengthSpec.softMin}-${lengthSpec.softMax} words`;
+    }
+
+    return `要求：
+- 目标字数：${lengthSpec.target}字
+- 允许区间：${lengthSpec.softMin}-${lengthSpec.softMax}字`;
   }
 
   private async loadRecentChapters(
