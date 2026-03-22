@@ -129,4 +129,40 @@ describe("LengthNormalizerAgent", () => {
     expect(result.mode).toBe("compress");
     expect(result.warning).toContain("outside");
   });
+
+  it("strips explanatory wrappers from malformed normalizer output", async () => {
+    const agent = createAgent();
+    const chatSpy = vi.spyOn(BaseAgent.prototype as never, "chat").mockResolvedValue({
+      content: [
+        "我先压缩一下正文。",
+        "",
+        "```markdown",
+        "压缩后的正文。[[KEEP_ME]]",
+        "```",
+      ].join("\n"),
+      usage: ZERO_USAGE,
+    });
+    const lengthSpec = LengthSpecSchema.parse({
+      target: 220,
+      softMin: 190,
+      softMax: 250,
+      hardMin: 160,
+      hardMax: 280,
+      countingMode: "zh_chars",
+      normalizeMode: "compress",
+    });
+    const draft = "开头。" + "冗余句子。".repeat(50) + "[[KEEP_ME]]";
+
+    const result = await agent.normalizeChapter({
+      chapterContent: draft,
+      lengthSpec,
+      chapterIntent: "Preserve [[KEEP_ME]] only.",
+      reducedControlBlock: "No extra commentary.",
+    });
+
+    expect(chatSpy).toHaveBeenCalledTimes(1);
+    expect(result.normalizedContent).toBe("压缩后的正文。[[KEEP_ME]]");
+    expect(result.normalizedContent).not.toContain("我先压缩一下正文");
+    expect(result.normalizedContent).not.toContain("```");
+  });
 });

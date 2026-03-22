@@ -55,7 +55,7 @@ export class LengthNormalizerAgent extends BaseAgent {
       },
     );
 
-    const normalizedContent = response.content.trim() || input.chapterContent;
+    const normalizedContent = this.sanitizeNormalizedContent(response.content, input.chapterContent);
     const finalCount = countChapterLength(normalizedContent, input.lengthSpec.countingMode);
     const warning = this.buildWarning(finalCount, input.lengthSpec);
 
@@ -128,5 +128,45 @@ ${input.chapterContent}`;
     }
 
     return `Final count ${finalCount} is outside the soft range ${lengthSpec.softMin}-${lengthSpec.softMax} after one normalization pass.`;
+  }
+
+  private sanitizeNormalizedContent(rawContent: string, fallbackContent: string): string {
+    const trimmed = rawContent.trim();
+    if (!trimmed) return fallbackContent;
+
+    const fenced = this.extractFirstFencedBlock(trimmed);
+    if (fenced) return fenced;
+
+    if (this.looksLikeResponseWrapper(trimmed)) {
+      const stripped = this.stripCommonWrappers(trimmed);
+      if (stripped) return stripped;
+    }
+
+    return trimmed;
+  }
+
+  private extractFirstFencedBlock(content: string): string | undefined {
+    const match = content.match(/```(?:[a-zA-Z-]+)?\s*\n([\s\S]*?)\n```/);
+    if (!match) return undefined;
+    const body = match[1]?.trim();
+    return body ? body : undefined;
+  }
+
+  private looksLikeResponseWrapper(content: string): boolean {
+    return /```/.test(content) || /^(我先|下面是|以下是|Here is|I will)/i.test(content);
+  }
+
+  private stripCommonWrappers(content: string): string {
+    return content
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) =>
+        line.length > 0 &&
+        !/^```/.test(line) &&
+        !/^(我先|下面是|以下是|Here is|I will)/i.test(line) &&
+        !/^#+\s*(说明|解释|注释|analysis|analysis note)/i.test(line),
+      )
+      .join("\n")
+      .trim();
   }
 }
