@@ -377,6 +377,72 @@ describe("PipelineRunner", () => {
     }
   });
 
+  it("passes reduced control inputs into auditor and reviser in v2 mode", async () => {
+    const { root, runner, state, bookId } = await createRunnerFixture({
+      inputGovernanceMode: "v2",
+    });
+
+    await Promise.all([
+      writeFile(join(state.bookDir(bookId), "story", "current_focus.md"), "# Current Focus\n\nBring focus back to the mentor conflict.\n", "utf-8"),
+      writeFile(join(state.bookDir(bookId), "story", "volume_outline.md"), "# Volume Outline\n\n## Chapter 1\nTrack the merchant guild trail.\n", "utf-8"),
+      writeFile(join(state.bookDir(bookId), "story", "current_state.md"), "# Current State\n\n- Lin Yue still hides the broken oath token.\n", "utf-8"),
+      writeFile(join(state.bookDir(bookId), "story", "story_bible.md"), "# Story Bible\n\n- The jade seal cannot be destroyed.\n", "utf-8"),
+      writeFile(join(state.bookDir(bookId), "story", "pending_hooks.md"), "# Pending Hooks\n\n- Why the mentor vanished after the trial.\n", "utf-8"),
+    ]);
+
+    vi.spyOn(WriterAgent.prototype, "writeChapter").mockResolvedValue(
+      createWriterOutput({
+        chapterNumber: 1,
+        content: "Needs governed revision.",
+        wordCount: "Needs governed revision.".length,
+      }),
+    );
+    const auditChapter = vi.spyOn(ContinuityAuditor.prototype, "auditChapter").mockResolvedValue(
+      createAuditResult({
+        passed: false,
+        issues: [CRITICAL_ISSUE],
+        summary: "needs revision",
+      }),
+    );
+    const reviseChapter = vi.spyOn(ReviserAgent.prototype, "reviseChapter").mockResolvedValue(
+      createReviseOutput({
+        revisedContent: "Governed revised content.",
+        wordCount: "Governed revised content.".length,
+      }),
+    );
+    vi.spyOn(ChapterAnalyzerAgent.prototype, "analyzeChapter").mockResolvedValue(
+      createAnalyzedOutput({
+        content: "Governed revised content.",
+        wordCount: "Governed revised content.".length,
+      }),
+    );
+
+    try {
+      await runner.writeNextChapter(bookId);
+
+      expect(auditChapter.mock.calls[0]?.[4]).toMatchObject({
+        chapterIntent: expect.stringContaining("# Chapter Intent"),
+        contextPackage: expect.objectContaining({
+          selectedContext: expect.any(Array),
+        }),
+        ruleStack: expect.objectContaining({
+          activeOverrides: expect.any(Array),
+        }),
+      });
+      expect(reviseChapter.mock.calls[0]?.[6]).toMatchObject({
+        chapterIntent: expect.stringContaining("# Chapter Intent"),
+        contextPackage: expect.objectContaining({
+          selectedContext: expect.any(Array),
+        }),
+        ruleStack: expect.objectContaining({
+          activeOverrides: expect.any(Array),
+        }),
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("preserves the legacy fallback when input governance mode is legacy", async () => {
     const { root, runner, bookId } = await createRunnerFixture({
       inputGovernanceMode: "legacy",

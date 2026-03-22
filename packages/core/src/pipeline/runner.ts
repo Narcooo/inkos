@@ -617,6 +617,13 @@ export class PipelineRunner {
       chapterNumber,
       this.config.externalContext,
     );
+    const reducedControlInput = writeInput.chapterIntent && writeInput.contextPackage && writeInput.ruleStack
+      ? {
+          chapterIntent: writeInput.chapterIntent,
+          contextPackage: writeInput.contextPackage,
+          ruleStack: writeInput.ruleStack,
+        }
+      : undefined;
     const { profile: gp } = await this.loadGenreProfile(book.genre);
 
     // 1. Write chapter
@@ -656,6 +663,7 @@ export class PipelineRunner {
         spotFixIssues,
         "spot-fix",
         book.genre,
+        reducedControlInput,
       );
       totalUsage = PipelineRunner.addUsage(totalUsage, fixResult.tokenUsage);
       if (fixResult.revisedContent.length > 0) {
@@ -672,6 +680,7 @@ export class PipelineRunner {
       finalContent,
       chapterNumber,
       book.genre,
+      reducedControlInput,
     );
     totalUsage = PipelineRunner.addUsage(totalUsage, llmAudit.tokenUsage);
     const aiTellsResult = analyzeAITells(finalContent);
@@ -697,6 +706,7 @@ export class PipelineRunner {
           auditResult.issues,
           "spot-fix",
           book.genre,
+          reducedControlInput,
         );
         totalUsage = PipelineRunner.addUsage(totalUsage, reviseOutput.tokenUsage);
 
@@ -721,7 +731,7 @@ export class PipelineRunner {
             finalContent,
             chapterNumber,
             book.genre,
-            { temperature: 0 },
+            { ...reducedControlInput, temperature: 0 },
           );
           totalUsage = PipelineRunner.addUsage(totalUsage, reAudit.tokenUsage);
           const reAITells = analyzeAITells(finalContent);

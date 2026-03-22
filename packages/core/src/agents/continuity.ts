@@ -2,6 +2,7 @@ import { BaseAgent } from "./base.js";
 import type { GenreProfile } from "../models/genre-profile.js";
 import type { BookRules } from "../models/book-rules.js";
 import type { FanficMode } from "../models/book.js";
+import type { ContextPackage, RuleStack } from "../models/input-governance.js";
 import { readGenreProfile, readBookRules } from "./rules-reader.js";
 import { getFanficDimensionConfig, FANFIC_DIMENSIONS } from "./fanfic-dimensions.js";
 import { readFile, readdir } from "node:fs/promises";
@@ -206,7 +207,12 @@ export class ContinuityAuditor extends BaseAgent {
     chapterContent: string,
     chapterNumber: number,
     genre?: string,
-    options?: { temperature?: number },
+    options?: {
+      temperature?: number;
+      chapterIntent?: string;
+      contextPackage?: ContextPackage;
+      ruleStack?: RuleStack;
+    },
   ): Promise<AuditResult> {
     const [currentState, ledger, hooks, styleGuideRaw, subplotBoard, emotionalArcs, characterMatrix, chapterSummaries, parentCanon, fanficCanon, volumeOutline] =
       await Promise.all([
@@ -335,6 +341,12 @@ ${dimList}
     const outlineBlock = volumeOutline !== "(文件不存在)"
       ? `\n## 卷纲（用于大纲偏离检测）\n${volumeOutline}\n`
       : "";
+    const reducedControlBlock = options?.chapterIntent && options.contextPackage && options.ruleStack
+      ? this.buildReducedControlBlock(options.chapterIntent, options.contextPackage, options.ruleStack)
+      : "";
+    const styleGuideBlock = reducedControlBlock.length === 0
+      ? `\n## 文风指南\n${styleGuide}`
+      : "";
 
     const prevChapterBlock = previousChapter
       ? `\n## 上一章全文（用于衔接检查）\n${previousChapter}\n`
@@ -347,9 +359,7 @@ ${currentState}
 ${ledgerBlock}
 ## 伏笔池
 ${filteredHooks}
-${subplotBlock}${emotionalBlock}${matrixBlock}${summariesBlock}${canonBlock}${fanficCanonBlock}${outlineBlock}${prevChapterBlock}
-## 文风指南
-${styleGuide}
+${subplotBlock}${emotionalBlock}${matrixBlock}${summariesBlock}${canonBlock}${fanficCanonBlock}${reducedControlBlock || outlineBlock}${prevChapterBlock}${styleGuideBlock}
 
 ## 待审章节内容
 ${chapterContent}`;
@@ -434,6 +444,35 @@ ${chapterContent}`;
       }],
       summary: "审稿输出解析失败",
     };
+  }
+
+  private buildReducedControlBlock(
+    chapterIntent: string,
+    contextPackage: ContextPackage,
+    ruleStack: RuleStack,
+  ): string {
+    const selectedContext = contextPackage.selectedContext
+      .map((entry) => `- ${entry.source}: ${entry.reason}${entry.excerpt ? ` | ${entry.excerpt}` : ""}`)
+      .join("\n");
+    const overrides = ruleStack.activeOverrides.length > 0
+      ? ruleStack.activeOverrides
+        .map((override) => `- ${override.from} -> ${override.to}: ${override.reason} (${override.target})`)
+        .join("\n")
+      : "- none";
+
+    return `\n## 本章控制输入（由 Planner/Composer 编译）
+${chapterIntent}
+
+### 已选上下文
+${selectedContext || "- none"}
+
+### 规则栈
+- 硬护栏：${ruleStack.sections.hard.join("、") || "(无)"}
+- 软约束：${ruleStack.sections.soft.join("、") || "(无)"}
+- 诊断规则：${ruleStack.sections.diagnostic.join("、") || "(无)"}
+
+### 当前覆盖
+${overrides}\n`;
   }
 
   private extractBalancedJson(text: string): string | null {

@@ -26,8 +26,10 @@ export function buildWriterSystemPrompt(
   mode: "full" | "creative" = "full",
   fanficContext?: FanficContext,
   languageOverride?: "zh" | "en",
+  inputProfile: "legacy" | "governed" = "legacy",
 ): string {
   const isEnglish = (languageOverride ?? genreProfile.language) === "en";
+  const governed = inputProfile === "governed";
 
   const outputSection = mode === "creative"
     ? buildCreativeOutputFormat(book, genreProfile)
@@ -37,8 +39,9 @@ export function buildWriterSystemPrompt(
     ? [
         buildEnglishGenreIntro(book, genreProfile),
         buildEnglishCoreRules(book),
-        buildEnglishAntiAIRules(),
-        buildEnglishCharacterMethod(),
+        buildGovernedInputContract("en", governed),
+        !governed ? buildEnglishAntiAIRules() : "",
+        !governed ? buildEnglishCharacterMethod() : "",
         buildGenreRules(genreProfile, genreBody),
         buildProtagonistRules(bookRules),
         buildBookRulesBody(bookRulesBody),
@@ -47,19 +50,20 @@ export function buildWriterSystemPrompt(
         fanficContext ? buildFanficCanonSection(fanficContext.fanficCanon, fanficContext.fanficMode) : "",
         fanficContext ? buildCharacterVoiceProfiles(fanficContext.fanficCanon) : "",
         fanficContext ? buildFanficModeInstructions(fanficContext.fanficMode, fanficContext.allowedDeviations) : "",
-        buildEnglishPreWriteChecklist(book, genreProfile),
+        !governed ? buildEnglishPreWriteChecklist(book, genreProfile) : "",
         outputSection,
       ]
     : [
         buildGenreIntro(book, genreProfile),
         buildCoreRules(book),
-        buildAntiAIExamples(),
-        buildCharacterPsychologyMethod(),
-        buildSupportingCharacterMethod(),
-        buildReaderPsychologyMethod(),
-        buildEmotionalPacingMethod(),
-        buildImmersionTechniques(),
-        buildGoldenChaptersRules(chapterNumber),
+        buildGovernedInputContract("zh", governed),
+        !governed ? buildAntiAIExamples() : "",
+        !governed ? buildCharacterPsychologyMethod() : "",
+        !governed ? buildSupportingCharacterMethod() : "",
+        !governed ? buildReaderPsychologyMethod() : "",
+        !governed ? buildEmotionalPacingMethod() : "",
+        !governed ? buildImmersionTechniques() : "",
+        !governed ? buildGoldenChaptersRules(chapterNumber) : "",
         bookRules?.enableFullCastTracking ? buildFullCastTracking() : "",
         buildGenreRules(genreProfile, genreBody),
         buildProtagonistRules(bookRules),
@@ -69,7 +73,7 @@ export function buildWriterSystemPrompt(
         fanficContext ? buildFanficCanonSection(fanficContext.fanficCanon, fanficContext.fanficMode) : "",
         fanficContext ? buildCharacterVoiceProfiles(fanficContext.fanficCanon) : "",
         fanficContext ? buildFanficModeInstructions(fanficContext.fanficMode, fanficContext.allowedDeviations) : "",
-        buildPreWriteChecklist(book, genreProfile),
+        !governed ? buildPreWriteChecklist(book, genreProfile) : "",
         outputSection,
       ];
 
@@ -82,6 +86,26 @@ export function buildWriterSystemPrompt(
 
 function buildGenreIntro(book: BookConfig, gp: GenreProfile): string {
   return `你是一位专业的${gp.name}网络小说作家。你为${book.platform}平台写作。`;
+}
+
+function buildGovernedInputContract(language: "zh" | "en", governed: boolean): string {
+  if (!governed) return "";
+
+  if (language === "en") {
+    return `## Input Governance Contract
+
+- Chapter-specific steering comes from the provided chapter intent and composed context package.
+- The outline is the default plan, not unconditional global supremacy.
+- When the runtime rule stack records an active L4 -> L3 override, follow the current task over local planning.
+- Keep hard guardrails compact: canon, continuity facts, and explicit prohibitions still win.`;
+  }
+
+  return `## 输入治理契约
+
+- 本章具体写什么，以提供给你的 chapter intent 和 composed context package 为准。
+- 卷纲是默认规划，不是全局最高规则。
+- 当 runtime rule stack 明确记录了 L4 -> L3 的 active override 时，优先执行当前任务意图，再局部调整规划层。
+- 真正不能突破的只有硬护栏：世界设定、连续性事实、显式禁令。`;
 }
 
 // ---------------------------------------------------------------------------

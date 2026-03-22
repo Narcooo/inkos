@@ -2,6 +2,7 @@ import { BaseAgent } from "./base.js";
 import type { GenreProfile } from "../models/genre-profile.js";
 import type { BookRules } from "../models/book-rules.js";
 import type { AuditIssue } from "./continuity.js";
+import type { ContextPackage, RuleStack } from "../models/input-governance.js";
 import { readGenreProfile, readBookRules } from "./rules-reader.js";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -53,6 +54,11 @@ export class ReviserAgent extends BaseAgent {
     issues: ReadonlyArray<AuditIssue>,
     mode: ReviseMode = "rewrite",
     genre?: string,
+    options?: {
+      chapterIntent?: string;
+      contextPackage?: ContextPackage;
+      ruleStack?: RuleStack;
+    },
   ): Promise<ReviseOutput> {
     const [currentState, ledger, hooks, styleGuideRaw, volumeOutline, storyBible, characterMatrix, chapterSummaries, parentCanon, fanficCanon] = await Promise.all([
       this.readFileSafe(join(bookDir, "story/current_state.md")),
@@ -147,6 +153,12 @@ ${gp.numericalSystem ? "\n=== UPDATED_LEDGER ===\n(更新后的完整资源账�
     const fanficCanonBlock = hasFanficCanon
       ? `\n## 同人正典参照（修稿专用）\n本书为同人作品。修改时参照正典角色档案和世界规则，不可违反正典事实。角色对话必须保留原作语癖。\n${fanficCanon}\n`
       : "";
+    const reducedControlBlock = options?.chapterIntent && options.contextPackage && options.ruleStack
+      ? this.buildReducedControlBlock(options.chapterIntent, options.contextPackage, options.ruleStack)
+      : "";
+    const styleGuideBlock = reducedControlBlock.length === 0
+      ? `\n## 文风指南\n${styleGuide}`
+      : "";
 
     const userPrompt = `请修正第${chapterNumber}章。
 
@@ -158,9 +170,7 @@ ${currentState}
 ${ledgerBlock}
 ## 伏笔池
 ${hooks}
-${outlineBlock}${bibleBlock}${matrixBlock}${summariesBlock}${canonBlock}${fanficCanonBlock}
-## 文风指南
-${styleGuide}
+${reducedControlBlock || outlineBlock}${bibleBlock}${matrixBlock}${summariesBlock}${canonBlock}${fanficCanonBlock}${styleGuideBlock}
 
 ## 待修正章节
 ${chapterContent}`;
@@ -212,5 +222,34 @@ ${chapterContent}`;
     } catch {
       return "(文件不存在)";
     }
+  }
+
+  private buildReducedControlBlock(
+    chapterIntent: string,
+    contextPackage: ContextPackage,
+    ruleStack: RuleStack,
+  ): string {
+    const selectedContext = contextPackage.selectedContext
+      .map((entry) => `- ${entry.source}: ${entry.reason}${entry.excerpt ? ` | ${entry.excerpt}` : ""}`)
+      .join("\n");
+    const overrides = ruleStack.activeOverrides.length > 0
+      ? ruleStack.activeOverrides
+        .map((override) => `- ${override.from} -> ${override.to}: ${override.reason} (${override.target})`)
+        .join("\n")
+      : "- none";
+
+    return `\n## 本章控制输入（由 Planner/Composer 编译）
+${chapterIntent}
+
+### 已选上下文
+${selectedContext || "- none"}
+
+### 规则栈
+- 硬护栏：${ruleStack.sections.hard.join("、") || "(无)"}
+- 软约束：${ruleStack.sections.soft.join("、") || "(无)"}
+- 诊断规则：${ruleStack.sections.diagnostic.join("、") || "(无)"}
+
+### 当前覆盖
+${overrides}\n`;
   }
 }
