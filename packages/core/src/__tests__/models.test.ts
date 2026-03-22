@@ -11,6 +11,12 @@ import {
   LLMConfigSchema,
   NotifyChannelSchema,
 } from "../models/project.js";
+import {
+  ChapterIntentSchema,
+  ContextPackageSchema,
+  RuleStackSchema,
+  ChapterTraceSchema,
+} from "../models/input-governance.js";
 
 // ---------------------------------------------------------------------------
 // BookConfig
@@ -436,5 +442,169 @@ describe("NotifyChannelSchema", () => {
         webhookUrl: "https://hooks.slack.com/xxx",
       }),
     ).toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Input Governance
+// ---------------------------------------------------------------------------
+
+describe("ChapterIntentSchema", () => {
+  it("accepts a valid chapter intent", () => {
+    const result = ChapterIntentSchema.parse({
+      chapter: 12,
+      goal: "Pull focus back to the mentor conflict",
+      outlineNode: "Volume 2 / Chapter 12",
+      mustKeep: ["Protagonist remains injured"],
+      mustAvoid: ["Do not reveal the mastermind"],
+      styleEmphasis: ["dialogue tension", "character conflict"],
+      conflicts: [
+        {
+          type: "outline_vs_focus",
+          resolution: "allow local outline deferral",
+        },
+      ],
+    });
+
+    expect(result.chapter).toBe(12);
+    expect(result.goal).toContain("mentor conflict");
+    expect(result.conflicts).toHaveLength(1);
+  });
+
+  it("defaults optional arrays to empty", () => {
+    const result = ChapterIntentSchema.parse({
+      chapter: 1,
+      goal: "Establish the protagonist's first setback",
+    });
+
+    expect(result.mustKeep).toEqual([]);
+    expect(result.mustAvoid).toEqual([]);
+    expect(result.styleEmphasis).toEqual([]);
+    expect(result.conflicts).toEqual([]);
+  });
+
+  it("rejects invalid chapter numbers", () => {
+    expect(() =>
+      ChapterIntentSchema.parse({
+        chapter: 0,
+        goal: "Bad chapter",
+      }),
+    ).toThrow();
+  });
+});
+
+describe("ContextPackageSchema", () => {
+  it("accepts selected context with provenance", () => {
+    const result = ContextPackageSchema.parse({
+      chapter: 8,
+      selectedContext: [
+        {
+          source: "story/current_focus.md",
+          reason: "Current focus requests mentor conflict recovery",
+          excerpt: "Recent chapters should center the mentor/student break.",
+        },
+        {
+          source: "story/chapter_summaries.md#10",
+          reason: "Provide prior conflict context",
+        },
+      ],
+    });
+
+    expect(result.chapter).toBe(8);
+    expect(result.selectedContext).toHaveLength(2);
+  });
+
+  it("rejects context entries without source", () => {
+    expect(() =>
+      ContextPackageSchema.parse({
+        chapter: 8,
+        selectedContext: [
+          {
+            reason: "Missing source",
+          },
+        ],
+      }),
+    ).toThrow();
+  });
+});
+
+describe("RuleStackSchema", () => {
+  it("accepts explicit layer precedence and overrides", () => {
+    const result = RuleStackSchema.parse({
+      layers: [
+        { id: "L1", name: "hard_facts", precedence: 100, scope: "global" },
+        { id: "L2", name: "author_intent", precedence: 80, scope: "book" },
+        { id: "L3", name: "planning", precedence: 60, scope: "arc" },
+        { id: "L4", name: "current_task", precedence: 70, scope: "local" },
+      ],
+      overrideEdges: [
+        { from: "L4", to: "L3", allowed: true, scope: "current_chapter" },
+        { from: "L4", to: "L2", allowed: false, scope: "current_chapter" },
+      ],
+      activeOverrides: [
+        {
+          from: "L4",
+          to: "L3",
+          target: "volume_outline.chapter_12",
+          reason: "Current focus overrides the local plan",
+        },
+      ],
+    });
+
+    expect(result.layers[0]?.id).toBe("L1");
+    expect(result.activeOverrides).toHaveLength(1);
+  });
+
+  it("defaults override lists to empty", () => {
+    const result = RuleStackSchema.parse({
+      layers: [
+        { id: "L1", name: "hard_facts", precedence: 100, scope: "global" },
+      ],
+    });
+
+    expect(result.overrideEdges).toEqual([]);
+    expect(result.activeOverrides).toEqual([]);
+  });
+
+  it("rejects empty rule stacks", () => {
+    expect(() =>
+      RuleStackSchema.parse({
+        layers: [],
+      }),
+    ).toThrow();
+  });
+});
+
+describe("ChapterTraceSchema", () => {
+  it("accepts trace metadata for planner/composer output", () => {
+    const result = ChapterTraceSchema.parse({
+      chapter: 8,
+      plannerInputs: [
+        "story/author_intent.md",
+        "story/current_focus.md",
+      ],
+      composerInputs: [
+        "story/runtime/chapter-0008.intent.md",
+      ],
+      selectedSources: [
+        "story/current_state.md",
+        "story/chapter_summaries.md#7",
+      ],
+      notes: ["current_focus locally overrides planning"],
+    });
+
+    expect(result.plannerInputs).toContain("story/author_intent.md");
+    expect(result.notes).toHaveLength(1);
+  });
+
+  it("defaults notes to empty", () => {
+    const result = ChapterTraceSchema.parse({
+      chapter: 2,
+      plannerInputs: [],
+      composerInputs: [],
+      selectedSources: [],
+    });
+
+    expect(result.notes).toEqual([]);
   });
 });

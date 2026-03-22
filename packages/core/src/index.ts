@@ -7,6 +7,28 @@ export { type GenreProfile, type ParsedGenreProfile, GenreProfileSchema, parseGe
 export { type BookRules, type ParsedBookRules, BookRulesSchema, parseBookRules } from "./models/book-rules.js";
 export { type DetectionHistoryEntry, type DetectionStats } from "./models/detection.js";
 export { type StyleProfile } from "./models/style-profile.js";
+export {
+  type ChapterConflict,
+  type ChapterIntent,
+  type ContextSource,
+  type ContextPackage,
+  type RuleLayerScope,
+  type RuleLayer,
+  type OverrideEdge,
+  type ActiveOverride,
+  type RuleStack,
+  type ChapterTrace,
+  ChapterConflictSchema,
+  ChapterIntentSchema,
+  ContextSourceSchema,
+  ContextPackageSchema,
+  RuleLayerScopeSchema,
+  RuleLayerSchema,
+  OverrideEdgeSchema,
+  ActiveOverrideSchema,
+  RuleStackSchema,
+  ChapterTraceSchema,
+} from "./models/input-governance.js";
 
 // LLM
 export { createLLMClient, chatCompletion, chatWithTools, createStreamMonitor, PartialResponseError, type LLMClient, type LLMResponse, type LLMMessage, type ToolDefinition, type ToolCall, type AgentMessage, type ChatWithToolsResult, type StreamProgress, type OnStreamProgress } from "./llm/provider.js";
