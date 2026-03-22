@@ -107,6 +107,41 @@ inkos status
    inkos review approve-all
    ```
 
+### Workflow 2.5: Steering Chapter Focus Before Writing
+
+Use this when the user says things like "pull focus back to the mentor conflict", "pause the merchant guild subplot", or "change what the next chapter should prioritize".
+
+1. **Update the book-level control docs when needed**:
+   - Use `update_author_intent` to change the long-horizon identity of the book
+   - Use `update_current_focus` to change the next 1-3 chapters' focus
+
+2. **Compile the next chapter intent**:
+   ```text
+   plan_chapter(bookId, guidance?)
+   ```
+   - Generates `story/runtime/chapter-XXXX.intent.md`
+   - Use this to verify what the system thinks the next chapter should do
+
+3. **Compose the actual runtime input package**:
+   ```text
+   compose_chapter(bookId, guidance?)
+   ```
+   - Generates `story/runtime/chapter-XXXX.context.json`
+   - Generates `story/runtime/chapter-XXXX.rule-stack.yaml`
+   - Generates `story/runtime/chapter-XXXX.trace.json`
+
+4. **Only then write**:
+   - `write_draft` if the user wants intermediate review
+   - `write_full_pipeline` if they want the usual write → audit → revise flow
+
+Recommended orchestration:
+- user asks to redirect focus
+- `update_current_focus`
+- `plan_chapter`
+- `compose_chapter`
+- inspect the resulting intent/paths
+- `write_draft` or `write_full_pipeline`
+
 ### Workflow 3: Import Existing Chapters & Continue
 
 Use this when you have an existing novel (or partial novel) and want InkOS to pick up where it left off.
@@ -257,6 +292,28 @@ inkos agent "写一部都市题材的小说，主角是一个年轻律师，第�
 ```
 - Agent interprets natural language and invokes appropriate commands
 - Useful for complex multi-step requests
+
+## Input Governance Tools
+
+These tools are the preferred control surface for chapter steering:
+
+- `plan_chapter(bookId, guidance?)`
+  - Generates chapter intent for the next chapter
+  - Use before writing when the user wants to change focus
+
+- `compose_chapter(bookId, guidance?)`
+  - Generates runtime context/rule-stack/trace artifacts
+  - Use after planning and before writing
+
+- `update_author_intent(bookId, content)`
+  - Rewrites `story/author_intent.md`
+  - Use for long-horizon changes to the book's identity
+
+- `update_current_focus(bookId, content)`
+  - Rewrites `story/current_focus.md`
+  - Use for local steering over the next 1-3 chapters
+
+`write_truth_file` remains available for broad file edits, but prefer the dedicated control tools above for input-governance changes.
 
 ## Key Concepts
 

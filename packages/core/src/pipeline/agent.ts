@@ -18,6 +18,30 @@ const TOOLS: ReadonlyArray<ToolDefinition> = [
     },
   },
   {
+    name: "plan_chapter",
+    description: "为下一章生成 chapter intent（章节目标、必须保留、冲突说明）。适合在正式写作前检查当前控制输入是否正确。",
+    parameters: {
+      type: "object",
+      properties: {
+        bookId: { type: "string", description: "书籍ID" },
+        guidance: { type: "string", description: "本章额外指导（可选，自然语言）" },
+      },
+      required: ["bookId"],
+    },
+  },
+  {
+    name: "compose_chapter",
+    description: "为下一章生成 context/rule-stack/trace 运行时产物。适合在写作前确认系统实际会带哪些上下文和优先级。",
+    parameters: {
+      type: "object",
+      properties: {
+        bookId: { type: "string", description: "书籍ID" },
+        guidance: { type: "string", description: "本章额外指导（可选，自然语言）" },
+      },
+      required: ["bookId"],
+    },
+  },
+  {
     name: "audit_chapter",
     description: "审计指定章节。检查连续性、OOC、数值、伏笔等问题。",
     parameters: {
@@ -62,6 +86,30 @@ const TOOLS: ReadonlyArray<ToolDefinition> = [
         brief: { type: "string", description: "创作简述/需求（自然语言）" },
       },
       required: ["title", "genre", "platform"],
+    },
+  },
+  {
+    name: "update_author_intent",
+    description: "更新书级长期意图文档 author_intent.md。用于修改这本书长期想成为什么。",
+    parameters: {
+      type: "object",
+      properties: {
+        bookId: { type: "string", description: "书籍ID" },
+        content: { type: "string", description: "author_intent.md 的完整新内容" },
+      },
+      required: ["bookId", "content"],
+    },
+  },
+  {
+    name: "update_current_focus",
+    description: "更新当前关注点文档 current_focus.md。用于把最近几章的注意力拉回某条主线或冲突。",
+    parameters: {
+      type: "object",
+      properties: {
+        bookId: { type: "string", description: "书籍ID" },
+        content: { type: "string", description: "current_focus.md 的完整新内容" },
+      },
+      required: ["bookId", "content"],
     },
   },
   {
@@ -199,9 +247,13 @@ export async function runAgentLoop(
 | get_book_status | 查看书的章数、字数、审计状态 |
 | read_truth_files | 读取长期记忆（状态卡、资源账本、伏笔池）和设定（世界观、卷纲、本书规则） |
 | create_book | 建书，生成世界观、卷纲、本书规则（自动加载题材 genre profile） |
+| plan_chapter | 先生成 chapter intent，确认本章目标/冲突/优先级 |
+| compose_chapter | 再生成 runtime context/rule stack，确认实际输入 |
 | write_draft | 写一章草稿（自动加载 genre profile + book_rules） |
 | audit_chapter | 审计章节（32维度，按题材条件启用，含AI痕迹+敏感词检测） |
 | revise_chapter | 修订章节（支持 polish/rewrite/rework/spot-fix/anti-detect 五种模式） |
+| update_author_intent | 更新书级长期意图 author_intent.md |
+| update_current_focus | 更新当前关注点 current_focus.md |
 | write_full_pipeline | 完整管线：写 → 审 → 改（如需要） |
 | scan_market | 扫描平台排行榜，分析市场趋势 |
 | web_fetch | 抓取指定URL的文本内容 |
@@ -212,7 +264,11 @@ export async function runAgentLoop(
 
 ## 长期记忆
 
-每本书有七个长期记忆文件，是 Agent 写作和审计的事实依据：
+每本书有两层控制面：
+- **author_intent.md** — 这本书长期想成为什么
+- **current_focus.md** — 最近 1-3 章要把注意力拉回哪里
+
+以及七个长期记忆文件，是 Agent 写作和审计的事实依据：
 - **current_state.md** — 角色位置、关系、已知信息、当前冲突
 - **particle_ledger.md** — 物品/资源账本，每笔增减有据可查
 - **pending_hooks.md** — 已埋伏笔、推进状态、预期回收时机
@@ -232,6 +288,7 @@ export async function runAgentLoop(
 - 用户提供了题材/创意但没说要扫描市场 → 跳过 scan_market，直接 create_book
 - 用户说了书名/bookId → 直接操作，不需要先 list_books
 - 每完成一步，简要汇报进展
+- 当用户要求“先把注意力拉回某条线”时，优先 update_current_focus，然后 plan_chapter / compose_chapter，再决定是否 write_draft 或 write_full_pipeline
 - 仿写流程：用户提供参考文本 → import_style → 生成 style_guide.md，后续写作自动参照
 - 番外流程：先 create_book 建番外书 → import_canon 导入正传正典 → 然后正常 write_draft
 - 续写流程：用户提供已有章节 → import_chapters → 然后 write_draft 续写`,
@@ -279,7 +336,7 @@ export async function runAgentLoop(
   return lastAssistantMessage;
 }
 
-async function executeTool(
+export async function executeAgentTool(
   pipeline: PipelineRunner,
   state: import("../state/manager.js").StateManager,
   config: PipelineConfig,
@@ -287,6 +344,22 @@ async function executeTool(
   args: Record<string, unknown>,
 ): Promise<string> {
   switch (name) {
+    case "plan_chapter": {
+      const result = await pipeline.planChapter(
+        args.bookId as string,
+        args.guidance as string | undefined,
+      );
+      return JSON.stringify(result);
+    }
+
+    case "compose_chapter": {
+      const result = await pipeline.composeChapter(
+        args.bookId as string,
+        args.guidance as string | undefined,
+      );
+      return JSON.stringify(result);
+    }
+
     case "write_draft": {
       const result = await pipeline.writeDraft(
         args.bookId as string,
@@ -352,6 +425,24 @@ async function executeTool(
     case "get_book_status": {
       const result = await pipeline.getBookStatus(args.bookId as string);
       return JSON.stringify(result);
+    }
+
+    case "update_author_intent": {
+      await state.ensureControlDocuments(args.bookId as string);
+      const { writeFile } = await import("node:fs/promises");
+      const { join } = await import("node:path");
+      const storyDir = join(state.bookDir(args.bookId as string), "story");
+      await writeFile(join(storyDir, "author_intent.md"), args.content as string, "utf-8");
+      return JSON.stringify({ bookId: args.bookId, file: "story/author_intent.md", written: true });
+    }
+
+    case "update_current_focus": {
+      await state.ensureControlDocuments(args.bookId as string);
+      const { writeFile } = await import("node:fs/promises");
+      const { join } = await import("node:path");
+      const storyDir = join(state.bookDir(args.bookId as string), "story");
+      await writeFile(join(storyDir, "current_focus.md"), args.content as string, "utf-8");
+      return JSON.stringify({ bookId: args.bookId, file: "story/current_focus.md", written: true });
     }
 
     case "read_truth_files": {
@@ -466,6 +557,16 @@ async function executeTool(
     default:
       return JSON.stringify({ error: `Unknown tool: ${name}` });
   }
+}
+
+async function executeTool(
+  pipeline: PipelineRunner,
+  state: import("../state/manager.js").StateManager,
+  config: PipelineConfig,
+  name: string,
+  args: Record<string, unknown>,
+): Promise<string> {
+  return executeAgentTool(pipeline, state, config, name, args);
 }
 
 /** Export tool definitions so external systems can reference them. */
