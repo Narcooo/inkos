@@ -6,6 +6,12 @@ import type { ChapterMeta } from "../models/chapter.js";
 export class StateManager {
   constructor(private readonly projectRoot: string) {}
 
+  private static readonly defaultAuthorIntent =
+    "# Author Intent\n\n(Describe the long-horizon vision for this book here.)\n";
+
+  private static readonly defaultCurrentFocus =
+    "# Current Focus\n\n## Active Focus\n\n(Describe what the next 1-3 chapters should prioritize.)\n";
+
   async ensureControlDocuments(bookId: string, authorIntent?: string): Promise<void> {
     const storyDir = join(this.bookDir(bookId), "story");
     const runtimeDir = join(storyDir, "runtime");
@@ -17,13 +23,30 @@ export class StateManager {
       join(storyDir, "author_intent.md"),
       authorIntent?.trim()
         ? authorIntent.trimEnd() + "\n"
-        : "# Author Intent\n\n(Describe the long-horizon vision for this book here.)\n",
+        : StateManager.defaultAuthorIntent,
     );
 
     await this.writeIfMissing(
       join(storyDir, "current_focus.md"),
-      "# Current Focus\n\n## Active Focus\n\n(Describe what the next 1-3 chapters should prioritize.)\n",
+      StateManager.defaultCurrentFocus,
     );
+  }
+
+  async loadControlDocuments(bookId: string): Promise<{
+    authorIntent: string;
+    currentFocus: string;
+    runtimeDir: string;
+  }> {
+    await this.ensureControlDocuments(bookId);
+
+    const storyDir = join(this.bookDir(bookId), "story");
+    const runtimeDir = join(storyDir, "runtime");
+    const [authorIntent, currentFocus] = await Promise.all([
+      readFile(join(storyDir, "author_intent.md"), "utf-8"),
+      readFile(join(storyDir, "current_focus.md"), "utf-8"),
+    ]);
+
+    return { authorIntent, currentFocus, runtimeDir };
   }
 
   async acquireBookLock(bookId: string): Promise<() => Promise<void>> {

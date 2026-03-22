@@ -257,6 +257,33 @@ describe("PipelineRunner", () => {
     }
   });
 
+  it("bootstraps missing control documents for legacy books before writing", async () => {
+    const { root, runner, bookId } = await createRunnerFixture();
+
+    vi.spyOn(WriterAgent.prototype, "writeChapter").mockResolvedValue(
+      createWriterOutput({
+        chapterNumber: 1,
+        content: "Legacy chapter body.",
+        wordCount: "Legacy chapter body.".length,
+      }),
+    );
+
+    try {
+      await runner.writeDraft(bookId);
+
+      const storyDir = join(root, "books", bookId, "story");
+      const authorIntent = await readFile(join(storyDir, "author_intent.md"), "utf-8");
+      const currentFocus = await readFile(join(storyDir, "current_focus.md"), "utf-8");
+      const runtimeDir = await stat(join(storyDir, "runtime"));
+
+      expect(authorIntent).toContain("Author Intent");
+      expect(currentFocus).toContain("Current Focus");
+      expect(runtimeDir.isDirectory()).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("uses the latest revised content as the input for follow-up spot-fix revisions", async () => {
     const { root, runner, bookId } = await createRunnerFixture();
 

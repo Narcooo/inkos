@@ -266,6 +266,7 @@ export class PipelineRunner {
   async writeDraft(bookId: string, context?: string, wordCount?: number): Promise<DraftResult> {
     const releaseLock = await this.state.acquireBookLock(bookId);
     try {
+      await this.state.ensureControlDocuments(bookId);
       const book = await this.state.loadBookConfig(bookId);
       const bookDir = this.state.bookDir(bookId);
       const chapterNumber = await this.state.getNextChapterNumber(bookId);
@@ -538,6 +539,7 @@ export class PipelineRunner {
   }
 
   private async _writeNextChapterLocked(bookId: string, wordCount?: number, temperatureOverride?: number): Promise<ChapterPipelineResult> {
+    await this.state.ensureControlDocuments(bookId);
     const book = await this.state.loadBookConfig(bookId);
     const bookDir = this.state.bookDir(bookId);
     const chapterNumber = await this.state.getNextChapterNumber(bookId);

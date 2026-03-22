@@ -410,5 +410,21 @@ describe("StateManager", () => {
       expect(currentFocus).toContain("Current Focus");
       expect(runtimeStat.isDirectory()).toBe(true);
     });
+
+    it("bootstraps and returns safe defaults for legacy books", async () => {
+      const storyDir = join(manager.bookDir("legacy-book"), "story");
+      await mkdir(storyDir, { recursive: true });
+      await writeFile(
+        join(storyDir, "story_bible.md"),
+        "# Story Bible\n\nLegacy books may not have control docs yet.\n",
+        "utf-8",
+      );
+
+      const controlDocs = await manager.loadControlDocuments("legacy-book");
+
+      expect(controlDocs.authorIntent).toContain("# Author Intent");
+      expect(controlDocs.currentFocus).toContain("# Current Focus");
+      expect(controlDocs.runtimeDir).toBe(join(storyDir, "runtime"));
+    });
   });
 });
