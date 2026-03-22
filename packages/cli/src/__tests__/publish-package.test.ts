@@ -9,6 +9,9 @@ import { describe, expect, it } from "vitest";
 const testDir = dirname(fileURLToPath(import.meta.url));
 const cliDir = resolve(testDir, "..", "..");
 const workspaceRoot = resolve(cliDir, "..", "..");
+const sourceCliPackageJsonPromise = readFile(resolve(cliDir, "package.json"), "utf-8").then((raw) =>
+  JSON.parse(raw),
+);
 
 function runNpm(args: string[], cwd: string) {
   const npmCliPath = resolve(dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js");
@@ -37,7 +40,7 @@ async function extractPackedPackageJson(packDir: string) {
   });
 }
 
-describe("publish packaging", () => {
+describe.sequential("publish packaging", () => {
   it("rewrites workspace package versions for canary publishing", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "inkos-version-script-"));
     const tempPackagesDir = join(tempRoot, "packages");
@@ -96,13 +99,13 @@ describe("publish packaging", () => {
   });
 
   it("keeps source CLI dependencies linked through the workspace protocol", async () => {
-    const cliPackageJson = JSON.parse(await readFile(resolve(cliDir, "package.json"), "utf-8"));
+    const cliPackageJson = await sourceCliPackageJsonPromise;
 
     expect(cliPackageJson.dependencies["@actalk/inkos-core"]).toBe("workspace:*");
   });
 
   it("verifies publishable manifests before npm publish runs", async () => {
-    const cliPackageJson = JSON.parse(await readFile(resolve(cliDir, "package.json"), "utf-8"));
+    const cliPackageJson = await sourceCliPackageJsonPromise;
     const corePackageJson = JSON.parse(
       await readFile(resolve(workspaceRoot, "packages/core/package.json"), "utf-8"),
     );
