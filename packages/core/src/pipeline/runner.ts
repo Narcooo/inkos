@@ -132,37 +132,49 @@ export class PipelineRunner {
     if (typeof override === "string") {
       return { model: override, client: this.config.client };
     }
-    // Full override — needs its own client if baseUrl differs
-    if (!override.baseUrl) {
+    // Full override — needs its own client if baseUrl or other parameters differ
+    if (
+      !override.baseUrl &&
+      !override.temperature &&
+      !override.maxTokens &&
+      !override.thinkingBudget &&
+      !override.reasoningEffort
+    ) {
       return { model: override.model, client: this.config.client };
     }
+
     const base = this.config.defaultLLMConfig;
     const provider = override.provider ?? base?.provider ?? "custom";
+    const baseUrl = override.baseUrl ?? base?.baseUrl;
     const apiKeySource = override.apiKeyEnv
       ? `env:${override.apiKeyEnv}`
       : `base:${base?.apiKey ?? ""}`;
     const stream = override.stream ?? base?.stream ?? true;
     const apiFormat = base?.apiFormat ?? "chat";
+
     const cacheKey = [
       provider,
-      override.baseUrl,
+      baseUrl,
       apiKeySource,
       `stream:${stream}`,
       `format:${apiFormat}`,
+      `temp:${override.temperature ?? ""}`,
+      `max:${override.maxTokens ?? ""}`,
+      `re:${override.reasoningEffort ?? ""}`,
     ].join("|");
+
     let client = this.agentClients.get(cacheKey);
     if (!client) {
-      const apiKey = override.apiKeyEnv
-        ? process.env[override.apiKeyEnv] ?? ""
-        : base?.apiKey ?? "";
+      const apiKey = override.apiKeyEnv ? process.env[override.apiKeyEnv] ?? "" : base?.apiKey ?? "";
       client = createLLMClient({
         provider,
-        baseUrl: override.baseUrl,
+        baseUrl: baseUrl!,
         apiKey,
         model: override.model,
-        temperature: base?.temperature ?? 0.7,
-        maxTokens: base?.maxTokens ?? 8192,
-        thinkingBudget: base?.thinkingBudget ?? 0,
+        temperature: override.temperature ?? base?.temperature ?? 0.7,
+        maxTokens: override.maxTokens ?? base?.maxTokens ?? 8192,
+        thinkingBudget: override.thinkingBudget ?? base?.thinkingBudget ?? 0,
+        reasoningEffort: override.reasoningEffort ?? base?.reasoningEffort,
         apiFormat,
         stream,
       });
