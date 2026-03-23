@@ -105,7 +105,7 @@ export class WriterAgent extends BaseAgent {
         }
       : undefined;
 
-    // ── Phase 1: Creative writing (temperature 0.7) ──
+    // ── Phase 1: Creative writing (temperature override > agent default) ──
     const resolvedLanguage = book.language ?? genreProfile.language;
     const creativeSystemPrompt = buildWriterSystemPrompt(
       book, genreProfile, bookRules, bookRulesBody, genreBody, styleGuide, styleFingerprint,
@@ -148,7 +148,7 @@ export class WriterAgent extends BaseAgent {
       language: book.language ?? genreProfile.language,
     });
 
-    const creativeTemperature = input.temperatureOverride ?? 0.7;
+    const creativeTemperature = input.temperatureOverride ?? this.ctx.client.defaults.temperature;
 
     this.ctx.logger?.info(`Phase 1: creative writing for chapter ${chapterNumber}`);
 

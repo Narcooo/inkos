@@ -23,7 +23,7 @@ configCommand
 
       const KNOWN_KEYS = new Set([
         "llm.provider", "llm.baseUrl", "llm.model", "llm.temperature",
-        "llm.maxTokens", "llm.thinkingBudget", "llm.apiFormat", "llm.stream",
+        "llm.maxTokens", "llm.thinkingBudget", "llm.reasoningEffort", "llm.apiFormat", "llm.stream",
         "daemon.schedule.radarCron", "daemon.schedule.writeCron",
         "daemon.maxConcurrentBooks", "daemon.chaptersPerCycle",
         "daemon.retryDelayMs", "daemon.cooldownAfterChapterMs",
@@ -94,6 +94,7 @@ configCommand
   .option("--max-tokens <n>", "Max output tokens")
   .option("--thinking-budget <n>", "Anthropic thinking budget")
   .option("--api-format <format>", "API format (chat / responses)")
+  .option("--reasoning-effort <level>", "Reasoning effort (low / medium / high)")
   .option("--lang <language>", "Default writing language: zh (Chinese) or en (English)")
   .action(async (opts) => {
     try {
@@ -110,6 +111,7 @@ configCommand
       if (opts.maxTokens) lines.push(`INKOS_LLM_MAX_TOKENS=${opts.maxTokens}`);
       if (opts.thinkingBudget) lines.push(`INKOS_LLM_THINKING_BUDGET=${opts.thinkingBudget}`);
       if (opts.apiFormat) lines.push(`INKOS_LLM_API_FORMAT=${opts.apiFormat}`);
+      if (opts.reasoningEffort) lines.push(`INKOS_LLM_REASONING_EFFORT=${opts.reasoningEffort}`);
       if (opts.lang) lines.push(`INKOS_DEFAULT_LANGUAGE=${opts.lang}`);
 
       await writeFile(GLOBAL_ENV_PATH, lines.join("\n") + "\n", "utf-8");
