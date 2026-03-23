@@ -20,6 +20,19 @@ export function countChapterLength(
   return normalized.replace(/\s+/g, "").length;
 }
 
+export function resolveLengthCountingMode(
+  language: LengthLanguage = "zh",
+): LengthCountingMode {
+  return language === "en" ? "en_words" : "zh_chars";
+}
+
+export function formatLengthCount(
+  count: number,
+  countingMode: LengthCountingMode,
+): string {
+  return countingMode === "en_words" ? `${count} words` : `${count}字`;
+}
+
 export function buildLengthSpec(
   target: number,
   language: LengthLanguage = "zh",
@@ -37,7 +50,7 @@ export function buildLengthSpec(
     softMax,
     hardMin,
     hardMax,
-    countingMode: language === "en" ? "en_words" : "zh_chars",
+    countingMode: resolveLengthCountingMode(language),
     normalizeMode: "none",
   };
 }

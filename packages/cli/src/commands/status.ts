@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { StateManager } from "@actalk/inkos-core";
+import { StateManager, formatLengthCount, readGenreProfile, resolveLengthCountingMode } from "@actalk/inkos-core";
 import { findProjectRoot, log, logError } from "../utils.js";
 
 export const statusCommand = new Command("status")
@@ -33,6 +33,8 @@ export const statusCommand = new Command("status")
         const book = await state.loadBookConfig(id);
         const index = await state.loadChapterIndex(id);
         const nextChapter = await state.getNextChapterNumber(id);
+        const { profile: genreProfile } = await readGenreProfile(root, book.genre);
+        const countingMode = resolveLengthCountingMode(book.language ?? genreProfile.language);
 
         const approved = index.filter((ch) => ch.status === "approved").length;
         const pending = index.filter(
@@ -80,7 +82,7 @@ export const statusCommand = new Command("status")
             log("");
             for (const ch of index) {
               const icon = ch.status === "approved" ? "+" : ch.status === "audit-failed" ? "!" : "~";
-              log(`    [${icon}] Ch.${ch.number} "${ch.title}" | ${ch.wordCount}字 | ${ch.status}`);
+              log(`    [${icon}] Ch.${ch.number} "${ch.title}" | ${formatLengthCount(ch.wordCount, countingMode)} | ${ch.status}`);
               if (ch.status === "audit-failed" && ch.auditIssues.length > 0) {
                 const criticals = ch.auditIssues.filter((i: string) => i.startsWith("[critical]"));
                 const warnings = ch.auditIssues.filter((i: string) => i.startsWith("[warning]"));

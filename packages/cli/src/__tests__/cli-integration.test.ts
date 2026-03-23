@@ -171,6 +171,47 @@ describe("CLI integration", () => {
       const { exitCode, stderr } = runStderr(["status", "nonexistent"]);
       expect(exitCode).not.toBe(0);
     });
+
+    it("shows English chapter counts in words for chapter rows", async () => {
+      const bookDir = join(projectDir, "books", "english-status");
+      await mkdir(join(bookDir, "chapters"), { recursive: true });
+      await writeFile(
+        join(bookDir, "book.json"),
+        JSON.stringify({
+          id: "english-status",
+          title: "English Status Book",
+          platform: "other",
+          genre: "other",
+          status: "active",
+          targetChapters: 10,
+          chapterWordCount: 2200,
+          language: "en",
+          createdAt: "2026-03-22T00:00:00.000Z",
+          updatedAt: "2026-03-22T00:00:00.000Z",
+        }, null, 2),
+        "utf-8",
+      );
+      await writeFile(
+        join(bookDir, "chapters", "index.json"),
+        JSON.stringify([
+          {
+            number: 1,
+            title: "A Quiet Sky",
+            status: "ready-for-review",
+            wordCount: 7,
+            createdAt: "2026-03-22T00:00:00.000Z",
+            updatedAt: "2026-03-22T00:00:00.000Z",
+            auditIssues: [],
+            lengthWarnings: [],
+          },
+        ], null, 2),
+        "utf-8",
+      );
+
+      const output = run(["status", "english-status", "--chapters"]);
+      expect(output).toContain('Ch.1 "A Quiet Sky" | 7 words | ready-for-review');
+      expect(output).not.toContain("7字");
+    });
   });
 
   describe("inkos doctor", () => {

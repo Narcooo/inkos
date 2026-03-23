@@ -108,7 +108,7 @@ function extractNames(text: string): Set<string> {
 
 function isHeaderRow(line: string): boolean {
   // First data-like row in a table (contains column names)
-  return /\|\s*(章节|角色|支线|hook_id|Chapter|Character|Subplot)/i.test(line);
+  return /^\|\s*(章节|角色|支线|hook_id|Chapter|Character|Subplot)/i.test(line);
 }
 
 /**

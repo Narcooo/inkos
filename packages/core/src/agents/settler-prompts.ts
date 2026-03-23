@@ -143,6 +143,7 @@ export function buildSettlerUserPrompt(params: {
   readonly characterMatrix: string;
   readonly volumeOutline: string;
   readonly observations?: string;
+  readonly selectedEvidenceBlock?: string;
 }): string {
   const ledgerBlock = params.ledger
     ? `\n## 当前资源账本\n${params.ledger}\n`
@@ -167,6 +168,9 @@ export function buildSettlerUserPrompt(params: {
   const observationsBlock = params.observations
     ? `\n## 观察日志（由 Observer 提取，包含本章所有事实变化）\n${params.observations}\n\n基于以上观察日志和正文，更新所有追踪文件。确保观察日志中的每一项变化都反映在对应的文件中。\n`
     : "";
+  const selectedEvidenceBlock = params.selectedEvidenceBlock
+    ? `\n## 已选长程证据\n${params.selectedEvidenceBlock}\n`
+    : "";
 
   return `请分析第${params.chapterNumber}章「${params.title}」的正文，更新所有追踪文件。
 ${observationsBlock}
@@ -179,7 +183,7 @@ ${params.currentState}
 ${ledgerBlock}
 ## 当前伏笔池
 ${params.hooks}
-${summariesBlock}${subplotBlock}${emotionalBlock}${matrixBlock}
+${selectedEvidenceBlock}${summariesBlock}${subplotBlock}${emotionalBlock}${matrixBlock}
 ## 卷纲
 ${params.volumeOutline}
 

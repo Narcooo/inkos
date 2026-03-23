@@ -137,8 +137,8 @@ ${input.chapterContent}`;
     const fenced = this.extractFirstFencedBlock(trimmed);
     if (fenced) return fenced;
 
-    if (this.looksLikeResponseWrapper(trimmed)) {
-      const stripped = this.stripCommonWrappers(trimmed);
+    const stripped = this.stripCommonWrappers(trimmed);
+    if (stripped !== undefined) {
       return stripped || fallbackContent;
     }
 
@@ -152,21 +152,48 @@ ${input.chapterContent}`;
     return body ? body : undefined;
   }
 
-  private looksLikeResponseWrapper(content: string): boolean {
-    return /```/.test(content) || /^(我先|下面是|以下是|Here is|I will)/i.test(content);
+  private stripCommonWrappers(content: string): string | undefined {
+    const lines = content.split("\n");
+    let removedAny = false;
+    const keptLines: string[] = [];
+
+    for (const rawLine of lines) {
+      const trimmed = rawLine.trim();
+      if (this.isWrapperLine(trimmed)) {
+        removedAny = true;
+        continue;
+      }
+      keptLines.push(rawLine);
+    }
+
+    if (!removedAny) {
+      return undefined;
+    }
+
+    return keptLines.join("\n").trim();
   }
 
-  private stripCommonWrappers(content: string): string {
-    return content
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) =>
-        line.length > 0 &&
-        !/^```/.test(line) &&
-        !/^(我先|下面是|以下是|Here is|I will)/i.test(line) &&
-        !/^#+\s*(说明|解释|注释|analysis|analysis note)/i.test(line),
-      )
-      .join("\n")
-      .trim();
+  private isWrapperLine(line: string): boolean {
+    if (!line) return false;
+    if (/^```/.test(line)) return true;
+    if (/^#+\s*(说明|解释|注释|analysis|analysis note)\b/i.test(line)) return true;
+
+    if (/^(下面是|以下是).*(正文|章节|压缩|扩写|修正|修改|调整|改写|润色|结果|内容|输出|版本)/i.test(line)) {
+      return true;
+    }
+
+    if (/^我先.*(压缩|扩写|修正|修改|调整|改写|润色|处理).*(正文|章节)?/i.test(line)) {
+      return true;
+    }
+
+    if (/^(here(?:'s| is)|below is).*(chapter|draft|content|rewrite|revised|compressed|expanded|normalized|adjusted|output|version|result)/i.test(line)) {
+      return true;
+    }
+
+    if (/^i(?:'ll| will)\s+(rewrite|revise|reword|compress|expand|normalize|adjust|shorten|lengthen|trim|fix)\b/i.test(line)) {
+      return true;
+    }
+
+    return false;
   }
 }

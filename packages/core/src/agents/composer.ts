@@ -1,5 +1,5 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import yaml from "js-yaml";
 import { BaseAgent } from "./base.js";
 import type { BookConfig } from "../models/book.js";
@@ -12,6 +12,7 @@ import {
   type RuleStack,
 } from "../models/input-governance.js";
 import type { PlanChapterOutput } from "./planner.js";
+import { retrieveMemorySelection } from "../utils/memory-retrieval.js";
 
 export interface ComposeChapterInput {
   readonly book: BookConfig;
@@ -120,14 +121,43 @@ export class ComposerAgent extends BaseAgent {
         "Anchor the default planning node for this chapter.",
         plan.intent.outlineNode ? [plan.intent.outlineNode] : [],
       ),
-      this.maybeContextSource(
-        storyDir,
-        "pending_hooks.md",
-        "Carry forward unresolved hooks that match the chapter focus.",
-      ),
     ]);
 
-    return entries.filter((entry): entry is NonNullable<typeof entry> => entry !== null);
+    const planningAnchor = plan.intent.conflicts.length > 0 ? undefined : plan.intent.outlineNode;
+    const memorySelection = await retrieveMemorySelection({
+      bookDir: dirname(storyDir),
+      chapterNumber: plan.intent.chapter,
+      goal: plan.intent.goal,
+      outlineNode: planningAnchor,
+      mustKeep: plan.intent.mustKeep,
+    });
+
+    const summaryEntries = memorySelection.summaries.map((summary) => ({
+      source: `story/chapter_summaries.md#${summary.chapter}`,
+      reason: "Relevant episodic memory retrieved for the current chapter goal.",
+      excerpt: [summary.title, summary.events, summary.stateChanges, summary.hookActivity]
+        .filter(Boolean)
+        .join(" | "),
+    }));
+    const factEntries = memorySelection.facts.map((fact) => ({
+      source: `story/current_state.md#${this.toFactAnchor(fact.predicate)}`,
+      reason: "Relevant current-state fact retrieved for the current chapter goal.",
+      excerpt: `${fact.predicate} | ${fact.object}`,
+    }));
+    const hookEntries = memorySelection.hooks.map((hook) => ({
+      source: `story/pending_hooks.md#${hook.hookId}`,
+      reason: "Carry forward unresolved hooks that match the chapter focus.",
+      excerpt: [hook.type, hook.status, hook.expectedPayoff, hook.notes]
+        .filter(Boolean)
+        .join(" | "),
+    }));
+
+    return [
+      ...entries.filter((entry): entry is NonNullable<typeof entry> => entry !== null),
+      ...factEntries,
+      ...summaryEntries,
+      ...hookEntries,
+    ];
   }
 
   private async maybeContextSource(
@@ -156,6 +186,15 @@ export class ComposerAgent extends BaseAgent {
       .split("\n")
       .map((line) => line.trim())
       .find((line) => line.length > 0 && !line.startsWith("#"));
+  }
+
+  private toFactAnchor(predicate: string): string {
+    return predicate
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9\u4e00-\u9fff]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      || "fact";
   }
 
   private async readFileOrDefault(path: string): Promise<string> {

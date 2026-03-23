@@ -7,6 +7,7 @@ import { readGenreProfile, readBookRules } from "./rules-reader.js";
 import { getFanficDimensionConfig, FANFIC_DIMENSIONS } from "./fanfic-dimensions.js";
 import { readFile, readdir } from "node:fs/promises";
 import { filterHooks, filterSummaries, filterSubplots, filterEmotionalArcs, filterCharacterMatrix } from "../utils/context-filter.js";
+import { buildGovernedMemoryEvidenceBlocks } from "../utils/governed-context.js";
 import { join } from "node:path";
 
 export interface AuditResult {
@@ -317,6 +318,14 @@ ${dimList}
     const filteredSummaries = filterSummaries(chapterSummaries, chapterNumber);
     const filteredHooks = filterHooks(hooks);
 
+    const governedMemoryBlocks = options?.contextPackage
+      ? buildGovernedMemoryEvidenceBlocks(options.contextPackage)
+      : undefined;
+
+    const hooksBlock = governedMemoryBlocks?.hooksBlock
+      ?? (filteredHooks !== "(文件不存在)"
+        ? `\n## 伏笔池\n${filteredHooks}\n`
+        : "");
     const subplotBlock = filteredSubplots !== "(文件不存在)"
       ? `\n## 支线进度板\n${filteredSubplots}\n`
       : "";
@@ -326,9 +335,10 @@ ${dimList}
     const matrixBlock = filteredMatrix !== "(文件不存在)"
       ? `\n## 角色交互矩阵\n${filteredMatrix}\n`
       : "";
-    const summariesBlock = filteredSummaries !== "(文件不存在)"
-      ? `\n## 章节摘要（用于节奏检查）\n${filteredSummaries}\n`
-      : "";
+    const summariesBlock = governedMemoryBlocks?.summariesBlock
+      ?? (filteredSummaries !== "(文件不存在)"
+        ? `\n## 章节摘要（用于节奏检查）\n${filteredSummaries}\n`
+        : "");
 
     const canonBlock = hasParentCanon
       ? `\n## 正传正典参照（番外审查专用）\n${parentCanon}\n`
@@ -357,9 +367,7 @@ ${dimList}
 ## 当前状态卡
 ${currentState}
 ${ledgerBlock}
-## 伏笔池
-${filteredHooks}
-${subplotBlock}${emotionalBlock}${matrixBlock}${summariesBlock}${canonBlock}${fanficCanonBlock}${reducedControlBlock || outlineBlock}${prevChapterBlock}${styleGuideBlock}
+${hooksBlock}${subplotBlock}${emotionalBlock}${matrixBlock}${summariesBlock}${canonBlock}${fanficCanonBlock}${reducedControlBlock || outlineBlock}${prevChapterBlock}${styleGuideBlock}
 
 ## 待审章节内容
 ${chapterContent}`;

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BookConfig } from "../models/book.js";
@@ -93,14 +93,15 @@ describe("ComposerAgent", () => {
       plan,
     });
 
-    expect(result.contextPackage.selectedContext.map((entry) => entry.source)).toEqual([
+    const selectedSources = result.contextPackage.selectedContext.map((entry) => entry.source);
+    expect(selectedSources.slice(0, 4)).toEqual([
       "story/current_focus.md",
       "story/current_state.md",
       "story/story_bible.md",
       "story/volume_outline.md",
-      "story/pending_hooks.md",
     ]);
-    expect(result.contextPackage.selectedContext.map((entry) => entry.source)).not.toContain("story/style_guide.md");
+    expect(selectedSources.some((source) => source.startsWith("story/pending_hooks.md"))).toBe(true);
+    expect(selectedSources).not.toContain("story/style_guide.md");
     await expect(readFile(result.contextPath, "utf-8")).resolves.toContain("current_focus.md");
   });
 
@@ -144,5 +145,115 @@ describe("ComposerAgent", () => {
     expect(result.trace.selectedSources).toContain("story/current_focus.md");
     expect(result.trace.notes).toContain("allow local outline deferral");
     await expect(readFile(result.tracePath, "utf-8")).resolves.toContain("allow local outline deferral");
+  });
+
+  it("retrieves summary and hook evidence chunks instead of whole long memory files", async () => {
+    await Promise.all([
+      writeFile(
+        join(storyDir, "pending_hooks.md"),
+        [
+          "# Pending Hooks",
+          "",
+          "| hook_id | 起始章节 | 类型 | 状态 | 最近推进 | 预期回收 | 备注 |",
+          "| --- | --- | --- | --- | --- | --- | --- |",
+          "| guild-route | 1 | mystery | open | 2 | 6 | Merchant guild trail |",
+          "| mentor-oath | 8 | relationship | open | 9 | 11 | Mentor oath debt with Lin Yue |",
+          "| old-seal | 3 | artifact | resolved | 3 | 3 | Jade seal already recovered |",
+          "",
+        ].join("\n"),
+        "utf-8",
+      ),
+      writeFile(
+        join(storyDir, "chapter_summaries.md"),
+        [
+          "# Chapter Summaries",
+          "",
+          "| 1 | Guild Trail | Merchant guild flees west | Route clues only | None | guild-route seeded | tense | action |",
+          "| 7 | Broken Letter | Lin Yue | A torn letter mentions the mentor | Lin Yue reopens the old oath | mentor-oath seeded | uneasy | mystery |",
+          "| 8 | River Camp | Lin Yue, Mentor Witness | Mentor debt becomes personal | Lin Yue cannot let go | mentor-oath advanced | raw | confrontation |",
+          "| 9 | Trial Echo | Lin Yue | Mentor left without explanation | Oath token matters again | mentor-oath advanced | aching | fallout |",
+          "",
+        ].join("\n"),
+        "utf-8",
+      ),
+    ]);
+
+    const longRangePlan: PlanChapterOutput = {
+      ...plan,
+      intent: {
+        ...plan.intent,
+        chapter: 10,
+        goal: "Bring the focus back to the mentor oath conflict.",
+        outlineNode: "Track the merchant guild trail.",
+      },
+    };
+
+    const composer = new ComposerAgent({
+      client: {} as ConstructorParameters<typeof ComposerAgent>[0]["client"],
+      model: "test-model",
+      projectRoot: root,
+      bookId: book.id,
+    });
+
+    const result = await composer.composeChapter({
+      book,
+      bookDir,
+      chapterNumber: 10,
+      plan: longRangePlan,
+    });
+
+    const selectedSources = result.contextPackage.selectedContext.map((entry) => entry.source);
+    expect(selectedSources).toContain("story/pending_hooks.md#mentor-oath");
+    expect(selectedSources).toContain("story/chapter_summaries.md#9");
+    expect(selectedSources).not.toContain("story/pending_hooks.md");
+    await expect(stat(join(storyDir, "memory.db"))).resolves.toBeTruthy();
+  });
+
+  it("adds current-state fact evidence retrieved from sqlite-backed memory", async () => {
+    await writeFile(
+      join(storyDir, "current_state.md"),
+      [
+        "# Current State",
+        "",
+        "| Field | Value |",
+        "| --- | --- |",
+        "| Current Chapter | 9 |",
+        "| Current Location | Ashen ferry crossing |",
+        "| Protagonist State | Lin Yue hides the broken oath token and the old wound has reopened. |",
+        "| Current Goal | Find the vanished mentor before the guild covers its tracks. |",
+        "| Current Conflict | Mentor debt with the vanished teacher blocks every choice. |",
+        "",
+      ].join("\n"),
+      "utf-8",
+    );
+
+    const composer = new ComposerAgent({
+      client: {} as ConstructorParameters<typeof ComposerAgent>[0]["client"],
+      model: "test-model",
+      projectRoot: root,
+      bookId: book.id,
+    });
+
+    const result = await composer.composeChapter({
+      book,
+      bookDir,
+      chapterNumber: 10,
+      plan: {
+        ...plan,
+        intent: {
+          ...plan.intent,
+          chapter: 10,
+          goal: "Bring the focus back to the vanished mentor conflict.",
+        },
+      },
+    });
+
+    const factEntry = result.contextPackage.selectedContext.find((entry) =>
+      entry.source === "story/current_state.md#current-conflict",
+    );
+
+    expect(factEntry).toBeDefined();
+    expect(factEntry?.excerpt).toContain("Current Conflict");
+    expect(factEntry?.excerpt).toContain("Mentor debt with the vanished teacher");
   });
 });

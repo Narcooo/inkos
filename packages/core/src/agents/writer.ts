@@ -13,6 +13,7 @@ import type { ChapterTrace, ContextPackage, RuleStack } from "../models/input-go
 import type { LengthSpec } from "../models/length-governance.js";
 import { buildLengthSpec } from "../utils/length-metrics.js";
 import { filterHooks, filterSummaries, filterSubplots, filterEmotionalArcs, filterCharacterMatrix } from "../utils/context-filter.js";
+import { buildGovernedMemoryEvidenceBlocks } from "../utils/governed-context.js";
 import { extractPOVFromOutline, filterMatrixByPOV, filterHooksByPOV } from "../utils/pov-filter.js";
 import { parseCreativeOutput } from "./writer-parser.js";
 import { readFile, writeFile, mkdir, readdir } from "node:fs/promises";
@@ -106,6 +107,9 @@ export class WriterAgent extends BaseAgent {
     const resolvedLanguage = book.language ?? genreProfile.language;
     const targetWords = input.lengthSpec?.target ?? input.wordCountOverride ?? book.chapterWordCount;
     const resolvedLengthSpec = input.lengthSpec ?? buildLengthSpec(targetWords, resolvedLanguage);
+    const governedMemoryBlocks = input.contextPackage
+      ? buildGovernedMemoryEvidenceBlocks(input.contextPackage)
+      : undefined;
 
     // Build fanfic context if fanfic_canon.md exists
     const fanficContext: FanficContext | undefined = hasFanficCanon && bookRules?.fanficMode
@@ -204,11 +208,16 @@ export class WriterAgent extends BaseAgent {
       currentState,
       ledger: genreProfile.numericalSystem ? ledger : "",
       hooks,
-      chapterSummaries,
+      chapterSummaries: input.contextPackage ? filterSummaries(chapterSummaries, chapterNumber) : chapterSummaries,
       subplotBoard,
       emotionalArcs,
       characterMatrix,
       volumeOutline,
+      selectedEvidenceBlock: governedMemoryBlocks
+        ? [governedMemoryBlocks.hooksBlock, governedMemoryBlocks.summariesBlock]
+          .filter(Boolean)
+          .join("\n")
+        : undefined,
     });
     const settlement = settleResult.settlement;
     const settleUsage = settleResult.usage;
@@ -279,6 +288,7 @@ export class WriterAgent extends BaseAgent {
     readonly emotionalArcs: string;
     readonly characterMatrix: string;
     readonly volumeOutline: string;
+    readonly selectedEvidenceBlock?: string;
   }): Promise<{ settlement: ReturnType<typeof parseSettlementOutput>; usage: TokenUsage }> {
     // Phase 2a: Observer — extract all facts from the chapter
     const resolvedLang = params.book.language ?? params.genreProfile.language;
@@ -314,6 +324,7 @@ export class WriterAgent extends BaseAgent {
       characterMatrix: params.characterMatrix,
       volumeOutline: params.volumeOutline,
       observations,
+      selectedEvidenceBlock: params.selectedEvidenceBlock,
     });
 
     // Settler outputs all truth files — scale with content size

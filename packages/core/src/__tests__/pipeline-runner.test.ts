@@ -14,6 +14,7 @@ import { ReviserAgent, type ReviseOutput } from "../agents/reviser.js";
 import { ChapterAnalyzerAgent } from "../agents/chapter-analyzer.js";
 import type { BookConfig } from "../models/book.js";
 import type { ChapterMeta } from "../models/chapter.js";
+import { MemoryDB } from "../state/memory-db.js";
 import { countChapterLength } from "../utils/length-metrics.js";
 
 const ZERO_USAGE = {
@@ -87,6 +88,29 @@ function createAnalyzedOutput(overrides: Partial<WriteChapterOutput> = {}): Writ
     updatedCharacterMatrix: "analyzed matrix",
     ...overrides,
   });
+}
+
+function createStateCard(params: {
+  readonly chapter: number;
+  readonly location: string;
+  readonly protagonistState: string;
+  readonly goal: string;
+  readonly conflict: string;
+}): string {
+  return [
+    "# Current State",
+    "",
+    "| Field | Value |",
+    "| --- | --- |",
+    `| Current Chapter | ${params.chapter} |`,
+    `| Current Location | ${params.location} |`,
+    `| Protagonist State | ${params.protagonistState} |`,
+    `| Current Goal | ${params.goal} |`,
+    "| Current Constraint | The city gates are watched. |",
+    "| Current Alliances | Mentor allies are scattered. |",
+    `| Current Conflict | ${params.conflict} |`,
+    "",
+  ].join("\n");
 }
 
 async function createRunnerFixture(
@@ -343,6 +367,65 @@ describe("PipelineRunner", () => {
       await expect(stat(join(runtimeDir, "chapter-0001.context.json"))).resolves.toBeTruthy();
       await expect(stat(join(runtimeDir, "chapter-0001.rule-stack.yaml"))).resolves.toBeTruthy();
       await expect(stat(join(runtimeDir, "chapter-0001.trace.json"))).resolves.toBeTruthy();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("syncs current-state facts into memory.db after drafting a chapter", async () => {
+    const { root, runner, state, bookId } = await createRunnerFixture();
+    const chapterOneState = createStateCard({
+      chapter: 1,
+      location: "Ashen ferry crossing",
+      protagonistState: "Lin Yue hides the broken oath token.",
+      goal: "Find the vanished mentor before dawn.",
+      conflict: "Mentor debt blocks every choice.",
+    });
+
+    await Promise.all([
+      writeFile(join(state.bookDir(bookId), "story", "pending_hooks.md"), "# Pending Hooks\n", "utf-8"),
+      writeFile(
+        join(state.bookDir(bookId), "story", "current_state.md"),
+        createStateCard({
+          chapter: 0,
+          location: "Shrine outskirts",
+          protagonistState: "Lin Yue begins with the oath token hidden.",
+          goal: "Reach the trial city.",
+          conflict: "The trial deadline is closing in.",
+        }),
+        "utf-8",
+      ),
+    ]);
+    await state.snapshotState(bookId, 0);
+
+    vi.spyOn(WriterAgent.prototype, "writeChapter").mockResolvedValue(
+      createWriterOutput({
+        chapterNumber: 1,
+        content: "Draft body.",
+        wordCount: "Draft body.".length,
+        updatedState: chapterOneState,
+        updatedHooks: "# Pending Hooks\n",
+      }),
+    );
+
+    try {
+      await runner.writeDraft(bookId);
+
+      const memoryDb = new MemoryDB(state.bookDir(bookId));
+      try {
+        expect(memoryDb.getCurrentFacts()).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              predicate: "Current Conflict",
+              object: "Mentor debt blocks every choice.",
+              validFromChapter: 1,
+              sourceChapter: 1,
+            }),
+          ]),
+        );
+      } finally {
+        memoryDb.close();
+      }
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -904,5 +987,234 @@ describe("PipelineRunner", () => {
     expect(result.nextChapter).toBe(5);
 
     await rm(root, { recursive: true, force: true });
+  });
+
+  it("rebuilds fact history from imported chapter snapshots", async () => {
+    const { root, runner, state, bookId } = await createRunnerFixture();
+
+    vi.spyOn(ArchitectAgent.prototype, "generateFoundationFromImport").mockResolvedValue({
+      storyBible: "# Story Bible\n",
+      volumeOutline: "# Volume Outline\n",
+      bookRules: "---\nversion: \"1.0\"\n---\n\n# Book Rules\n",
+      currentState: createStateCard({
+        chapter: 0,
+        location: "Shrine outskirts",
+        protagonistState: "Lin Yue begins with the oath token hidden.",
+        goal: "Reach the trial city.",
+        conflict: "The trial deadline is closing in.",
+      }),
+      pendingHooks: "# Pending Hooks\n",
+    });
+
+    vi.spyOn(ChapterAnalyzerAgent.prototype, "analyzeChapter")
+      .mockResolvedValueOnce(createAnalyzedOutput({
+        chapterNumber: 1,
+        title: "One",
+        content: "One body.",
+        wordCount: "One body.".length,
+        updatedState: createStateCard({
+          chapter: 1,
+          location: "Ashen ferry crossing",
+          protagonistState: "Lin Yue still hides the oath token.",
+          goal: "Find the vanished mentor.",
+          conflict: "The mentor debt is still personal.",
+        }),
+        updatedHooks: "# Pending Hooks\n",
+      }))
+      .mockResolvedValueOnce(createAnalyzedOutput({
+        chapterNumber: 2,
+        title: "Two",
+        content: "Two body.",
+        wordCount: "Two body.".length,
+        updatedState: createStateCard({
+          chapter: 2,
+          location: "North watchtower",
+          protagonistState: "Lin Yue finally shows the oath token.",
+          goal: "Reach the watchtower before the guild.",
+          conflict: "The merchant guild now contests the mentor trail.",
+        }),
+        updatedHooks: "# Pending Hooks\n",
+      }));
+
+    try {
+      await runner.importChapters({
+        bookId,
+        chapters: [
+          { title: "One", content: "One body." },
+          { title: "Two", content: "Two body." },
+        ],
+      });
+
+      const memoryDb = new MemoryDB(state.bookDir(bookId));
+      try {
+        const chapterOneFacts = memoryDb.getFactsAt("protagonist", 1);
+        const currentFacts = memoryDb.getCurrentFacts();
+
+        expect(chapterOneFacts).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              predicate: "Current Conflict",
+              object: "The mentor debt is still personal.",
+            }),
+          ]),
+        );
+        expect(currentFacts).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              predicate: "Current Conflict",
+              object: "The merchant guild now contests the mentor trail.",
+              validFromChapter: 2,
+              sourceChapter: 2,
+            }),
+          ]),
+        );
+      } finally {
+        memoryDb.close();
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("tracks imported English chapters using word counts instead of characters", async () => {
+    const { root, runner, state, bookId } = await createRunnerFixture();
+    const englishBook = {
+      ...(await state.loadBookConfig(bookId)),
+      genre: "other",
+      language: "en" as const,
+    };
+    const now = "2026-03-19T00:00:00.000Z";
+
+    await state.saveBookConfig(bookId, englishBook);
+    await state.saveChapterIndex(bookId, [
+      {
+        number: 1,
+        title: "Prelude",
+        status: "imported",
+        wordCount: 3,
+        createdAt: now,
+        updatedAt: now,
+        auditIssues: [],
+        lengthWarnings: [],
+      },
+      {
+        number: 2,
+        title: "Crossroads",
+        status: "imported",
+        wordCount: 2,
+        createdAt: now,
+        updatedAt: now,
+        auditIssues: [],
+        lengthWarnings: [],
+      },
+    ]);
+
+    vi.spyOn(ChapterAnalyzerAgent.prototype, "analyzeChapter").mockImplementation(async (input) =>
+      createAnalyzedOutput({
+        chapterNumber: input.chapterNumber,
+        title: input.chapterTitle ?? `Chapter ${input.chapterNumber}`,
+        content: input.chapterContent,
+        wordCount: countChapterLength(input.chapterContent, "en_words"),
+      }),
+    );
+    vi.spyOn(WriterAgent.prototype, "saveChapter").mockResolvedValue(undefined);
+    vi.spyOn(WriterAgent.prototype, "saveNewTruthFiles").mockResolvedValue(undefined);
+
+    const result = await runner.importChapters({
+      bookId,
+      resumeFrom: 3,
+      chapters: [
+        { title: "Prelude", content: "One two three" },
+        { title: "Crossroads", content: "Four five" },
+        { title: "The Watchtower", content: "The storm kept rolling west" },
+        { title: "Aftermath", content: "Lanterns dimmed before dawn broke" },
+      ],
+    });
+
+    const chapterIndex = await state.loadChapterIndex(bookId);
+    const chapterThree = chapterIndex.find((entry) => entry.number === 3);
+    const chapterFour = chapterIndex.find((entry) => entry.number === 4);
+
+    expect(result.importedCount).toBe(2);
+    expect(result.totalWords).toBe(10);
+    expect(chapterThree?.wordCount).toBe(5);
+    expect(chapterFour?.wordCount).toBe(5);
+
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it("rebuilds current facts from the revised chapter snapshot", async () => {
+    const { root, runner, state, bookId } = await createRunnerFixture();
+    const storyDir = join(state.bookDir(bookId), "story");
+    const chaptersDir = join(state.bookDir(bookId), "chapters");
+    const oldState = createStateCard({
+      chapter: 1,
+      location: "Ashen ferry crossing",
+      protagonistState: "Lin Yue still hides the oath token.",
+      goal: "Find the vanished mentor.",
+      conflict: "The mentor debt is still personal.",
+    });
+    const revisedState = createStateCard({
+      chapter: 1,
+      location: "Ashen ferry crossing",
+      protagonistState: "Lin Yue no longer hides the oath token.",
+      goal: "Confront the vanished mentor.",
+      conflict: "The oath token is public now, forcing the confrontation.",
+    });
+
+    await Promise.all([
+      writeFile(join(chaptersDir, "0001_Test_Chapter.md"), "# 第1章 Test Chapter\n\nOriginal body.", "utf-8"),
+      writeFile(join(storyDir, "current_state.md"), oldState, "utf-8"),
+      writeFile(join(storyDir, "pending_hooks.md"), "# Pending Hooks\n", "utf-8"),
+    ]);
+    await state.saveChapterIndex(bookId, [{
+      number: 1,
+      title: "Test Chapter",
+      status: "audit-failed",
+      wordCount: "Original body.".length,
+      createdAt: "2026-03-19T00:00:00.000Z",
+      updatedAt: "2026-03-19T00:00:00.000Z",
+      auditIssues: [],
+      lengthWarnings: [],
+    }]);
+    await state.snapshotState(bookId, 1);
+
+    vi.spyOn(ContinuityAuditor.prototype, "auditChapter").mockResolvedValue(
+      createAuditResult({
+        passed: false,
+        issues: [CRITICAL_ISSUE],
+        summary: "needs revision",
+      }),
+    );
+    vi.spyOn(ReviserAgent.prototype, "reviseChapter").mockResolvedValue(
+      createReviseOutput({
+        revisedContent: "Revised body.",
+        wordCount: "Revised body.".length,
+        updatedState: revisedState,
+        updatedHooks: "# Pending Hooks\n",
+      }),
+    );
+
+    try {
+      await runner.reviseDraft(bookId, 1);
+
+      const memoryDb = new MemoryDB(state.bookDir(bookId));
+      try {
+        expect(memoryDb.getCurrentFacts()).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              predicate: "Current Conflict",
+              object: "The oath token is public now, forcing the confrontation.",
+              validFromChapter: 1,
+              sourceChapter: 1,
+            }),
+          ]),
+        );
+      } finally {
+        memoryDb.close();
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

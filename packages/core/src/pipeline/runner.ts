@@ -20,13 +20,15 @@ import { readGenreProfile } from "../agents/rules-reader.js";
 import { analyzeAITells } from "../agents/ai-tells.js";
 import { analyzeSensitiveWords } from "../agents/sensitive-words.js";
 import { StateManager } from "../state/manager.js";
+import { MemoryDB, type Fact } from "../state/memory-db.js";
 import { dispatchNotification, dispatchWebhookEvent } from "../notify/dispatcher.js";
 import type { WebhookEvent } from "../notify/webhook.js";
 import type { AgentContext } from "../agents/base.js";
 import type { AuditResult, AuditIssue } from "../agents/continuity.js";
 import type { RadarResult } from "../agents/radar.js";
 import type { LengthSpec, LengthTelemetry } from "../models/length-governance.js";
-import { buildLengthSpec, countChapterLength, isOutsideHardRange, isOutsideSoftRange } from "../utils/length-metrics.js";
+import { buildLengthSpec, countChapterLength, formatLengthCount, isOutsideHardRange, isOutsideSoftRange, resolveLengthCountingMode } from "../utils/length-metrics.js";
+import { parseCurrentStateFacts } from "../utils/memory-retrieval.js";
 import { readFile, readdir, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -390,6 +392,7 @@ export class PipelineRunner {
 
       // Snapshot
       await this.state.snapshotState(bookId, chapterNumber);
+      await this.syncCurrentStateFactHistory(bookId, chapterNumber);
 
       await this.emitWebhook("chapter-complete", bookId, chapterNumber, {
         title: draftOutput.title,
@@ -530,12 +533,17 @@ export class PipelineRunner {
       const content = await this.readChapterContent(bookDir, targetChapter);
       const auditor = new ContinuityAuditor(this.agentCtxFor("auditor", bookId));
       const auditResult = await auditor.auditChapter(bookDir, content, targetChapter, book.genre);
+      const { profile: gp } = await this.loadGenreProfile(book.genre);
+      const countingMode = resolveLengthCountingMode(book.language ?? gp.language);
 
       if (auditResult.passed && auditResult.issues.filter(i => i.severity === "warning" || i.severity === "critical").length === 0) {
-        return { chapterNumber: targetChapter, wordCount: content.length, fixedIssues: [] };
+        return {
+          chapterNumber: targetChapter,
+          wordCount: countChapterLength(content, countingMode),
+          fixedIssues: [],
+        };
       }
 
-      const { profile: gp } = await this.loadGenreProfile(book.genre);
       const lengthSpec = buildLengthSpec(
         book.chapterWordCount,
         book.language ?? gp.language,
@@ -625,6 +633,7 @@ export class PipelineRunner {
 
       // Re-snapshot
       await this.state.snapshotState(bookId, targetChapter);
+      await this.syncCurrentStateFactHistory(bookId, targetChapter);
 
       await this.emitWebhook("revision-complete", bookId, targetChapter, {
         wordCount: normalizedRevision.wordCount,
@@ -985,14 +994,16 @@ export class PipelineRunner {
 
     // 5.6 Snapshot state for rollback support
     await this.state.snapshotState(bookId, chapterNumber);
+    await this.syncCurrentStateFactHistory(bookId, chapterNumber);
 
     // 6. Send notification
     if (this.config.notifyChannels && this.config.notifyChannels.length > 0) {
       const statusEmoji = auditResult.passed ? "✅" : "⚠️";
+      const chapterLength = formatLengthCount(finalWordCount, lengthSpec.countingMode);
       await dispatchNotification(this.config.notifyChannels, {
         title: `${statusEmoji} ${book.title} 第${chapterNumber}章`,
         body: [
-          `**${persistenceOutput.title}** | ${finalWordCount}字`,
+          `**${persistenceOutput.title}** | ${chapterLength}`,
           revised ? "📝 已自动修正" : "",
           `审稿: ${auditResult.passed ? "通过" : "需人工审核"}`,
           ...auditResult.issues
@@ -1262,6 +1273,7 @@ ${matrix}`,
       log?.info(`Step 2: Sequential replay from chapter ${startFrom}...`);
       const analyzer = new ChapterAnalyzerAgent(this.agentCtxFor("chapter-analyzer", input.bookId));
       const writer = new WriterAgent(this.agentCtxFor("writer", input.bookId));
+      const countingMode = resolveLengthCountingMode(book.language ?? gp.language);
       let totalWords = 0;
       let importedCount = 0;
 
@@ -1297,11 +1309,12 @@ ${matrix}`,
         // Update chapter index
         const existingIndex = await this.state.loadChapterIndex(input.bookId);
         const now = new Date().toISOString();
+        const chapterWordCount = countChapterLength(ch.content, countingMode);
         const newEntry: ChapterMeta = {
           number: chapterNumber,
           title: output.title,
           status: "imported",
-          wordCount: ch.content.length,
+          wordCount: chapterWordCount,
           createdAt: now,
           updatedAt: now,
           auditIssues: [],
@@ -1318,11 +1331,15 @@ ${matrix}`,
         await this.state.snapshotState(input.bookId, chapterNumber);
 
         importedCount++;
-        totalWords += ch.content.length;
+        totalWords += chapterWordCount;
+      }
+
+      if (input.chapters.length > 0) {
+        await this.syncCurrentStateFactHistory(input.bookId, input.chapters.length);
       }
 
       const nextChapter = input.chapters.length + 1;
-      log?.info(`Done. ${importedCount} chapters imported, ${totalWords} chars. Next chapter: ${nextChapter}`);
+      log?.info(`Done. ${importedCount} chapters imported, ${formatLengthCount(totalWords, countingMode)}. Next chapter: ${nextChapter}`);
 
       return {
         bookId: input.bookId,
@@ -1448,6 +1465,59 @@ ${matrix}`,
       applied: normalized.applied,
       tokenUsage: normalized.tokenUsage,
     };
+  }
+
+  private async syncCurrentStateFactHistory(bookId: string, uptoChapter: number): Promise<void> {
+    let memoryDb: MemoryDB | null = null;
+    try {
+      const bookDir = this.state.bookDir(bookId);
+      memoryDb = new MemoryDB(bookDir);
+      memoryDb.resetFacts();
+
+      const activeFacts = new Map<string, { id: number; object: string }>();
+
+      for (let chapter = 0; chapter <= uptoChapter; chapter++) {
+        const snapshotPath = join(bookDir, "story", "snapshots", String(chapter), "current_state.md");
+        const markdown = await readFile(snapshotPath, "utf-8").catch(() => "");
+        if (!markdown) continue;
+
+        const snapshotFacts = parseCurrentStateFacts(markdown, chapter);
+        const nextFacts = new Map<string, Omit<Fact, "id">>();
+
+        for (const fact of snapshotFacts) {
+          nextFacts.set(this.factKey(fact), {
+            subject: fact.subject,
+            predicate: fact.predicate,
+            object: fact.object,
+            validFromChapter: chapter,
+            validUntilChapter: null,
+            sourceChapter: chapter,
+          });
+        }
+
+        for (const [key, previous] of activeFacts.entries()) {
+          const next = nextFacts.get(key);
+          if (!next || next.object !== previous.object) {
+            memoryDb.invalidateFact(previous.id, chapter);
+            activeFacts.delete(key);
+          }
+        }
+
+        for (const [key, fact] of nextFacts.entries()) {
+          if (activeFacts.has(key)) continue;
+          const id = memoryDb.addFact(fact);
+          activeFacts.set(key, { id, object: fact.object });
+        }
+      }
+    } catch (error) {
+      this.config.logger?.warn(`State fact sync skipped: ${String(error)}`);
+    } finally {
+      memoryDb?.close();
+    }
+  }
+
+  private factKey(fact: Pick<Fact, "subject" | "predicate">): string {
+    return `${fact.subject}::${fact.predicate}`;
   }
 
   private buildLengthWarnings(

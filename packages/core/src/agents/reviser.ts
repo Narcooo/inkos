@@ -6,6 +6,7 @@ import type { AuditIssue } from "./continuity.js";
 import type { ContextPackage, RuleStack } from "../models/input-governance.js";
 import { readGenreProfile, readBookRules } from "./rules-reader.js";
 import { countChapterLength } from "../utils/length-metrics.js";
+import { buildGovernedMemoryEvidenceBlocks } from "../utils/governed-context.js";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -137,6 +138,11 @@ ${gp.numericalSystem ? "\n=== UPDATED_LEDGER ===\n(更新后的完整资源账�
     const ledgerBlock = gp.numericalSystem
       ? `\n## 资源账本\n${ledger}`
       : "";
+    const governedMemoryBlocks = options?.contextPackage
+      ? buildGovernedMemoryEvidenceBlocks(options.contextPackage)
+      : undefined;
+    const hooksBlock = governedMemoryBlocks?.hooksBlock
+      ?? `\n## 伏笔池\n${hooks}\n`;
     const outlineBlock = volumeOutline !== "(文件不存在)"
       ? `\n## 卷纲\n${volumeOutline}\n`
       : "";
@@ -146,9 +152,10 @@ ${gp.numericalSystem ? "\n=== UPDATED_LEDGER ===\n(更新后的完整资源账�
     const matrixBlock = characterMatrix !== "(文件不存在)"
       ? `\n## 角色交互矩阵\n${characterMatrix}\n`
       : "";
-    const summariesBlock = chapterSummaries !== "(文件不存在)"
-      ? `\n## 章节摘要\n${chapterSummaries}\n`
-      : "";
+    const summariesBlock = governedMemoryBlocks?.summariesBlock
+      ?? (chapterSummaries !== "(文件不存在)"
+        ? `\n## 章节摘要\n${chapterSummaries}\n`
+        : "");
 
     const hasParentCanon = parentCanon !== "(文件不存在)";
     const hasFanficCanon = fanficCanon !== "(文件不存在)";
@@ -178,9 +185,7 @@ ${issueList}
 ## 当前状态卡
 ${currentState}
 ${ledgerBlock}
-## 伏笔池
-${hooks}
-${reducedControlBlock || outlineBlock}${bibleBlock}${matrixBlock}${summariesBlock}${canonBlock}${fanficCanonBlock}${styleGuideBlock}${lengthGuidanceBlock}
+${hooksBlock}${reducedControlBlock || outlineBlock}${bibleBlock}${matrixBlock}${summariesBlock}${canonBlock}${fanficCanonBlock}${styleGuideBlock}${lengthGuidanceBlock}
 
 ## 待修正章节
 ${chapterContent}`;

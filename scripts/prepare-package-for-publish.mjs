@@ -7,12 +7,18 @@
  * Expects process.cwd() to be the package directory (npm/pnpm guarantee this).
  */
 
-import { readFile, writeFile, copyFile, rm } from "node:fs/promises";
+import { readFile, writeFile, copyFile, rm, rename } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 const packageDir = process.cwd();
 const packageJsonPath = join(packageDir, "package.json");
 const backupPath = join(packageDir, ".package.json.publish-backup");
+
+async function writeAtomic(path, content) {
+  const tempPath = `${path}.tmp-${process.pid}-${Date.now()}`;
+  await writeFile(tempPath, content, "utf-8");
+  await rename(tempPath, path);
+}
 
 // Walk up to workspace root (contains pnpm-workspace.yaml)
 function findWorkspaceRoot(startDir) {
@@ -97,7 +103,7 @@ async function main() {
     }
   }
 
-  await writeFile(packageJsonPath, `${JSON.stringify(pkg, null, 2)}\n`, "utf-8");
+  await writeAtomic(packageJsonPath, `${JSON.stringify(pkg, null, 2)}\n`);
   process.stderr.write(`[prepack] Replaced workspace:* deps in ${pkg.name}\n`);
 
   // Verify: re-read and confirm no workspace: references remain
@@ -120,7 +126,7 @@ async function main() {
     );
     // Restore backup before aborting
     const original = await readFile(backupPath, "utf-8");
-    await writeFile(packageJsonPath, original, "utf-8");
+    await writeAtomic(packageJsonPath, original);
     await rm(backupPath, { force: true });
     process.exit(1);
   }

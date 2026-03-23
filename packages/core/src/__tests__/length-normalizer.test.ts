@@ -194,4 +194,58 @@ describe("LengthNormalizerAgent", () => {
     expect(result.normalizedContent).toBe(draft);
     expect(result.finalCount).toBe(countChapterLength(draft, "zh_chars"));
   });
+
+  it("preserves legitimate Chinese prose that starts with '我先'", async () => {
+    const agent = createAgent();
+    const prose = "我先回去了，明天再说。\n风从窗缝里灌进来。";
+    const chatSpy = vi.spyOn(BaseAgent.prototype as never, "chat").mockResolvedValue({
+      content: prose,
+      usage: ZERO_USAGE,
+    });
+    const lengthSpec = LengthSpecSchema.parse({
+      target: 220,
+      softMin: 190,
+      softMax: 250,
+      hardMin: 160,
+      hardMax: 280,
+      countingMode: "zh_chars",
+      normalizeMode: "compress",
+    });
+    const draft = "原文。".repeat(80);
+
+    const result = await agent.normalizeChapter({
+      chapterContent: draft,
+      lengthSpec,
+    });
+
+    expect(chatSpy).toHaveBeenCalledTimes(1);
+    expect(result.normalizedContent).toBe(prose);
+  });
+
+  it("preserves legitimate English prose that starts with 'I will'", async () => {
+    const agent = createAgent();
+    const prose = "I will wait here until dawn.\nThe shutters rattled in the wind.";
+    const chatSpy = vi.spyOn(BaseAgent.prototype as never, "chat").mockResolvedValue({
+      content: prose,
+      usage: ZERO_USAGE,
+    });
+    const lengthSpec = LengthSpecSchema.parse({
+      target: 220,
+      softMin: 190,
+      softMax: 250,
+      hardMin: 160,
+      hardMax: 280,
+      countingMode: "en_words",
+      normalizeMode: "compress",
+    });
+    const draft = "Original text. ".repeat(80);
+
+    const result = await agent.normalizeChapter({
+      chapterContent: draft,
+      lengthSpec,
+    });
+
+    expect(chatSpy).toHaveBeenCalledTimes(1);
+    expect(result.normalizedContent).toBe(prose);
+  });
 });

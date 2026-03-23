@@ -4,6 +4,7 @@ import { BaseAgent } from "./base.js";
 import type { BookConfig } from "../models/book.js";
 import { parseBookRules } from "../models/book-rules.js";
 import { ChapterIntentSchema, type ChapterConflict, type ChapterIntent } from "../models/input-governance.js";
+import { renderHookSnapshot, renderSummarySnapshot, retrieveMemorySelection } from "../utils/memory-retrieval.js";
 
 export interface PlanChapterInput {
   readonly book: BookConfig;
@@ -36,8 +37,6 @@ export class PlannerAgent extends BaseAgent {
       volumeOutline: join(storyDir, "volume_outline.md"),
       bookRules: join(storyDir, "book_rules.md"),
       currentState: join(storyDir, "current_state.md"),
-      pendingHooks: join(storyDir, "pending_hooks.md"),
-      chapterSummaries: join(storyDir, "chapter_summaries.md"),
     } as const;
 
     const [
@@ -47,8 +46,6 @@ export class PlannerAgent extends BaseAgent {
       volumeOutline,
       bookRulesRaw,
       currentState,
-      pendingHooks,
-      chapterSummaries,
     ] = await Promise.all([
       this.readFileOrDefault(sourcePaths.authorIntent),
       this.readFileOrDefault(sourcePaths.currentFocus),
@@ -56,8 +53,6 @@ export class PlannerAgent extends BaseAgent {
       this.readFileOrDefault(sourcePaths.volumeOutline),
       this.readFileOrDefault(sourcePaths.bookRules),
       this.readFileOrDefault(sourcePaths.currentState),
-      this.readFileOrDefault(sourcePaths.pendingHooks),
-      this.readFileOrDefault(sourcePaths.chapterSummaries),
     ]);
 
     const goal = this.deriveGoal(input.externalContext, currentFocus, authorIntent, input.chapterNumber);
@@ -67,6 +62,14 @@ export class PlannerAgent extends BaseAgent {
     const mustAvoid = this.collectMustAvoid(currentFocus, parsedRules.rules.prohibitions);
     const styleEmphasis = this.collectStyleEmphasis(authorIntent, currentFocus);
     const conflicts = this.collectConflicts(input.externalContext, outlineNode, volumeOutline);
+    const planningAnchor = conflicts.length > 0 ? undefined : outlineNode;
+    const memorySelection = await retrieveMemorySelection({
+      bookDir: input.bookDir,
+      chapterNumber: input.chapterNumber,
+      goal,
+      outlineNode: planningAnchor,
+      mustKeep,
+    });
 
     const intent = ChapterIntentSchema.parse({
       chapter: input.chapterNumber,
@@ -79,13 +82,22 @@ export class PlannerAgent extends BaseAgent {
     });
 
     const runtimePath = join(runtimeDir, `chapter-${String(input.chapterNumber).padStart(4, "0")}.intent.md`);
-    const intentMarkdown = this.renderIntentMarkdown(intent, pendingHooks, chapterSummaries);
+    const intentMarkdown = this.renderIntentMarkdown(
+      intent,
+      renderHookSnapshot(memorySelection.hooks),
+      renderSummarySnapshot(memorySelection.summaries),
+    );
     await writeFile(runtimePath, intentMarkdown, "utf-8");
 
     return {
       intent,
       intentMarkdown,
-      plannerInputs: Object.values(sourcePaths),
+      plannerInputs: [
+        ...Object.values(sourcePaths),
+        join(storyDir, "pending_hooks.md"),
+        join(storyDir, "chapter_summaries.md"),
+        ...(memorySelection.dbPath ? [memorySelection.dbPath] : []),
+      ],
       runtimePath,
     };
   }

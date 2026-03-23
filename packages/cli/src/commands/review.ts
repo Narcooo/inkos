@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { StateManager } from "@actalk/inkos-core";
+import { StateManager, formatLengthCount, readGenreProfile, resolveLengthCountingMode } from "@actalk/inkos-core";
 import { findProjectRoot, resolveBookId, log, logError } from "../utils.js";
 
 export const reviewCommand = new Command("review")
@@ -36,6 +36,8 @@ reviewCommand
         if (pending.length === 0) continue;
 
         const book = await state.loadBookConfig(id);
+        const { profile: genreProfile } = await readGenreProfile(root, book.genre);
+        const countingMode = resolveLengthCountingMode(book.language ?? genreProfile.language);
 
         if (!opts.json) {
           log(`\n${book.title} (${id}):`);
@@ -52,7 +54,7 @@ reviewCommand
           });
           if (!opts.json) {
             log(
-              `  Ch.${ch.number} "${ch.title}" | ${ch.wordCount}字 | ${ch.status}`,
+              `  Ch.${ch.number} "${ch.title}" | ${formatLengthCount(ch.wordCount, countingMode)} | ${ch.status}`,
             );
             if (ch.auditIssues.length > 0) {
               for (const issue of ch.auditIssues) {
