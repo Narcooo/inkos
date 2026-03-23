@@ -79,6 +79,7 @@ export interface LLMClient {
     readonly temperature: number;
     readonly maxTokens: number;
     readonly thinkingBudget: number;
+    readonly reasoningEffort?: string;
     readonly extra: Record<string, unknown>;
   };
 }
@@ -115,6 +116,7 @@ export function createLLMClient(config: LLMConfig): LLMClient {
     temperature: config.temperature ?? 0.7,
     maxTokens: config.maxTokens ?? 8192,
     thinkingBudget: config.thinkingBudget ?? 0,
+    reasoningEffort: config.reasoningEffort,
     extra: config.extra ?? {},
   };
 
@@ -213,6 +215,7 @@ export async function chatCompletion(
   options?: {
     readonly temperature?: number;
     readonly maxTokens?: number;
+    readonly reasoningEffort?: string;
     readonly webSearch?: boolean;
     readonly onStreamProgress?: OnStreamProgress;
   },
@@ -220,6 +223,7 @@ export async function chatCompletion(
   const resolved = {
     temperature: options?.temperature ?? client.defaults.temperature,
     maxTokens: options?.maxTokens ?? client.defaults.maxTokens,
+    reasoningEffort: options?.reasoningEffort ?? client.defaults.reasoningEffort,
     extra: client.defaults.extra,
   };
   const onStreamProgress = options?.onStreamProgress;
@@ -304,6 +308,7 @@ export async function chatWithTools(
     const resolved = {
       temperature: options?.temperature ?? client.defaults.temperature,
       maxTokens: options?.maxTokens ?? client.defaults.maxTokens,
+      reasoningEffort: options?.reasoningEffort ?? client.defaults.reasoningEffort,
     };
     // Tool-calling always uses streaming (only used by agent loop, not by writer/auditor)
     if (client.provider === "anthropic") {
@@ -324,7 +329,7 @@ async function chatCompletionOpenAIChat(
   client: OpenAI,
   model: string,
   messages: ReadonlyArray<LLMMessage>,
-  options: { readonly temperature: number; readonly maxTokens: number; readonly extra: Record<string, unknown> },
+  options: { readonly temperature: number; readonly maxTokens: number; readonly reasoningEffort?: string; readonly extra: Record<string, unknown> },
   webSearch?: boolean,
   onStreamProgress?: OnStreamProgress,
 ): Promise<LLMResponse> {
@@ -335,6 +340,7 @@ async function chatCompletionOpenAIChat(
     temperature: options.temperature,
     max_tokens: options.maxTokens,
     stream: true,
+    ...(options.reasoningEffort ? { reasoning_effort: options.reasoningEffort } : {}),
     ...(webSearch ? { web_search_options: { search_context_size: "medium" as const } } : {}),
     ...options.extra,
   };
@@ -386,7 +392,7 @@ async function chatCompletionOpenAIChatSync(
   client: OpenAI,
   model: string,
   messages: ReadonlyArray<LLMMessage>,
-  options: { readonly temperature: number; readonly maxTokens: number; readonly extra: Record<string, unknown> },
+  options: { readonly temperature: number; readonly maxTokens: number; readonly reasoningEffort?: string; readonly extra: Record<string, unknown> },
   _webSearch?: boolean,
 ): Promise<LLMResponse> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -396,6 +402,7 @@ async function chatCompletionOpenAIChatSync(
     temperature: options.temperature,
     max_tokens: options.maxTokens,
     stream: false,
+    ...(options.reasoningEffort ? { reasoning_effort: options.reasoningEffort } : {}),
     ...options.extra,
   };
   const response = await client.chat.completions.create(syncParams);
@@ -512,7 +519,7 @@ async function chatCompletionOpenAIResponses(
   client: OpenAI,
   model: string,
   messages: ReadonlyArray<LLMMessage>,
-  options: { readonly temperature: number; readonly maxTokens: number },
+  options: { readonly temperature: number; readonly maxTokens: number; readonly reasoningEffort?: string },
   webSearch?: boolean,
   onStreamProgress?: OnStreamProgress,
 ): Promise<LLMResponse> {
@@ -531,6 +538,7 @@ async function chatCompletionOpenAIResponses(
     temperature: options.temperature,
     max_output_tokens: options.maxTokens,
     stream: true,
+    ...(options.reasoningEffort ? { reasoning: { effort: options.reasoningEffort as any } } : {}),
     ...(tools ? { tools } : {}),
   });
 
@@ -578,7 +586,7 @@ async function chatCompletionOpenAIResponsesSync(
   client: OpenAI,
   model: string,
   messages: ReadonlyArray<LLMMessage>,
-  options: { readonly temperature: number; readonly maxTokens: number },
+  options: { readonly temperature: number; readonly maxTokens: number; readonly reasoningEffort?: string },
   _webSearch?: boolean,
 ): Promise<LLMResponse> {
   const input: OpenAI.Responses.ResponseInputItem[] = messages.map((m) => ({
@@ -592,6 +600,7 @@ async function chatCompletionOpenAIResponsesSync(
     temperature: options.temperature,
     max_output_tokens: options.maxTokens,
     stream: false,
+    ...(options.reasoningEffort ? { reasoning: { effort: options.reasoningEffort as any } } : {}),
   });
 
   const content = response.output
@@ -618,7 +627,7 @@ async function chatWithToolsOpenAIResponses(
   model: string,
   messages: ReadonlyArray<AgentMessage>,
   tools: ReadonlyArray<ToolDefinition>,
-  options: { readonly temperature: number; readonly maxTokens: number },
+  options: { readonly temperature: number; readonly maxTokens: number; readonly reasoningEffort?: string },
 ): Promise<ChatWithToolsResult> {
   const input = agentMessagesToResponsesInput(messages);
   const responsesTools: OpenAI.Responses.Tool[] = tools.map((t) => ({
@@ -636,6 +645,7 @@ async function chatWithToolsOpenAIResponses(
     temperature: options.temperature,
     max_output_tokens: options.maxTokens,
     stream: true,
+    ...(options.reasoningEffort ? { reasoning: { effort: options.reasoningEffort as any } } : {}),
   });
 
   let content = "";
