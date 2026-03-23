@@ -8,6 +8,7 @@ export const LLMConfigSchema = z.object({
   temperature: z.number().min(0).max(2).default(0.7),
   maxTokens: z.number().int().min(1).default(8192),
   thinkingBudget: z.number().int().min(0).default(0),
+  reasoningEffort: z.enum(["low", "medium", "high"]).optional(),
   extra: z.record(z.unknown()).optional(),
   apiFormat: z.enum(["chat", "responses"]).default("chat"),
   stream: z.boolean().default(true),
@@ -65,6 +66,10 @@ export const AgentLLMOverrideSchema = z.object({
   baseUrl: z.string().url().optional(),
   apiKeyEnv: z.string().optional(),
   stream: z.boolean().optional(),
+  temperature: z.number().min(0).max(2).optional(),
+  maxTokens: z.number().int().min(1).optional(),
+  thinkingBudget: z.number().int().min(0).optional(),
+  reasoningEffort: z.enum(["low", "medium", "high"]).optional(),
 });
 
 export type AgentLLMOverride = z.infer<typeof AgentLLMOverrideSchema>;
