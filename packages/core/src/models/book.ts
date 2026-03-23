@@ -25,13 +25,13 @@ export const BookConfigSchema = z.object({
   platform: PlatformSchema,
   genre: GenreSchema,
   status: BookStatusSchema,
+  language: z.enum(["zh", "en"]).optional(),
   targetChapters: z.number().int().min(1).default(200),
   chapterWordCount: z.number().int().min(1000).default(3000),
-  language: z.enum(["zh", "en"]).optional(),
-  createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime(),
   parentBookId: z.string().optional(),
   fanficMode: FanficModeSchema.optional(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
 });
 
 export type BookConfig = z.infer<typeof BookConfigSchema>;

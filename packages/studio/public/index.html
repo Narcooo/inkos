@@ -1,0 +1,649 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>InkOS Studio</title>
+    <!-- Prevent flash of wrong theme -->
+    <script>
+      (function(){
+        var t = localStorage.getItem('inkos-theme');
+        if (!t) t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t);
+      })();
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;700;900&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./app.css" />
+  </head>
+  <body>
+    <div class="app">
+      <!-- ======== TOP BAR ======== -->
+      <header class="topbar">
+        <div class="topbar-left">
+          <button class="topbar-toggle" id="sidebar-toggle" type="button" title="Toggle sidebar">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          </button>
+          <span class="topbar-logo ink-text font-serif">InkOS</span>
+        </div>
+        <div class="topbar-center">
+          <select class="topbar-book-select" id="book-select">
+            <option value="">-- 选择书籍 --</option>
+          </select>
+        </div>
+        <div class="topbar-right">
+          <span class="topbar-status" id="app-status"></span>
+          <button class="theme-toggle" id="theme-toggle" type="button" title="Toggle theme">
+            <svg id="theme-icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+            <svg id="theme-icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="display:none"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
+          </button>
+          <button class="topbar-btn" id="settings-btn" type="button" title="Settings">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M10 12.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5z" stroke="currentColor" stroke-width="1.4"/><path d="M16.2 12.2a1.3 1.3 0 00.3 1.4l.04.05a1.6 1.6 0 11-2.26 2.26l-.05-.05a1.3 1.3 0 00-1.4-.26 1.3 1.3 0 00-.8 1.2v.14a1.6 1.6 0 11-3.2 0v-.07a1.3 1.3 0 00-.86-1.2 1.3 1.3 0 00-1.4.27l-.05.04a1.6 1.6 0 11-2.26-2.26l.05-.05a1.3 1.3 0 00.26-1.4 1.3 1.3 0 00-1.2-.8h-.13a1.6 1.6 0 110-3.2h.07a1.3 1.3 0 001.2-.86 1.3 1.3 0 00-.27-1.4l-.04-.05A1.6 1.6 0 116.5 4.1l.05.05a1.3 1.3 0 001.4.26h.06a1.3 1.3 0 00.8-1.2V3.1a1.6 1.6 0 013.2 0v.07a1.3 1.3 0 00.8 1.2 1.3 1.3 0 001.4-.27l.05-.04a1.6 1.6 0 112.26 2.26l-.05.05a1.3 1.3 0 00-.26 1.4v.06a1.3 1.3 0 001.2.8h.13a1.6 1.6 0 010 3.2h-.07a1.3 1.3 0 00-1.2.8z" stroke="currentColor" stroke-width="1.2"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <!-- ======== BODY: SIDEBAR + MAIN ======== -->
+      <div class="app-body">
+        <!-- SIDEBAR -->
+        <aside class="sidebar" id="sidebar">
+          <div class="sidebar-tree" id="sidebar-tree">
+            <div class="sidebar-empty">选择书籍后显示导航</div>
+          </div>
+          <div class="sidebar-footer">
+            <button class="sidebar-action" id="nav-dashboard" type="button">&#x1f4da; 书架</button>
+            <button class="sidebar-action" id="nav-create" type="button">+ 创建新书</button>
+            <button class="sidebar-action" id="nav-upload" type="button">&#x1f4e4; 导入</button>
+            <button class="sidebar-action" id="nav-knowledge" type="button">&#x1f4d6; 知识库</button>
+            <button class="sidebar-action" id="nav-llm-logs" type="button">&#x1f4ca; 调用日志</button>
+            <button class="sidebar-action sidebar-action--primary" id="nav-chat" type="button">&#x1f4ac; 返回对话</button>
+          </div>
+        </aside>
+
+        <!-- MAIN AREA -->
+        <main class="main" id="main-area">
+
+          <!-- DASHBOARD VIEW (default) -->
+          <section class="dashboard-view active-view" id="dashboard-view">
+            <div class="dashboard-header">
+              <h1 class="ink-text font-serif">落笔生花，一字千金。</h1>
+              <p class="dashboard-subtitle">MY BOOKSHELF</p>
+            </div>
+            <div id="dashboard-content"></div>
+          </section>
+
+          <!-- EDITOR VIEW (three-column) -->
+          <section class="editor-view" id="editor-view">
+            <!-- Editor Top Bar -->
+            <div class="editor-topbar">
+              <div class="editor-topbar-left">
+                <button class="btn ghost btn-sm" id="editor-back" type="button">&#x2190; 书架</button>
+                <span class="editor-book-title font-serif" id="editor-book-title"></span>
+              </div>
+              <div class="editor-topbar-center">
+                <button class="editor-mode-btn active" data-mode="write" type="button">写作</button>
+                <button class="editor-mode-btn" data-mode="outline" type="button">大纲</button>
+                <button class="editor-mode-btn" data-mode="settings" type="button">设置</button>
+              </div>
+              <div class="editor-topbar-right">
+                <span class="editor-wordcount" id="editor-wordcount"></span>
+                <span class="editor-save-status" id="editor-save-status"></span>
+                <button class="btn ghost btn-sm" id="editor-analytics" type="button" title="分析">&#x1f4ca;</button>
+                <button class="btn ghost btn-sm" id="editor-toggle-ai" type="button" title="Toggle AI panel">AI</button>
+              </div>
+            </div>
+
+            <div class="editor-body">
+              <!-- Left Panel: Tabs -->
+              <aside class="editor-left" id="editor-left">
+                <div class="editor-tabs">
+                  <button class="editor-tab active" data-tab="chapters" type="button" title="章节目录">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
+                  </button>
+                  <button class="editor-tab" data-tab="worldbuild" type="button" title="设定库">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
+                  </button>
+                  <button class="editor-tab" data-tab="outline" type="button" title="大纲">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+                  </button>
+                  <button class="editor-tab" data-tab="presets" type="button" title="预设">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="9" y1="9" x2="21" y2="9"/></svg>
+                  </button>
+                </div>
+                <div class="editor-tab-content">
+                  <!-- Chapters Tab -->
+                  <div class="editor-tab-panel active" id="tab-chapters">
+                    <div class="tab-panel-header">
+                      <span class="font-serif">章节目录</span>
+                      <span class="section-tag">CHAPTERS</span>
+                    </div>
+                    <div class="editor-chapter-tree" id="editor-chapter-tree"></div>
+                  </div>
+                  <!-- Worldbuilding Tab -->
+                  <div class="editor-tab-panel" id="tab-worldbuild">
+                    <div class="tab-panel-header">
+                      <span class="font-serif">设定库</span>
+                      <span class="section-tag">WORLD</span>
+                    </div>
+                    <div class="editor-world-tree" id="editor-world-tree"></div>
+                  </div>
+                  <!-- Outline Tab -->
+                  <div class="editor-tab-panel" id="tab-outline">
+                    <div class="tab-panel-header">
+                      <span class="font-serif">三级大纲</span>
+                      <span class="section-tag">OUTLINE</span>
+                    </div>
+                    <div class="editor-outline-tree" id="editor-outline-tree"></div>
+                  </div>
+                  <!-- Presets Tab -->
+                  <div class="editor-tab-panel" id="tab-presets">
+                    <div class="tab-panel-header">
+                      <span class="font-serif">预设</span>
+                      <span class="section-tag">PRESETS</span>
+                      <button class="btn ghost btn-xs" id="preset-create-btn" type="button" title="新建预设">+</button>
+                    </div>
+                    <div class="preset-list" id="preset-list">
+                      <div class="sidebar-empty">暂无预设</div>
+                    </div>
+                  </div>
+                </div>
+              </aside>
+
+              <!-- Center: Main Editor -->
+              <div class="editor-center" id="editor-center">
+                <div class="editor-toolbar" id="editor-toolbar">
+                  <button class="toolbar-btn" data-cmd="bold" type="button" title="加粗"><strong>B</strong></button>
+                  <button class="toolbar-btn" data-cmd="italic" type="button" title="斜体"><em>I</em></button>
+                  <button class="toolbar-btn" data-cmd="heading" type="button" title="标题">H</button>
+                  <button class="toolbar-btn" data-cmd="ul" type="button" title="列表">&#x2022;</button>
+                  <button class="toolbar-btn" data-cmd="quote" type="button" title="引用">&ldquo;</button>
+                  <span class="toolbar-sep"></span>
+                  <button class="toolbar-btn" data-cmd="detect" type="button" title="AIGC 检测">检测</button>
+                  <button class="toolbar-btn" data-cmd="preview" type="button" title="预览/编辑">预览</button>
+                </div>
+                <textarea class="editor-textarea" id="editor-textarea" placeholder="开始书写..."></textarea>
+                <div class="editor-preview" id="editor-preview" style="display:none"></div>
+                <div class="editor-statusbar">
+                  <span id="editor-char-count">0 字</span>
+                  <span id="editor-cursor-pos"></span>
+                </div>
+              </div>
+
+              <!-- Right: AI Panels -->
+              <aside class="editor-right" id="editor-right">
+                <div class="ai-panel-tabs">
+                  <button class="ai-panel-tab active" data-panel="ai-chat" type="button">聊天</button>
+                  <button class="ai-panel-tab" data-panel="ai-summary" type="button">摘要</button>
+                  <button class="ai-panel-tab" data-panel="ai-continue" type="button">续写</button>
+                  <button class="ai-panel-tab" data-panel="ai-revise" type="button">修订</button>
+                  <button class="ai-panel-tab" data-panel="ai-predict" type="button">抽卡</button>
+                </div>
+                <!-- AI Chat Panel -->
+                <div class="ai-panel active" id="panel-ai-chat">
+                  <div class="ai-panel-messages" id="ai-panel-messages"></div>
+                  <div class="ai-panel-input">
+                    <textarea id="ai-panel-input" rows="2" placeholder="向 AI 提问..."></textarea>
+                    <button class="btn accent btn-sm" id="ai-panel-send" type="button">发送</button>
+                  </div>
+                </div>
+                <!-- AI Summary Panel -->
+                <div class="ai-panel" id="panel-ai-summary">
+                  <div class="ai-panel-body">
+                    <p class="text-muted">选择章节后可生成摘要</p>
+                    <button class="btn accent btn-sm" id="ai-gen-summary" type="button">生成摘要</button>
+                  </div>
+                </div>
+                <!-- AI Continue Panel -->
+                <div class="ai-panel" id="panel-ai-continue">
+                  <div class="ai-panel-body">
+                    <label class="form-field">
+                      <span>续写章数</span>
+                      <input id="ai-continue-count" type="number" min="1" value="1" />
+                    </label>
+                    <label class="form-field">
+                      <span>创作指导</span>
+                      <textarea id="ai-continue-context" rows="3" placeholder="本章重点..."></textarea>
+                    </label>
+                    <button class="btn accent btn-sm" id="ai-continue-btn" type="button">开始续写</button>
+                  </div>
+                </div>
+                <!-- AI Revise Panel -->
+                <div class="ai-panel" id="panel-ai-revise">
+                  <div class="ai-panel-body">
+                    <p class="text-muted">选择修订模式：</p>
+                    <div class="revise-modes">
+                      <button class="btn ghost btn-sm revise-mode-btn" data-mode="polish" type="button">润色</button>
+                      <button class="btn ghost btn-sm revise-mode-btn" data-mode="rewrite" type="button">改写</button>
+                      <button class="btn ghost btn-sm revise-mode-btn" data-mode="rework" type="button">重写</button>
+                      <button class="btn ghost btn-sm revise-mode-btn" data-mode="anti-detect" type="button">反检测</button>
+                      <button class="btn ghost btn-sm revise-mode-btn" data-mode="spot-fix" type="button">定点修复</button>
+                    </div>
+                    <div class="revise-result" id="revise-result"></div>
+                  </div>
+                </div>
+                <!-- AI Predict (抽卡) Panel -->
+                <div class="ai-panel" id="panel-ai-predict">
+                  <div class="ai-panel-body prediction-panel">
+                    <label class="form-field">
+                      <span>系统提示词</span>
+                      <textarea id="prediction-system" rows="2" placeholder="你是一个高水平的中文小说作家。"></textarea>
+                    </label>
+                    <label class="form-field">
+                      <span>生成提示词</span>
+                      <textarea id="prediction-prompt" rows="3" placeholder="请续写下一章..."></textarea>
+                    </label>
+                    <div class="form-field">
+                      <span>模型列表</span>
+                      <div id="prediction-models">
+                        <div class="prediction-model-row">
+                          <input type="text" class="prediction-model-input" placeholder="模型名称 (如 gpt-4o)">
+                        </div>
+                      </div>
+                      <button class="btn ghost btn-sm" id="prediction-add-model" type="button">+ 添加模型</button>
+                    </div>
+                    <button class="btn accent btn-sm" id="prediction-generate" type="button">开始抽卡</button>
+                    <div class="prediction-results">
+                      <div class="prediction-list-panel" id="prediction-list"></div>
+                      <div class="prediction-detail-panel" id="prediction-detail">
+                        <div class="prediction-empty">选择左侧模型查看详情</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </aside>
+            </div>
+          </section>
+
+          <!-- CHAT VIEW -->
+          <section class="chat-view" id="chat-view">
+            <div class="chat-messages" id="chat-messages">
+              <div class="chat-welcome">
+                <div class="chat-welcome-icon">
+                  <svg width="48" height="48" viewBox="0 0 48 48" fill="none"><rect x="4" y="8" width="40" height="28" rx="6" stroke="currentColor" stroke-width="2.5"/><path d="M16 24h16M16 20h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M18 36l-4 6M30 36l4 6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
+                </div>
+                <h2>InkOS Studio</h2>
+                <p>AI 小说写作工作台 &mdash; 对话优先，从这里开始</p>
+              </div>
+            </div>
+            <div class="chat-chips" id="chat-chips">
+              <button class="chip" type="button" data-action="write-next">写下一章</button>
+              <button class="chip" type="button" data-action="audit">审计最新章节</button>
+              <button class="chip" type="button" data-action="world-state">查看世界状态</button>
+              <button class="chip" type="button" data-action="export">导出全书</button>
+            </div>
+            <div class="chat-input-bar">
+              <textarea id="chat-input" rows="1" placeholder="输入你的想法..."></textarea>
+              <button class="btn-send" id="send-chat" type="button" title="Send">
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M4 10l12-6-4 6 4 6-12-6z" fill="currentColor"/></svg>
+              </button>
+            </div>
+          </section>
+
+          <!-- LLM LOGS VIEW -->
+          <section class="llm-logs-view" id="llm-logs-view">
+            <div class="llm-logs-header">
+              <h2 class="font-serif">LLM 调用日志</h2>
+              <div style="display:flex;gap:8px;align-items:center">
+                <input type="date" id="llm-logs-date" class="form-input-sm">
+                <button class="btn ghost btn-sm" id="llm-logs-refresh" type="button">刷新</button>
+              </div>
+            </div>
+            <div class="llm-logs-content" id="llm-logs-content">
+              <div class="sidebar-empty">点击刷新加载日志</div>
+            </div>
+          </section>
+
+          <!-- UPLOAD VIEW -->
+          <section class="upload-view" id="upload-view">
+            <div class="upload-header">
+              <h2 class="font-serif">文件上传 & 章节导入</h2>
+            </div>
+            <div class="upload-body">
+              <div class="upload-dropzone" id="upload-dropzone">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                <p>拖拽 .txt 文件到此处</p>
+                <button class="btn ghost btn-sm" id="upload-select-btn" type="button">或点击选择文件</button>
+                <input type="file" id="upload-file-input" accept=".txt" style="display:none">
+              </div>
+              <div class="upload-status" id="upload-status"></div>
+              <div class="upload-preview" id="upload-preview"></div>
+              <div class="upload-progress" id="upload-progress"></div>
+            </div>
+          </section>
+
+          <!-- ANALYTICS VIEW -->
+          <section class="analytics-view" id="analytics-view">
+            <div class="analytics-header">
+              <h2 class="font-serif">书籍分析</h2>
+            </div>
+            <div class="analytics-content" id="analytics-content">
+              <div class="sidebar-empty">请先选择书籍</div>
+            </div>
+          </section>
+
+          <!-- KNOWLEDGE VIEW (番茄 + 知识库) -->
+          <section class="knowledge-view" id="knowledge-view">
+            <div class="knowledge-layout">
+              <!-- Left: Fanqie Search + Knowledge List -->
+              <div class="knowledge-left">
+                <div class="knowledge-section">
+                  <h3 class="font-serif">番茄小说搜索</h3>
+                  <div class="fanqie-search-bar">
+                    <input type="text" id="fanqie-search-input" placeholder="搜索小说标题或作者...">
+                    <button class="btn accent btn-sm" id="fanqie-search-btn" type="button">搜索</button>
+                  </div>
+                  <div class="fanqie-results" id="fanqie-results"></div>
+                </div>
+                <div class="knowledge-section">
+                  <div class="knowledge-section-header">
+                    <h3 class="font-serif">知识库</h3>
+                    <button class="btn ghost btn-sm" id="knowledge-refresh" type="button">刷新</button>
+                  </div>
+                  <div class="knowledge-list" id="knowledge-list">
+                    <div class="sidebar-empty">暂无知识库条目</div>
+                  </div>
+                  <details class="knowledge-manual" style="margin-top:12px">
+                    <summary>手动分析</summary>
+                    <label class="form-field"><span>标题</span><input id="knowledge-manual-title" type="text" placeholder="小说标题"></label>
+                    <label class="form-field"><span>内容片段</span><textarea id="knowledge-manual-content" rows="4" placeholder="粘贴小说片段..."></textarea></label>
+                    <button class="btn accent btn-sm" id="knowledge-manual-analyze" type="button">开始解剖</button>
+                  </details>
+                </div>
+              </div>
+              <!-- Right: Knowledge Detail -->
+              <div class="knowledge-right" id="knowledge-detail">
+                <div class="sidebar-empty">选择知识库条目查看7维度分析</div>
+              </div>
+            </div>
+          </section>
+
+          <!-- CONTENT VIEW -->
+          <section class="content-view" id="content-view">
+            <div class="content-header">
+              <div class="content-breadcrumb" id="content-breadcrumb"></div>
+              <div class="content-actions">
+                <button class="btn ghost" id="back-to-chat" type="button">&#x2190; 对话</button>
+                <button class="btn ghost" id="toggle-edit" type="button">编辑</button>
+                <button class="btn accent" id="save-content" type="button" style="display:none">保存</button>
+              </div>
+            </div>
+            <div class="content-body" id="content-body"></div>
+            <textarea class="content-editor" id="content-editor" style="display:none"></textarea>
+          </section>
+
+          <!-- CREATE BOOK VIEW -->
+          <section class="create-view" id="create-view">
+            <div class="form-page">
+              <div class="form-page-header">
+                <h2>创建新书</h2>
+                <button class="btn ghost" id="create-back" type="button">&#x2190; 返回</button>
+              </div>
+              <form class="form-grid" id="create-form">
+                <label class="form-field">
+                  <span>书名</span>
+                  <input name="title" type="text" placeholder="例如：长夜行星" required />
+                </label>
+                <label class="form-field">
+                  <span>题材</span>
+                  <select name="genre">
+                    <option value="xuanhuan">玄幻</option>
+                    <option value="xianxia">仙侠</option>
+                    <option value="urban">都市</option>
+                    <option value="horror">恐怖</option>
+                    <option value="other">其他</option>
+                  </select>
+                </label>
+                <label class="form-field">
+                  <span>平台</span>
+                  <select name="platform">
+                    <option value="tomato">番茄</option>
+                    <option value="qidian">起点</option>
+                    <option value="feilu">飞卢</option>
+                    <option value="other">其他</option>
+                  </select>
+                </label>
+                <label class="form-field">
+                  <span>目标章节数</span>
+                  <input name="targetChapters" type="number" min="1" value="200" />
+                </label>
+                <label class="form-field">
+                  <span>每章字数</span>
+                  <input name="chapterWords" type="number" min="200" value="3000" />
+                </label>
+                <label class="form-field span-2">
+                  <span>创作简报（可选）</span>
+                  <textarea name="brief" rows="4" placeholder="你的脑洞 / 世界观 / 设定"></textarea>
+                </label>
+                <label class="form-check span-2">
+                  <input type="checkbox" name="useProjectBrief" checked />
+                  <span>使用 project/brief.md</span>
+                </label>
+                <label class="form-check span-2">
+                  <input type="checkbox" name="writeFirstChapter" />
+                  <span>创建后立即写第 1 章</span>
+                </label>
+                <button class="btn accent span-2" type="submit">创建书籍</button>
+              </form>
+            </div>
+          </section>
+
+          <!-- WRITE NEXT VIEW -->
+          <section class="write-view" id="write-view">
+            <div class="form-page">
+              <div class="form-page-header">
+                <h2>写下一章</h2>
+                <button class="btn ghost" id="write-back" type="button">&#x2190; 返回</button>
+              </div>
+              <form class="form-grid" id="write-form">
+                <label class="form-field">
+                  <span>选择书籍</span>
+                  <select name="bookId" id="write-book"></select>
+                </label>
+                <label class="form-field">
+                  <span>连写数量</span>
+                  <input name="count" type="number" min="1" value="1" />
+                </label>
+                <label class="form-field">
+                  <span>覆盖字数（可选）</span>
+                  <input name="words" type="number" min="200" placeholder="默认使用书籍设置" />
+                </label>
+                <label class="form-field span-2">
+                  <span>创作指导（可选）</span>
+                  <textarea name="context" rows="3" placeholder="本章重点、人物冲突、伏笔..."></textarea>
+                </label>
+                <button class="btn accent span-2" type="submit">开始写作</button>
+              </form>
+              <div class="form-page-header" style="margin-top:32px">
+                <h2>导出书籍</h2>
+              </div>
+              <form class="form-grid" id="export-form">
+                <label class="form-field">
+                  <span>选择书籍</span>
+                  <select name="bookId" id="export-book"></select>
+                </label>
+                <label class="form-field">
+                  <span>格式</span>
+                  <select name="format">
+                    <option value="txt">txt</option>
+                    <option value="md">md</option>
+                    <option value="epub">epub</option>
+                  </select>
+                </label>
+                <label class="form-field span-2">
+                  <span>输出路径（可选）</span>
+                  <input name="output" type="text" placeholder="留空使用默认路径" />
+                </label>
+                <label class="form-check span-2">
+                  <input type="checkbox" name="approvedOnly" />
+                  <span>仅导出已通过章节</span>
+                </label>
+                <button class="btn accent span-2" type="submit">导出文件</button>
+              </form>
+            </div>
+          </section>
+
+        </main>
+      </div>
+
+      <!-- ======== SETTINGS MODAL ======== -->
+      <div class="modal-backdrop" id="settings-modal" style="display:none">
+        <div class="modal">
+          <div class="modal-header">
+            <h2>设置</h2>
+            <button class="modal-close" id="settings-close" type="button">&times;</button>
+          </div>
+          <div class="modal-body">
+            <!-- Section 1: Basic Config -->
+            <details class="settings-section" open>
+              <summary><h3>基础配置</h3></summary>
+              <div class="form-grid form-grid--compact">
+                <label class="form-field">
+                  <span>Provider</span>
+                  <select id="s-provider">
+                    <option value="openai">OpenAI</option>
+                    <option value="anthropic">Anthropic</option>
+                    <option value="gemini">Gemini</option>
+                    <option value="custom">Custom</option>
+                  </select>
+                </label>
+                <label class="form-field">
+                  <span>Base URL</span>
+                  <input id="s-baseurl" type="text" placeholder="https://api.openai.com/v1" />
+                </label>
+                <label class="form-field">
+                  <span>API Key</span>
+                  <input id="s-apikey" type="password" placeholder="sk-..." />
+                </label>
+                <label class="form-field">
+                  <span>Model</span>
+                  <input id="s-model" type="text" placeholder="gpt-4o" />
+                </label>
+                <label class="form-field">
+                  <span>API Format</span>
+                  <select id="s-apiformat">
+                    <option value="chat">chat</option>
+                    <option value="responses">responses</option>
+                  </select>
+                </label>
+              </div>
+            </details>
+
+            <!-- Section 2: Advanced Parameters -->
+            <details class="settings-section">
+              <summary><h3>高级参数</h3></summary>
+              <div class="form-grid form-grid--compact">
+                <label class="form-field">
+                  <span>Temperature</span>
+                  <input id="s-temperature" type="number" step="0.1" min="0" max="2" placeholder="0.7" />
+                </label>
+                <label class="form-field">
+                  <span>Max Tokens</span>
+                  <input id="s-maxtokens" type="number" min="256" placeholder="8192" />
+                </label>
+                <label class="form-field">
+                  <span>Thinking Budget</span>
+                  <input id="s-thinking-budget" type="number" min="0" placeholder="0 (关闭)" />
+                </label>
+                <label class="form-field">
+                  <span>Reasoning Effort</span>
+                  <select id="s-reasoning-effort">
+                    <option value="">默认</option>
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                    <option value="xhigh">XHigh (Codex Fast)</option>
+                  </select>
+                </label>
+                <label class="form-field">
+                  <span>Stream</span>
+                  <select id="s-stream">
+                    <option value="true">开启</option>
+                    <option value="false">关闭</option>
+                  </select>
+                </label>
+                <label class="form-field">
+                  <span>Disable Response Storage</span>
+                  <select id="s-disable-storage">
+                    <option value="false">否</option>
+                    <option value="true">是 (Codex Fast)</option>
+                  </select>
+                </label>
+              </div>
+            </details>
+
+            <!-- Section 3: Agent Routing -->
+            <details class="settings-section">
+              <summary><h3>Agent 模型路由</h3></summary>
+              <p class="text-muted" style="font-size:0.8rem;margin-bottom:8px">为每个 Agent 指定不同的模型（留空使用默认模型）</p>
+              <div class="agent-routing-grid" id="agent-routing">
+                <label class="form-field"><span>Architect</span><input id="s-agent-architect" type="text" placeholder="默认"></label>
+                <label class="form-field"><span>Writer</span><input id="s-agent-writer" type="text" placeholder="默认"></label>
+                <label class="form-field"><span>Auditor</span><input id="s-agent-auditor" type="text" placeholder="默认"></label>
+                <label class="form-field"><span>Reviser</span><input id="s-agent-reviser" type="text" placeholder="默认"></label>
+                <label class="form-field"><span>Radar</span><input id="s-agent-radar" type="text" placeholder="默认"></label>
+                <label class="form-field"><span>Chapter Analyzer</span><input id="s-agent-chapter-analyzer" type="text" placeholder="默认"></label>
+              </div>
+            </details>
+
+            <!-- Connectivity & Info -->
+            <details class="settings-section">
+              <summary><h3>连通性 & 信息</h3></summary>
+              <div class="settings-row">
+                <button class="btn ghost" id="run-doctor" type="button">检测连通性</button>
+                <span class="settings-doctor-status" id="doctor-status">未检测</span>
+              </div>
+              <div class="settings-info" style="margin-top:12px">
+                <div><span class="info-label">项目目录</span><span class="info-value" id="info-project-root">-</span></div>
+                <div><span class="info-label">CLI 路径</span><span class="info-value" id="info-cli-path">-</span></div>
+              </div>
+            </details>
+
+            <div class="modal-footer">
+              <button class="btn accent" id="save-settings" type="button">保存设置</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PRESET EDITOR MODAL -->
+      <div class="modal-backdrop" id="preset-editor-modal" style="display:none">
+        <div class="modal-content" style="max-width:520px">
+          <div class="modal-header">
+            <h3 id="preset-editor-title">新建预设</h3>
+            <button class="modal-close" id="preset-editor-close" type="button">&times;</button>
+          </div>
+          <div class="modal-body">
+            <label class="form-field"><span>名称</span><input id="preset-name" type="text" placeholder="预设名称"></label>
+            <label class="form-field"><span>类型</span>
+              <select id="preset-type">
+                <option value="chat">聊天</option>
+                <option value="revise">修订</option>
+                <option value="continue">续写</option>
+                <option value="outline">大纲</option>
+                <option value="analyze">分析</option>
+              </select>
+            </label>
+            <label class="form-field"><span>系统提示词</span><textarea id="preset-system-prompt" rows="3" placeholder="System prompt..."></textarea></label>
+            <label class="form-field"><span>用户提示词模板</span><textarea id="preset-user-template" rows="3" placeholder="使用 {{content}} 插入当前内容"></textarea></label>
+            <label class="form-field"><span>指定模型 (可选)</span><input id="preset-model" type="text" placeholder="留空使用默认模型"></label>
+            <div style="display:flex;gap:12px">
+              <label class="form-field" style="flex:1"><span>Temperature</span><input id="preset-temperature" type="number" step="0.1" min="0" max="2" value="0.7"></label>
+              <label class="form-field" style="flex:1"><span>Max Tokens</span><input id="preset-max-tokens" type="number" min="256" value="4096"></label>
+            </div>
+            <label class="form-field"><span>标签 (逗号分隔)</span><input id="preset-tags" type="text" placeholder="润色, 玄幻"></label>
+          </div>
+          <div class="modal-footer">
+            <button class="btn accent" id="preset-editor-save" type="button">保存</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- TOAST -->
+      <div class="toast-container" id="toast-container"></div>
+    </div>
+
+    <script type="module" src="./js/app.js"></script>
+  </body>
+</html>

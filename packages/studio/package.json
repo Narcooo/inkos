@@ -1,0 +1,16 @@
+{
+  "name": "@actalk/inkos-studio",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "InkOS local GUI (simple)",
+  "license": "MIT",
+  "scripts": {
+    "dev": "node server.cjs",
+    "start": "node server.cjs",
+    "build:exe": "pkg server.cjs --targets node18-win-x64 --output dist/inkos-studio.exe --assets public/**/*"
+  },
+  "devDependencies": {
+    "pkg": "^5.8.1"
+  }
+}
