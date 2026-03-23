@@ -127,14 +127,24 @@ export class ConsolidatorAgent extends BaseAgent {
 
   private parseVolumeBoundaries(outline: string): Array<{ name: string; startCh: number; endCh: number }> {
     const volumes: Array<{ name: string; startCh: number; endCh: number }> = [];
-    // Match patterns like "第一卷 ... 第1-30章" or "Volume 1 ... Chapters 1-30"
-    const regex = /(?:第[一二三四五六七八九十\d]+卷|Volume\s+\d+)[：:\s]*([^\n]*?)(?:第(\d+)[-–~](\d+)章|[Cc]hapters?\s+(\d+)[-–~](\d+))/g;
-    let match: RegExpExecArray | null;
-    while ((match = regex.exec(outline)) !== null) {
-      const name = match[0].split(/[（(]/)[0]!.trim();
-      const startCh = parseInt(match[2] ?? match[4] ?? "0", 10);
-      const endCh = parseInt(match[3] ?? match[5] ?? "0", 10);
-      if (startCh > 0 && endCh > 0) {
+    const lines = outline.split("\n");
+    const volumeHeader = /^(第[一二三四五六七八九十百千万零〇\d]+卷|Volume\s+\d+)/i;
+    const rangePattern = /[（(]\s*(?:第|[Cc]hapters?\s+)?(\d+)\s*[-–~～—]\s*(\d+)\s*(?:章)?\s*[）)]|(?:第|[Cc]hapters?\s+)(\d+)\s*[-–~～—]\s*(\d+)\s*(?:章)?/i;
+
+    for (const rawLine of lines) {
+      const line = rawLine.replace(/^#+\s*/, "").trim();
+      if (!volumeHeader.test(line)) continue;
+
+      const rangeMatch = line.match(rangePattern);
+      if (!rangeMatch) continue;
+
+      const startCh = parseInt(rangeMatch[1] ?? rangeMatch[3] ?? "0", 10);
+      const endCh = parseInt(rangeMatch[2] ?? rangeMatch[4] ?? "0", 10);
+      if (startCh <= 0 || endCh <= 0) continue;
+
+      const rangeIndex = rangeMatch.index ?? line.length;
+      const name = line.slice(0, rangeIndex).replace(/[（(]\s*$/, "").trim();
+      if (name.length > 0) {
         volumes.push({ name, startCh, endCh });
       }
     }

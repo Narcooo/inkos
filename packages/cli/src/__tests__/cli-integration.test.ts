@@ -141,6 +141,30 @@ describe("CLI integration", () => {
     });
   });
 
+  describe("inkos config set-model", () => {
+    it("rejects raw API keys passed to --api-key-env", async () => {
+      const { exitCode, stderr } = runStderr([
+        "config",
+        "set-model",
+        "writer",
+        "gpt-4-turbo",
+        "--provider",
+        "custom",
+        "--base-url",
+        "https://poloai.top/v1",
+        "--api-key-env",
+        "sk-test-direct-key",
+      ]);
+
+      expect(exitCode).not.toBe(0);
+      expect(stderr).toContain("--api-key-env expects an environment variable name");
+
+      const raw = await readFile(join(projectDir, "inkos.json"), "utf-8");
+      const config = JSON.parse(raw);
+      expect(config.modelOverrides).toBeUndefined();
+    });
+  });
+
   describe("inkos book list", () => {
     it("shows no books in empty project", () => {
       const output = run(["book", "list"]);
