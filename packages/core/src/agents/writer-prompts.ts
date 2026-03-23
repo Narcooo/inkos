@@ -3,6 +3,7 @@ import type { GenreProfile } from "../models/genre-profile.js";
 import type { BookRules } from "../models/book-rules.js";
 import { buildFanficCanonSection, buildCharacterVoiceProfiles, buildFanficModeInstructions } from "./fanfic-prompt-sections.js";
 import { buildEnglishCoreRules, buildEnglishAntiAIRules, buildEnglishCharacterMethod, buildEnglishPreWriteChecklist, buildEnglishGenreIntro } from "./en-prompt-sections.js";
+import { getChapterLengthTarget, formatChapterLengthTarget, type ChapterLengthTarget } from "../utils/chapter-length.js";
 
 export interface FanficContext {
   readonly fanficCanon: string;
@@ -26,17 +27,19 @@ export function buildWriterSystemPrompt(
   mode: "full" | "creative" = "full",
   fanficContext?: FanficContext,
   languageOverride?: "zh" | "en",
+  targetWordCount?: number,
 ): string {
   const isEnglish = (languageOverride ?? genreProfile.language) === "en";
+  const chapterLengthTarget = getChapterLengthTarget(targetWordCount ?? book.chapterWordCount);
 
   const outputSection = mode === "creative"
-    ? buildCreativeOutputFormat(book, genreProfile)
-    : buildOutputFormat(book, genreProfile);
+    ? buildCreativeOutputFormat(book, genreProfile, chapterLengthTarget)
+    : buildOutputFormat(book, genreProfile, chapterLengthTarget);
 
   const sections = isEnglish
     ? [
-        buildEnglishGenreIntro(book, genreProfile),
-        buildEnglishCoreRules(book),
+        buildEnglishGenreIntro(book, genreProfile, chapterLengthTarget),
+        buildEnglishCoreRules(chapterLengthTarget),
         buildEnglishAntiAIRules(),
         buildEnglishCharacterMethod(),
         buildGenreRules(genreProfile, genreBody),
@@ -47,12 +50,12 @@ export function buildWriterSystemPrompt(
         fanficContext ? buildFanficCanonSection(fanficContext.fanficCanon, fanficContext.fanficMode) : "",
         fanficContext ? buildCharacterVoiceProfiles(fanficContext.fanficCanon) : "",
         fanficContext ? buildFanficModeInstructions(fanficContext.fanficMode, fanficContext.allowedDeviations) : "",
-        buildEnglishPreWriteChecklist(book, genreProfile),
+        buildEnglishPreWriteChecklist(genreProfile, chapterLengthTarget),
         outputSection,
       ]
     : [
         buildGenreIntro(book, genreProfile),
-        buildCoreRules(book),
+        buildCoreRules(chapterLengthTarget),
         buildAntiAIExamples(),
         buildCharacterPsychologyMethod(),
         buildSupportingCharacterMethod(),
@@ -88,11 +91,11 @@ function buildGenreIntro(book: BookConfig, gp: GenreProfile): string {
 // Core rules (~25 universal rules)
 // ---------------------------------------------------------------------------
 
-function buildCoreRules(book: BookConfig): string {
+function buildCoreRules(target: ChapterLengthTarget): string {
   return `## 核心规则
 
 1. 以简体中文工作，句子长短交替，段落适合手机阅读（3-5行/段）
-2. 每章${book.chapterWordCount}字左右
+2. 每章${formatChapterLengthTarget(target, "zh")}
 3. 伏笔前后呼应，不留悬空线；所有埋下的伏笔都必须在后续收回
 4. 只读必要上下文，不机械重复已有内容
 
@@ -462,7 +465,7 @@ function buildPreWriteChecklist(book: BookConfig, gp: GenreProfile): string {
 // Creative-only output format (no settlement blocks)
 // ---------------------------------------------------------------------------
 
-function buildCreativeOutputFormat(book: BookConfig, gp: GenreProfile): string {
+function buildCreativeOutputFormat(book: BookConfig, gp: GenreProfile, target: ChapterLengthTarget): string {
   const resourceRow = gp.numericalSystem
     ? "| 当前资源总量 | X | 与账本一致 |\n| 本章预计增量 | +X（来源） | 无增量写+0 |"
     : "";
@@ -487,7 +490,7 @@ ${preWriteTable}
 (章节标题，不含"第X章")
 
 === CHAPTER_CONTENT ===
-(正文内容，${book.chapterWordCount}字左右)
+(正文内容，${formatChapterLengthTarget(target, "zh")})
 
 【重要】本次只需输出以上三个区块（PRE_WRITE_CHECK、CHAPTER_TITLE、CHAPTER_CONTENT）。
 状态卡、伏笔池、摘要等追踪文件将由后续结算阶段处理，请勿输出。`;
@@ -497,7 +500,7 @@ ${preWriteTable}
 // Output format
 // ---------------------------------------------------------------------------
 
-function buildOutputFormat(book: BookConfig, gp: GenreProfile): string {
+function buildOutputFormat(book: BookConfig, gp: GenreProfile, target: ChapterLengthTarget): string {
   const resourceRow = gp.numericalSystem
     ? "| 当前资源总量 | X | 与账本一致 |\n| 本章预计增量 | +X（来源） | 无增量写+0 |"
     : "";
@@ -540,7 +543,7 @@ ${preWriteTable}
 (章节标题，不含"第X章")
 
 === CHAPTER_CONTENT ===
-(正文内容，${book.chapterWordCount}字左右)
+(正文内容，${formatChapterLengthTarget(target, "zh")})
 
 ${postSettlement}
 

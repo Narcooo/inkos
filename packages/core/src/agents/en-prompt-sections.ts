@@ -1,9 +1,10 @@
 import type { BookConfig } from "../models/book.js";
 import type { GenreProfile } from "../models/genre-profile.js";
-import type { BookRules } from "../models/book-rules.js";
+import type { ChapterLengthTarget } from "../utils/chapter-length.js";
+import { formatChapterLengthTarget } from "../utils/chapter-length.js";
 
 // English equivalent of buildCoreRules() — universal writing rules for English fiction
-export function buildEnglishCoreRules(_book: BookConfig): string {
+export function buildEnglishCoreRules(target: ChapterLengthTarget): string {
   return `## Universal Writing Rules
 
 ### Character Rules
@@ -31,7 +32,8 @@ export function buildEnglishCoreRules(_book: BookConfig): string {
 16. **Promise and payoff**: Every planted hook must be resolved. Every mystery must have an answer.
 17. **Escalation**: Each conflict should feel higher-stakes than the last—either externally or emotionally.
 18. **Reader proxy**: One character should react with surprise/excitement/fear when remarkable things happen, giving readers permission to feel the same.
-19. **Pacing breathing room**: After a high-intensity sequence, give 0.5-1 chapter of lower intensity before the next escalation.`;
+19. **Pacing breathing room**: After a high-intensity sequence, give 0.5-1 chapter of lower intensity before the next escalation.
+20. **Length discipline**: Keep each chapter at ${formatChapterLengthTarget(target, "en")}.`;
 }
 
 // English equivalent of buildAntiAIExamples()
@@ -91,7 +93,7 @@ This method is for YOUR planning. The terms never appear in the chapter text.`;
 }
 
 // English pre-write checklist
-export function buildEnglishPreWriteChecklist(book: BookConfig, gp: GenreProfile): string {
+export function buildEnglishPreWriteChecklist(gp: GenreProfile, target: ChapterLengthTarget): string {
   const items = [
     "Outline anchor: Which volume_outline plot point does this chapter advance?",
     "POV: Whose perspective? Consistent throughout?",
@@ -99,7 +101,7 @@ export function buildEnglishPreWriteChecklist(book: BookConfig, gp: GenreProfile
     "Sensory grounding: At least 2 non-visual senses per major scene",
     "Character consistency: Does every character act from their established motivation?",
     "Information boundary: No character references info they haven't witnessed",
-    `Pacing: Chapter targets ${book.chapterWordCount} words. ${gp.pacingRule}`,
+    `Pacing: Chapter stays at ${formatChapterLengthTarget(target, "en")}. ${gp.pacingRule}`,
     "Show don't tell: Are emotions shown through action, not labeled?",
     "AI-tell check: No banned analytical language in prose?",
     "Conflict: What is the core tension driving this chapter?",
@@ -119,10 +121,10 @@ ${items.map((item, i) => `${i + 1}. ${item}`).join("\n")}`;
 }
 
 // English genre intro
-export function buildEnglishGenreIntro(book: BookConfig, gp: GenreProfile): string {
+export function buildEnglishGenreIntro(book: BookConfig, gp: GenreProfile, target: ChapterLengthTarget): string {
   return `You are a professional ${gp.name} web fiction author writing for English-speaking platforms (Royal Road, Kindle Unlimited, Scribble Hub).
 
-Target: ${book.chapterWordCount} words per chapter, ${book.targetChapters} total chapters.
+Target: ${formatChapterLengthTarget(target, "en")}, ${book.targetChapters} total chapters.
 
 Write in English. Vary sentence length. Mix short punchy sentences with longer flowing ones. Maintain consistent narrative voice throughout.`;
 }

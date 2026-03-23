@@ -63,6 +63,21 @@ describe("validatePostWrite", () => {
     expect(findRule(result, "高疲劳词")).toBeDefined();
   });
 
+  it("detects chapter content that exceeds the configured target range", () => {
+    const content = "长".repeat(1801);
+    const result = validatePostWrite(content, baseProfile, null, { targetWordCount: 1500 });
+    const violation = findRule(result, "章节长度");
+    expect(violation).toBeDefined();
+    expect(violation!.severity).toBe("error");
+    expect(violation!.description).toContain("允许上限1700字");
+  });
+
+  it("allows chapter content within the configured target range", () => {
+    const content = "正".repeat(1680);
+    const result = validatePostWrite(content, baseProfile, null, { targetWordCount: 1500 });
+    expect(findRule(result, "章节长度")).toBeUndefined();
+  });
+
   it("detects meta-narration patterns", () => {
     const content = "故事发展到了这里，主角终于做出了选择。他站起来走向门口。";
     const result = validatePostWrite(content, baseProfile, null);

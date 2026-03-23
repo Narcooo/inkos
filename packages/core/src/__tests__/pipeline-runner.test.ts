@@ -325,6 +325,54 @@ describe("PipelineRunner", () => {
     await rm(root, { recursive: true, force: true });
   });
 
+  it("fails the pipeline when final chapter length exceeds the requested override", async () => {
+    const { root, runner, bookId } = await createRunnerFixture();
+    const oversizedContent = "长".repeat(1801);
+
+    vi.spyOn(WriterAgent.prototype, "writeChapter").mockResolvedValue(
+      createWriterOutput({
+        content: oversizedContent,
+        wordCount: oversizedContent.length,
+      }),
+    );
+    vi.spyOn(ContinuityAuditor.prototype, "auditChapter").mockResolvedValue(
+      createAuditResult({
+        passed: true,
+        issues: [],
+        summary: "clean",
+      }),
+    );
+    vi.spyOn(ReviserAgent.prototype, "reviseChapter").mockResolvedValue(
+      createReviseOutput({
+        revisedContent: oversizedContent,
+        wordCount: oversizedContent.length,
+      }),
+    );
+    vi.spyOn(WriterAgent.prototype, "saveChapter").mockResolvedValue(undefined);
+    vi.spyOn(WriterAgent.prototype, "saveNewTruthFiles").mockResolvedValue(undefined);
+    vi.spyOn(ChapterAnalyzerAgent.prototype, "analyzeChapter").mockResolvedValue(
+      createAnalyzedOutput({
+        content: oversizedContent,
+        wordCount: oversizedContent.length,
+      }),
+    );
+
+    const result = await runner.writeNextChapter(bookId, 1500);
+
+    expect(result.status).toBe("audit-failed");
+    expect(result.auditResult.passed).toBe(false);
+    expect(result.auditResult.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          category: "章节长度",
+          severity: "critical",
+        }),
+      ]),
+    );
+
+    await rm(root, { recursive: true, force: true });
+  });
+
   it("reports only resumed chapters in import results", async () => {
     const { root, runner, state, bookId } = await createRunnerFixture();
     const now = "2026-03-19T00:00:00.000Z";

@@ -13,9 +13,10 @@ import { ReviserAgent, type ReviseMode } from "../agents/reviser.js";
 import { StateValidatorAgent } from "../agents/state-validator.js";
 import { RadarAgent } from "../agents/radar.js";
 import type { RadarSource } from "../agents/radar-source.js";
-import { readGenreProfile } from "../agents/rules-reader.js";
+import { readGenreProfile, readBookRules } from "../agents/rules-reader.js";
 import { analyzeAITells } from "../agents/ai-tells.js";
 import { analyzeSensitiveWords } from "../agents/sensitive-words.js";
+import { validatePostWrite, type PostWriteViolation } from "../agents/post-write-validator.js";
 import { StateManager } from "../state/manager.js";
 import { dispatchNotification, dispatchWebhookEvent } from "../notify/dispatcher.js";
 import type { WebhookEvent } from "../notify/webhook.js";
@@ -540,6 +541,8 @@ export class PipelineRunner {
     const bookDir = this.state.bookDir(bookId);
     const chapterNumber = await this.state.getNextChapterNumber(bookId);
     const { profile: gp } = await this.loadGenreProfile(book.genre);
+    const bookRules = (await readBookRules(bookDir))?.rules ?? null;
+    const targetWordCount = wordCount ?? book.chapterWordCount;
 
     // 1. Write chapter
     const writer = new WriterAgent(this.agentCtxFor("writer", bookId));
@@ -598,10 +601,19 @@ export class PipelineRunner {
     totalUsage = PipelineRunner.addUsage(totalUsage, llmAudit.tokenUsage);
     const aiTellsResult = analyzeAITells(finalContent);
     const sensitiveWriteResult = analyzeSensitiveWords(finalContent);
+    const deterministicIssues = validatePostWrite(finalContent, gp, bookRules, {
+      targetWordCount,
+    });
     const hasBlockedWriteWords = sensitiveWriteResult.found.some((f) => f.severity === "block");
+    const hasDeterministicErrors = deterministicIssues.some((issue) => issue.severity === "error");
     let auditResult: AuditResult = {
-      passed: hasBlockedWriteWords ? false : llmAudit.passed,
-      issues: [...llmAudit.issues, ...aiTellsResult.issues, ...sensitiveWriteResult.issues],
+      passed: hasBlockedWriteWords || hasDeterministicErrors ? false : llmAudit.passed,
+      issues: [
+        ...llmAudit.issues,
+        ...aiTellsResult.issues,
+        ...sensitiveWriteResult.issues,
+        ...PipelineRunner.toAuditIssues(deterministicIssues),
+      ],
       summary: llmAudit.summary,
     };
 
@@ -648,10 +660,19 @@ export class PipelineRunner {
           totalUsage = PipelineRunner.addUsage(totalUsage, reAudit.tokenUsage);
           const reAITells = analyzeAITells(finalContent);
           const reSensitive = analyzeSensitiveWords(finalContent);
+          const reDeterministicIssues = validatePostWrite(finalContent, gp, bookRules, {
+            targetWordCount,
+          });
           const reHasBlocked = reSensitive.found.some((f) => f.severity === "block");
+          const reHasDeterministicErrors = reDeterministicIssues.some((issue) => issue.severity === "error");
           auditResult = {
-            passed: reHasBlocked ? false : reAudit.passed,
-            issues: [...reAudit.issues, ...reAITells.issues, ...reSensitive.issues],
+            passed: reHasBlocked || reHasDeterministicErrors ? false : reAudit.passed,
+            issues: [
+              ...reAudit.issues,
+              ...reAITells.issues,
+              ...reSensitive.issues,
+              ...PipelineRunner.toAuditIssues(reDeterministicIssues),
+            ],
             summary: reAudit.summary,
           };
         }
@@ -1105,6 +1126,15 @@ ${matrix}`,
       completionTokens: a.completionTokens + b.completionTokens,
       totalTokens: a.totalTokens + b.totalTokens,
     };
+  }
+
+  private static toAuditIssues(violations: ReadonlyArray<PostWriteViolation>): ReadonlyArray<AuditIssue> {
+    return violations.map((violation) => ({
+      severity: violation.severity === "error" ? "critical" : "warning",
+      category: violation.rule,
+      description: violation.description,
+      suggestion: violation.suggestion,
+    }));
   }
 
   private async buildPersistenceOutput(

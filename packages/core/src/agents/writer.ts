@@ -12,6 +12,7 @@ import { analyzeAITells } from "./ai-tells.js";
 import { filterHooks, filterSummaries, filterSubplots, filterEmotionalArcs, filterCharacterMatrix } from "../utils/context-filter.js";
 import { extractPOVFromOutline, filterMatrixByPOV, filterHooksByPOV } from "../utils/pov-filter.js";
 import { parseCreativeOutput } from "./writer-parser.js";
+import { getChapterLengthTarget } from "../utils/chapter-length.js";
 import { readFile, writeFile, mkdir, readdir } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -107,9 +108,10 @@ export class WriterAgent extends BaseAgent {
 
     // ── Phase 1: Creative writing (temperature 0.7) ──
     const resolvedLanguage = book.language ?? genreProfile.language;
+    const targetWordCount = input.wordCountOverride ?? book.chapterWordCount;
     const creativeSystemPrompt = buildWriterSystemPrompt(
       book, genreProfile, bookRules, bookRulesBody, genreBody, styleGuide, styleFingerprint,
-      chapterNumber, "creative", fanficContext, resolvedLanguage,
+      chapterNumber, "creative", fanficContext, resolvedLanguage, targetWordCount,
     );
 
     // Smart context filtering: inject only relevant parts of truth files
@@ -136,7 +138,7 @@ export class WriterAgent extends BaseAgent {
       ledger: genreProfile.numericalSystem ? ledger : "",
       hooks: povFilteredHooks,
       recentChapters,
-      wordCount: input.wordCountOverride ?? book.chapterWordCount,
+      wordCount: targetWordCount,
       externalContext: input.externalContext,
       chapterSummaries: filteredSummaries,
       subplotBoard: filteredSubplots,
@@ -152,9 +154,8 @@ export class WriterAgent extends BaseAgent {
 
     this.ctx.logger?.info(`Phase 1: creative writing for chapter ${chapterNumber}`);
 
-    // Scale maxTokens to chapter word count (Chinese ≈ 1.5 tokens/char)
-    const targetWords = input.wordCountOverride ?? book.chapterWordCount;
-    const creativeMaxTokens = Math.max(8192, Math.ceil(targetWords * 2));
+    // Completion budget scales with the requested chapter target instead of always leaving a huge headroom.
+    const creativeMaxTokens = Math.max(4096, Math.ceil(targetWordCount * 2.2));
 
     const creativeResponse = await this.chat(
       [
@@ -190,7 +191,9 @@ export class WriterAgent extends BaseAgent {
     const settleUsage = settleResult.usage;
 
     // ── Post-write validation (regex + rule-based, zero LLM cost) ──
-    const ruleViolations = validatePostWrite(creative.content, genreProfile, bookRules);
+    const ruleViolations = validatePostWrite(creative.content, genreProfile, bookRules, {
+      targetWordCount,
+    });
     const aiTellIssues = analyzeAITells(creative.content).issues;
 
     const postWriteErrors = ruleViolations.filter(v => v.severity === "error");
@@ -365,6 +368,7 @@ export class WriterAgent extends BaseAgent {
     readonly parentCanon?: string;
     readonly language?: "zh" | "en";
   }): string {
+    const chapterLengthTarget = getChapterLengthTarget(params.wordCount);
     const contextBlock = params.externalContext
       ? `\n## 外部指令\n以下是来自外部系统的创作指令，请在本章中融入：\n\n${params.externalContext}\n`
       : "";
@@ -428,9 +432,10 @@ ${params.volumeOutline}
 - PRE_WRITE_CHECK must identify which outline node this chapter covers.
 
 Requirements:
-- Chapter body must be at least ${params.wordCount} words
-- Output PRE_WRITE_CHECK first, then the chapter
-- Output only PRE_WRITE_CHECK, CHAPTER_TITLE, and CHAPTER_CONTENT blocks`;
+ - Target ${params.wordCount} words. Keep the chapter body within ${chapterLengthTarget.min}-${chapterLengthTarget.max} words.
+ - If the draft runs long, compress repetition, exposition, and filler beats instead of adding new scenes.
+ - Output PRE_WRITE_CHECK first, then the chapter
+ - Output only PRE_WRITE_CHECK, CHAPTER_TITLE, and CHAPTER_CONTENT blocks`;
     }
 
     return `请续写第${params.chapterNumber}章。
@@ -457,9 +462,10 @@ ${params.volumeOutline}
 - PRE_WRITE_CHECK中必须明确标注本章对应的卷纲节点
 
 要求：
-- 正文不少于${params.wordCount}字
-- 先输出写作自检表，再写正文
-- 只需输出 PRE_WRITE_CHECK、CHAPTER_TITLE、CHAPTER_CONTENT 三个区块`;
+ - 正文字数目标${params.wordCount}字，控制在${chapterLengthTarget.min}-${chapterLengthTarget.max}字区间
+ - 如果篇幅偏长，优先压缩重复描写、解释性句子和过渡段，不要额外扩写
+ - 先输出写作自检表，再写正文
+ - 只需输出 PRE_WRITE_CHECK、CHAPTER_TITLE、CHAPTER_CONTENT 三个区块`;
   }
 
   private async loadRecentChapters(

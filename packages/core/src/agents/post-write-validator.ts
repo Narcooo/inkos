@@ -7,12 +7,17 @@
 
 import type { BookRules } from "../models/book-rules.js";
 import type { GenreProfile } from "../models/genre-profile.js";
+import { getChapterLengthTarget } from "../utils/chapter-length.js";
 
 export interface PostWriteViolation {
   readonly rule: string;
   readonly severity: "error" | "warning";
   readonly description: string;
   readonly suggestion: string;
+}
+
+export interface PostWriteValidationOptions {
+  readonly targetWordCount?: number;
 }
 
 // --- Marker word lists ---
@@ -52,14 +57,19 @@ export function validatePostWrite(
   content: string,
   genreProfile: GenreProfile,
   bookRules: BookRules | null,
+  options: PostWriteValidationOptions = {},
 ): ReadonlyArray<PostWriteViolation> {
   const violations: PostWriteViolation[] = [];
+
+  if (options.targetWordCount !== undefined) {
+    violations.push(...validateChapterLength(content, options.targetWordCount));
+  }
 
   // Skip Chinese-specific rules for English content
   const isEnglish = genreProfile.language === "en";
   if (isEnglish) {
     // For English, only run book-specific prohibitions and paragraph length check
-    return validatePostWriteEnglish(content, genreProfile, bookRules);
+    return [...violations, ...validatePostWriteEnglish(content, genreProfile, bookRules)];
   }
 
   // 1. 硬性禁令: "不是…而是…" 句式
@@ -242,6 +252,35 @@ export function validatePostWrite(
   }
 
   return violations;
+}
+
+function validateChapterLength(content: string, targetWordCount: number): ReadonlyArray<PostWriteViolation> {
+  const lengthTarget = getChapterLengthTarget(targetWordCount);
+  const actualLength = content.length;
+
+  if (actualLength < lengthTarget.min) {
+    return [
+      {
+        rule: "章节长度",
+        severity: "error",
+        description: `正文长度${actualLength}字，低于目标${lengthTarget.target}字的允许下限${lengthTarget.min}字`,
+        suggestion: `补足必要的剧情推进、冲突兑现或章末钩子，将篇幅补到${lengthTarget.min}-${lengthTarget.max}字区间`,
+      },
+    ];
+  }
+
+  if (actualLength > lengthTarget.max) {
+    return [
+      {
+        rule: "章节长度",
+        severity: "error",
+        description: `正文长度${actualLength}字，超出目标${lengthTarget.target}字的允许上限${lengthTarget.max}字`,
+        suggestion: `压缩重复描写、解释性句子和过渡段，把篇幅收束到${lengthTarget.min}-${lengthTarget.max}字区间`,
+      },
+    ];
+  }
+
+  return [];
 }
 
 /** English-specific post-write validation rules. */

@@ -108,6 +108,8 @@ export interface ChatWithToolsResult {
   readonly toolCalls: ReadonlyArray<ToolCall>;
 }
 
+type OpenAIChatTokenParam = "max_tokens" | "max_completion_tokens";
+
 // === Factory ===
 
 export function createLLMClient(config: LLMConfig): LLMClient {
@@ -140,6 +142,54 @@ export function createLLMClient(config: LLMConfig): LLMClient {
     _openai: new OpenAI({ apiKey: config.apiKey, baseURL: config.baseUrl }),
     defaults,
   };
+}
+
+function prefersMaxCompletionTokens(model: string): boolean {
+  return /^(gpt-5(?:\b|[-.])|o\d(?:\b|[-.]))/i.test(model);
+}
+
+function getOpenAIChatTokenParamError(error: unknown): string | undefined {
+  const directParam = (error as { param?: unknown })?.param;
+  if (typeof directParam === "string") return directParam;
+
+  const nestedParam = (error as { error?: { param?: unknown } })?.error?.param;
+  if (typeof nestedParam === "string") return nestedParam;
+
+  return undefined;
+}
+
+function isUnsupportedOpenAITokenParamError(error: unknown, tokenParam: OpenAIChatTokenParam): boolean {
+  const param = getOpenAIChatTokenParamError(error)?.toLowerCase();
+  if (param === tokenParam) return true;
+
+  const message = String(error).toLowerCase();
+  return (
+    (message.includes("unsupported parameter") || message.includes("unknown parameter"))
+    && message.includes(tokenParam)
+  );
+}
+
+async function createOpenAIChatCompletionWithTokenFallback<T>(
+  model: string,
+  maxTokens: number,
+  baseParams: Record<string, unknown>,
+  request: (params: Record<string, unknown>) => Promise<T>,
+): Promise<T> {
+  const primaryTokenParam: OpenAIChatTokenParam = prefersMaxCompletionTokens(model)
+    ? "max_completion_tokens"
+    : "max_tokens";
+  const fallbackTokenParam: OpenAIChatTokenParam = primaryTokenParam === "max_tokens"
+    ? "max_completion_tokens"
+    : "max_tokens";
+
+  try {
+    return await request({ ...baseParams, [primaryTokenParam]: maxTokens });
+  } catch (error) {
+    if (!isUnsupportedOpenAITokenParamError(error, primaryTokenParam)) {
+      throw error;
+    }
+    return await request({ ...baseParams, [fallbackTokenParam]: maxTokens });
+  }
 }
 
 // === Partial Response (stream interrupted but usable content received) ===
@@ -328,18 +378,24 @@ async function chatCompletionOpenAIChat(
   webSearch?: boolean,
   onStreamProgress?: OnStreamProgress,
 ): Promise<LLMResponse> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const createParams: any = {
+  // GPT-5 / reasoning-style chat models require max_completion_tokens, while
+  // older OpenAI-compatible APIs may still expect max_tokens.
+  const createParams = {
     model,
     messages: messages.map((m) => ({ role: m.role, content: m.content })),
     temperature: options.temperature,
-    max_tokens: options.maxTokens,
     stream: true,
     ...(webSearch ? { web_search_options: { search_context_size: "medium" as const } } : {}),
     ...options.extra,
   };
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const stream = await client.chat.completions.create(createParams) as any;
+  const stream = await createOpenAIChatCompletionWithTokenFallback(
+    model,
+    options.maxTokens,
+    createParams,
+    async (params) => await client.chat.completions.create(
+      params as unknown as OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming,
+    ),
+  ) as AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>;
 
   const chunks: string[] = [];
   let inputTokens = 0;
@@ -389,16 +445,21 @@ async function chatCompletionOpenAIChatSync(
   options: { readonly temperature: number; readonly maxTokens: number; readonly extra: Record<string, unknown> },
   _webSearch?: boolean,
 ): Promise<LLMResponse> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const syncParams: any = {
+  const syncParams = {
     model,
     messages: messages.map((m) => ({ role: m.role, content: m.content })),
     temperature: options.temperature,
-    max_tokens: options.maxTokens,
     stream: false,
     ...options.extra,
   };
-  const response = await client.chat.completions.create(syncParams);
+  const response = await createOpenAIChatCompletionWithTokenFallback(
+    model,
+    options.maxTokens,
+    syncParams,
+    async (params) => await client.chat.completions.create(
+      params as unknown as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming,
+    ),
+  );
 
   const content = response.choices[0]?.message?.content ?? "";
   if (!content) throw new Error("LLM returned empty response");
@@ -430,14 +491,20 @@ async function chatWithToolsOpenAIChat(
     },
   }));
 
-  const stream = await client.chat.completions.create({
+  const stream = await createOpenAIChatCompletionWithTokenFallback(
     model,
-    messages: openaiMessages,
-    tools: openaiTools,
-    temperature: options.temperature,
-    max_tokens: options.maxTokens,
-    stream: true,
-  });
+    options.maxTokens,
+    {
+      model,
+      messages: openaiMessages,
+      tools: openaiTools,
+      temperature: options.temperature,
+      stream: true,
+    },
+    async (params) => await client.chat.completions.create(
+      params as unknown as OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming,
+    ),
+  ) as AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>;
 
   let content = "";
   const toolCallMap = new Map<number, { id: string; name: string; arguments: string }>();
