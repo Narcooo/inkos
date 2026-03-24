@@ -20,6 +20,7 @@ export function buildEnglishCoreRules(_book: BookConfig): string {
 9. **Information layering**: Worldbuilding emerges through action. Key lore revealed at plot-critical moments. Never dump exposition.
 10. **Description serves narrative**: Environment descriptions set mood or foreshadow. One line is enough.
 11. **Downtime earns its place**: Quiet scenes must plant hooks, advance relationships, or build contrast. Pure filler is padding.
+12. **Dialogue-driven**: In scenes with character interaction, deliver conflict and information through dialogue first, narration second. Solo/escape/exploration scenes are exempt.
 
 ### Logic / Consistency
 12. **World rules are law**: Once established, physics/magic/social rules cannot bend for plot convenience.
