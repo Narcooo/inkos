@@ -3,7 +3,7 @@ import type { GenreProfile } from "../models/genre-profile.js";
 import type { BookRules } from "../models/book-rules.js";
 import type { FanficMode } from "../models/book.js";
 import type { ContextPackage, RuleStack } from "../models/input-governance.js";
-import { readGenreProfile, readBookRules } from "./rules-reader.js";
+import { readGenreProfile, readBookLanguage, readBookRules } from "./rules-reader.js";
 import { getFanficDimensionConfig, FANFIC_DIMENSIONS } from "./fanfic-dimensions.js";
 import { readFile, readdir } from "node:fs/promises";
 import { filterHooks, filterSummaries, filterSubplots, filterEmotionalArcs, filterCharacterMatrix } from "../utils/context-filter.js";
@@ -28,50 +28,210 @@ export interface AuditIssue {
   readonly suggestion: string;
 }
 
-// Dimension ID → name mapping
-const DIMENSION_MAP: Record<number, string> = {
-  1: "OOC检查",
-  2: "时间线检查",
-  3: "设定冲突",
-  4: "战力崩坏",
-  5: "数值检查",
-  6: "伏笔检查",
-  7: "节奏检查",
-  8: "文风检查",
-  9: "信息越界",
-  10: "词汇疲劳",
-  11: "利益链断裂",
-  12: "年代考据",
-  13: "配角降智",
-  14: "配角工具人化",
-  15: "爽点虚化",
-  16: "台词失真",
-  17: "流水账",
-  18: "知识库污染",
-  19: "视角一致性",
-  20: "段落等长",
-  21: "套话密度",
-  22: "公式化转折",
-  23: "列表式结构",
-  24: "支线停滞",
-  25: "弧线平坦",
-  26: "节奏单调",
-  27: "敏感词检查",
-  28: "正传事件冲突",
-  29: "未来信息泄露",
-  30: "世界规则跨书一致性",
-  31: "番外伏笔隔离",
-  32: "读者期待管理",
-  33: "大纲偏离检测",
-  34: "角色还原度",
-  35: "世界规则遵守",
-  36: "关系动态",
-  37: "正典事件一致性",
+type PromptLanguage = "zh" | "en";
+
+const DIMENSION_LABELS: Record<number, { readonly zh: string; readonly en: string }> = {
+  1: { zh: "OOC检查", en: "OOC Check" },
+  2: { zh: "时间线检查", en: "Timeline Check" },
+  3: { zh: "设定冲突", en: "Lore Conflict Check" },
+  4: { zh: "战力崩坏", en: "Power Scaling Check" },
+  5: { zh: "数值检查", en: "Numerical Consistency Check" },
+  6: { zh: "伏笔检查", en: "Hook Check" },
+  7: { zh: "节奏检查", en: "Pacing Check" },
+  8: { zh: "文风检查", en: "Style Check" },
+  9: { zh: "信息越界", en: "Information Boundary Check" },
+  10: { zh: "词汇疲劳", en: "Lexical Fatigue Check" },
+  11: { zh: "利益链断裂", en: "Incentive Chain Check" },
+  12: { zh: "年代考据", en: "Era Accuracy Check" },
+  13: { zh: "配角降智", en: "Side Character Competence Check" },
+  14: { zh: "配角工具人化", en: "Side Character Instrumentalization Check" },
+  15: { zh: "爽点虚化", en: "Payoff Dilution Check" },
+  16: { zh: "台词失真", en: "Dialogue Authenticity Check" },
+  17: { zh: "流水账", en: "Chronicle Drift Check" },
+  18: { zh: "知识库污染", en: "Knowledge Base Pollution Check" },
+  19: { zh: "视角一致性", en: "POV Consistency Check" },
+  20: { zh: "段落等长", en: "Paragraph Uniformity Check" },
+  21: { zh: "套话密度", en: "Cliche Density Check" },
+  22: { zh: "公式化转折", en: "Formulaic Twist Check" },
+  23: { zh: "列表式结构", en: "List-like Structure Check" },
+  24: { zh: "支线停滞", en: "Subplot Stagnation Check" },
+  25: { zh: "弧线平坦", en: "Arc Flatline Check" },
+  26: { zh: "节奏单调", en: "Pacing Monotony Check" },
+  27: { zh: "敏感词检查", en: "Sensitive Content Check" },
+  28: { zh: "正传事件冲突", en: "Mainline Canon Event Conflict" },
+  29: { zh: "未来信息泄露", en: "Future Knowledge Leak Check" },
+  30: { zh: "世界规则跨书一致性", en: "Cross-Book World Rule Check" },
+  31: { zh: "番外伏笔隔离", en: "Spinoff Hook Isolation Check" },
+  32: { zh: "读者期待管理", en: "Reader Expectation Check" },
+  33: { zh: "大纲偏离检测", en: "Outline Drift Check" },
+  34: { zh: "角色还原度", en: "Character Fidelity Check" },
+  35: { zh: "世界规则遵守", en: "World Rule Compliance Check" },
+  36: { zh: "关系动态", en: "Relationship Dynamics Check" },
+  37: { zh: "正典事件一致性", en: "Canon Event Consistency Check" },
 };
+
+function containsChinese(text: string): boolean {
+  return /[\u4e00-\u9fff]/u.test(text);
+}
+
+function resolveGenreLabel(genreId: string, profileName: string, language: PromptLanguage): string {
+  if (language === "zh" || !containsChinese(profileName)) {
+    return profileName;
+  }
+
+  if (genreId === "other") {
+    return "general";
+  }
+
+  return genreId.replace(/[_-]+/g, " ");
+}
+
+function dimensionName(id: number, language: PromptLanguage): string | undefined {
+  return DIMENSION_LABELS[id]?.[language];
+}
+
+function joinLocalized(items: ReadonlyArray<string>, language: PromptLanguage): string {
+  return items.join(language === "en" ? ", " : "、");
+}
+
+function formatFanficSeverityNote(
+  severity: "critical" | "warning" | "info",
+  language: PromptLanguage,
+): string {
+  if (language === "en") {
+    return severity === "critical"
+      ? "Strict check."
+      : severity === "info"
+        ? "Log only; do not fail the chapter."
+        : "Warning level.";
+  }
+
+  return severity === "critical"
+    ? "（严格检查）"
+    : severity === "info"
+      ? "（仅记录，不判定失败）"
+      : "（警告级别）";
+}
+
+function buildDimensionNote(
+  id: number,
+  language: PromptLanguage,
+  gp: GenreProfile,
+  bookRules: BookRules | null,
+  fanficMode: FanficMode | undefined,
+  fanficConfig: ReturnType<typeof getFanficDimensionConfig> | undefined,
+): string {
+  const words = bookRules?.fatigueWordsOverride && bookRules.fatigueWordsOverride.length > 0
+    ? bookRules.fatigueWordsOverride
+    : gp.fatigueWords;
+
+  if (fanficConfig?.notes.has(id) && language === "zh") {
+    return fanficConfig.notes.get(id)!;
+  }
+
+  if (id === 1 && fanficMode === "ooc") {
+    return language === "en"
+      ? "In OOC mode, personality drift can be intentional; record only, do not fail. Evaluate against the character dossiers in fanfic_canon.md."
+      : "OOC模式下角色可偏离性格底色，此维度仅记录不判定失败。参照 fanfic_canon.md 角色档案评估偏离程度。";
+  }
+
+  if (id === 1 && fanficMode === "canon") {
+    return language === "en"
+      ? "Canon-faithful fanfic: characters must stay close to their original personality core. Evaluate against fanfic_canon.md character dossiers."
+      : "原作向同人：角色必须严格遵守性格底色。参照 fanfic_canon.md 角色档案中的性格底色和行为模式。";
+  }
+
+  if (id === 10 && words.length > 0) {
+    return language === "en"
+      ? `Fatigue words: ${words.join(", ")}. Also check AI tell markers (仿佛/不禁/宛如/竟然/忽然/猛地); warn when any appears more than once per 3,000 words.`
+      : `高疲劳词：${words.join("、")}。同时检查AI标记词（仿佛/不禁/宛如/竟然/忽然/猛地）密度，每3000字超过1次即warning`;
+  }
+
+  if (id === 15 && gp.satisfactionTypes.length > 0) {
+    return language === "en"
+      ? `Payoff types: ${gp.satisfactionTypes.join(", ")}`
+      : `爽点类型：${gp.satisfactionTypes.join("、")}`;
+  }
+
+  if (id === 12 && bookRules?.eraConstraints) {
+    const era = bookRules.eraConstraints;
+    const parts = [era.period, era.region].filter(Boolean);
+    if (parts.length > 0) {
+      return language === "en"
+        ? `Era: ${parts.join(", ")}`
+        : `年代：${parts.join("，")}`;
+    }
+  }
+
+  switch (id) {
+    case 19:
+      return language === "en"
+        ? "Check whether POV shifts are signaled clearly and stay consistent with the configured viewpoint."
+        : "检查视角切换是否有过渡、是否与设定视角一致";
+    case 24:
+      return language === "en"
+        ? "Cross-check subplot_board and chapter_summaries: if any subplot goes unmentioned or unadvanced for more than 5 chapters -> warning. If subplots exist but none move in the last 3 chapters -> warning."
+        : "对照 subplot_board 和 chapter_summaries：如果任何支线超过5章未被提及或推进→warning。如果存在支线但近3章完全没有任何支线推进→warning";
+    case 25:
+      return language === "en"
+        ? "Cross-check emotional_arcs and chapter_summaries: if a major character shows no emotional change for 3 straight chapters (no new pressure, release, or turn) -> warning. Distinguish unchanged circumstances from unchanged inner movement."
+        : "对照 emotional_arcs 和 chapter_summaries：如果主要角色连续3章情绪状态无变化（没有新的压力、释放、转变）→warning。注意区分'角色处境未变'和'角色内心未变'";
+    case 26:
+      return language === "en"
+        ? "Cross-check chapter_summaries for chapter-type distribution: 3+ consecutive chapters of the same type -> warning. No payoff or climax chapter for 5+ chapters -> warning. Explicitly list the recent type sequence."
+        : "对照 chapter_summaries 的章节类型分布：连续≥3章相同类型（如连续3个事件章/战斗章/布局章）→warning。≥5章没有出现回收章或高潮章→warning。请明确列出最近章节的类型序列";
+    case 28:
+      return language === "en"
+        ? "Check whether spinoff events contradict the mainline canon constraints."
+        : "检查番外事件是否与正典约束表矛盾";
+    case 29:
+      return language === "en"
+        ? "Check whether characters reference information that should only be revealed after the divergence point (see the information-boundary table)."
+        : "检查角色是否引用了分歧点之后才揭示的信息（参照信息边界表）";
+    case 30:
+      return language === "en"
+        ? "Check whether the spinoff violates mainline world rules (power system, geography, factions)."
+        : "检查番外是否违反正传世界规则（力量体系、地理、阵营）";
+    case 31:
+      return language === "en"
+        ? "Check whether the spinoff resolves mainline hooks without authorization (warning level)."
+        : "检查番外是否越权回收正传伏笔（warning级别）";
+    case 32:
+      return language === "en"
+        ? "Check: does the chapter ending provide a hook? Has there been a meaningful payoff within the last 3-5 chapters? Is emotional pressure being suppressed for more than 3 chapters without release? Are reader expectation gaps accumulating or being satisfied?"
+        : "检查：章尾是否有钩子？最近3-5章内是否有爽点落地？是否存在超过3章的情绪压制无释放？读者的情绪缺口是否在积累或被满足？";
+    case 33:
+      return language === "en"
+        ? "Cross-check volume_outline: does this chapter match the planned beat for the current chapter range? Did it skip planned nodes or consume later nodes too early? Does actual pacing match the planned chapter span? If a beat planned for N chapters is consumed in 1-2 chapters -> critical."
+        : "对照 volume_outline：本章内容是否对应卷纲中当前章节范围的剧情节点？是否跳过了节点或提前消耗了后续节点？剧情推进速度是否与卷纲规划的章节跨度匹配？如果卷纲规划某段剧情跨N章但实际1-2章就讲完→critical";
+    case 34:
+    case 35:
+    case 36:
+    case 37: {
+      if (!fanficConfig) return "";
+      const severity = fanficConfig.severityOverrides.get(id) ?? "warning";
+      const baseNote = language === "en"
+        ? {
+            34: "Check whether dialogue tics, speaking style, and behavior remain consistent with the character dossiers in fanfic_canon.md. Deviations need clear situational motivation.",
+            35: "Check whether the chapter violates world rules documented in fanfic_canon.md (geography, power system, faction relations).",
+            36: "Check whether relationship beats remain plausible and aligned with, or meaningfully develop from, the key relationships documented in fanfic_canon.md.",
+            37: "Check whether the chapter contradicts the key event timeline in fanfic_canon.md.",
+          }[id]
+        : FANFIC_DIMENSIONS.find((dimension) => dimension.id === id)?.baseNote;
+
+      return baseNote
+        ? `${baseNote} ${formatFanficSeverityNote(severity, language)}`
+        : "";
+    }
+    default:
+      return "";
+  }
+}
 
 function buildDimensionList(
   gp: GenreProfile,
   bookRules: BookRules | null,
+  language: PromptLanguage,
   hasParentCanon = false,
   fanficMode?: FanficMode,
 ): ReadonlyArray<{ readonly id: number; readonly name: string; readonly note: string }> {
@@ -81,8 +241,9 @@ function buildDimensionList(
   if (bookRules?.additionalAuditDimensions) {
     // Build reverse lookup: name → id
     const nameToId = new Map<string, number>();
-    for (const [id, name] of Object.entries(DIMENSION_MAP)) {
-      nameToId.set(name, Number(id));
+    for (const [id, labels] of Object.entries(DIMENSION_LABELS)) {
+      nameToId.set(labels.zh, Number(id));
+      nameToId.set(labels.en, Number(id));
     }
 
     for (const d of bookRules.additionalAuditDimensions) {
@@ -138,59 +299,10 @@ function buildDimensionList(
   const dims: Array<{ id: number; name: string; note: string }> = [];
 
   for (const id of [...activeIds].sort((a, b) => a - b)) {
-    const name = DIMENSION_MAP[id];
+    const name = dimensionName(id, language);
     if (!name) continue;
 
-    let note = "";
-    if (id === 10 && gp.fatigueWords.length > 0) {
-      const words = bookRules?.fatigueWordsOverride && bookRules.fatigueWordsOverride.length > 0
-        ? bookRules.fatigueWordsOverride
-        : gp.fatigueWords;
-      note = `高疲劳词：${words.join("、")}。同时检查AI标记词（仿佛/不禁/宛如/竟然/忽然/猛地）密度，每3000字超过1次即warning`;
-    }
-    if (id === 15 && gp.satisfactionTypes.length > 0) {
-      note = `爽点类型：${gp.satisfactionTypes.join("、")}`;
-    }
-    if (id === 12 && bookRules?.eraConstraints) {
-      const era = bookRules.eraConstraints;
-      const parts = [era.period, era.region].filter(Boolean);
-      if (parts.length > 0) note = `年代：${parts.join("，")}`;
-    }
-    if (id === 19) {
-      note = "检查视角切换是否有过渡、是否与设定视角一致";
-    }
-    if (id === 24) {
-      note = "对照 subplot_board 和 chapter_summaries：如果任何支线超过5章未被提及或推进→warning。如果存在支线但近3章完全没有任何支线推进→warning";
-    }
-    if (id === 25) {
-      note = "对照 emotional_arcs 和 chapter_summaries：如果主要角色连续3章情绪状态无变化（没有新的压力、释放、转变）→warning。注意区分'角色处境未变'和'角色内心未变'";
-    }
-    if (id === 26) {
-      note = "对照 chapter_summaries 的章节类型分布：连续≥3章相同类型（如连续3个事件章/战斗章/布局章）→warning。≥5章没有出现回收章或高潮章→warning。请明确列出最近章节的类型序列";
-    }
-    if (id === 28) {
-      note = "检查番外事件是否与正典约束表矛盾";
-    }
-    if (id === 29) {
-      note = "检查角色是否引用了分歧点之后才揭示的信息（参照信息边界表）";
-    }
-    if (id === 30) {
-      note = "检查番外是否违反正传世界规则（力量体系、地理、阵营）";
-    }
-    if (id === 31) {
-      note = "检查番外是否越权回收正传伏笔（warning级别）";
-    }
-    if (id === 32) {
-      note = "检查：章尾是否有钩子？最近3-5章内是否有爽点落地？是否存在超过3章的情绪压制无释放？读者的情绪缺口是否在积累或被满足？";
-    }
-    if (id === 33) {
-      note = "对照 volume_outline：本章内容是否对应卷纲中当前章节范围的剧情节点？是否跳过了节点或提前消耗了后续节点？剧情推进速度是否与卷纲规划的章节跨度匹配？如果卷纲规划某段剧情跨N章但实际1-2章就讲完→critical";
-    }
-
-    // Fanfic dimension notes (34-37) — mode-aware
-    if (fanficConfig?.notes.has(id)) {
-      note = fanficConfig.notes.get(id)!;
-    }
+    const note = buildDimensionNote(id, language, gp, bookRules, fanficMode, fanficConfig);
 
     dims.push({ id, name, note });
   }
@@ -238,7 +350,10 @@ export class ContinuityAuditor extends BaseAgent {
 
     // Load genre profile and book rules
     const genreId = genre ?? "other";
-    const { profile: gp } = await readGenreProfile(this.ctx.projectRoot, genreId);
+    const [{ profile: gp }, bookLanguage] = await Promise.all([
+      readGenreProfile(this.ctx.projectRoot, genreId),
+      readBookLanguage(bookDir),
+    ]);
     const parsedRules = await readBookRules(bookDir);
     const bookRules = parsedRules?.rules ?? null;
 
@@ -247,25 +362,29 @@ export class ContinuityAuditor extends BaseAgent {
       ? styleGuideRaw
       : (parsedRules?.body ?? "(无文风指南)");
 
+    const resolvedLanguage = bookLanguage ?? gp.language;
+    const isEnglish = resolvedLanguage === "en";
     const fanficMode = hasFanficCanon ? (bookRules?.fanficMode as FanficMode | undefined) : undefined;
-    const dimensions = buildDimensionList(gp, bookRules, hasParentCanon, fanficMode);
+    const dimensions = buildDimensionList(gp, bookRules, resolvedLanguage, hasParentCanon, fanficMode);
     const dimList = dimensions
-      .map((d) => `${d.id}. ${d.name}${d.note ? `（${d.note}）` : ""}`)
+      .map((d) => `${d.id}. ${d.name}${d.note ? (isEnglish ? ` (${d.note})` : `（${d.note}）`) : ""}`)
       .join("\n");
+    const genreLabel = resolveGenreLabel(genreId, gp.name, resolvedLanguage);
 
     const protagonistBlock = bookRules?.protagonist
-      ? `\n主角人设锁定：${bookRules.protagonist.name}，${bookRules.protagonist.personalityLock.join("、")}，行为约束：${bookRules.protagonist.behavioralConstraints.join("、")}`
+      ? isEnglish
+        ? `\n\nProtagonist lock: ${bookRules.protagonist.name}; personality locks: ${joinLocalized(bookRules.protagonist.personalityLock, resolvedLanguage)}; behavioral constraints: ${joinLocalized(bookRules.protagonist.behavioralConstraints, resolvedLanguage)}.`
+        : `\n主角人设锁定：${bookRules.protagonist.name}，${bookRules.protagonist.personalityLock.join("、")}，行为约束：${bookRules.protagonist.behavioralConstraints.join("、")}`
       : "";
 
     const searchNote = gp.eraResearch
-      ? "\n\n你有联网搜索能力（search_web / fetch_url）。对于涉及真实年代、人物、事件、地理、政策的内容，你必须用search_web核实，不可凭记忆判断。至少对比2个来源交叉验证。"
+      ? isEnglish
+        ? "\n\nYou have web-search capability (search_web / fetch_url). For real-world eras, people, events, geography, or policies, you must verify with search_web instead of relying on memory. Cross-check at least 2 sources."
+        : "\n\n你有联网搜索能力（search_web / fetch_url）。对于涉及真实年代、人物、事件、地理、政策的内容，你必须用search_web核实，不可凭记忆判断。至少对比2个来源交叉验证。"
       : "";
 
-    const resolvedLanguage = gp.language;
-    const isEnglish = resolvedLanguage === "en";
-
     const systemPrompt = isEnglish
-      ? `You are a strict ${gp.name} web fiction editor. Audit the chapter for continuity, consistency, and quality. ALL OUTPUT MUST BE IN ENGLISH.${protagonistBlock}${searchNote}
+      ? `You are a strict ${genreLabel} web fiction editor. Audit the chapter for continuity, consistency, and quality. ALL OUTPUT MUST BE IN ENGLISH.${protagonistBlock}${searchNote}
 
 Audit dimensions:
 ${dimList}
@@ -307,7 +426,9 @@ ${dimList}
 只有当存在 critical 级别问题时，passed 才为 false。`;
 
     const ledgerBlock = gp.numericalSystem
-      ? `\n## 资源账本\n${ledger}`
+      ? isEnglish
+        ? `\n## Resource Ledger\n${ledger}`
+        : `\n## 资源账本\n${ledger}`
       : "";
 
     // Smart context filtering for auditor — same logic as writer
@@ -319,55 +440,86 @@ ${dimList}
     const filteredHooks = filterHooks(hooks);
 
     const governedMemoryBlocks = options?.contextPackage
-      ? buildGovernedMemoryEvidenceBlocks(options.contextPackage)
+      ? buildGovernedMemoryEvidenceBlocks(options.contextPackage, resolvedLanguage)
       : undefined;
 
     const hooksBlock = governedMemoryBlocks?.hooksBlock
       ?? (filteredHooks !== "(文件不存在)"
-        ? `\n## 伏笔池\n${filteredHooks}\n`
+        ? isEnglish
+          ? `\n## Pending Hooks\n${filteredHooks}\n`
+          : `\n## 伏笔池\n${filteredHooks}\n`
         : "");
     const subplotBlock = filteredSubplots !== "(文件不存在)"
-      ? `\n## 支线进度板\n${filteredSubplots}\n`
+      ? isEnglish
+        ? `\n## Subplot Board\n${filteredSubplots}\n`
+        : `\n## 支线进度板\n${filteredSubplots}\n`
       : "";
     const emotionalBlock = filteredArcs !== "(文件不存在)"
-      ? `\n## 情感弧线\n${filteredArcs}\n`
+      ? isEnglish
+        ? `\n## Emotional Arcs\n${filteredArcs}\n`
+        : `\n## 情感弧线\n${filteredArcs}\n`
       : "";
     const matrixBlock = filteredMatrix !== "(文件不存在)"
-      ? `\n## 角色交互矩阵\n${filteredMatrix}\n`
+      ? isEnglish
+        ? `\n## Character Interaction Matrix\n${filteredMatrix}\n`
+        : `\n## 角色交互矩阵\n${filteredMatrix}\n`
       : "";
     const summariesBlock = governedMemoryBlocks?.summariesBlock
       ?? (filteredSummaries !== "(文件不存在)"
-        ? `\n## 章节摘要（用于节奏检查）\n${filteredSummaries}\n`
+        ? isEnglish
+          ? `\n## Chapter Summaries (for pacing checks)\n${filteredSummaries}\n`
+          : `\n## 章节摘要（用于节奏检查）\n${filteredSummaries}\n`
         : "");
+    const volumeSummariesBlock = governedMemoryBlocks?.volumeSummariesBlock ?? "";
 
     const canonBlock = hasParentCanon
-      ? `\n## 正传正典参照（番外审查专用）\n${parentCanon}\n`
+      ? isEnglish
+        ? `\n## Mainline Canon Reference (for spinoff audit)\n${parentCanon}\n`
+        : `\n## 正传正典参照（番外审查专用）\n${parentCanon}\n`
       : "";
 
     const fanficCanonBlock = hasFanficCanon
-      ? `\n## 同人正典参照（同人审查专用）\n${fanficCanon}\n`
+      ? isEnglish
+        ? `\n## Fanfic Canon Reference (for fanfic audit)\n${fanficCanon}\n`
+        : `\n## 同人正典参照（同人审查专用）\n${fanficCanon}\n`
       : "";
 
     const outlineBlock = volumeOutline !== "(文件不存在)"
-      ? `\n## 卷纲（用于大纲偏离检测）\n${volumeOutline}\n`
+      ? isEnglish
+        ? `\n## Volume Outline (for outline drift checks)\n${volumeOutline}\n`
+        : `\n## 卷纲（用于大纲偏离检测）\n${volumeOutline}\n`
       : "";
     const reducedControlBlock = options?.chapterIntent && options.contextPackage && options.ruleStack
-      ? this.buildReducedControlBlock(options.chapterIntent, options.contextPackage, options.ruleStack)
+      ? this.buildReducedControlBlock(options.chapterIntent, options.contextPackage, options.ruleStack, resolvedLanguage)
       : "";
     const styleGuideBlock = reducedControlBlock.length === 0
-      ? `\n## 文风指南\n${styleGuide}`
+      ? isEnglish
+        ? `\n## Style Guide\n${styleGuide}`
+        : `\n## 文风指南\n${styleGuide}`
       : "";
 
     const prevChapterBlock = previousChapter
-      ? `\n## 上一章全文（用于衔接检查）\n${previousChapter}\n`
+      ? isEnglish
+        ? `\n## Previous Chapter Full Text (for transition checks)\n${previousChapter}\n`
+        : `\n## 上一章全文（用于衔接检查）\n${previousChapter}\n`
       : "";
 
-    const userPrompt = `请审查第${chapterNumber}章。
+    const userPrompt = isEnglish
+      ? `Review chapter ${chapterNumber}.
+
+## Current State Card
+${currentState}
+${ledgerBlock}
+${hooksBlock}${volumeSummariesBlock}${subplotBlock}${emotionalBlock}${matrixBlock}${summariesBlock}${canonBlock}${fanficCanonBlock}${reducedControlBlock || outlineBlock}${prevChapterBlock}${styleGuideBlock}
+
+## Chapter Content Under Review
+${chapterContent}`
+      : `请审查第${chapterNumber}章。
 
 ## 当前状态卡
 ${currentState}
 ${ledgerBlock}
-${hooksBlock}${subplotBlock}${emotionalBlock}${matrixBlock}${summariesBlock}${canonBlock}${fanficCanonBlock}${reducedControlBlock || outlineBlock}${prevChapterBlock}${styleGuideBlock}
+${hooksBlock}${volumeSummariesBlock}${subplotBlock}${emotionalBlock}${matrixBlock}${summariesBlock}${canonBlock}${fanficCanonBlock}${reducedControlBlock || outlineBlock}${prevChapterBlock}${styleGuideBlock}
 
 ## 待审章节内容
 ${chapterContent}`;
@@ -383,31 +535,31 @@ ${chapterContent}`;
       ? await this.chatWithSearch(chatMessages, chatOptions)
       : await this.chat(chatMessages, chatOptions);
 
-    const result = this.parseAuditResult(response.content);
+    const result = this.parseAuditResult(response.content, resolvedLanguage);
     return { ...result, tokenUsage: response.usage };
   }
 
-  private parseAuditResult(content: string): AuditResult {
+  private parseAuditResult(content: string, language: PromptLanguage): AuditResult {
     // Try multiple JSON extraction strategies (handles small/local models)
 
     // Strategy 1: Find balanced JSON object (not greedy)
     const balanced = this.extractBalancedJson(content);
     if (balanced) {
-      const result = this.tryParseAuditJson(balanced);
+      const result = this.tryParseAuditJson(balanced, language);
       if (result) return result;
     }
 
     // Strategy 2: Try the whole content as JSON (some models output pure JSON)
     const trimmed = content.trim();
     if (trimmed.startsWith("{")) {
-      const result = this.tryParseAuditJson(trimmed);
+      const result = this.tryParseAuditJson(trimmed, language);
       if (result) return result;
     }
 
     // Strategy 3: Look for ```json code blocks
     const codeBlockMatch = content.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
     if (codeBlockMatch) {
-      const result = this.tryParseAuditJson(codeBlockMatch[1]!.trim());
+      const result = this.tryParseAuditJson(codeBlockMatch[1]!.trim(), language);
       if (result) return result;
     }
 
@@ -426,7 +578,7 @@ ${chapterContent}`;
             const issue = JSON.parse(match[0]);
             issues.push({
               severity: issue.severity ?? "warning",
-              category: issue.category ?? "未分类",
+              category: issue.category ?? (language === "en" ? "Uncategorized" : "未分类"),
               description: issue.description ?? "",
               suggestion: issue.suggestion ?? "",
             });
@@ -446,11 +598,15 @@ ${chapterContent}`;
       passed: false,
       issues: [{
         severity: "critical",
-        category: "系统错误",
-        description: "审稿输出格式异常，无法解析为 JSON",
-        suggestion: "可能是模型不支持结构化输出。尝试换一个更大的模型，或检查 API 返回格式。",
+        category: language === "en" ? "System Error" : "系统错误",
+        description: language === "en"
+          ? "Audit output format was invalid and could not be parsed as JSON."
+          : "审稿输出格式异常，无法解析为 JSON",
+        suggestion: language === "en"
+          ? "The model may not support reliable structured output. Try a stronger model or inspect the API response format."
+          : "可能是模型不支持结构化输出。尝试换一个更大的模型，或检查 API 返回格式。",
       }],
-      summary: "审稿输出解析失败",
+      summary: language === "en" ? "Audit output parsing failed" : "审稿输出解析失败",
     };
   }
 
@@ -458,6 +614,7 @@ ${chapterContent}`;
     chapterIntent: string,
     contextPackage: ContextPackage,
     ruleStack: RuleStack,
+    language: PromptLanguage,
   ): string {
     const selectedContext = contextPackage.selectedContext
       .map((entry) => `- ${entry.source}: ${entry.reason}${entry.excerpt ? ` | ${entry.excerpt}` : ""}`)
@@ -468,7 +625,21 @@ ${chapterContent}`;
         .join("\n")
       : "- none";
 
-    return `\n## 本章控制输入（由 Planner/Composer 编译）
+    return language === "en"
+      ? `\n## Chapter Control Inputs (compiled by Planner/Composer)
+${chapterIntent}
+
+### Selected Context
+${selectedContext || "- none"}
+
+### Rule Stack
+- Hard guardrails: ${ruleStack.sections.hard.join(", ") || "(none)"}
+- Soft constraints: ${ruleStack.sections.soft.join(", ") || "(none)"}
+- Diagnostic rules: ${ruleStack.sections.diagnostic.join(", ") || "(none)"}
+
+### Active Overrides
+${overrides}\n`
+      : `\n## 本章控制输入（由 Planner/Composer 编译）
 ${chapterIntent}
 
 ### 已选上下文
@@ -495,7 +666,7 @@ ${overrides}\n`;
     return null;
   }
 
-  private tryParseAuditJson(json: string): AuditResult | null {
+  private tryParseAuditJson(json: string, language: PromptLanguage = "zh"): AuditResult | null {
     try {
       const parsed = JSON.parse(json);
       if (typeof parsed.passed !== "boolean" && parsed.passed !== undefined) return null;
@@ -504,7 +675,7 @@ ${overrides}\n`;
         issues: Array.isArray(parsed.issues)
           ? parsed.issues.map((i: Record<string, unknown>) => ({
               severity: (i.severity as string) ?? "warning",
-              category: (i.category as string) ?? "未分类",
+              category: (i.category as string) ?? (language === "en" ? "Uncategorized" : "未分类"),
               description: (i.description as string) ?? "",
               suggestion: (i.suggestion as string) ?? "",
             }))

@@ -82,7 +82,7 @@ export const ProjectConfigSchema = z.object({
   notify: z.array(NotifyChannelSchema).default([]),
   detection: DetectionConfigSchema.optional(),
   modelOverrides: z.record(z.string(), ModelOverrideValueSchema).optional(),
-  inputGovernanceMode: InputGovernanceModeSchema.default("legacy"),
+  inputGovernanceMode: InputGovernanceModeSchema.default("v2"),
   daemon: z.object({
     schedule: z.object({
       radarCron: z.string().default("0 */6 * * *"),

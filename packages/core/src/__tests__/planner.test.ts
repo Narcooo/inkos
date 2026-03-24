@@ -95,6 +95,95 @@ describe("PlannerAgent", () => {
     await expect(readFile(result.runtimePath, "utf-8")).resolves.toContain("mentor conflict");
   });
 
+  it("ignores the default current_focus placeholder and falls back to author intent when no chapter outline is available", async () => {
+    await Promise.all([
+      writeFile(
+        join(storyDir, "current_focus.md"),
+        [
+          "# Current Focus",
+          "",
+          "## Active Focus",
+          "",
+          "(Describe what the next 1-3 chapters should prioritize.)",
+          "",
+        ].join("\n"),
+        "utf-8",
+      ),
+      writeFile(
+        join(storyDir, "volume_outline.md"),
+        "# Volume Outline\n",
+        "utf-8",
+      ),
+    ]);
+
+    const planner = new PlannerAgent({
+      client: {} as ConstructorParameters<typeof PlannerAgent>[0]["client"],
+      model: "test-model",
+      projectRoot: root,
+      bookId: book.id,
+    });
+
+    const result = await planner.planChapter({
+      book,
+      bookDir,
+      chapterNumber: 3,
+    });
+
+    expect(result.intent.goal).toContain("mentor-student bond");
+    expect(result.intent.goal).not.toContain("Describe what the next 1-3 chapters should prioritize");
+  });
+
+  it("uses bullet-style volume outline chapter nodes as the fallback goal when control docs are placeholders", async () => {
+    await Promise.all([
+      writeFile(
+        join(storyDir, "author_intent.md"),
+        "# Author Intent\n\n(Describe the long-horizon vision for this book here.)\n",
+        "utf-8",
+      ),
+      writeFile(
+        join(storyDir, "current_focus.md"),
+        [
+          "# Current Focus",
+          "",
+          "## Active Focus",
+          "",
+          "(Describe what the next 1-3 chapters should prioritize.)",
+          "",
+        ].join("\n"),
+        "utf-8",
+      ),
+      writeFile(
+        join(storyDir, "volume_outline.md"),
+        [
+          "## Volume 1",
+          "**Chapter range:** 1-8",
+          "",
+          "**Key turning points:**",
+          "- **Chapter 3:** Track the merchant guild's escape route through the western canal.",
+          "",
+        ].join("\n"),
+        "utf-8",
+      ),
+    ]);
+
+    const planner = new PlannerAgent({
+      client: {} as ConstructorParameters<typeof PlannerAgent>[0]["client"],
+      model: "test-model",
+      projectRoot: root,
+      bookId: book.id,
+    });
+
+    const result = await planner.planChapter({
+      book,
+      bookDir,
+      chapterNumber: 3,
+    });
+
+    expect(result.intent.outlineNode).toContain("merchant guild's escape route");
+    expect(result.intent.goal).toContain("merchant guild's escape route");
+    expect(result.intent.goal).not.toContain("Advance chapter 3 with clear narrative focus.");
+  });
+
   it("preserves hard facts from state and canon in mustKeep", async () => {
     const planner = new PlannerAgent({
       client: {} as ConstructorParameters<typeof PlannerAgent>[0]["client"],
@@ -189,5 +278,122 @@ describe("PlannerAgent", () => {
     expect(intentMarkdown).toContain("| 10 | Locked Gate |");
     expect(intentMarkdown).not.toContain("| 1 | Guild Trail |");
     expect(intentMarkdown).not.toContain("| old-seal | 3 | artifact | resolved |");
+  });
+
+  it("renders English memory snapshot headers for English books", async () => {
+    book = {
+      ...book,
+      genre: "other",
+      language: "en",
+    };
+    await Promise.all([
+      writeFile(
+        join(storyDir, "pending_hooks.md"),
+        [
+          "# Pending Hooks",
+          "",
+          "| hook_id | start_chapter | type | status | last_advanced | expected_payoff | notes |",
+          "| --- | --- | --- | --- | --- | --- | --- |",
+          "| mentor-oath | 8 | relationship | open | 9 | 11 | Mentor oath debt with Lin Yue |",
+          "",
+        ].join("\n"),
+        "utf-8",
+      ),
+      writeFile(
+        join(storyDir, "chapter_summaries.md"),
+        [
+          "# Chapter Summaries",
+          "",
+          "| chapter | title | characters | events | stateChanges | hookActivity | mood | chapterType |",
+          "| --- | --- | --- | --- | --- | --- | --- | --- |",
+          "| 10 | Locked Gate | Lin Yue | Lin Yue chooses the mentor line over the guild line | Mentor conflict takes priority | mentor-oath advanced | focused | decision |",
+          "",
+        ].join("\n"),
+        "utf-8",
+      ),
+    ]);
+
+    const planner = new PlannerAgent({
+      client: {} as ConstructorParameters<typeof PlannerAgent>[0]["client"],
+      model: "test-model",
+      projectRoot: root,
+      bookId: book.id,
+    });
+
+    const result = await planner.planChapter({
+      book,
+      bookDir,
+      chapterNumber: 11,
+      externalContext: "Bring the focus back to the mentor oath conflict with Lin Yue.",
+    });
+
+    const intentMarkdown = await readFile(result.runtimePath, "utf-8");
+    expect(intentMarkdown).toContain("| hook_id | start_chapter | type | status | last_advanced | expected_payoff | notes |");
+    expect(intentMarkdown).toContain("| chapter | title | characters | events | stateChanges | hookActivity | mood | chapterType |");
+    expect(intentMarkdown).not.toContain("| hook_id | 起始章节 | 类型 | 状态 | 最近推进 | 预期回收 | 备注 |");
+    expect(intentMarkdown).not.toContain("| 章节 | 标题 | 出场人物 | 关键事件 | 状态变化 | 伏笔动态 | 情绪基调 | 章节类型 |");
+  });
+
+  it("derives structured current_focus markdown into goal, avoids, and style emphasis", async () => {
+    await Promise.all([
+      writeFile(
+        join(storyDir, "current_focus.md"),
+        [
+          "# Current Focus",
+          "",
+          "## Active Focus",
+          "",
+          "- Bring the focus back to Lin Yue's private confrontation with the mentor debt.",
+          "- Keep the chapter centered on a missing record, not a whole-conspiracy overview.",
+          "- Surface one concrete evidence trail the next chapter can pursue.",
+          "",
+          "## Avoid",
+          "",
+          "- Do not turn this chapter into a citywide survey of every faction.",
+          "- Do not use summary-heavy moralizing paragraphs.",
+          "",
+        ].join("\n"),
+        "utf-8",
+      ),
+      writeFile(
+        join(storyDir, "story_bible.md"),
+        [
+          "# Story Bible",
+          "",
+          "- --",
+          "- The jade seal cannot be destroyed.",
+          "",
+        ].join("\n"),
+        "utf-8",
+      ),
+    ]);
+
+    const planner = new PlannerAgent({
+      client: {} as ConstructorParameters<typeof PlannerAgent>[0]["client"],
+      model: "test-model",
+      projectRoot: root,
+      bookId: book.id,
+    });
+
+    const result = await planner.planChapter({
+      book,
+      bookDir,
+      chapterNumber: 3,
+    });
+
+    expect(result.intent.goal).toContain("private confrontation");
+    expect(result.intent.goal).toContain("missing record");
+    expect(result.intent.mustAvoid).toEqual(expect.arrayContaining([
+      "Do not turn this chapter into a citywide survey of every faction.",
+      "Do not use summary-heavy moralizing paragraphs.",
+    ]));
+    expect(result.intent.mustAvoid).not.toContain(
+      "Keep the chapter centered on a missing record, not a whole-conspiracy overview.",
+    );
+    expect(result.intent.styleEmphasis).toEqual(expect.arrayContaining([
+      "Bring the focus back to Lin Yue's private confrontation with the mentor debt.",
+      "Surface one concrete evidence trail the next chapter can pursue.",
+    ]));
+    expect(result.intent.mustKeep).not.toContain("--");
   });
 });

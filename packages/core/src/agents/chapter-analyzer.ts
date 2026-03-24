@@ -4,6 +4,7 @@ import type { GenreProfile } from "../models/genre-profile.js";
 import { readGenreProfile, readBookRules } from "./rules-reader.js";
 import { parseWriterOutput, type ParsedWriterOutput } from "./writer-parser.js";
 import { resolveLengthCountingMode } from "../utils/length-metrics.js";
+import { retrieveMemorySelection } from "../utils/memory-retrieval.js";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -24,32 +25,48 @@ export class ChapterAnalyzerAgent extends BaseAgent {
 
   async analyzeChapter(input: AnalyzeChapterInput): Promise<AnalyzeChapterOutput> {
     const { book, bookDir, chapterNumber, chapterContent, chapterTitle } = input;
+    const { profile: genreProfile, body: genreBody } =
+      await readGenreProfile(this.ctx.projectRoot, book.genre);
+    const resolvedLanguage = book.language ?? genreProfile.language;
 
     // Read current truth files (same set as writer.ts)
     const [
       currentState, ledger, hooks,
-      chapterSummaries, subplotBoard, emotionalArcs, characterMatrix,
+      subplotBoard, emotionalArcs, characterMatrix,
       storyBible, volumeOutline,
     ] = await Promise.all([
-      this.readFileOrDefault(join(bookDir, "story/current_state.md")),
-      this.readFileOrDefault(join(bookDir, "story/particle_ledger.md")),
-      this.readFileOrDefault(join(bookDir, "story/pending_hooks.md")),
-      this.readFileOrDefault(join(bookDir, "story/chapter_summaries.md")),
-      this.readFileOrDefault(join(bookDir, "story/subplot_board.md")),
-      this.readFileOrDefault(join(bookDir, "story/emotional_arcs.md")),
-      this.readFileOrDefault(join(bookDir, "story/character_matrix.md")),
-      this.readFileOrDefault(join(bookDir, "story/story_bible.md")),
-      this.readFileOrDefault(join(bookDir, "story/volume_outline.md")),
+      this.readFileOrDefault(join(bookDir, "story/current_state.md"), resolvedLanguage),
+      this.readFileOrDefault(join(bookDir, "story/particle_ledger.md"), resolvedLanguage),
+      this.readFileOrDefault(join(bookDir, "story/pending_hooks.md"), resolvedLanguage),
+      this.readFileOrDefault(join(bookDir, "story/subplot_board.md"), resolvedLanguage),
+      this.readFileOrDefault(join(bookDir, "story/emotional_arcs.md"), resolvedLanguage),
+      this.readFileOrDefault(join(bookDir, "story/character_matrix.md"), resolvedLanguage),
+      this.readFileOrDefault(join(bookDir, "story/story_bible.md"), resolvedLanguage),
+      this.readFileOrDefault(join(bookDir, "story/volume_outline.md"), resolvedLanguage),
     ]);
-
-    const { profile: genreProfile, body: genreBody } =
-      await readGenreProfile(this.ctx.projectRoot, book.genre);
     const parsedBookRules = await readBookRules(bookDir);
     const bookRulesBody = parsedBookRules?.body ?? "";
+    const memorySelection = await retrieveMemorySelection({
+      bookDir,
+      chapterNumber,
+      goal: this.buildMemoryGoal(chapterTitle, chapterContent),
+      outlineNode: this.findOutlineNode(volumeOutline, chapterNumber),
+    });
+    const chapterSummaries = this.renderSummarySnapshot(
+      memorySelection.summaries,
+      resolvedLanguage,
+    );
 
-    const systemPrompt = this.buildSystemPrompt(book, genreProfile, genreBody, bookRulesBody);
+    const systemPrompt = this.buildSystemPrompt(
+      book,
+      genreProfile,
+      genreBody,
+      bookRulesBody,
+      resolvedLanguage,
+    );
 
     const userPrompt = this.buildUserPrompt({
+      language: resolvedLanguage,
       chapterNumber,
       chapterContent,
       chapterTitle,
@@ -76,7 +93,13 @@ export class ChapterAnalyzerAgent extends BaseAgent {
     const output = parseWriterOutput(chapterNumber, response.content, genreProfile, countingMode);
 
     // If LLM didn't return a title, use the one from input or derive from chapter number
-    if (output.title === `第${chapterNumber}章` && chapterTitle) {
+    if (
+      chapterTitle
+      && (
+        output.title === this.defaultChapterTitle(chapterNumber, resolvedLanguage)
+        || output.title === `第${chapterNumber}章`
+      )
+    ) {
       return { ...output, title: chapterTitle };
     }
 
@@ -88,7 +111,103 @@ export class ChapterAnalyzerAgent extends BaseAgent {
     genreProfile: GenreProfile,
     genreBody: string,
     bookRulesBody: string,
+    language: "zh" | "en",
   ): string {
+    if (language === "en") {
+      const numericalBlock = genreProfile.numericalSystem
+        ? "\n- This genre tracks numerical/resources systems; UPDATED_LEDGER must capture every resource change shown in the chapter."
+        : "\n- This genre has no numerical system; leave UPDATED_LEDGER empty.";
+
+      return `【LANGUAGE OVERRIDE】ALL output MUST be in English. The === TAG === markers remain unchanged.
+
+You are a fiction continuity analyst. Analyze a finished chapter, extract every state change, and update the tracking files.
+
+## Working Mode
+
+You are not writing new prose. You are reading completed chapter text and updating the book's truth files.
+1. Read the chapter carefully and extract all important facts.
+2. Update the existing tracking files incrementally rather than rebuilding them from scratch.
+3. Keep the output contract identical to the writer pipeline.
+
+## What To Extract
+
+- Character entrances, exits, injuries, breakthroughs, deaths, and other status changes
+- Location movement and scene transitions
+- Item or resource gains and losses
+- Hook setup, advancement, and payoff
+- Emotional arc movement
+- Subplot progress
+- Relationship changes and information-boundary changes
+
+## Book Information
+
+- Title: ${book.title}
+- Genre: ${genreProfile.name} (${book.genre})
+- Platform: ${book.platform}
+${numericalBlock}
+
+## Genre Guidance
+
+${genreBody}
+
+${bookRulesBody ? `## Book Rules\n\n${bookRulesBody}` : ""}
+
+## Output Format
+
+Use === TAG === delimiters exactly as shown:
+
+=== CHAPTER_TITLE ===
+(Extract or infer the chapter title. Output title text only.)
+
+=== CHAPTER_CONTENT ===
+(Repeat the original chapter content exactly. Do not rewrite.)
+
+=== PRE_WRITE_CHECK ===
+(Leave empty in analysis mode.)
+
+=== POST_SETTLEMENT ===
+(Leave empty in analysis mode.)
+
+=== UPDATED_STATE ===
+Updated state card as a Markdown table reflecting the end-of-chapter state:
+| Field | Value |
+| --- | --- |
+| Current Chapter | {chapter_number} |
+| Current Location | ... |
+| Protagonist State | ... |
+| Current Goal | ... |
+| Current Constraint | ... |
+| Current Alliances | ... |
+| Current Conflict | ... |
+
+=== UPDATED_LEDGER ===
+(If the genre has a numerical system: output the fully updated resource ledger table. Otherwise leave empty.)
+
+=== UPDATED_HOOKS ===
+Updated hooks pool as a Markdown table with the latest status of every known hook:
+| hook_id | start_chapter | type | status | last_advanced_chapter | expected_payoff | notes |
+
+=== CHAPTER_SUMMARY ===
+Single Markdown table row:
+| Chapter | Title | Characters | Key Events | State Changes | Hook Activity | Mood | Chapter Type |
+
+=== UPDATED_SUBPLOTS ===
+Updated subplot board (Markdown table)
+
+=== UPDATED_EMOTIONAL_ARCS ===
+Updated emotional arcs (Markdown table)
+
+=== UPDATED_CHARACTER_MATRIX ===
+Updated character interaction matrix (Markdown table)
+
+## Rules
+
+1. UPDATED_STATE and UPDATED_HOOKS must be incremental updates based on the current tracking files.
+2. Every factual change in the chapter must appear in the corresponding tracking file.
+3. Do not miss resource changes, movement, relationship changes, or information changes.
+4. Information boundaries in the character matrix must stay exact: each character only knows what they directly witnessed or learned.`;
+    }
+
     const numericalBlock = genreProfile.numericalSystem
       ? `\n- 本题材有数值/资源体系，你必须在 UPDATED_LEDGER 中追踪正文中出现的所有资源变动`
       : `\n- 本题材无数值系统，UPDATED_LEDGER 留空`;
@@ -183,6 +302,7 @@ ${bookRulesBody ? `## 本书规则\n\n${bookRulesBody}` : ""}
   }
 
   private buildUserPrompt(params: {
+    readonly language: "zh" | "en";
     readonly chapterNumber: number;
     readonly chapterContent: string;
     readonly chapterTitle?: string;
@@ -196,6 +316,52 @@ ${bookRulesBody ? `## 本书规则\n\n${bookRulesBody}` : ""}
     readonly emotionalArcs: string;
     readonly characterMatrix: string;
   }): string {
+    if (params.language === "en") {
+      const titleLine = params.chapterTitle
+        ? `Chapter Title: ${params.chapterTitle}\n`
+        : "";
+
+      const ledgerBlock = params.ledger
+        ? `\n## Current Resource Ledger\n${params.ledger}\n`
+        : "";
+
+      const summariesBlock = params.chapterSummaries !== this.missingFilePlaceholder("en")
+        ? `\n## Existing Chapter Summaries\n${params.chapterSummaries}\n`
+        : "";
+
+      const subplotBlock = params.subplotBoard !== this.missingFilePlaceholder("en")
+        ? `\n## Current Subplot Board\n${params.subplotBoard}\n`
+        : "";
+
+      const emotionalBlock = params.emotionalArcs !== this.missingFilePlaceholder("en")
+        ? `\n## Current Emotional Arcs\n${params.emotionalArcs}\n`
+        : "";
+
+      const matrixBlock = params.characterMatrix !== this.missingFilePlaceholder("en")
+        ? `\n## Current Character Matrix\n${params.characterMatrix}\n`
+        : "";
+
+      return `Analyze chapter ${params.chapterNumber} and update all tracking files.
+${titleLine}
+## Chapter Content
+
+${params.chapterContent}
+
+## Current State
+${params.currentState}
+${ledgerBlock}
+## Current Hooks
+${params.hooks}
+${summariesBlock}${subplotBlock}${emotionalBlock}${matrixBlock}
+## Story Bible
+${params.storyBible}
+
+## Volume Outline
+${params.volumeOutline}
+
+Please return the result strictly in the === TAG === format.`;
+    }
+
     const titleLine = params.chapterTitle
       ? `章节标题：${params.chapterTitle}\n`
       : "";
@@ -241,11 +407,92 @@ ${params.volumeOutline}
 请严格按照 === TAG === 格式输出分析结果。`;
   }
 
-  private async readFileOrDefault(path: string): Promise<string> {
+  private buildMemoryGoal(chapterTitle: string | undefined, chapterContent: string): string {
+    return [chapterTitle ?? "", chapterContent.slice(0, 1500)]
+      .filter((part) => part.trim().length > 0)
+      .join("\n\n");
+  }
+
+  private findOutlineNode(volumeOutline: string, chapterNumber: number): string | undefined {
+    if (!volumeOutline || volumeOutline === this.missingFilePlaceholder("zh") || volumeOutline === this.missingFilePlaceholder("en")) {
+      return undefined;
+    }
+
+    const lines = volumeOutline.split("\n").map((line) => line.trim()).filter(Boolean);
+    const chapterPatterns = [
+      new RegExp(`^#+\\s*Chapter\\s*${chapterNumber}\\b`, "i"),
+      new RegExp(`^#+\\s*第\\s*${chapterNumber}\\s*章`),
+    ];
+
+    const heading = lines.find((line) => chapterPatterns.some((pattern) => pattern.test(line)));
+    if (!heading) return undefined;
+
+    const headingIndex = lines.indexOf(heading);
+    const nextLine = lines[headingIndex + 1];
+    return nextLine && !nextLine.startsWith("#") ? nextLine : heading.replace(/^#+\s*/, "");
+  }
+
+  private renderSummarySnapshot(
+    summaries: ReadonlyArray<{
+      chapter: number;
+      title: string;
+      characters: string;
+      events: string;
+      stateChanges: string;
+      hookActivity: string;
+      mood: string;
+      chapterType: string;
+    }>,
+    language: "zh" | "en",
+  ): string {
+    if (summaries.length === 0) {
+      return this.missingFilePlaceholder(language);
+    }
+
+    const header = language === "en"
+      ? [
+          "| Chapter | Title | Characters | Key Events | State Changes | Hook Activity | Mood | Chapter Type |",
+          "| --- | --- | --- | --- | --- | --- | --- | --- |",
+        ]
+      : [
+          "| 章节 | 标题 | 出场人物 | 关键事件 | 状态变化 | 伏笔动态 | 情绪基调 | 章节类型 |",
+          "| --- | --- | --- | --- | --- | --- | --- | --- |",
+        ];
+
+    const rows = summaries.map((summary) => [
+      summary.chapter,
+      summary.title,
+      summary.characters,
+      summary.events,
+      summary.stateChanges,
+      summary.hookActivity,
+      summary.mood,
+      summary.chapterType,
+    ].map((cell) => this.escapeTableCell(String(cell))).join(" | "));
+
+    return [
+      ...header,
+      ...rows.map((row) => `| ${row} |`),
+    ].join("\n");
+  }
+
+  private escapeTableCell(value: string): string {
+    return value.replace(/\|/g, "\\|").replace(/\n/g, "<br>");
+  }
+
+  private async readFileOrDefault(path: string, language: "zh" | "en"): Promise<string> {
     try {
       return await readFile(path, "utf-8");
     } catch {
-      return "(文件尚未创建)";
+      return this.missingFilePlaceholder(language);
     }
+  }
+
+  private missingFilePlaceholder(language: "zh" | "en"): string {
+    return language === "en" ? "(file not created yet)" : "(文件尚未创建)";
+  }
+
+  private defaultChapterTitle(chapterNumber: number, language: "zh" | "en"): string {
+    return language === "en" ? `Chapter ${chapterNumber}` : `第${chapterNumber}章`;
   }
 }

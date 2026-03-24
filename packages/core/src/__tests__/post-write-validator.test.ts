@@ -41,6 +41,20 @@ describe("validatePostWrite", () => {
     expect(findRule(result, "禁止破折号")!.severity).toBe("error");
   });
 
+  it("skips Chinese-only rules when the book language override is English", () => {
+    const content = "He stepped forward——then stopped at the door.";
+    const validateWithLanguage = validatePostWrite as (
+      content: string,
+      genreProfile: GenreProfile,
+      bookRules: null,
+      languageOverride?: "zh" | "en",
+    ) => ReadonlyArray<PostWriteViolation>;
+
+    const result = validateWithLanguage(content, baseProfile, null, "en");
+
+    expect(findRule(result, "禁止破折号")).toBeUndefined();
+  });
+
   it("detects surprise marker density exceeding threshold", () => {
     // ~100 chars total, threshold = max(1, floor(100/3000)) = 1, but we put 3 markers
     const content = "他忽然站起来。仿佛听到了什么声音。竟然是那个人回来了。";

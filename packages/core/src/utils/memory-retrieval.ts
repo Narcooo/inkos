@@ -6,7 +6,14 @@ export interface MemorySelection {
   readonly summaries: ReadonlyArray<StoredSummary>;
   readonly hooks: ReadonlyArray<StoredHook>;
   readonly facts: ReadonlyArray<Fact>;
+  readonly volumeSummaries: ReadonlyArray<VolumeSummarySelection>;
   readonly dbPath?: string;
+}
+
+export interface VolumeSummarySelection {
+  readonly heading: string;
+  readonly content: string;
+  readonly anchor: string;
 }
 
 export async function retrieveMemorySelection(params: {
@@ -17,14 +24,10 @@ export async function retrieveMemorySelection(params: {
   readonly mustKeep?: ReadonlyArray<string>;
 }): Promise<MemorySelection> {
   const storyDir = join(params.bookDir, "story");
-  const [summariesMarkdown, hooksMarkdown, currentStateMarkdown] = await Promise.all([
-    readFile(join(storyDir, "chapter_summaries.md"), "utf-8").catch(() => ""),
-    readFile(join(storyDir, "pending_hooks.md"), "utf-8").catch(() => ""),
+  const [currentStateMarkdown, volumeSummariesMarkdown] = await Promise.all([
     readFile(join(storyDir, "current_state.md"), "utf-8").catch(() => ""),
+    readFile(join(storyDir, "volume_summaries.md"), "utf-8").catch(() => ""),
   ]);
-
-  const summaries = parseChapterSummariesMarkdown(summariesMarkdown);
-  const hooks = parsePendingHooksMarkdown(hooksMarkdown);
   const facts = parseCurrentStateFacts(
     currentStateMarkdown,
     Math.max(0, params.chapterNumber - 1),
@@ -34,13 +37,31 @@ export async function retrieveMemorySelection(params: {
     params.outlineNode,
     params.mustKeep ?? [],
   );
+  const volumeSummaries = selectRelevantVolumeSummaries(
+    parseVolumeSummariesMarkdown(volumeSummariesMarkdown),
+    queryTerms,
+  );
 
   const memoryDb = openMemoryDB(params.bookDir);
   if (memoryDb) {
     try {
-      memoryDb.replaceSummaries(summaries);
-      memoryDb.replaceHooks(hooks);
-      memoryDb.replaceCurrentFacts(facts);
+      if (memoryDb.getChapterCount() === 0) {
+        const summariesMarkdown = await readFile(join(storyDir, "chapter_summaries.md"), "utf-8").catch(() => "");
+        const summaries = parseChapterSummariesMarkdown(summariesMarkdown);
+        if (summaries.length > 0) {
+          memoryDb.replaceSummaries(summaries);
+        }
+      }
+      if (memoryDb.getActiveHooks().length === 0) {
+        const hooksMarkdown = await readFile(join(storyDir, "pending_hooks.md"), "utf-8").catch(() => "");
+        const hooks = parsePendingHooksMarkdown(hooksMarkdown);
+        if (hooks.length > 0) {
+          memoryDb.replaceHooks(hooks);
+        }
+      }
+      if (memoryDb.getCurrentFacts().length === 0 && facts.length > 0) {
+        memoryDb.replaceCurrentFacts(facts);
+      }
 
       return {
         summaries: selectRelevantSummaries(
@@ -50,6 +71,7 @@ export async function retrieveMemorySelection(params: {
         ),
         hooks: selectRelevantHooks(memoryDb.getActiveHooks(), queryTerms),
         facts: selectRelevantFacts(memoryDb.getCurrentFacts(), queryTerms),
+        volumeSummaries,
         dbPath: join(storyDir, "memory.db"),
       };
     } finally {
@@ -57,19 +79,55 @@ export async function retrieveMemorySelection(params: {
     }
   }
 
+  const [summariesMarkdown, hooksMarkdown] = await Promise.all([
+    readFile(join(storyDir, "chapter_summaries.md"), "utf-8").catch(() => ""),
+    readFile(join(storyDir, "pending_hooks.md"), "utf-8").catch(() => ""),
+  ]);
+  const summaries = parseChapterSummariesMarkdown(summariesMarkdown);
+  const hooks = parsePendingHooksMarkdown(hooksMarkdown);
+
   return {
     summaries: selectRelevantSummaries(summaries, params.chapterNumber, queryTerms),
     hooks: selectRelevantHooks(hooks, queryTerms),
     facts: selectRelevantFacts(facts, queryTerms),
+    volumeSummaries,
   };
 }
 
-export function renderSummarySnapshot(summaries: ReadonlyArray<StoredSummary>): string {
+export function extractQueryTerms(goal: string, outlineNode: string | undefined, mustKeep: ReadonlyArray<string>): string[] {
+  const primaryTerms = uniqueTerms([
+    ...extractTermsFromText(stripNegativeGuidance(goal)),
+    ...mustKeep.flatMap((item) => extractTermsFromText(item)),
+  ]);
+
+  if (primaryTerms.length >= 2) {
+    return primaryTerms.slice(0, 12);
+  }
+
+  return uniqueTerms([
+    ...primaryTerms,
+    ...extractTermsFromText(stripNegativeGuidance(outlineNode ?? "")),
+  ]).slice(0, 12);
+}
+
+export function renderSummarySnapshot(
+  summaries: ReadonlyArray<StoredSummary>,
+  language: "zh" | "en" = "zh",
+): string {
   if (summaries.length === 0) return "- none";
 
+  const headers = language === "en"
+    ? [
+      "| chapter | title | characters | events | stateChanges | hookActivity | mood | chapterType |",
+      "| --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    : [
+      "| 章节 | 标题 | 出场人物 | 关键事件 | 状态变化 | 伏笔动态 | 情绪基调 | 章节类型 |",
+      "| --- | --- | --- | --- | --- | --- | --- | --- |",
+    ];
+
   return [
-    "| 章节 | 标题 | 出场人物 | 关键事件 | 状态变化 | 伏笔动态 | 情绪基调 | 章节类型 |",
-    "| --- | --- | --- | --- | --- | --- | --- | --- |",
+    ...headers,
     ...summaries.map((summary) => [
       summary.chapter,
       summary.title,
@@ -83,12 +141,24 @@ export function renderSummarySnapshot(summaries: ReadonlyArray<StoredSummary>): 
   ].join("\n");
 }
 
-export function renderHookSnapshot(hooks: ReadonlyArray<StoredHook>): string {
+export function renderHookSnapshot(
+  hooks: ReadonlyArray<StoredHook>,
+  language: "zh" | "en" = "zh",
+): string {
   if (hooks.length === 0) return "- none";
 
+  const headers = language === "en"
+    ? [
+      "| hook_id | start_chapter | type | status | last_advanced | expected_payoff | notes |",
+      "| --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    : [
+      "| hook_id | 起始章节 | 类型 | 状态 | 最近推进 | 预期回收 | 备注 |",
+      "| --- | --- | --- | --- | --- | --- | --- |",
+    ];
+
   return [
-    "| hook_id | 起始章节 | 类型 | 状态 | 最近推进 | 预期回收 | 备注 |",
-    "| --- | --- | --- | --- | --- | --- | --- |",
+    ...headers,
     ...hooks.map((hook) => [
       hook.hookId,
       hook.startChapter,
@@ -109,7 +179,7 @@ function openMemoryDB(bookDir: string): MemoryDB | null {
   }
 }
 
-function extractQueryTerms(goal: string, outlineNode: string | undefined, mustKeep: ReadonlyArray<string>): string[] {
+function buildLegacyQueryTerms(goal: string, outlineNode: string | undefined, mustKeep: ReadonlyArray<string>): string[] {
   const stopWords = new Set([
     "bring", "focus", "back", "chapter", "clear", "narrative", "before", "opening",
     "track", "the", "with", "from", "that", "this", "into", "still", "cannot",
@@ -128,7 +198,74 @@ function extractQueryTerms(goal: string, outlineNode: string | undefined, mustKe
   )].slice(0, 12);
 }
 
-function parseChapterSummariesMarkdown(markdown: string): StoredSummary[] {
+function extractTermsFromText(text: string): string[] {
+  if (!text.trim()) return [];
+
+  const stopWords = new Set([
+    "bring", "focus", "back", "chapter", "clear", "narrative", "before", "opening",
+    "track", "the", "with", "from", "that", "this", "into", "still", "cannot",
+    "current", "state", "advance", "conflict", "story", "keep", "must", "local",
+    "does", "not", "only", "just", "then", "than",
+  ]);
+
+  const normalized = text.replace(/第\d+章/g, " ");
+  const english = (normalized.match(/[a-z]{4,}/gi) ?? [])
+    .map((term) => term.trim())
+    .filter((term) => term.length >= 2)
+    .filter((term) => !stopWords.has(term.toLowerCase()));
+
+  const chineseSegments = normalized.match(/[\u4e00-\u9fff]{2,}/g) ?? [];
+  const chinese = chineseSegments.flatMap((segment) => extractChineseFocusTerms(segment));
+
+  return [...english, ...chinese];
+}
+
+function extractChineseFocusTerms(segment: string): string[] {
+  const stripped = segment
+    .replace(/^(本章|继续|重新|拉回|回到|推进|优先|围绕|聚焦|坚持|保持|把注意力|注意力|将注意力|请把注意力|先把注意力)+/, "")
+    .replace(/^(处理|推进|回拉|拉回到)+/, "")
+    .trim();
+
+  const target = stripped.length >= 2 ? stripped : segment;
+  const terms = new Set<string>();
+
+  if (target.length <= 4) {
+    terms.add(target);
+  }
+
+  for (let size = 2; size <= 4; size += 1) {
+    if (target.length >= size) {
+      terms.add(target.slice(-size));
+    }
+  }
+
+  return [...terms].filter((term) => term.length >= 2);
+}
+
+function stripNegativeGuidance(text: string): string {
+  if (!text) return "";
+
+  return text
+    .replace(/\b(do not|don't|avoid|without|instead of)\b[\s\S]*$/i, " ")
+    .replace(/(?:不要|不让|别|禁止|避免|但不允许)[\s\S]*$/u, " ")
+    .trim();
+}
+
+function uniqueTerms(terms: ReadonlyArray<string>): string[] {
+  const result: string[] = [];
+  const seen = new Set<string>();
+
+  for (const term of terms) {
+    const normalized = term.trim().toLowerCase();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    result.push(term.trim());
+  }
+
+  return result;
+}
+
+export function parseChapterSummariesMarkdown(markdown: string): StoredSummary[] {
   const rows = parseMarkdownTableRows(markdown)
     .filter((row) => /^\d+$/.test(row[0] ?? ""));
 
@@ -144,7 +281,7 @@ function parseChapterSummariesMarkdown(markdown: string): StoredSummary[] {
   }));
 }
 
-function parsePendingHooksMarkdown(markdown: string): StoredHook[] {
+export function parsePendingHooksMarkdown(markdown: string): StoredHook[] {
   const tableRows = parseMarkdownTableRows(markdown)
     .filter((row) => (row[0] ?? "").toLowerCase() !== "hook_id");
 
@@ -235,6 +372,27 @@ function parseMarkdownTableRows(markdown: string): string[][] {
     .filter((line) => !line.includes("---"))
     .map((line) => line.split("|").slice(1, -1).map((cell) => cell.trim()))
     .filter((cells) => cells.some(Boolean));
+}
+
+function parseVolumeSummariesMarkdown(markdown: string): VolumeSummarySelection[] {
+  if (!markdown.trim()) return [];
+
+  const sections = markdown
+    .split(/^##\s+/m)
+    .map((section) => section.trim())
+    .filter(Boolean);
+
+  return sections.map((section) => {
+    const [headingLine, ...bodyLines] = section.split("\n");
+    const heading = headingLine?.trim() ?? "";
+    const content = bodyLines.join("\n").trim();
+
+    return {
+      heading,
+      content,
+      anchor: slugifyAnchor(heading),
+    };
+  }).filter((section) => section.heading.length > 0 && section.content.length > 0);
 }
 
 function isStateTableHeaderRow(row: ReadonlyArray<string>): boolean {
@@ -337,6 +495,36 @@ function selectRelevantFacts(
     .map((entry) => entry.fact);
 }
 
+function selectRelevantVolumeSummaries(
+  summaries: ReadonlyArray<VolumeSummarySelection>,
+  queryTerms: ReadonlyArray<string>,
+): VolumeSummarySelection[] {
+  if (summaries.length === 0) return [];
+
+  const ranked = summaries
+    .map((summary, index) => {
+      const text = `${summary.heading} ${summary.content}`;
+      const termScore = queryTerms.reduce(
+        (score, term) => score + (includesTerm(text, term) ? Math.max(8, term.length * 2) : 0),
+        0,
+      );
+
+      return {
+        index,
+        summary,
+        score: termScore + index,
+        matched: matchesAny(text, queryTerms),
+      };
+    })
+    .filter((entry, index, all) => entry.matched || index === all.length - 1)
+    .sort((left, right) => right.score - left.score)
+    .slice(0, 2)
+    .sort((left, right) => left.index - right.index)
+    .map((entry) => entry.summary);
+
+  return ranked;
+}
+
 function scoreSummary(summary: StoredSummary, chapterNumber: number, queryTerms: ReadonlyArray<string>): number {
   const text = [
     summary.title,
@@ -375,4 +563,13 @@ function parseInteger(value: string | undefined): number {
 
 function escapeTableCell(value: string | number): string {
   return String(value).replace(/\|/g, "\\|").trim();
+}
+
+function slugifyAnchor(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\u4e00-\u9fff]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    || "volume-summary";
 }

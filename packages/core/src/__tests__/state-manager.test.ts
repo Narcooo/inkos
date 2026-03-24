@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtemp, rm, writeFile, readFile, mkdir, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -372,6 +372,33 @@ describe("StateManager", () => {
       expect(rejected).toHaveLength(1);
       expect(String(rejected[0]?.reason)).toMatch(/is locked/);
     });
+
+    it("reclaims a stale lock when the recorded pid is no longer alive", async () => {
+      await mkdir(manager.bookDir("lock-book-5"), { recursive: true });
+      const lockPath = join(manager.bookDir("lock-book-5"), ".write.lock");
+      await writeFile(lockPath, "pid:424242 ts:123", "utf-8");
+
+      const killSpy = vi.spyOn(process, "kill").mockImplementation((((pid: number) => {
+        if (pid === 424242) {
+          const error = new Error("no such process") as NodeJS.ErrnoException;
+          error.code = "ESRCH";
+          throw error;
+        }
+        return true;
+      }) as unknown) as typeof process.kill);
+
+      try {
+        const release = await manager.acquireBookLock("lock-book-5");
+        const lockData = await readFile(lockPath, "utf-8");
+
+        expect(typeof release).toBe("function");
+        expect(lockData).toContain(`pid:${process.pid}`);
+
+        await release();
+      } finally {
+        killSpy.mockRestore();
+      }
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -431,6 +458,37 @@ describe("StateManager", () => {
       expect(controlDocs.authorIntent).toContain("# Author Intent");
       expect(controlDocs.currentFocus).toContain("# Current Focus");
       expect(controlDocs.runtimeDir).toBe(join(storyDir, "runtime"));
+    });
+
+    it("creates localized Chinese defaults for Chinese books", async () => {
+      await manager.saveBookConfig("zh-book", {
+        id: "zh-book",
+        title: "中文书",
+        platform: "tomato",
+        genre: "other",
+        status: "outlining",
+        targetChapters: 100,
+        chapterWordCount: 2200,
+        language: "zh",
+        createdAt: "2026-03-24T00:00:00Z",
+        updatedAt: "2026-03-24T00:00:00Z",
+      });
+
+      await manager.ensureControlDocuments("zh-book");
+
+      const storyDir = join(manager.bookDir("zh-book"), "story");
+      const authorIntent = await readFile(
+        join(storyDir, "author_intent.md"),
+        "utf-8",
+      );
+      const currentFocus = await readFile(
+        join(storyDir, "current_focus.md"),
+        "utf-8",
+      );
+
+      expect(authorIntent).toContain("# 作者意图");
+      expect(currentFocus).toContain("# 当前聚焦");
+      expect(currentFocus).not.toContain("# Current Focus");
     });
   });
 });

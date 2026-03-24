@@ -1,7 +1,7 @@
 import { chatWithTools, type AgentMessage, type ToolDefinition } from "../llm/provider.js";
 import { PipelineRunner, type PipelineConfig } from "./runner.js";
 import type { Platform, Genre } from "../models/book.js";
-import type { ReviseMode } from "../agents/reviser.js";
+import { DEFAULT_REVISE_MODE, type ReviseMode } from "../agents/reviser.js";
 
 /** Tool definitions for the agent loop. */
 const TOOLS: ReadonlyArray<ToolDefinition> = [
@@ -55,13 +55,13 @@ const TOOLS: ReadonlyArray<ToolDefinition> = [
   },
   {
     name: "revise_chapter",
-    description: "修订指定章节。根据审计问题修正。支持三种模式：polish(润色)、rewrite(改写)、rework(重写)。",
+    description: "修订指定章节。根据审计问题修正。默认使用 spot-fix 定点修复；也支持 polish(润色)、rewrite(改写)、rework(重写)、anti-detect。",
     parameters: {
       type: "object",
       properties: {
         bookId: { type: "string", description: "书籍ID" },
         chapterNumber: { type: "number", description: "章节号（不填则修订最新章）" },
-        mode: { type: "string", enum: ["polish", "rewrite", "rework", "spot-fix", "anti-detect"], description: "修订模式（默认rewrite）" },
+        mode: { type: "string", enum: ["polish", "rewrite", "rework", "spot-fix", "anti-detect"], description: `修订模式（默认${DEFAULT_REVISE_MODE}）` },
       },
       required: ["bookId"],
     },
@@ -380,7 +380,7 @@ export async function executeAgentTool(
       const result = await pipeline.reviseDraft(
         args.bookId as string,
         args.chapterNumber as number | undefined,
-        (args.mode as ReviseMode) ?? "rewrite",
+        (args.mode as ReviseMode) ?? DEFAULT_REVISE_MODE,
       );
       return JSON.stringify(result);
     }

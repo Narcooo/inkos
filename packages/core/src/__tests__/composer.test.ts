@@ -256,4 +256,51 @@ describe("ComposerAgent", () => {
     expect(factEntry?.excerpt).toContain("Current Conflict");
     expect(factEntry?.excerpt).toContain("Mentor debt with the vanished teacher");
   });
+
+  it("adds relevant volume-summary evidence for long-span retrieval after consolidation", async () => {
+    await writeFile(
+      join(storyDir, "volume_summaries.md"),
+      [
+        "# Volume Summaries",
+        "",
+        "## Volume 1 (Ch.1-40)",
+        "",
+        "Lin Yue's mentor oath becomes the core unresolved debt, while the guild route keeps trying to pull him away from the mainline.",
+        "",
+        "## Volume 2 (Ch.41-80)",
+        "",
+        "The guild route dominates logistics noise, but the mentor debt recedes into the background.",
+        "",
+      ].join("\n"),
+      "utf-8",
+    );
+
+    const composer = new ComposerAgent({
+      client: {} as ConstructorParameters<typeof ComposerAgent>[0]["client"],
+      model: "test-model",
+      projectRoot: root,
+      bookId: book.id,
+    });
+
+    const result = await composer.composeChapter({
+      book,
+      bookDir,
+      chapterNumber: 81,
+      plan: {
+        ...plan,
+        intent: {
+          ...plan.intent,
+          chapter: 81,
+          goal: "Bring the focus back to the mentor oath conflict.",
+        },
+      },
+    });
+
+    const volumeEntry = result.contextPackage.selectedContext.find((entry) =>
+      entry.source.startsWith("story/volume_summaries.md#"),
+    );
+
+    expect(volumeEntry).toBeDefined();
+    expect(volumeEntry?.excerpt).toContain("mentor oath");
+  });
 });

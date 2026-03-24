@@ -28,12 +28,12 @@ export function parseCreativeOutput(
   // Fallback: if === TAG === parsing fails (common with local/small models),
   // try to extract usable content from the raw output
   if (!chapterContent) {
-    chapterContent = fallbackExtractContent(content);
+    chapterContent = fallbackExtractContent(content, countingMode);
   }
 
   let title = extract("CHAPTER_TITLE");
   if (!title) {
-    title = fallbackExtractTitle(content, chapterNumber);
+    title = fallbackExtractTitle(content, chapterNumber, countingMode);
   }
 
   return {
@@ -49,17 +49,31 @@ export function parseCreativeOutput(
  * Tries common patterns from local/small models, then falls back to
  * stripping metadata and returning the longest prose block.
  */
-function fallbackExtractContent(raw: string): string {
+function fallbackExtractContent(raw: string, countingMode: LengthCountingMode): string {
   // Try markdown heading: # 第N章 ... followed by content
   const headingMatch = raw.match(/^#\s*第\d+章[^\n]*\n+([\s\S]+)/m);
   if (headingMatch) {
     return headingMatch[1]!.trim();
   }
 
+  if (countingMode === "en_words") {
+    const englishHeadingMatch = raw.match(/^#\s*Chapter\s+\d+(?::|\s+)([^\n]*)\n+([\s\S]+)/im);
+    if (englishHeadingMatch) {
+      return englishHeadingMatch[2]!.trim();
+    }
+  }
+
   // Try "正文" or "内容" labeled section
   const labelMatch = raw.match(/(?:正文|内容|章节内容)[：:]\s*\n+([\s\S]+)/);
   if (labelMatch) {
     return labelMatch[1]!.trim();
+  }
+
+  if (countingMode === "en_words") {
+    const englishLabelMatch = raw.match(/(?:content|chapter content)[：:]\s*\n+([\s\S]+)/i);
+    if (englishLabelMatch) {
+      return englishLabelMatch[1]!.trim();
+    }
   }
 
   // Last resort: strip lines that look like metadata/tags, keep the rest
@@ -79,18 +93,28 @@ function fallbackExtractContent(raw: string): string {
 /**
  * Fallback title extraction when === CHAPTER_TITLE === tag is missing.
  */
-function fallbackExtractTitle(raw: string, chapterNumber: number): string {
+function fallbackExtractTitle(
+  raw: string,
+  chapterNumber: number,
+  countingMode: LengthCountingMode,
+): string {
   // Try: # 第N章 Title
   const headingMatch = raw.match(/^#\s*第\d+章\s*(.+)/m);
   if (headingMatch) {
     return headingMatch[1]!.trim();
+  }
+  if (countingMode === "en_words") {
+    const englishHeadingMatch = raw.match(/^#\s*Chapter\s+\d+(?::|\s+)\s*(.+)/im);
+    if (englishHeadingMatch) {
+      return englishHeadingMatch[1]!.trim();
+    }
   }
   // Try: 章节标题：Title or CHAPTER_TITLE: Title (without === delimiters)
   const labelMatch = raw.match(/(?:章节标题|CHAPTER_TITLE)[：:]\s*(.+)/);
   if (labelMatch) {
     return labelMatch[1]!.trim();
   }
-  return `第${chapterNumber}章`;
+  return defaultChapterTitle(chapterNumber, countingMode);
 }
 
 export type ParsedWriterOutput = Omit<WriteChapterOutput, "postWriteErrors" | "postWriteWarnings">;
@@ -117,19 +141,38 @@ export function parseWriterOutput(
 
   return {
     chapterNumber,
-    title: extract("CHAPTER_TITLE") || `第${chapterNumber}章`,
+    title: extract("CHAPTER_TITLE") || defaultChapterTitle(chapterNumber, countingMode),
     content: chapterContent,
     wordCount: countChapterLength(chapterContent, countingMode),
     preWriteCheck: extract("PRE_WRITE_CHECK"),
     postSettlement: extract("POST_SETTLEMENT"),
-    updatedState: extract("UPDATED_STATE") || "(状态卡未更新)",
+    updatedState: extract("UPDATED_STATE") || defaultStatePlaceholder(countingMode),
     updatedLedger: genreProfile.numericalSystem
-      ? (extract("UPDATED_LEDGER") || "(账本未更新)")
+      ? (extract("UPDATED_LEDGER") || defaultLedgerPlaceholder(countingMode))
       : "",
-    updatedHooks: extract("UPDATED_HOOKS") || "(伏笔池未更新)",
+    updatedHooks: extract("UPDATED_HOOKS") || defaultHooksPlaceholder(countingMode),
     chapterSummary: extract("CHAPTER_SUMMARY"),
     updatedSubplots: extract("UPDATED_SUBPLOTS"),
     updatedEmotionalArcs: extract("UPDATED_EMOTIONAL_ARCS"),
     updatedCharacterMatrix: extract("UPDATED_CHARACTER_MATRIX"),
   };
+}
+
+function defaultChapterTitle(
+  chapterNumber: number,
+  countingMode: LengthCountingMode,
+): string {
+  return countingMode === "en_words" ? `Chapter ${chapterNumber}` : `第${chapterNumber}章`;
+}
+
+function defaultStatePlaceholder(countingMode: LengthCountingMode): string {
+  return countingMode === "en_words" ? "(state card not updated)" : "(状态卡未更新)";
+}
+
+function defaultLedgerPlaceholder(countingMode: LengthCountingMode): string {
+  return countingMode === "en_words" ? "(ledger not updated)" : "(账本未更新)";
+}
+
+function defaultHooksPlaceholder(countingMode: LengthCountingMode): string {
+  return countingMode === "en_words" ? "(hooks pool not updated)" : "(伏笔池未更新)";
 }

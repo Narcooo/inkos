@@ -10,7 +10,7 @@ function createConfig(): SchedulerConfig {
       defaults: {
         temperature: 0.7,
         maxTokens: 1024,
-        thinkingBudget: 0,
+        thinkingBudget: 0, maxTokensCap: null,
       },
     } as SchedulerConfig["client"],
     model: "test-model",

@@ -336,9 +336,9 @@ describe("ProjectConfigSchema", () => {
     expect(result.notify).toEqual([]);
   });
 
-  it("defaults input governance mode to legacy", () => {
+  it("defaults input governance mode to v2", () => {
     const result = ProjectConfigSchema.parse(validProject);
-    expect(result.inputGovernanceMode).toBe("legacy");
+    expect(result.inputGovernanceMode).toBe("v2");
   });
 
   it("rejects wrong version", () => {

@@ -11,6 +11,27 @@ const ZERO_USAGE = {
   totalTokens: 0,
 } as const;
 
+function createCaptureLogger() {
+  const infos: string[] = [];
+  const warnings: string[] = [];
+
+  const logger = {
+    debug() {},
+    info(message: string) {
+      infos.push(message);
+    },
+    warn(message: string) {
+      warnings.push(message);
+    },
+    error() {},
+    child() {
+      return logger;
+    },
+  };
+
+  return { logger, infos, warnings };
+}
+
 describe("WriterAgent", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -33,6 +54,7 @@ describe("WriterAgent", () => {
         "| hook_id | 起始章节 | 类型 | 状态 | 最近推进 | 预期回收 | 备注 |",
         "| --- | --- | --- | --- | --- | --- | --- |",
         "| guild-route | 1 | mystery | open | 2 | 6 | Merchant guild trail |",
+        "| old-seal | 3 | artifact | open | 12 | 40 | Old seal detour |",
         "| mentor-oath | 8 | relationship | open | 99 | 101 | Mentor oath debt with Lin Yue |",
       ].join("\n"), "utf-8"),
       writeFile(join(storyDir, "chapter_summaries.md"), [
@@ -43,9 +65,31 @@ describe("WriterAgent", () => {
         "| 98 | Trial Echo | Lin Yue | Mentor left without explanation | Oath token matters again | mentor-oath advanced | aching | fallout |",
         "| 99 | Locked Gate | Lin Yue | Lin Yue chooses the mentor line over the guild line | Mentor conflict takes priority | mentor-oath advanced | focused | decision |",
       ].join("\n"), "utf-8"),
-      writeFile(join(storyDir, "subplot_board.md"), "# 支线进度板\n", "utf-8"),
-      writeFile(join(storyDir, "emotional_arcs.md"), "# 情感弧线\n", "utf-8"),
-      writeFile(join(storyDir, "character_matrix.md"), "# 角色交互矩阵\n", "utf-8"),
+      writeFile(join(storyDir, "subplot_board.md"), [
+        "# 支线进度板",
+        "",
+        "| 支线ID | 支线名 | 相关角色 | 起始章 | 最近活跃章 | 距今章数 | 状态 | 进度概述 | 回收ETA |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| SP-mentor | 师债线 | Lin Yue | 8 | 99 | 1 | active | 师债继续推进 | 101 |",
+        "| SP-seal | 旧印支线 | Guildmaster Ren | 3 | 12 | 88 | closed | 旧印已回收 | 12 |",
+      ].join("\n"), "utf-8"),
+      writeFile(join(storyDir, "emotional_arcs.md"), [
+        "# 情感弧线",
+        "",
+        "| 角色 | 章节 | 情绪状态 | 触发事件 | 强度(1-10) | 弧线方向 |",
+        "| --- | --- | --- | --- | --- | --- |",
+        "| Lin Yue | 40 | 麻木 | 旧印支线拖延 | 4 | 停滞 |",
+        "| Lin Yue | 99 | 紧绷 | 师债重新压上来 | 8 | 收紧 |",
+      ].join("\n"), "utf-8"),
+      writeFile(join(storyDir, "character_matrix.md"), [
+        "# 角色交互矩阵",
+        "",
+        "### 角色档案",
+        "| 角色 | 核心标签 | 反差细节 | 说话风格 | 性格底色 | 与主角关系 | 核心动机 | 当前目标 |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| Lin Yue | oath | restraint | clipped | stubborn | self | repay debt | find mentor |",
+        "| Guildmaster Ren | guild | swagger | loud | opportunistic | rival | stall Mara | seize seal |",
+      ].join("\n"), "utf-8"),
     ]);
 
     const agent = new WriterAgent({
@@ -56,7 +100,7 @@ describe("WriterAgent", () => {
         defaults: {
           temperature: 0.7,
           maxTokens: 4096,
-          thinkingBudget: 0,
+          thinkingBudget: 0, maxTokensCap: null,
           extra: {},
         },
       },
@@ -128,6 +172,11 @@ describe("WriterAgent", () => {
           chapter: 100,
           selectedContext: [
             {
+              source: "story/volume_outline.md",
+              reason: "Anchor the current beat.",
+              excerpt: "Bring the focus back to the mentor oath conflict.",
+            },
+            {
               source: "story/chapter_summaries.md#99",
               reason: "Relevant episodic memory.",
               excerpt: "Locked Gate | Lin Yue chooses the mentor line over the guild line | mentor-oath advanced",
@@ -153,9 +202,123 @@ describe("WriterAgent", () => {
       });
 
       const settlePrompt = (chatSpy.mock.calls[2]?.[0] as ReadonlyArray<{ content: string }> | undefined)?.[1]?.content ?? "";
+      expect(settlePrompt).toContain("## 本章控制输入");
       expect(settlePrompt).toContain("story/chapter_summaries.md#99");
       expect(settlePrompt).toContain("| 99 | Locked Gate |");
       expect(settlePrompt).not.toContain("| 1 | Guild Trail |");
+      expect(settlePrompt).not.toContain("old-seal");
+      expect(settlePrompt).not.toContain("Guildmaster Ren");
+      expect(settlePrompt).not.toContain("| Lin Yue | 40 | 麻木 |");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("logs localized phase messages for Chinese books", async () => {
+    const root = await mkdtemp(join(tmpdir(), "inkos-writer-test-"));
+    const bookDir = join(root, "book");
+    const storyDir = join(bookDir, "story");
+    const { logger, infos } = createCaptureLogger();
+    await mkdir(storyDir, { recursive: true });
+
+    await Promise.all([
+      writeFile(join(storyDir, "story_bible.md"), "# Story Bible\n", "utf-8"),
+      writeFile(join(storyDir, "volume_outline.md"), "# Volume Outline\n", "utf-8"),
+      writeFile(join(storyDir, "style_guide.md"), "# Style Guide\n", "utf-8"),
+      writeFile(join(storyDir, "current_state.md"), "# 当前状态\n", "utf-8"),
+      writeFile(join(storyDir, "pending_hooks.md"), "# 伏笔池\n", "utf-8"),
+      writeFile(join(storyDir, "chapter_summaries.md"), "# 章节摘要\n", "utf-8"),
+      writeFile(join(storyDir, "subplot_board.md"), "# 支线进度板\n", "utf-8"),
+      writeFile(join(storyDir, "emotional_arcs.md"), "# 情感弧线\n", "utf-8"),
+      writeFile(join(storyDir, "character_matrix.md"), "# 角色交互矩阵\n", "utf-8"),
+    ]);
+
+    const agent = new WriterAgent({
+      client: {
+        provider: "openai",
+        apiFormat: "chat",
+        stream: false,
+        defaults: {
+          temperature: 0.7,
+          maxTokens: 4096,
+          thinkingBudget: 0, maxTokensCap: null,
+          extra: {},
+        },
+      },
+      model: "test-model",
+      projectRoot: root,
+      logger,
+    });
+
+    vi.spyOn(WriterAgent.prototype as never, "chat" as never)
+      .mockResolvedValueOnce({
+        content: [
+          "=== CHAPTER_TITLE ===",
+          "试炼前夜",
+          "",
+          "=== CHAPTER_CONTENT ===",
+          "林越在破庙外停住脚步，想起师门旧债。",
+          "",
+          "=== PRE_WRITE_CHECK ===",
+          "- ok",
+        ].join("\n"),
+        usage: ZERO_USAGE,
+      })
+      .mockResolvedValueOnce({
+        content: "=== OBSERVATIONS ===\n- observed",
+        usage: ZERO_USAGE,
+      })
+      .mockResolvedValueOnce({
+        content: [
+          "=== POST_SETTLEMENT ===",
+          "| 伏笔变动 | mentor-oath 推进 | 同步更新伏笔池 |",
+          "",
+          "=== UPDATED_STATE ===",
+          "状态卡",
+          "",
+          "=== UPDATED_HOOKS ===",
+          "伏笔池",
+          "",
+          "=== CHAPTER_SUMMARY ===",
+          "| 1 | 试炼前夜 | 林越 | 林越记起师门旧债 | 决心加深 | mentor-oath advanced | tense | setup |",
+          "",
+          "=== UPDATED_SUBPLOTS ===",
+          "支线板",
+          "",
+          "=== UPDATED_EMOTIONAL_ARCS ===",
+          "情感弧线",
+          "",
+          "=== UPDATED_CHARACTER_MATRIX ===",
+          "角色矩阵",
+        ].join("\n"),
+        usage: ZERO_USAGE,
+      });
+
+    try {
+      await agent.writeChapter({
+        book: {
+          id: "writer-book",
+          title: "Writer Book",
+          platform: "tomato",
+          genre: "xuanhuan",
+          status: "active",
+          targetChapters: 120,
+          chapterWordCount: 2200,
+          language: "zh",
+          createdAt: "2026-03-23T00:00:00.000Z",
+          updatedAt: "2026-03-23T00:00:00.000Z",
+        },
+        bookDir,
+        chapterNumber: 1,
+        lengthSpec: buildLengthSpec(220, "zh"),
+      });
+
+      expect(infos).toEqual(expect.arrayContaining([
+        "阶段 1：创作正文（第1章）",
+        "阶段 2：状态结算（第1章，18字）",
+        "阶段 2a：提取第1章事实",
+        "阶段 2b：把观察结果回写到真相文件",
+      ]));
     } finally {
       await rm(root, { recursive: true, force: true });
     }

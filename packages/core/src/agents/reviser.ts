@@ -4,13 +4,22 @@ import type { BookRules } from "../models/book-rules.js";
 import type { LengthSpec } from "../models/length-governance.js";
 import type { AuditIssue } from "./continuity.js";
 import type { ContextPackage, RuleStack } from "../models/input-governance.js";
-import { readGenreProfile, readBookRules } from "./rules-reader.js";
+import { readGenreProfile, readBookLanguage, readBookRules } from "./rules-reader.js";
 import { countChapterLength } from "../utils/length-metrics.js";
 import { buildGovernedMemoryEvidenceBlocks } from "../utils/governed-context.js";
+import { filterSummaries } from "../utils/context-filter.js";
+import {
+  buildGovernedCharacterMatrixWorkingSet,
+  buildGovernedHookWorkingSet,
+  mergeTableMarkdownByKey,
+} from "../utils/governed-working-set.js";
+import { applySpotFixPatches, parseSpotFixPatches } from "../utils/spot-fix-patches.js";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 export type ReviseMode = "polish" | "rewrite" | "rework" | "anti-detect" | "spot-fix";
+
+export const DEFAULT_REVISE_MODE: ReviseMode = "spot-fix";
 
 export interface ReviseOutput {
   readonly revisedContent: string;
@@ -28,7 +37,7 @@ export interface ReviseOutput {
 
 const MODE_DESCRIPTIONS: Record<ReviseMode, string> = {
   polish: "润色：只改表达、节奏、段落呼吸，不改事实与剧情结论。禁止：增删段落、改变人名/地名/物品名、增加新情节或新对话、改变因果关系。只允许：替换用词、调整句序、修改标点节奏",
-  rewrite: "改写：可改叙述顺序、画面、力度，但保留核心事实与人物动机",
+  rewrite: "改写：允许重组问题段落、调整画面和叙述力度，但优先保留原文的绝大部分句段。除非问题跨越整章，否则禁止整章推倒重写；只能围绕问题段落及其直接上下文改写，同时保留核心事实与人物动机",
   rework: "重写：可重构场景推进和冲突组织，但不改主设定和大事件结果",
   "anti-detect": `反检测改写：在保持剧情不变的前提下，降低AI生成可检测性。
 
@@ -55,7 +64,7 @@ export class ReviserAgent extends BaseAgent {
     chapterContent: string,
     chapterNumber: number,
     issues: ReadonlyArray<AuditIssue>,
-    mode: ReviseMode = "rewrite",
+    mode: ReviseMode = DEFAULT_REVISE_MODE,
     genre?: string,
     options?: {
       chapterIntent?: string;
@@ -79,7 +88,10 @@ export class ReviserAgent extends BaseAgent {
 
     // Load genre profile and book rules
     const genreId = genre ?? "other";
-    const { profile: gp } = await readGenreProfile(this.ctx.projectRoot, genreId);
+    const [{ profile: gp }, bookLanguage] = await Promise.all([
+      readGenreProfile(this.ctx.projectRoot, genreId),
+      readBookLanguage(bookDir),
+    ]);
     const parsedRules = await readBookRules(bookDir);
     const bookRules = parsedRules?.rules ?? null;
 
@@ -103,10 +115,63 @@ export class ReviserAgent extends BaseAgent {
       ? `\n8. 保持章节字数在目标区间内；只有在修复关键问题确实需要时才允许轻微偏离`
       : "";
 
-    const isEnglish = gp.language === "en";
+    const isEnglish = (bookLanguage ?? gp.language) === "en";
+    const resolvedLanguage = isEnglish ? "en" : "zh";
     const langPrefix = isEnglish
-      ? `【LANGUAGE OVERRIDE】ALL output (FIXED_ISSUES, REVISED_CONTENT, UPDATED_STATE, UPDATED_HOOKS) MUST be in English. The revised chapter content must be written entirely in English.\n\n`
+      ? mode === "spot-fix"
+        ? `【LANGUAGE OVERRIDE】ALL output (FIXED_ISSUES, PATCHES, UPDATED_STATE, UPDATED_HOOKS) MUST be in English. Every TARGET_TEXT and REPLACEMENT_TEXT must be written entirely in English.\n\n`
+        : `【LANGUAGE OVERRIDE】ALL output (FIXED_ISSUES, REVISED_CONTENT, UPDATED_STATE, UPDATED_HOOKS) MUST be in English. The revised chapter content must be written entirely in English.\n\n`
       : "";
+    const governedMode = Boolean(options?.chapterIntent && options?.contextPackage && options?.ruleStack);
+    const hooksWorkingSet = governedMode && options?.contextPackage
+      ? buildGovernedHookWorkingSet({
+          hooksMarkdown: hooks,
+          contextPackage: options.contextPackage,
+          chapterNumber,
+          language: resolvedLanguage,
+        })
+      : hooks;
+    const chapterSummariesWorkingSet = governedMode
+      ? filterSummaries(chapterSummaries, chapterNumber)
+      : chapterSummaries;
+    const characterMatrixWorkingSet = governedMode
+      ? buildGovernedCharacterMatrixWorkingSet({
+          matrixMarkdown: characterMatrix,
+          chapterIntent: options?.chapterIntent ?? volumeOutline,
+          contextPackage: options!.contextPackage!,
+          protagonistName: bookRules?.protagonist?.name,
+        })
+      : characterMatrix;
+
+    const outputFormat = mode === "spot-fix"
+      ? `=== FIXED_ISSUES ===
+(逐条说明修正了什么，一行一条；如果无法安全定点修复，也在这里说明)
+
+=== PATCHES ===
+(只输出需要替换的局部补丁，不得输出整章重写。格式如下，可重复多个 PATCH 区块)
+--- PATCH 1 ---
+TARGET_TEXT:
+(必须从原文中精确复制、且能唯一命中的原句或原段)
+REPLACEMENT_TEXT:
+(替换后的局部文本)
+--- END PATCH ---
+
+=== UPDATED_STATE ===
+(更新后的完整状态卡)
+${gp.numericalSystem ? "\n=== UPDATED_LEDGER ===\n(更新后的完整资源账本)" : ""}
+=== UPDATED_HOOKS ===
+(更新后的完整伏笔池)`
+      : `=== FIXED_ISSUES ===
+(逐条说明修正了什么，一行一条)
+
+=== REVISED_CONTENT ===
+(修正后的完整正文)
+
+=== UPDATED_STATE ===
+(更新后的完整状态卡)
+${gp.numericalSystem ? "\n=== UPDATED_LEDGER ===\n(更新后的完整资源账本)" : ""}
+=== UPDATED_HOOKS ===
+(更新后的完整伏笔池)`;
 
     const systemPrompt = `${langPrefix}你是一位专业的${gp.name}网络小说修稿编辑。你的任务是根据审稿意见对章节进行修正。${protagonistBlock}
 
@@ -120,42 +185,34 @@ export class ReviserAgent extends BaseAgent {
 6. 保持原文的语言风格和节奏
 7. 修改后同步更新状态卡${gp.numericalSystem ? "、账本" : ""}、伏笔池
 ${lengthGuardrail}
+${mode === "spot-fix" ? "\n9. spot-fix 只能输出局部补丁，禁止输出整章改写；TARGET_TEXT 必须能在原文中唯一命中\n10. 如果需要大面积改写，说明无法安全 spot-fix，并让 PATCHES 留空" : ""}
 
 输出格式：
 
-=== FIXED_ISSUES ===
-(逐条说明修正了什么，一行一条)
-
-=== REVISED_CONTENT ===
-(修正后的完整正文)
-
-=== UPDATED_STATE ===
-(更新后的完整状态卡)
-${gp.numericalSystem ? "\n=== UPDATED_LEDGER ===\n(更新后的完整资源账本)" : ""}
-=== UPDATED_HOOKS ===
-(更新后的完整伏笔池)`;
+${outputFormat}`;
 
     const ledgerBlock = gp.numericalSystem
       ? `\n## 资源账本\n${ledger}`
       : "";
     const governedMemoryBlocks = options?.contextPackage
-      ? buildGovernedMemoryEvidenceBlocks(options.contextPackage)
+      ? buildGovernedMemoryEvidenceBlocks(options.contextPackage, resolvedLanguage)
       : undefined;
     const hooksBlock = governedMemoryBlocks?.hooksBlock
-      ?? `\n## 伏笔池\n${hooks}\n`;
+      ?? `\n## 伏笔池\n${hooksWorkingSet}\n`;
     const outlineBlock = volumeOutline !== "(文件不存在)"
       ? `\n## 卷纲\n${volumeOutline}\n`
       : "";
-    const bibleBlock = storyBible !== "(文件不存在)"
+    const bibleBlock = !governedMode && storyBible !== "(文件不存在)"
       ? `\n## 世界观设定\n${storyBible}\n`
       : "";
-    const matrixBlock = characterMatrix !== "(文件不存在)"
-      ? `\n## 角色交互矩阵\n${characterMatrix}\n`
+    const matrixBlock = characterMatrixWorkingSet !== "(文件不存在)"
+      ? `\n## 角色交互矩阵\n${characterMatrixWorkingSet}\n`
       : "";
     const summariesBlock = governedMemoryBlocks?.summariesBlock
-      ?? (chapterSummaries !== "(文件不存在)"
-        ? `\n## 章节摘要\n${chapterSummaries}\n`
+      ?? (chapterSummariesWorkingSet !== "(文件不存在)"
+        ? `\n## 章节摘要\n${chapterSummariesWorkingSet}\n`
         : "");
+    const volumeSummariesBlock = governedMemoryBlocks?.volumeSummariesBlock ?? "";
 
     const hasParentCanon = parentCanon !== "(文件不存在)";
     const hasFanficCanon = fanficCanon !== "(文件不存在)";
@@ -185,7 +242,7 @@ ${issueList}
 ## 当前状态卡
 ${currentState}
 ${ledgerBlock}
-${hooksBlock}${reducedControlBlock || outlineBlock}${bibleBlock}${matrixBlock}${summariesBlock}${canonBlock}${fanficCanonBlock}${styleGuideBlock}${lengthGuidanceBlock}
+${hooksBlock}${volumeSummariesBlock}${reducedControlBlock || outlineBlock}${bibleBlock}${matrixBlock}${summariesBlock}${canonBlock}${fanficCanonBlock}${styleGuideBlock}${lengthGuidanceBlock}
 
 ## 待修正章节
 ${chapterContent}`;
@@ -200,14 +257,25 @@ ${chapterContent}`;
       { temperature: 0.3, maxTokens },
     );
 
-    const output = this.parseOutput(response.content, gp);
+    const output = this.parseOutput(response.content, gp, mode, chapterContent);
+    const mergedOutput = governedMode
+      ? {
+          ...output,
+          updatedHooks: mergeTableMarkdownByKey(hooks, output.updatedHooks, [0]),
+        }
+      : output;
     const wordCount = options?.lengthSpec
-      ? countChapterLength(output.revisedContent, options.lengthSpec.countingMode)
-      : output.wordCount;
-    return { ...output, wordCount, tokenUsage: response.usage };
+      ? countChapterLength(mergedOutput.revisedContent, options.lengthSpec.countingMode)
+      : mergedOutput.wordCount;
+    return { ...mergedOutput, wordCount, tokenUsage: response.usage };
   }
 
-  private parseOutput(content: string, gp: GenreProfile): ReviseOutput {
+  private parseOutput(
+    content: string,
+    gp: GenreProfile,
+    mode: ReviseMode,
+    originalChapter: string,
+  ): ReviseOutput {
     const extract = (tag: string): string => {
       const regex = new RegExp(
         `=== ${tag} ===\\s*([\\s\\S]*?)(?==== [A-Z_]+ ===|$)`,
@@ -216,16 +284,34 @@ ${chapterContent}`;
       return match?.[1]?.trim() ?? "";
     };
 
-    const revisedContent = extract("REVISED_CONTENT");
     const fixedRaw = extract("FIXED_ISSUES");
+    const fixedIssues = fixedRaw
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0);
+
+    if (mode === "spot-fix") {
+      const patches = parseSpotFixPatches(extract("PATCHES"));
+      const patchResult = applySpotFixPatches(originalChapter, patches);
+
+      return {
+        revisedContent: patchResult.revisedContent,
+        wordCount: patchResult.revisedContent.length,
+        fixedIssues: patchResult.applied ? fixedIssues : [],
+        updatedState: extract("UPDATED_STATE") || "(状态卡未更新)",
+        updatedLedger: gp.numericalSystem
+          ? (extract("UPDATED_LEDGER") || "(账本未更新)")
+          : "",
+        updatedHooks: extract("UPDATED_HOOKS") || "(伏笔池未更新)",
+      };
+    }
+
+    const revisedContent = extract("REVISED_CONTENT");
 
     return {
       revisedContent,
       wordCount: revisedContent.length,
-      fixedIssues: fixedRaw
-        .split("\n")
-        .map((l) => l.trim())
-        .filter((l) => l.length > 0),
+      fixedIssues,
       updatedState: extract("UPDATED_STATE") || "(状态卡未更新)",
       updatedLedger: gp.numericalSystem
         ? (extract("UPDATED_LEDGER") || "(账本未更新)")

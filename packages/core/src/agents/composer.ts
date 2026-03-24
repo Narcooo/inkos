@@ -151,11 +151,17 @@ export class ComposerAgent extends BaseAgent {
         .filter(Boolean)
         .join(" | "),
     }));
+    const volumeSummaryEntries = memorySelection.volumeSummaries.map((summary) => ({
+      source: `story/volume_summaries.md#${summary.anchor}`,
+      reason: "Carry forward long-span arc memory compressed from earlier volumes.",
+      excerpt: `${summary.heading} | ${summary.content}`,
+    }));
 
     return [
       ...entries.filter((entry): entry is NonNullable<typeof entry> => entry !== null),
       ...factEntries,
       ...summaryEntries,
+      ...volumeSummaryEntries,
       ...hookEntries,
     ];
   }

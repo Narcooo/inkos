@@ -21,6 +21,7 @@ export class ArchitectAgent extends BaseAgent {
   async generateFoundation(book: BookConfig, externalContext?: string): Promise<ArchitectOutput> {
     const { profile: gp, body: genreBody } =
       await readGenreProfile(this.ctx.projectRoot, book.genre);
+    const resolvedLanguage = book.language ?? gp.language;
 
     const contextBlock = externalContext
       ? `\n\n## 外部指令\n以下是来自外部系统的创作指令，请将其融入设定中：\n\n${externalContext}\n`
@@ -39,24 +40,34 @@ export class ArchitectAgent extends BaseAgent {
       ? "- 需要年代考据支撑（在 book_rules 中设置 eraConstraints）"
       : "";
 
-    const systemPrompt = `你是一个专业的网络小说架构师。你的任务是为一本新的${gp.name}小说生成完整的基础设定。${contextBlock}
+    const storyBiblePrompt = resolvedLanguage === "en"
+      ? `Use structured second-level headings:
+## 01_Worldview
+World setting, historical-social frame, and core rules
 
-要求：
-- 平台：${book.platform}
-- 题材：${gp.name}（${book.genre}）
-- 目标章数：${book.targetChapters}章
-- 每章字数：${book.chapterWordCount}字
+## 02_Protagonist
+Protagonist setup (identity / advantage / personality core / behavioral boundaries)
 
-## 题材特征
+## 03_Factions_and_Characters
+Major factions and important supporting characters (for each: name, identity, motivation, relationship to protagonist, independent goal)
 
-${genreBody}
+## 04_Geography_and_Environment
+Map / scene design and environmental traits
 
-## 生成要求
+## 05_Title_and_Blurb
+Title method:
+- Keep the title clear, direct, and easy to understand
+- Use a format that immediately signals genre and core appeal
+- Avoid overly literary or misleading titles
 
-你需要生成以下内容，每个部分用 === SECTION: <name> === 分隔：
+Blurb method (within 300 words, choose one):
+1. Open with conflict, then reveal the hook, then leave suspense
+2. Summarize only the main line and keep a clear suspense gap
+3. Use a miniature scene that captures the book's strongest pull
 
-=== SECTION: story_bible ===
-用结构化二级标题组织：
+Core blurb principle:
+- The blurb is product copy that must make readers want to click`
+      : `用结构化二级标题组织：
 ## 01_世界观
 世界观设定、核心规则体系
 
@@ -85,18 +96,52 @@ ${genreBody}
 简介核心原则：
 - 简介 = 产品宣传语，必须让读者产生"我要点开看"的冲动
 - 可以从剧情设定、人设、或某个精彩片段切入
-- 必须有噱头（如"凡是被写在笔记本上的名字，最后都得死"）
+- 必须有噱头（如"凡是被写在笔记本上的名字，最后都得死"）`;
 
-=== SECTION: volume_outline ===
-卷纲规划，每卷包含：卷名、章节范围、核心冲突、关键转折、收益目标
+    const volumeOutlinePrompt = resolvedLanguage === "en"
+      ? `Volume plan. For each volume include: title, chapter range, core conflict, key turning points, and payoff goal
+
+### Golden First Three Chapters Rule
+- Chapter 1: throw the core conflict immediately; no large background dump
+- Chapter 2: show the core edge / ability / leverage that answers Chapter 1's pressure
+- Chapter 3: establish the first concrete short-term goal that gives readers a reason to continue`
+      : `卷纲规划，每卷包含：卷名、章节范围、核心冲突、关键转折、收益目标
 
 ### 黄金三章法则（前三章必须遵循）
 - 第1章：抛出核心冲突（主角立即面临困境/危机/选择），禁止大段背景灌输
 - 第2章：展示金手指/核心能力（主角如何应对第1章的困境），让读者看到爽点预期
-- 第3章：明确短期目标（主角确立第一个具体可达成的目标），给读者追读理由
+- 第3章：明确短期目标（主角确立第一个具体可达成的目标），给读者追读理由`;
 
-=== SECTION: book_rules ===
-生成 book_rules.md 格式的 YAML frontmatter + 叙事指导，包含：
+    const bookRulesPrompt = resolvedLanguage === "en"
+      ? `Generate book_rules.md as YAML frontmatter plus narrative guidance:
+\`\`\`
+---
+version: "1.0"
+protagonist:
+  name: (protagonist name)
+  personalityLock: [(3-5 personality keywords)]
+  behavioralConstraints: [(3-5 behavioral constraints)]
+genreLock:
+  primary: ${book.genre}
+  forbidden: [(2-3 forbidden style intrusions)]
+${gp.numericalSystem ? `numericalSystemOverrides:
+  hardCap: (decide from the setting)
+  resourceTypes: [(core resource types)]` : ""}
+prohibitions:
+  - (3-5 book-specific prohibitions)
+chapterTypesOverride: []
+fatigueWordsOverride: []
+additionalAuditDimensions: []
+enableFullCastTracking: false
+---
+
+## Narrative Perspective
+(Describe the narrative perspective and style)
+
+## Core Conflict Driver
+(Describe the book's core conflict and propulsion)
+\`\`\``
+      : `生成 book_rules.md 格式的 YAML frontmatter + 叙事指导，包含：
 \`\`\`
 ---
 version: "1.0"
@@ -123,10 +168,20 @@ enableFullCastTracking: false
 
 ## 核心冲突驱动
 (描述本书的核心矛盾和驱动力)
-\`\`\`
+\`\`\``;
 
-=== SECTION: current_state ===
-初始状态卡（第0章），包含：
+    const currentStatePrompt = resolvedLanguage === "en"
+      ? `Initial state card (Chapter 0), include:
+| Field | Value |
+| --- | --- |
+| Current Chapter | 0 |
+| Current Location | (starting location) |
+| Protagonist State | (initial condition) |
+| Current Goal | (first goal) |
+| Current Constraint | (initial constraint) |
+| Current Alliances | (initial relationships) |
+| Current Conflict | (first conflict) |`
+      : `初始状态卡（第0章），包含：
 | 字段 | 值 |
 |------|-----|
 | 当前章节 | 0 |
@@ -135,13 +190,25 @@ enableFullCastTracking: false
 | 当前目标 | (第一个目标) |
 | 当前限制 | (初始限制) |
 | 当前敌我 | (初始关系) |
-| 当前冲突 | (第一个冲突) |
+| 当前冲突 | (第一个冲突) |`;
 
-=== SECTION: pending_hooks ===
-初始伏笔池（Markdown表格）：
-| hook_id | 起始章节 | 类型 | 状态 | 最近推进 | 预期回收 | 备注 |
+    const pendingHooksPrompt = resolvedLanguage === "en"
+      ? `Initial hook pool (Markdown table):
+| hook_id | start_chapter | type | status | latest_progress | expected_payoff | notes |`
+      : `初始伏笔池（Markdown表格）：
+| hook_id | 起始章节 | 类型 | 状态 | 最近推进 | 预期回收 | 备注 |`;
 
-生成内容必须：
+    const finalRequirementsPrompt = resolvedLanguage === "en"
+      ? `Generated content must:
+1. Fit the ${book.platform} platform taste
+2. Fit the ${gp.name} genre traits
+${numericalBlock}
+${powerBlock}
+${eraBlock}
+3. Give the protagonist a clear personality and behavioral boundaries
+4. Keep hooks and payoffs coherent
+5. Make supporting characters independently motivated rather than pure tools`
+      : `生成内容必须：
 1. 符合${book.platform}平台口味
 2. 符合${gp.name}题材特征
 ${numericalBlock}
@@ -151,7 +218,39 @@ ${eraBlock}
 4. 伏笔前后呼应，不留悬空线
 5. 配角有独立动机，不是工具人`;
 
-    const resolvedLanguage = book.language ?? gp.language;
+    const systemPrompt = `你是一个专业的网络小说架构师。你的任务是为一本新的${gp.name}小说生成完整的基础设定。${contextBlock}
+
+要求：
+- 平台：${book.platform}
+- 题材：${gp.name}（${book.genre}）
+- 目标章数：${book.targetChapters}章
+- 每章字数：${book.chapterWordCount}字
+
+## 题材特征
+
+${genreBody}
+
+## 生成要求
+
+你需要生成以下内容，每个部分用 === SECTION: <name> === 分隔：
+
+=== SECTION: story_bible ===
+${storyBiblePrompt}
+
+=== SECTION: volume_outline ===
+${volumeOutlinePrompt}
+
+=== SECTION: book_rules ===
+${bookRulesPrompt}
+
+=== SECTION: current_state ===
+${currentStatePrompt}
+
+=== SECTION: pending_hooks ===
+${pendingHooksPrompt}
+
+${finalRequirementsPrompt}`;
+
     const langPrefix = resolvedLanguage === "en"
       ? `【LANGUAGE OVERRIDE】ALL output (story_bible, volume_outline, book_rules, current_state, pending_hooks) MUST be written in English. Character names, place names, and all prose must be in English. The === SECTION: === tags remain unchanged.\n\n`
       : "";
@@ -171,6 +270,7 @@ ${eraBlock}
     bookDir: string,
     output: ArchitectOutput,
     numericalSystem: boolean = true,
+    language: "zh" | "en" = "zh",
   ): Promise<void> {
     const storyDir = join(bookDir, "story");
     await mkdir(storyDir, { recursive: true });
@@ -187,7 +287,9 @@ ${eraBlock}
       writes.push(
         writeFile(
           join(storyDir, "particle_ledger.md"),
-          "# 资源账本\n\n| 章节 | 期初值 | 来源 | 完整度 | 增量 | 期末值 | 依据 |\n|------|--------|------|--------|------|--------|------|\n| 0 | 0 | 初始化 | - | 0 | 0 | 开书初始 |\n",
+          language === "en"
+            ? "# Resource Ledger\n\n| Chapter | Opening Value | Source | Integrity | Delta | Closing Value | Evidence |\n| --- | --- | --- | --- | --- | --- | --- |\n| 0 | 0 | Initialization | - | 0 | 0 | Initial book state |\n"
+            : "# 资源账本\n\n| 章节 | 期初值 | 来源 | 完整度 | 增量 | 期末值 | 依据 |\n|------|--------|------|--------|------|--------|------|\n| 0 | 0 | 初始化 | - | 0 | 0 | 开书初始 |\n",
           "utf-8",
         ),
       );
@@ -197,17 +299,23 @@ ${eraBlock}
     writes.push(
       writeFile(
         join(storyDir, "subplot_board.md"),
-        "# 支线进度板\n\n| 支线ID | 支线名 | 相关角色 | 起始章 | 最近活跃章 | 距今章数 | 状态 | 进度概述 | 回收ETA |\n|--------|--------|----------|--------|------------|----------|------|----------|---------|\n",
+        language === "en"
+          ? "# Subplot Board\n\n| Subplot ID | Subplot | Related Characters | Start Chapter | Last Active Chapter | Chapters Since | Status | Progress Summary | Payoff ETA |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
+          : "# 支线进度板\n\n| 支线ID | 支线名 | 相关角色 | 起始章 | 最近活跃章 | 距今章数 | 状态 | 进度概述 | 回收ETA |\n|--------|--------|----------|--------|------------|----------|------|----------|---------|\n",
         "utf-8",
       ),
       writeFile(
         join(storyDir, "emotional_arcs.md"),
-        "# 情感弧线\n\n| 角色 | 章节 | 情绪状态 | 触发事件 | 强度(1-10) | 弧线方向 |\n|------|------|----------|----------|------------|----------|\n",
+        language === "en"
+          ? "# Emotional Arcs\n\n| Character | Chapter | Emotional State | Trigger Event | Intensity (1-10) | Arc Direction |\n| --- | --- | --- | --- | --- | --- |\n"
+          : "# 情感弧线\n\n| 角色 | 章节 | 情绪状态 | 触发事件 | 强度(1-10) | 弧线方向 |\n|------|------|----------|----------|------------|----------|\n",
         "utf-8",
       ),
       writeFile(
         join(storyDir, "character_matrix.md"),
-        "# 角色交互矩阵\n\n### 角色档案\n| 角色 | 核心标签 | 反差细节 | 说话风格 | 性格底色 | 与主角关系 | 核心动机 | 当前目标 |\n|------|----------|----------|----------|----------|------------|----------|----------|\n\n### 相遇记录\n| 角色A | 角色B | 首次相遇章 | 最近交互章 | 关系性质 | 关系变化 |\n|-------|-------|------------|------------|----------|----------|\n\n### 信息边界\n| 角色 | 已知信息 | 未知信息 | 信息来源章 |\n|------|----------|----------|------------|\n",
+        language === "en"
+          ? "# Character Matrix\n\n### Character Profiles\n| Character | Core Tags | Contrast Detail | Speech Style | Personality Core | Relationship to Protagonist | Core Motivation | Current Goal |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n\n### Encounter Log\n| Character A | Character B | First Meeting Chapter | Latest Interaction Chapter | Relationship Type | Relationship Change |\n| --- | --- | --- | --- | --- | --- |\n\n### Information Boundaries\n| Character | Known Information | Unknown Information | Source Chapter |\n| --- | --- | --- | --- |\n"
+          : "# 角色交互矩阵\n\n### 角色档案\n| 角色 | 核心标签 | 反差细节 | 说话风格 | 性格底色 | 与主角关系 | 核心动机 | 当前目标 |\n|------|----------|----------|----------|----------|------------|----------|----------|\n\n### 相遇记录\n| 角色A | 角色B | 首次相遇章 | 最近交互章 | 关系性质 | 关系变化 |\n|-------|-------|------------|------------|----------|----------|\n\n### 信息边界\n| 角色 | 已知信息 | 未知信息 | 信息来源章 |\n|------|----------|----------|------------|\n",
         "utf-8",
       ),
     );
@@ -227,6 +335,7 @@ ${eraBlock}
   ): Promise<ArchitectOutput> {
     const { profile: gp, body: genreBody } =
       await readGenreProfile(this.ctx.projectRoot, book.genre);
+    const resolvedLanguage = book.language ?? gp.language;
 
     const contextBlock = externalContext
       ? `\n\n## 外部指令\n${externalContext}\n`
@@ -244,6 +353,154 @@ ${eraBlock}
     const eraBlock = gp.eraResearch
       ? "- 需要年代考据支撑（在 book_rules 中设置 eraConstraints）"
       : "";
+
+    const storyBiblePrompt = resolvedLanguage === "en"
+      ? `Extract from the source text and organize with structured second-level headings:
+## 01_Worldview
+Extracted world setting, core rules, and frame
+
+## 02_Protagonist
+Inferred protagonist setup (identity / advantage / personality core / behavioral boundaries)
+
+## 03_Factions_and_Characters
+Factions and important supporting characters that appear in the source text
+
+## 04_Geography_and_Environment
+Locations, environments, and scene traits drawn from the source text
+
+## 05_Title_and_Blurb
+Keep the original title "${book.title}" and generate a matching blurb from the source text`
+      : `从正文中提取，用结构化二级标题组织：
+## 01_世界观
+从正文中提取的世界观设定、核心规则体系
+
+## 02_主角
+从正文中推断的主角设定（身份/金手指/性格底色/行为边界）
+
+## 03_势力与人物
+从正文中出现的势力分布、重要配角（每人：名字、身份、动机、与主角关系、独立目标）
+
+## 04_地理与环境
+从正文中出现的地图/场景设定、环境特色
+
+## 05_书名与简介
+保留原书名"${book.title}"，根据正文内容生成简介`;
+
+    const volumeOutlinePrompt = resolvedLanguage === "en"
+      ? `Infer the volume plan from existing text:
+- Existing chapters: review the actual structure already present
+- Future projection: predict later directions from active hooks and plot momentum
+For each volume include: title, chapter range, core conflict, and key turning points`
+      : `基于已有正文反推卷纲：
+- 已有章节部分：根据实际内容回顾每卷的结构
+- 后续预测部分：基于已有伏笔和剧情走向预测未来方向
+每卷包含：卷名、章节范围、核心冲突、关键转折`;
+
+    const bookRulesPrompt = resolvedLanguage === "en"
+      ? `Infer book_rules.md as YAML frontmatter plus narrative guidance from character behavior in the source text:
+\`\`\`
+---
+version: "1.0"
+protagonist:
+  name: (extract protagonist name from the text)
+  personalityLock: [(infer 3-5 personality keywords from behavior)]
+  behavioralConstraints: [(infer 3-5 behavioral constraints from behavior)]
+genreLock:
+  primary: ${book.genre}
+  forbidden: [(2-3 forbidden style intrusions)]
+${gp.numericalSystem ? `numericalSystemOverrides:
+  hardCap: (infer from the text)
+  resourceTypes: [(extract core resource types from the text)]` : ""}
+prohibitions:
+  - (infer 3-5 book-specific prohibitions from the text)
+chapterTypesOverride: []
+fatigueWordsOverride: []
+additionalAuditDimensions: []
+enableFullCastTracking: false
+---
+
+## Narrative Perspective
+(Infer the narrative perspective and style from the text)
+
+## Core Conflict Driver
+(Infer the book's core conflict and propulsion from the text)
+\`\`\``
+      : `从正文中角色行为反推 book_rules.md 格式的 YAML frontmatter + 叙事指导：
+\`\`\`
+---
+version: "1.0"
+protagonist:
+  name: (从正文提取主角名)
+  personalityLock: [(从行为推断3-5个性格关键词)]
+  behavioralConstraints: [(从行为推断3-5条行为约束)]
+genreLock:
+  primary: ${book.genre}
+  forbidden: [(2-3种禁止混入的文风)]
+${gp.numericalSystem ? `numericalSystemOverrides:
+  hardCap: (从正文推断)
+  resourceTypes: [(从正文提取核心资源类型)]` : ""}
+prohibitions:
+  - (从正文推断3-5条本书禁忌)
+chapterTypesOverride: []
+fatigueWordsOverride: []
+additionalAuditDimensions: []
+enableFullCastTracking: false
+---
+
+## 叙事视角
+(从正文推断本书叙事视角和风格)
+
+## 核心冲突驱动
+(从正文推断本书的核心矛盾和驱动力)
+\`\`\``;
+
+    const currentStatePrompt = resolvedLanguage === "en"
+      ? `Reflect the state at the end of the latest chapter:
+| Field | Value |
+| --- | --- |
+| Current Chapter | (latest chapter number) |
+| Current Location | (location at the end of the latest chapter) |
+| Protagonist State | (state at the end of the latest chapter) |
+| Current Goal | (current goal) |
+| Current Constraint | (current constraint) |
+| Current Alliances | (current alliances / opposition) |
+| Current Conflict | (current conflict) |`
+      : `反映最后一章结束时的状态卡：
+| 字段 | 值 |
+|------|-----|
+| 当前章节 | (最后一章章节号) |
+| 当前位置 | (最后一章结束时的位置) |
+| 主角状态 | (最后一章结束时的状态) |
+| 当前目标 | (当前目标) |
+| 当前限制 | (当前限制) |
+| 当前敌我 | (当前敌我关系) |
+| 当前冲突 | (当前冲突) |`;
+
+    const pendingHooksPrompt = resolvedLanguage === "en"
+      ? `Identify all active hooks from the source text (Markdown table):
+| hook_id | start_chapter | type | status | latest_progress | expected_payoff | notes |`
+      : `从正文中识别的所有伏笔（Markdown表格）：
+| hook_id | 起始章节 | 类型 | 状态 | 最近推进 | 预期回收 | 备注 |`;
+
+    const keyPrinciplesPrompt = resolvedLanguage === "en"
+      ? `## Key Principles
+
+1. Derive everything from the source text; do not invent unsupported settings
+2. Hook extraction must be complete: unresolved clues, hints, and foreshadowing all count
+3. Character inference must come from dialogue and behavior, not assumption
+4. Accuracy first; detailed is better than missing crucial information
+${numericalBlock}
+${powerBlock}
+${eraBlock}`
+      : `## 关键原则
+
+1. 一切从正文出发，不要臆造正文中没有的设定
+2. 伏笔识别要完整：悬而未决的线索、暗示、预告都算
+3. 角色推断要准确：从对话和行为推断性格，不要想当然
+4. 准确性优先，宁可详细也不要遗漏
+${numericalBlock}
+${powerBlock}
+${eraBlock}`;
 
     const systemPrompt = `你是一个专业的网络小说架构师。你的任务是从已有的小说正文中反向推导完整的基础设定。${contextBlock}
 
@@ -273,89 +530,34 @@ ${genreBody}
 你需要生成以下内容，每个部分用 === SECTION: <name> === 分隔：
 
 === SECTION: story_bible ===
-从正文中提取，用结构化二级标题组织：
-## 01_世界观
-从正文中提取的世界观设定、核心规则体系
-
-## 02_主角
-从正文中推断的主角设定（身份/金手指/性格底色/行为边界）
-
-## 03_势力与人物
-从正文中出现的势力分布、重要配角（每人：名字、身份、动机、与主角关系、独立目标）
-
-## 04_地理与环境
-从正文中出现的地图/场景设定、环境特色
-
-## 05_书名与简介
-保留原书名"${book.title}"，根据正文内容生成简介
+${storyBiblePrompt}
 
 === SECTION: volume_outline ===
-基于已有正文反推卷纲：
-- 已有章节部分：根据实际内容回顾每卷的结构
-- 后续预测部分：基于已有伏笔和剧情走向预测未来方向
-每卷包含：卷名、章节范围、核心冲突、关键转折
+${volumeOutlinePrompt}
 
 === SECTION: book_rules ===
-从正文中角色行为反推 book_rules.md 格式的 YAML frontmatter + 叙事指导：
-\`\`\`
----
-version: "1.0"
-protagonist:
-  name: (从正文提取主角名)
-  personalityLock: [(从行为推断3-5个性格关键词)]
-  behavioralConstraints: [(从行为推断3-5条行为约束)]
-genreLock:
-  primary: ${book.genre}
-  forbidden: [(2-3种禁止混入的文风)]
-${gp.numericalSystem ? `numericalSystemOverrides:
-  hardCap: (从正文推断)
-  resourceTypes: [(从正文提取核心资源类型)]` : ""}
-prohibitions:
-  - (从正文推断3-5条本书禁忌)
-chapterTypesOverride: []
-fatigueWordsOverride: []
-additionalAuditDimensions: []
-enableFullCastTracking: false
----
-
-## 叙事视角
-(从正文推断本书叙事视角和风格)
-
-## 核心冲突驱动
-(从正文推断本书的核心矛盾和驱动力)
-\`\`\`
+${bookRulesPrompt}
 
 === SECTION: current_state ===
-反映最后一章结束时的状态卡：
-| 字段 | 值 |
-|------|-----|
-| 当前章节 | (最后一章章节号) |
-| 当前位置 | (最后一章结束时的位置) |
-| 主角状态 | (最后一章结束时的状态) |
-| 当前目标 | (当前目标) |
-| 当前限制 | (当前限制) |
-| 当前敌我 | (当前敌我关系) |
-| 当前冲突 | (当前冲突) |
+${currentStatePrompt}
 
 === SECTION: pending_hooks ===
-从正文中识别的所有伏笔（Markdown表格）：
-| hook_id | 起始章节 | 类型 | 状态 | 最近推进 | 预期回收 | 备注 |
+${pendingHooksPrompt}
 
-## 关键原则
+${keyPrinciplesPrompt}`;
 
-1. 一切从正文出发，不要臆造正文中没有的设定
-2. 伏笔识别要完整：悬而未决的线索、暗示、预告都算
-3. 角色推断要准确：从对话和行为推断性格，不要想当然
-4. 准确性优先，宁可详细也不要遗漏
-${numericalBlock}
-${powerBlock}
-${eraBlock}`;
+    const langPrefix = resolvedLanguage === "en"
+      ? `【LANGUAGE OVERRIDE】ALL output (story_bible, volume_outline, book_rules, current_state, pending_hooks) MUST be written in English. Character names, place names, and all prose must be in English. The === SECTION: === tags remain unchanged.\n\n`
+      : "";
+    const userMessage = resolvedLanguage === "en"
+      ? `Generate the complete foundation for an imported ${gp.name} novel titled "${book.title}". Write everything in English.\n\n${chaptersText}`
+      : `以下是《${book.title}》的全部已有正文，请从中反向推导完整基础设定：\n\n${chaptersText}`;
 
     const response = await this.chat([
-      { role: "system", content: systemPrompt },
+      { role: "system", content: langPrefix + systemPrompt },
       {
         role: "user",
-        content: `以下是《${book.title}》的全部已有正文，请从中反向推导完整基础设定：\n\n${chaptersText}`,
+        content: userMessage,
       },
     ], { maxTokens: 16384, temperature: 0.5 });
 
@@ -446,7 +648,13 @@ prohibitions:
         `=== SECTION: ${name} ===\\s*([\\s\\S]*?)(?==== SECTION:|$)`,
       );
       const match = content.match(regex);
-      return match?.[1]?.trim() ?? `[${name} 生成失败，需要重新生成]`;
+      const section = match?.[1]?.trim();
+      if (!section) {
+        return `[${name} 生成失败，需要重新生成]`;
+      }
+      return name === "pending_hooks"
+        ? this.stripTrailingAssistantCoda(section)
+        : section;
     };
 
     return {
@@ -456,5 +664,20 @@ prohibitions:
       currentState: extract("current_state"),
       pendingHooks: extract("pending_hooks"),
     };
+  }
+
+  private stripTrailingAssistantCoda(section: string): string {
+    const lines = section.split("\n");
+    const cutoff = lines.findIndex((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return false;
+      return /^(如果(?:你愿意|需要|想要|希望)|If (?:you(?:'d)? like|you want|needed)|I can (?:continue|next))/i.test(trimmed);
+    });
+
+    if (cutoff < 0) {
+      return section;
+    }
+
+    return lines.slice(0, cutoff).join("\n").trimEnd();
   }
 }

@@ -55,8 +55,8 @@ export class PlannerAgent extends BaseAgent {
       this.readFileOrDefault(sourcePaths.currentState),
     ]);
 
-    const goal = this.deriveGoal(input.externalContext, currentFocus, authorIntent, input.chapterNumber);
     const outlineNode = this.findOutlineNode(volumeOutline, input.chapterNumber);
+    const goal = this.deriveGoal(input.externalContext, currentFocus, authorIntent, outlineNode, input.chapterNumber);
     const parsedRules = parseBookRules(bookRulesRaw);
     const mustKeep = this.collectMustKeep(currentState, storyBible);
     const mustAvoid = this.collectMustAvoid(currentFocus, parsedRules.rules.prohibitions);
@@ -84,8 +84,8 @@ export class PlannerAgent extends BaseAgent {
     const runtimePath = join(runtimeDir, `chapter-${String(input.chapterNumber).padStart(4, "0")}.intent.md`);
     const intentMarkdown = this.renderIntentMarkdown(
       intent,
-      renderHookSnapshot(memorySelection.hooks),
-      renderSummarySnapshot(memorySelection.summaries),
+      renderHookSnapshot(memorySelection.hooks, input.book.language ?? "zh"),
+      renderSummarySnapshot(memorySelection.summaries, input.book.language ?? "zh"),
     );
     await writeFile(runtimePath, intentMarkdown, "utf-8");
 
@@ -106,12 +106,15 @@ export class PlannerAgent extends BaseAgent {
     externalContext: string | undefined,
     currentFocus: string,
     authorIntent: string,
+    outlineNode: string | undefined,
     chapterNumber: number,
   ): string {
     const first = this.extractFirstDirective(externalContext);
     if (first) return first;
-    const focus = this.extractFirstDirective(currentFocus);
+    const focus = this.extractFocusGoal(currentFocus);
     if (focus) return focus;
+    const outline = this.extractFirstDirective(outlineNode);
+    if (outline) return outline;
     const author = this.extractFirstDirective(authorIntent);
     if (author) return author;
     return `Advance chapter ${chapterNumber} with clear narrative focus.`;
@@ -125,21 +128,31 @@ export class PlannerAgent extends BaseAgent {
   }
 
   private collectMustAvoid(currentFocus: string, prohibitions: ReadonlyArray<string>): string[] {
-    const focusAvoids = currentFocus
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) =>
-        line.startsWith("-") &&
-        /avoid|don't|do not|不要|别|禁止/i.test(line),
-      )
-      .map((line) => line.replace(/^-\s*/, ""));
+    const avoidSection = this.extractSection(currentFocus, [
+      "avoid",
+      "must avoid",
+      "禁止",
+      "避免",
+      "避雷",
+    ]);
+    const focusAvoids = avoidSection
+      ? this.extractListItems(avoidSection, 10)
+      : currentFocus
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) =>
+          line.startsWith("-") &&
+          /avoid|don't|do not|不要|别|禁止/i.test(line),
+        )
+        .map((line) => this.cleanListItem(line))
+        .filter((line): line is string => Boolean(line));
 
     return this.unique([...focusAvoids, ...prohibitions]).slice(0, 6);
   }
 
   private collectStyleEmphasis(authorIntent: string, currentFocus: string): string[] {
     return this.unique([
-      ...this.extractListItems(currentFocus, 2),
+      ...this.extractFocusStyleItems(currentFocus),
       ...this.extractListItems(authorIntent, 2),
     ]).slice(0, 4);
   }
@@ -168,7 +181,12 @@ export class PlannerAgent extends BaseAgent {
     return content
       .split("\n")
       .map((line) => line.trim())
-      .find((line) => line.length > 0 && !line.startsWith("#") && !line.startsWith("-"));
+      .find((line) =>
+        line.length > 0
+        && !line.startsWith("#")
+        && !line.startsWith("-")
+        && !this.isTemplatePlaceholder(line),
+      );
   }
 
   private extractListItems(content: string, limit: number): string[] {
@@ -176,8 +194,97 @@ export class PlannerAgent extends BaseAgent {
       .split("\n")
       .map((line) => line.trim())
       .filter((line) => line.startsWith("-"))
-      .map((line) => line.replace(/^-\s*/, ""))
+      .map((line) => this.cleanListItem(line))
+      .filter((line): line is string => Boolean(line))
       .slice(0, limit);
+  }
+
+  private extractFocusGoal(currentFocus: string): string | undefined {
+    const focusSection = this.extractSection(currentFocus, [
+      "active focus",
+      "focus",
+      "当前聚焦",
+      "当前焦点",
+      "近期聚焦",
+    ]) ?? currentFocus;
+    const directives = this.extractFocusStyleItems(focusSection, 3);
+    if (directives.length === 0) {
+      return this.extractFirstDirective(focusSection);
+    }
+    return directives.join(this.containsChinese(focusSection) ? "；" : "; ");
+  }
+
+  private extractFocusStyleItems(currentFocus: string, limit = 3): string[] {
+    const focusSection = this.extractSection(currentFocus, [
+      "active focus",
+      "focus",
+      "当前聚焦",
+      "当前焦点",
+      "近期聚焦",
+    ]) ?? currentFocus;
+    return this.extractListItems(focusSection, limit);
+  }
+
+  private extractSection(content: string, headings: ReadonlyArray<string>): string | undefined {
+    const targets = headings.map((heading) => this.normalizeHeading(heading));
+    const lines = content.split("\n");
+    let buffer: string[] | null = null;
+    let sectionLevel = 0;
+
+    for (const line of lines) {
+      const headingMatch = line.match(/^(#+)\s*(.+?)\s*$/);
+      if (headingMatch) {
+        const level = headingMatch[1]!.length;
+        const heading = this.normalizeHeading(headingMatch[2]!);
+
+        if (buffer && level <= sectionLevel) {
+          break;
+        }
+
+        if (targets.includes(heading)) {
+          buffer = [];
+          sectionLevel = level;
+          continue;
+        }
+      }
+
+      if (buffer) {
+        buffer.push(line);
+      }
+    }
+
+    const section = buffer?.join("\n").trim();
+    return section && section.length > 0 ? section : undefined;
+  }
+
+  private normalizeHeading(heading: string): string {
+    return heading
+      .toLowerCase()
+      .replace(/[*_`:#]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  private cleanListItem(line: string): string | undefined {
+    const cleaned = line.replace(/^-\s*/, "").trim();
+    if (cleaned.length === 0) return undefined;
+    if (/^[-|]+$/.test(cleaned)) return undefined;
+    if (this.isTemplatePlaceholder(cleaned)) return undefined;
+    return cleaned;
+  }
+
+  private isTemplatePlaceholder(line: string): boolean {
+    const normalized = line.trim();
+    if (!normalized) return false;
+
+    return (
+      /^\((describe|briefly describe|write)\b[\s\S]*\)$/i.test(normalized)
+      || /^（(?:在这里描述|描述|填写|写下)[\s\S]*）$/u.test(normalized)
+    );
+  }
+
+  private containsChinese(content: string): boolean {
+    return /[\u4e00-\u9fff]/.test(content);
   }
 
   private findOutlineNode(volumeOutline: string, chapterNumber: number): string | undefined {
@@ -186,6 +293,22 @@ export class PlannerAgent extends BaseAgent {
       new RegExp(`^#+\\s*Chapter\\s*${chapterNumber}\\b`, "i"),
       new RegExp(`^#+\\s*第\\s*${chapterNumber}\\s*章`),
     ];
+    const inlinePatterns = [
+      new RegExp(`^(?:[-*]\\s+)?(?:\\*\\*)?Chapter\\s*${chapterNumber}(?:[:：-])?(?:\\*\\*)?\\s*(.+)$`, "i"),
+      new RegExp(`^(?:[-*]\\s+)?(?:\\*\\*)?第\\s*${chapterNumber}\\s*章(?:[:：-])?(?:\\*\\*)?\\s*(.+)$`),
+    ];
+
+    const inlineMatch = lines
+      .map((line) => ({
+        line,
+        match: inlinePatterns
+          .map((pattern) => line.match(pattern))
+          .find((result): result is RegExpMatchArray => Boolean(result?.[1]?.trim())),
+      }))
+      .find((entry) => entry.match);
+    if (inlineMatch?.match?.[1]) {
+      return inlineMatch.match[1].trim();
+    }
 
     const heading = lines.find((line) => chapterPatterns.some((pattern) => pattern.test(line)));
     if (!heading) return this.extractFirstDirective(volumeOutline);

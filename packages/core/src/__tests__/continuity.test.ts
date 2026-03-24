@@ -15,6 +15,161 @@ describe("ContinuityAuditor", () => {
     vi.restoreAllMocks();
   });
 
+  it("prefers book language override when building audit prompts", async () => {
+    const root = await mkdtemp(join(tmpdir(), "inkos-auditor-lang-test-"));
+    const bookDir = join(root, "book");
+    const storyDir = join(bookDir, "story");
+    await mkdir(storyDir, { recursive: true });
+
+    await Promise.all([
+      writeFile(
+        join(bookDir, "book.json"),
+        JSON.stringify({
+          id: "english-book",
+          title: "English Book",
+          genre: "xuanhuan",
+          platform: "royalroad",
+          chapterWordCount: 800,
+          targetChapters: 60,
+          status: "active",
+          language: "en",
+          createdAt: "2026-03-23T00:00:00.000Z",
+          updatedAt: "2026-03-23T00:00:00.000Z",
+        }, null, 2),
+        "utf-8",
+      ),
+      writeFile(join(storyDir, "current_state.md"), "# Current State\n\n- Lin Yue keeps the oath token hidden.\n", "utf-8"),
+      writeFile(join(storyDir, "pending_hooks.md"), "# Pending Hooks\n", "utf-8"),
+      writeFile(join(storyDir, "chapter_summaries.md"), "# Chapter Summaries\n", "utf-8"),
+      writeFile(join(storyDir, "subplot_board.md"), "# Subplot Board\n", "utf-8"),
+      writeFile(join(storyDir, "emotional_arcs.md"), "# Emotional Arcs\n", "utf-8"),
+      writeFile(join(storyDir, "character_matrix.md"), "# Character Matrix\n", "utf-8"),
+      writeFile(join(storyDir, "volume_outline.md"), "# Volume Outline\n\n## Chapter 1\nReturn to the mentor debt.\n", "utf-8"),
+      writeFile(join(storyDir, "style_guide.md"), "# Style Guide\n\n- Keep the prose restrained.\n", "utf-8"),
+    ]);
+
+    const auditor = new ContinuityAuditor({
+      client: {
+        provider: "openai",
+        apiFormat: "chat",
+        stream: false,
+        defaults: {
+          temperature: 0.7,
+          maxTokens: 4096,
+          thinkingBudget: 0, maxTokensCap: null,
+          extra: {},
+        },
+      },
+      model: "test-model",
+      projectRoot: root,
+    });
+
+    const chatSpy = vi.spyOn(ContinuityAuditor.prototype as never, "chat" as never).mockResolvedValue({
+      content: JSON.stringify({
+        passed: true,
+        issues: [],
+        summary: "ok",
+      }),
+      usage: ZERO_USAGE,
+    });
+
+    try {
+      await auditor.auditChapter(bookDir, "Chapter body.", 1, "xuanhuan");
+
+      const messages = chatSpy.mock.calls[0]?.[0] as
+        | ReadonlyArray<{ content: string }>
+        | undefined;
+      const systemPrompt = messages?.[0]?.content ?? "";
+
+      expect(systemPrompt).toContain("ALL OUTPUT MUST BE IN ENGLISH");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("localizes English audit prompts instead of mixing Chinese control text", async () => {
+    const root = await mkdtemp(join(tmpdir(), "inkos-auditor-en-prompt-test-"));
+    const bookDir = join(root, "book");
+    const storyDir = join(bookDir, "story");
+    await mkdir(storyDir, { recursive: true });
+
+    await Promise.all([
+      writeFile(
+        join(bookDir, "book.json"),
+        JSON.stringify({
+          id: "english-book",
+          title: "English Book",
+          genre: "other",
+          platform: "royalroad",
+          chapterWordCount: 800,
+          targetChapters: 60,
+          status: "active",
+          language: "en",
+          createdAt: "2026-03-23T00:00:00.000Z",
+          updatedAt: "2026-03-23T00:00:00.000Z",
+        }, null, 2),
+        "utf-8",
+      ),
+      writeFile(join(storyDir, "current_state.md"), "# Current State\n\n- Mara keeps the warehouse key hidden.\n", "utf-8"),
+      writeFile(join(storyDir, "pending_hooks.md"), "# Pending Hooks\n", "utf-8"),
+      writeFile(join(storyDir, "chapter_summaries.md"), "# Chapter Summaries\n", "utf-8"),
+      writeFile(join(storyDir, "subplot_board.md"), "# Subplot Board\n", "utf-8"),
+      writeFile(join(storyDir, "emotional_arcs.md"), "# Emotional Arcs\n", "utf-8"),
+      writeFile(join(storyDir, "character_matrix.md"), "# Character Matrix\n", "utf-8"),
+      writeFile(join(storyDir, "volume_outline.md"), "# Volume Outline\n\n## Chapter 1\nCheck Warehouse 9.\n", "utf-8"),
+      writeFile(join(storyDir, "style_guide.md"), "# Style Guide\n\n- Keep the prose restrained.\n", "utf-8"),
+    ]);
+
+    const auditor = new ContinuityAuditor({
+      client: {
+        provider: "openai",
+        apiFormat: "chat",
+        stream: false,
+        defaults: {
+          temperature: 0.7,
+          maxTokens: 4096,
+          thinkingBudget: 0, maxTokensCap: null,
+          extra: {},
+        },
+      },
+      model: "test-model",
+      projectRoot: root,
+    });
+
+    const chatSpy = vi.spyOn(ContinuityAuditor.prototype as never, "chat" as never).mockResolvedValue({
+      content: JSON.stringify({
+        passed: true,
+        issues: [],
+        summary: "ok",
+      }),
+      usage: ZERO_USAGE,
+    });
+
+    try {
+      await auditor.auditChapter(bookDir, "Chapter body.", 1, "other");
+
+      const messages = chatSpy.mock.calls[0]?.[0] as
+        | ReadonlyArray<{ content: string }>
+        | undefined;
+      const systemPrompt = messages?.[0]?.content ?? "";
+      const userPrompt = messages?.[1]?.content ?? "";
+
+      expect(systemPrompt).toContain("Hook Check");
+      expect(systemPrompt).toContain("Outline Drift Check");
+      expect(systemPrompt).not.toContain("伏笔检查");
+      expect(systemPrompt).not.toContain("大纲偏离检测");
+
+      expect(userPrompt).toContain("Review chapter 1.");
+      expect(userPrompt).toContain("## Current State Card");
+      expect(userPrompt).toContain("## Pending Hooks");
+      expect(userPrompt).not.toContain("请审查第1章");
+      expect(userPrompt).not.toContain("## 当前状态卡");
+      expect(userPrompt).not.toContain("## 伏笔池");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("uses selected summary and hook evidence instead of full long-history markdown in governed mode", async () => {
     const root = await mkdtemp(join(tmpdir(), "inkos-auditor-test-"));
     const bookDir = join(root, "book");
@@ -62,7 +217,7 @@ describe("ContinuityAuditor", () => {
         defaults: {
           temperature: 0.7,
           maxTokens: 4096,
-          thinkingBudget: 0,
+          thinkingBudget: 0, maxTokensCap: null,
           extra: {},
         },
       },
