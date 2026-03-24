@@ -78,6 +78,7 @@ export interface LLMClient {
   readonly defaults: {
     readonly temperature: number;
     readonly maxTokens: number;
+    readonly maxTokensCap: number | null; // non-null only when user explicitly configured
     readonly thinkingBudget: number;
     readonly extra: Record<string, unknown>;
   };
@@ -114,6 +115,7 @@ export function createLLMClient(config: LLMConfig): LLMClient {
   const defaults = {
     temperature: config.temperature ?? 0.7,
     maxTokens: config.maxTokens ?? 8192,
+    maxTokensCap: config.maxTokens ?? null, // only cap when user explicitly set maxTokens
     thinkingBudget: config.thinkingBudget ?? 0,
     extra: config.extra ?? {},
   };
@@ -155,6 +157,17 @@ export class PartialResponseError extends Error {
 
 /** Minimum chars to consider a partial response salvageable (Chinese ~2 chars/word → 500 chars ≈ 250 words) */
 const MIN_SALVAGEABLE_CHARS = 500;
+
+/** Keys managed by the provider layer — prevent extra from overriding them. */
+const RESERVED_KEYS = new Set(["max_tokens", "temperature", "model", "messages", "stream"]);
+
+function stripReservedKeys(extra: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(extra)) {
+    if (!RESERVED_KEYS.has(key)) result[key] = value;
+  }
+  return result;
+}
 
 // === Error Wrapping ===
 
@@ -217,9 +230,11 @@ export async function chatCompletion(
     readonly onStreamProgress?: OnStreamProgress;
   },
 ): Promise<LLMResponse> {
+  const perCallMax = options?.maxTokens ?? client.defaults.maxTokens;
+  const cap = client.defaults.maxTokensCap;
   const resolved = {
     temperature: options?.temperature ?? client.defaults.temperature,
-    maxTokens: options?.maxTokens ?? client.defaults.maxTokens,
+    maxTokens: cap !== null ? Math.min(perCallMax, cap) : perCallMax,
     extra: client.defaults.extra,
   };
   const onStreamProgress = options?.onStreamProgress;
@@ -336,7 +351,7 @@ async function chatCompletionOpenAIChat(
     max_tokens: options.maxTokens,
     stream: true,
     ...(webSearch ? { web_search_options: { search_context_size: "medium" as const } } : {}),
-    ...options.extra,
+    ...stripReservedKeys(options.extra),
   };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const stream = await client.chat.completions.create(createParams) as any;
@@ -370,7 +385,7 @@ async function chatCompletionOpenAIChat(
   }
 
   const content = chunks.join("");
-  if (!content) throw new Error("LLM returned empty response");
+  if (!content) throw new Error("LLM returned empty response from stream");
 
   return {
     content,
@@ -396,7 +411,7 @@ async function chatCompletionOpenAIChatSync(
     temperature: options.temperature,
     max_tokens: options.maxTokens,
     stream: false,
-    ...options.extra,
+    ...stripReservedKeys(options.extra),
   };
   const response = await client.chat.completions.create(syncParams);
 
@@ -562,7 +577,7 @@ async function chatCompletionOpenAIResponses(
   }
 
   const content = chunks.join("");
-  if (!content) throw new Error("LLM returned empty response");
+  if (!content) throw new Error("LLM returned empty response from stream");
 
   return {
     content,
@@ -759,7 +774,7 @@ async function chatCompletionAnthropic(
   }
 
   const content = chunks.join("");
-  if (!content) throw new Error("LLM returned empty response");
+  if (!content) throw new Error("LLM returned empty response from stream");
 
   return {
     content,
