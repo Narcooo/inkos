@@ -2,12 +2,29 @@ import { Command } from "commander";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { findProjectRoot, log, logError, GLOBAL_ENV_PATH } from "../utils.js";
+import {
+  ensureNodeRuntimePinFiles,
+  evaluateSqliteMemorySupport,
+  inspectNodeRuntimePinFiles,
+} from "../runtime-requirements.js";
 
 export const doctorCommand = new Command("doctor")
   .description("Check environment and project health")
-  .action(async () => {
+  .option("--repair-node-runtime", "Write .nvmrc and .node-version pinned to Node 22 for this project")
+  .action(async (opts: { repairNodeRuntime?: boolean }) => {
     const checks: Array<{ name: string; ok: boolean; detail: string }> = [];
     const root = findProjectRoot();
+
+    if (opts.repairNodeRuntime) {
+      const repair = await ensureNodeRuntimePinFiles(root);
+      checks.push({
+        name: "Node runtime pin files repaired",
+        ok: true,
+        detail: repair.updated
+          ? `Wrote ${repair.written.join(", ")} -> Node 22`
+          : "Already pinned to Node 22",
+      });
+    }
 
     // 1. Check Node.js version
     const nodeVersion = process.version;
@@ -16,6 +33,14 @@ export const doctorCommand = new Command("doctor")
       name: "Node.js >= 20",
       ok: major >= 20,
       detail: nodeVersion,
+    });
+    checks.push({
+      name: "SQLite memory index (Node 22+)",
+      ...evaluateSqliteMemorySupport({ nodeVersion }),
+    });
+    checks.push({
+      name: "Node runtime pin files",
+      ...await inspectNodeRuntimePinFiles(root),
     });
 
     // 2. Check inkos.json exists

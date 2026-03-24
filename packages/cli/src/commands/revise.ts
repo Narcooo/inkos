@@ -1,12 +1,12 @@
 import { Command } from "commander";
-import { PipelineRunner, type ReviseMode } from "@actalk/inkos-core";
+import { DEFAULT_REVISE_MODE, PipelineRunner, type ReviseMode } from "@actalk/inkos-core";
 import { loadConfig, buildPipelineConfig, findProjectRoot, resolveBookId, log, logError } from "../utils.js";
 
 export const reviseCommand = new Command("revise")
   .description("Revise a chapter based on audit issues")
   .argument("[book-id]", "Book ID (auto-detected if only one book)")
   .argument("[chapter]", "Chapter number (defaults to latest)")
-  .option("--mode <mode>", "Revise mode: polish, rewrite, rework, spot-fix", "rewrite")
+  .option("--mode <mode>", "Revise mode: spot-fix, polish, rewrite, rework, anti-detect", DEFAULT_REVISE_MODE)
   .option("--json", "Output JSON")
   .action(async (bookIdArg: string | undefined, chapterStr: string | undefined, opts) => {
     try {
@@ -32,11 +32,13 @@ export const reviseCommand = new Command("revise")
 
       if (opts.json) {
         log(JSON.stringify(result, null, 2));
-      } else if (result.fixedIssues.length === 0) {
-        log(`  Chapter ${result.chapterNumber}: no issues to fix (audit passed)`);
+      } else if (!result.applied) {
+        log(`  Chapter ${result.chapterNumber}: kept original draft`);
+        if (result.skippedReason) log(`  Reason: ${result.skippedReason}`);
       } else {
         log(`  Chapter ${result.chapterNumber} revised`);
         log(`  Words: ${result.wordCount}`);
+        log(`  Status: ${result.status}`);
         log("  Fixed:");
         for (const fix of result.fixedIssues) {
           log(`    - ${fix}`);

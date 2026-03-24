@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import { StateManager } from "@actalk/inkos-core";
-import { readFile, readdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { findProjectRoot, resolveBookId, log, logError } from "../utils.js";
 
 export const exportCommand = new Command("export")
@@ -59,6 +59,7 @@ export const exportCommand = new Command("export")
 
       const outputPath =
         opts.output ?? join(root, `${bookId}_export.${opts.format}`);
+      await mkdir(dirname(outputPath), { recursive: true });
       await writeFile(outputPath, parts.join("\n"), "utf-8");
 
       if (opts.json) {
@@ -119,6 +120,7 @@ async function exportEpub(
 
   const totalWords = chapters.reduce((sum, ch) => sum + ch.wordCount, 0);
   const outputPath = opts.output ?? join(root, `${bookId}.epub`);
+  await mkdir(dirname(outputPath), { recursive: true });
   await writeFile(outputPath, epubBuffer);
 
   if (opts.json) {

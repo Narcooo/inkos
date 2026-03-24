@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import { access, readFile, writeFile, mkdir } from "node:fs/promises";
-import { join, basename } from "node:path";
+import { join, basename, resolve } from "node:path";
 import { log, logError, GLOBAL_ENV_PATH } from "../utils.js";
 
 async function hasGlobalConfig(): Promise<boolean> {
@@ -17,8 +17,8 @@ export const initCommand = new Command("init")
   .argument("[name]", "Project name (creates subdirectory). Omit to init current directory.")
   .option("--lang <language>", "Default writing language: zh (Chinese) or en (English)", "zh")
   .action(async (name: string | undefined, opts: { lang?: string }) => {
-    const projectDir = name ? join(process.cwd(), name) : process.cwd();
-    const projectName = name ?? basename(projectDir);
+    const projectDir = name ? resolve(process.cwd(), name) : process.cwd();
+    const projectName = basename(projectDir);
 
     try {
       await mkdir(projectDir, { recursive: true });
@@ -60,6 +60,10 @@ export const initCommand = new Command("init")
         JSON.stringify(config, null, 2),
         "utf-8",
       );
+      await Promise.all([
+        writeFile(join(projectDir, ".nvmrc"), "22\n", "utf-8"),
+        writeFile(join(projectDir, ".node-version"), "22\n", "utf-8"),
+      ]);
 
       const global = await hasGlobalConfig();
 
@@ -119,12 +123,16 @@ export const initCommand = new Command("init")
 
       log(`Project initialized at ${projectDir}`);
       log("");
+      const isEnglish = (opts.lang ?? "zh") === "en";
+      const exampleCreate = isEnglish
+        ? "  inkos book create --title 'My Novel' --genre progression --platform royalroad --lang en"
+        : "  inkos book create --title '我的小说' --genre xuanhuan --platform tomato";
       if (global) {
         log("Global LLM config detected. Ready to go!");
         log("");
         log("Next steps:");
         if (name) log(`  cd ${name}`);
-        log("  inkos book create --title '我的小说' --genre xuanhuan --platform tomato");
+        log(exampleCreate);
       } else {
         log("Next steps:");
         if (name) log(`  cd ${name}`);
@@ -132,7 +140,7 @@ export const initCommand = new Command("init")
         log("  inkos config set-global --provider openai --base-url <your-api-url> --api-key <your-key> --model <your-model>");
         log("  # Option 2: Edit .env for this project only");
         log("");
-        log("  inkos book create --title '我的小说' --genre xuanhuan --platform tomato");
+        log(exampleCreate);
       }
       log("  inkos write next <book-id>");
     } catch (e) {

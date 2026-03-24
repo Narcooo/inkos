@@ -4,6 +4,7 @@ import { readdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { loadConfig, buildPipelineConfig, findProjectRoot, resolveContext, resolveBookId, log, logError } from "../utils.js";
+import { formatWriteNextComplete, formatWriteNextProgress, formatWriteNextResultLines, resolveCliLanguage } from "../localization.js";
 
 export const writeCommand = new Command("write")
   .description("Write chapters");
@@ -24,6 +25,9 @@ writeCommand
       const root = findProjectRoot();
       const bookId = await resolveBookId(bookIdArg, root);
       const context = await resolveContext(opts);
+      const state = new StateManager(root);
+      const book = await state.loadBookConfig(bookId);
+      const language = resolveCliLanguage(book.language);
 
       const pipeline = new PipelineRunner(buildPipelineConfig(config, root, { externalContext: context, quiet: opts.quiet }));
 
@@ -32,27 +36,23 @@ writeCommand
 
       const results = [];
       for (let i = 0; i < count; i++) {
-        if (!opts.json) log(`[${i + 1}/${count}] Writing chapter for "${bookId}"...`);
+        if (!opts.json) log(formatWriteNextProgress(language, i + 1, count, bookId));
 
         const result = await pipeline.writeNextChapter(bookId, wordCount);
         results.push(result);
 
         if (!opts.json) {
-          log(`  Chapter ${result.chapterNumber}: ${result.title}`);
-          log(`  Words: ${result.wordCount}`);
-          log(`  Audit: ${result.auditResult.passed ? "PASSED" : "NEEDS REVIEW"}`);
-          if (result.revised) {
-            log("  Auto-revised: YES (critical issues were fixed)");
+          for (const line of formatWriteNextResultLines(language, {
+            chapterNumber: result.chapterNumber,
+            title: result.title,
+            wordCount: result.wordCount,
+            auditPassed: result.auditResult.passed,
+            revised: result.revised,
+            status: result.status,
+            issues: result.auditResult.issues,
+          })) {
+            log(line);
           }
-          log(`  Status: ${result.status}`);
-
-          if (result.auditResult.issues.length > 0) {
-            log("  Issues:");
-            for (const issue of result.auditResult.issues) {
-              log(`    [${issue.severity}] ${issue.category}: ${issue.description}`);
-            }
-          }
-
           log("");
         }
       }
@@ -60,7 +60,7 @@ writeCommand
       if (opts.json) {
         log(JSON.stringify(results, null, 2));
       } else {
-        log("Done.");
+        log(formatWriteNextComplete(language));
       }
     } catch (e) {
       if (opts.json) {
@@ -154,14 +154,23 @@ writeCommand
       const pipeline = new PipelineRunner(buildPipelineConfig(config, root));
 
       const result = await pipeline.writeNextChapter(bookId, wordCount);
+      const book = await state.loadBookConfig(bookId);
+      const language = resolveCliLanguage(book.language);
 
       if (opts.json) {
         log(JSON.stringify(result, null, 2));
       } else {
-        log(`  Chapter ${result.chapterNumber}: ${result.title}`);
-        log(`  Words: ${result.wordCount}`);
-        log(`  Audit: ${result.auditResult.passed ? "PASSED" : "NEEDS REVIEW"}`);
-        log(`  Status: ${result.status}`);
+        for (const line of formatWriteNextResultLines(language, {
+          chapterNumber: result.chapterNumber,
+          title: result.title,
+          wordCount: result.wordCount,
+          auditPassed: result.auditResult.passed,
+          revised: result.revised,
+          status: result.status,
+          issues: result.auditResult.issues,
+        })) {
+          log(line);
+        }
       }
     } catch (e) {
       if (opts.json) {

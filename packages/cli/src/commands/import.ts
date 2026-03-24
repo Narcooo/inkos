@@ -3,6 +3,14 @@ import { PipelineRunner, StateManager, splitChapters } from "@actalk/inkos-core"
 import { readFile, readdir, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { loadConfig, buildPipelineConfig, findProjectRoot, resolveBookId, log, logError } from "../utils.js";
+import {
+  formatImportCanonComplete,
+  formatImportCanonStart,
+  formatImportChaptersComplete,
+  formatImportChaptersDiscovery,
+  formatImportChaptersResume,
+  resolveCliLanguage,
+} from "../localization.js";
 
 export const importCommand = new Command("import")
   .description("Import external data into a book");
@@ -18,10 +26,13 @@ importCommand
       const root = findProjectRoot();
       const targetBookId = await resolveBookId(targetBookIdArg, root);
       const config = await loadConfig();
+      const state = new StateManager(root);
+      const targetBook = await state.loadBookConfig(targetBookId);
+      const language = resolveCliLanguage(targetBook.language);
 
       const pipeline = new PipelineRunner(buildPipelineConfig(config, root));
 
-      if (!opts.json) log(`Importing canon from "${opts.from}" into "${targetBookId}"...`);
+      if (!opts.json) log(formatImportCanonStart(language, opts.from, targetBookId));
 
       await pipeline.importCanon(targetBookId, opts.from);
 
@@ -32,8 +43,9 @@ importCommand
           output: "story/parent_canon.md",
         }, null, 2));
       } else {
-        log(`Canon imported: story/parent_canon.md`);
-        log(`Writer and auditor will auto-detect this file for spinoff mode.`);
+        for (const line of formatImportCanonComplete(language)) {
+          log(line);
+        }
       }
     } catch (e) {
       if (opts.json) {
@@ -60,6 +72,8 @@ importCommand
       const config = await loadConfig();
 
       const state = new StateManager(root);
+      const book = await state.loadBookConfig(bookId);
+      const language = resolveCliLanguage(book.language);
       const existingChapterCount = (await state.getNextChapterNumber(bookId)) - 1;
       if (existingChapterCount > 0 && !opts.resumeFrom) {
         throw new Error(
@@ -99,15 +113,15 @@ importCommand
         if (chapters.length === 0) {
           throw new Error(
             `No chapters found in ${fromPath}. ` +
-            `Default pattern matches "第X章". Use --split to provide a custom regex.`,
+            `Default pattern matches "第X章" and "Chapter X". Use --split to provide a custom regex.`,
           );
         }
       }
 
       if (!opts.json) {
-        log(`Found ${chapters.length} chapters to import into "${bookId}".`);
+        log(formatImportChaptersDiscovery(language, chapters.length, bookId));
         if (opts.resumeFrom) {
-          log(`Resuming from chapter ${opts.resumeFrom}.`);
+          log(formatImportChaptersResume(language, opts.resumeFrom));
         }
       }
 
@@ -122,11 +136,14 @@ importCommand
       if (opts.json) {
         log(JSON.stringify(result, null, 2));
       } else {
-        log(`Import complete:`);
-        log(`  Chapters imported: ${result.importedCount}`);
-        log(`  Total characters: ${result.totalWords}`);
-        log(`  Next chapter number: ${result.nextChapter}`);
-        log(`\nRun "inkos write next ${bookId}" to continue writing.`);
+        for (const line of formatImportChaptersComplete(language, {
+          importedCount: result.importedCount,
+          totalWords: result.totalWords,
+          nextChapter: result.nextChapter,
+          continueBookId: bookId,
+        })) {
+          log(line);
+        }
       }
     } catch (e) {
       if (opts.json) {

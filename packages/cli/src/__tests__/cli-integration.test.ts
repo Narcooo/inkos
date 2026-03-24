@@ -1,6 +1,6 @@
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -92,6 +92,11 @@ describe("CLI integration", () => {
       expect(gitignore).toContain(".env");
     });
 
+    it("creates Node version hints for sqlite-backed memory features", async () => {
+      await expect(readFile(join(projectDir, ".nvmrc"), "utf-8")).resolves.toContain("22");
+      await expect(readFile(join(projectDir, ".node-version"), "utf-8")).resolves.toContain("22");
+    });
+
     it("creates books/ and radar/ directories", async () => {
       const booksStat = await stat(join(projectDir, "books"));
       expect(booksStat.isDirectory()).toBe(true);
@@ -110,6 +115,34 @@ describe("CLI integration", () => {
       const raw = await readFile(join(projectDir, "subproject", "inkos.json"), "utf-8");
       const config = JSON.parse(raw);
       expect(config.name).toBe("subproject");
+    });
+
+    it("supports absolute project paths instead of nesting them under cwd", async () => {
+      const absoluteDir = await mkdtemp(join(tmpdir(), "inkos-cli-abs-init-"));
+
+      try {
+        const output = run(["init", absoluteDir]);
+        expect(output).toContain(`Project initialized at ${absoluteDir}`);
+
+        const raw = await readFile(join(absoluteDir, "inkos.json"), "utf-8");
+        const config = JSON.parse(raw);
+        expect(config.name).toBe(basename(absoluteDir));
+      } finally {
+        await rm(absoluteDir, { recursive: true, force: true });
+      }
+    });
+
+    it("prints English next steps when initialized with --lang en", async () => {
+      const englishDir = await mkdtemp(join(tmpdir(), "inkos-cli-en-init-"));
+
+      try {
+        const output = run(["init", englishDir, "--lang", "en"]);
+        expect(output).toContain("Project initialized");
+        expect(output).toContain("inkos book create --title 'My Novel'");
+        expect(output).not.toContain("我的小说");
+      } finally {
+        await rm(englishDir, { recursive: true, force: true });
+      }
     });
   });
 
@@ -130,6 +163,15 @@ describe("CLI integration", () => {
       expect(() => {
         run(["config", "set", "custom.nested.key", "value"]);
       }).toThrow();
+    });
+
+    it("sets input governance mode", async () => {
+      const output = run(["config", "set", "inputGovernanceMode", "v2"]);
+      expect(output).toContain("Set inputGovernanceMode = v2");
+
+      const raw = await readFile(join(projectDir, "inkos.json"), "utf-8");
+      const config = JSON.parse(raw);
+      expect(config.inputGovernanceMode).toBe("v2");
     });
   });
 
@@ -243,7 +285,30 @@ describe("CLI integration", () => {
       const { stdout } = runStderr(["doctor"]);
       expect(stdout).toContain("InkOS Doctor");
       expect(stdout).toContain("Node.js >= 20");
+      expect(stdout).toContain("SQLite memory index");
       expect(stdout).toContain("inkos.json");
+    });
+
+    it("repairs missing node runtime pin files for old projects", async () => {
+      await stat(join(projectDir, "inkos.json")).catch(() => {
+        run(["init"]);
+      });
+
+      await rm(join(projectDir, ".nvmrc"), { force: true });
+      await rm(join(projectDir, ".node-version"), { force: true });
+
+      const before = runStderr(["doctor"]);
+      expect(before.stdout).toContain("Node runtime pin files");
+      expect(before.stdout).toContain(".nvmrc");
+      expect(before.stdout).toContain(".node-version");
+
+      const repaired = runStderr(["doctor", "--repair-node-runtime"]);
+      expect(repaired.stdout).toContain("Node runtime pin files repaired");
+      expect(repaired.stdout).toContain(".nvmrc");
+      expect(repaired.stdout).toContain(".node-version");
+
+      await expect(readFile(join(projectDir, ".nvmrc"), "utf-8")).resolves.toBe("22\n");
+      await expect(readFile(join(projectDir, ".node-version"), "utf-8")).resolves.toBe("22\n");
     });
   });
 
@@ -256,6 +321,10 @@ describe("CLI integration", () => {
 
   describe("inkos plan/compose", () => {
     beforeAll(async () => {
+      const configPath = join(projectDir, "inkos.json");
+      const initialized = await stat(configPath).then(() => true).catch(() => false);
+      if (!initialized) run(["init"]);
+
       const bookDir = join(projectDir, "books", "cli-book");
       const storyDir = join(bookDir, "story");
       await mkdir(join(storyDir, "runtime"), { recursive: true });
@@ -314,6 +383,75 @@ describe("CLI integration", () => {
       await expect(stat(join(projectDir, "books", "cli-book", data.contextPath))).resolves.toBeTruthy();
       await expect(stat(join(projectDir, "books", "cli-book", data.ruleStackPath))).resolves.toBeTruthy();
       await expect(stat(join(projectDir, "books", "cli-book", data.tracePath))).resolves.toBeTruthy();
+    });
+
+    it("reuses the planned intent when compose runs without a new context", async () => {
+      const plannedGoal = "Ignore the guild chase and focus on the mentor conflict.";
+      run(["plan", "chapter", "cli-book", "--context", plannedGoal]);
+
+      const output = run(["compose", "chapter", "cli-book", "--json"]);
+      const data = JSON.parse(output);
+      const intentMarkdown = await readFile(join(projectDir, "books", "cli-book", data.intentPath), "utf-8");
+
+      expect(data.goal).toBe(plannedGoal);
+      expect(intentMarkdown).toContain(plannedGoal);
+    });
+  });
+
+  describe("inkos export", () => {
+    beforeAll(async () => {
+      const configPath = join(projectDir, "inkos.json");
+      const initialized = await stat(configPath).then(() => true).catch(() => false);
+      if (!initialized) run(["init"]);
+
+      const bookDir = join(projectDir, "books", "export-book");
+      await mkdir(join(bookDir, "chapters"), { recursive: true });
+
+      await writeFile(
+        join(bookDir, "book.json"),
+        JSON.stringify({
+          id: "export-book",
+          title: "Export Book",
+          platform: "tomato",
+          genre: "xuanhuan",
+          status: "active",
+          targetChapters: 10,
+          chapterWordCount: 2000,
+          createdAt: "2026-03-23T00:00:00.000Z",
+          updatedAt: "2026-03-23T00:00:00.000Z",
+        }, null, 2),
+        "utf-8",
+      );
+      await writeFile(
+        join(bookDir, "chapters", "index.json"),
+        JSON.stringify([
+          {
+            number: 1,
+            title: "Dawn Ledger",
+            status: "ready-for-review",
+            wordCount: 1200,
+            createdAt: "2026-03-23T00:00:00.000Z",
+            updatedAt: "2026-03-23T00:00:00.000Z",
+            auditIssues: [],
+          },
+        ], null, 2),
+        "utf-8",
+      );
+      await writeFile(
+        join(bookDir, "chapters", "0001_Dawn_Ledger.md"),
+        "# 第1章 Dawn Ledger\n\n正文。\n",
+        "utf-8",
+      );
+    });
+
+    it("creates missing parent directories for custom output paths", async () => {
+      const outputPath = join(projectDir, "exports", "nested", "book.md");
+      const output = run(["export", "export-book", "--format", "md", "--output", outputPath, "--json"]);
+      const data = JSON.parse(output);
+
+      expect(data.outputPath).toBe(outputPath);
+      await expect(stat(outputPath)).resolves.toBeTruthy();
+      await expect(readFile(outputPath, "utf-8")).resolves.toContain("# Export Book");
     });
   });
 });
