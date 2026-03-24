@@ -52,11 +52,12 @@ export function validatePostWrite(
   content: string,
   genreProfile: GenreProfile,
   bookRules: BookRules | null,
+  languageOverride?: "zh" | "en",
 ): ReadonlyArray<PostWriteViolation> {
   const violations: PostWriteViolation[] = [];
 
   // Skip Chinese-specific rules for English content
-  const isEnglish = genreProfile.language === "en";
+  const isEnglish = (languageOverride ?? genreProfile.language) === "en";
   if (isEnglish) {
     // For English, only run book-specific prohibitions and paragraph length check
     return validatePostWriteEnglish(content, genreProfile, bookRules);
@@ -238,6 +239,74 @@ export function validatePostWrite(
           suggestion: "删除或改写该内容",
         });
       }
+    }
+  }
+
+  return violations;
+}
+
+/**
+ * Cross-chapter repetition check.
+ * Detects phrases from the current chapter that also appeared in recent chapters.
+ */
+export function detectCrossChapterRepetition(
+  currentContent: string,
+  recentChaptersContent: string,
+  language: "zh" | "en" = "zh",
+): ReadonlyArray<PostWriteViolation> {
+  if (!recentChaptersContent || recentChaptersContent.length < 100) return [];
+
+  const violations: PostWriteViolation[] = [];
+  const isEnglish = language === "en";
+
+  if (isEnglish) {
+    // Extract 3-word phrases from current chapter
+    const words = currentContent.toLowerCase().replace(/[^\w\s']/g, "").split(/\s+/).filter(w => w.length > 2);
+    const phraseCounts = new Map<string, number>();
+    for (let i = 0; i < words.length - 2; i++) {
+      const phrase = `${words[i]} ${words[i + 1]} ${words[i + 2]}`;
+      phraseCounts.set(phrase, (phraseCounts.get(phrase) ?? 0) + 1);
+    }
+    // Check which repeated phrases (2+ in current) also appear in recent chapters
+    const recentLower = recentChaptersContent.toLowerCase();
+    const crossRepeats: string[] = [];
+    for (const [phrase, count] of phraseCounts) {
+      if (count >= 2 && recentLower.includes(phrase)) {
+        crossRepeats.push(`"${phrase}" (×${count})`);
+      }
+    }
+    if (crossRepeats.length >= 3) {
+      violations.push({
+        rule: "Cross-chapter repetition",
+        severity: "warning",
+        description: `${crossRepeats.length} repeated phrases also found in recent chapters: ${crossRepeats.slice(0, 5).join(", ")}`,
+        suggestion: "Vary action verbs and descriptive phrases to avoid cross-chapter repetition",
+      });
+    }
+  } else {
+    // Chinese: 6-char ngrams
+    const chars = currentContent.replace(/[\s\n\r]/g, "");
+    const phraseCounts = new Map<string, number>();
+    for (let i = 0; i < chars.length - 5; i++) {
+      const phrase = chars.slice(i, i + 6);
+      if (/^[\u4e00-\u9fff]{6}$/.test(phrase)) {
+        phraseCounts.set(phrase, (phraseCounts.get(phrase) ?? 0) + 1);
+      }
+    }
+    const recentClean = recentChaptersContent.replace(/[\s\n\r]/g, "");
+    const crossRepeats: string[] = [];
+    for (const [phrase, count] of phraseCounts) {
+      if (count >= 2 && recentClean.includes(phrase)) {
+        crossRepeats.push(`"${phrase}"(×${count})`);
+      }
+    }
+    if (crossRepeats.length >= 3) {
+      violations.push({
+        rule: "跨章重复",
+        severity: "warning",
+        description: `${crossRepeats.length}个重复短语在近期章节中也出现过：${crossRepeats.slice(0, 5).join("、")}`,
+        suggestion: "变换动作描写和场景用语，避免跨章节机械重复",
+      });
     }
   }
 
