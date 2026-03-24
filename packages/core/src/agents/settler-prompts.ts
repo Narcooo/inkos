@@ -16,12 +16,13 @@ export function buildSettlerSystemPrompt(
     : `\n- 本题材无数值系统，UPDATED_LEDGER 留空`;
 
   const hookRules = `
-## 伏笔追踪规则
+## 伏笔追踪规则（严格执行）
 
-- 新伏笔：正文中出现的暗示、悬念、未解之谜 → 新增 hook_id，标注起始章、类型、状态=待定
-- 推进伏笔：已有伏笔在本章有新进展 → 更新"最近推进"列和状态
-- 回收伏笔：伏笔在本章明确揭示/解决 → 状态改为"已回收"
-- 延后伏笔：超过5章未推进 → 标注"延后"，备注原因`;
+- 新伏笔：正文中出现的暗示、悬念、未解之谜 → 新增 hook_id，标注起始章=${isEnglish ? "current chapter" : "当前章"}、类型、状态=待定
+- 推进伏笔：已有伏笔在本章有新进展 → **必须**更新"最近推进"列为当前章节号，更新状态和备注
+- 回收伏笔：伏笔在本章被明确揭示、解决、或不再成立 → 状态改为"已回收"，备注回收方式
+- 延后伏笔：超过5章未推进 → 标注"延后"，备注原因
+- **铁律**：每次输出 UPDATED_HOOKS 时，逐条检查所有伏笔的"最近推进"列。如果某伏笔在本章正文中有任何相关内容（哪怕只是间接提及），必须更新其"最近推进"为当前章节号。不要让伏笔僵死。`;
 
   const fullCastBlock = bookRules?.enableFullCastTracking
     ? `\n## 全员追踪\nPOST_SETTLEMENT 必须额外包含：本章出场角色清单、角色间关系变动、未出场但被提及的角色。`
@@ -144,6 +145,7 @@ export function buildSettlerUserPrompt(params: {
   readonly volumeOutline: string;
   readonly observations?: string;
   readonly selectedEvidenceBlock?: string;
+  readonly governedControlBlock?: string;
 }): string {
   const ledgerBlock = params.ledger
     ? `\n## 当前资源账本\n${params.ledger}\n`
@@ -171,12 +173,17 @@ export function buildSettlerUserPrompt(params: {
   const selectedEvidenceBlock = params.selectedEvidenceBlock
     ? `\n## 已选长程证据\n${params.selectedEvidenceBlock}\n`
     : "";
+  const controlBlock = params.governedControlBlock ?? "";
+  const outlineBlock = controlBlock.length === 0
+    ? `\n## 卷纲\n${params.volumeOutline}\n`
+    : "";
 
   return `请分析第${params.chapterNumber}章「${params.title}」的正文，更新所有追踪文件。
 ${observationsBlock}
 ## 本章正文
 
 ${params.content}
+${controlBlock}
 
 ## 当前状态卡
 ${params.currentState}
@@ -184,8 +191,7 @@ ${ledgerBlock}
 ## 当前伏笔池
 ${params.hooks}
 ${selectedEvidenceBlock}${summariesBlock}${subplotBlock}${emotionalBlock}${matrixBlock}
-## 卷纲
-${params.volumeOutline}
+${outlineBlock}
 
 请严格按照 === TAG === 格式输出结算结果。`;
 }
