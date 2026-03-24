@@ -279,15 +279,15 @@ inkos write next my-book              # Draft → audit → auto-revise, all in 
 inkos write next my-book --count 5    # Write 5 chapters in sequence
 ```
 
-If you want `write next` to always go through the `plan -> compose -> write` governance chain, set this in `inkos.json`:
+`write next` now uses the `plan -> compose -> write` governance chain by default. If you need the older prompt-assembly path, set this explicitly in `inkos.json`:
 
 ```json
 {
-  "inputGovernanceMode": "v2"
+  "inputGovernanceMode": "legacy"
 }
 ```
 
-The default remains `legacy` so existing projects do not silently change behavior.
+The default is now `v2`. `legacy` remains available as an explicit fallback.
 
 ### 2. Atomic Commands (Composable, External Agent Friendly)
 
