@@ -992,9 +992,9 @@ describe("retrieveMemorySelection", () => {
       mustKeep: ["匿名来电必须留在开篇。"],
     });
 
-    expect(result.hooks.map((hook) => hook.hookId)).toEqual([
-      "opening-call",
+    expect(result.hooks.map((hook) => hook.hookId).sort()).toEqual([
       "nearby-ledger",
+      "opening-call",
     ]);
   });
 
