@@ -275,8 +275,14 @@ async function loadOrBootstrapSummaries(params: {
   }
 
   const markdown = await readFile(join(params.storyDir, "chapter_summaries.md"), "utf-8").catch(() => "");
+  const rawRows = parseChapterSummariesMarkdown(markdown);
+  // Deduplicate: keep last occurrence per chapter number (latest is most up-to-date)
+  const deduped = new Map<number, (typeof rawRows)[number]>();
+  for (const row of rawRows) {
+    deduped.set(row.chapter, row);
+  }
   const summariesState = ChapterSummariesStateSchema.parse({
-    rows: parseChapterSummariesMarkdown(markdown),
+    rows: [...deduped.values()].sort((a, b) => a.chapter - b.chapter),
   });
   await writeFile(params.statePath, JSON.stringify(summariesState, null, 2), "utf-8");
   params.createdFiles.push("chapter_summaries.json");

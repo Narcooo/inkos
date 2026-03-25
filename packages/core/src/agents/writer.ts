@@ -953,7 +953,21 @@ ${overrides}\n`;
       .join("\n");
 
     if (dataRows) {
-      await writeFile(summaryPath, `${existing.trimEnd()}\n${dataRows}\n`, "utf-8");
+      // Deduplicate: remove existing rows with the same chapter number before appending
+      const newChapterNums = new Set(
+        dataRows.split("\n")
+          .map((line) => line.split("|")[1]?.trim())
+          .filter((ch) => ch && /^\d+$/.test(ch)),
+      );
+      const deduped = existing
+        .split("\n")
+        .filter((line) => {
+          if (!line.startsWith("|")) return true;
+          const chNum = line.split("|")[1]?.trim();
+          return !chNum || !newChapterNums.has(chNum);
+        })
+        .join("\n");
+      await writeFile(summaryPath, `${deduped.trimEnd()}\n${dataRows}\n`, "utf-8");
     }
   }
 
