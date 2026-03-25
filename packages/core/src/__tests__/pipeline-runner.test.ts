@@ -991,6 +991,88 @@ describe("PipelineRunner", () => {
     }
   });
 
+  it("re-plans instead of reusing a persisted invalid intent artifact in v2 mode", async () => {
+    const { root, runner, state, bookId } = await createRunnerFixture({
+      inputGovernanceMode: "v2",
+    });
+    const storyDir = join(state.bookDir(bookId), "story");
+    const runtimeDir = join(storyDir, "runtime");
+    await mkdir(runtimeDir, { recursive: true });
+
+    await Promise.all([
+      writeFile(join(storyDir, "current_focus.md"), "# Current Focus\n\nBring focus back to the mentor conflict.\n", "utf-8"),
+      writeFile(
+        join(storyDir, "volume_outline.md"),
+        [
+          "# Volume Outline",
+          "",
+          "### Golden First Three Chapters Rule",
+          "",
+          "**Chapter 1:**",
+          "Track the merchant guild trail.",
+          "",
+        ].join("\n"),
+        "utf-8",
+      ),
+      writeFile(join(storyDir, "current_state.md"), "# Current State\n\n- Lin Yue still hides the broken oath token.\n", "utf-8"),
+      writeFile(join(storyDir, "story_bible.md"), "# Story Bible\n\n- The jade seal cannot be destroyed.\n", "utf-8"),
+      writeFile(join(storyDir, "pending_hooks.md"), "# Pending Hooks\n\n- Why the mentor vanished after the trial.\n", "utf-8"),
+      writeFile(
+        join(runtimeDir, "chapter-0001.intent.md"),
+        [
+          "# Chapter Intent",
+          "",
+          "## Goal",
+          "**",
+          "",
+          "## Outline Node",
+          "**",
+          "",
+          "## Must Keep",
+          "- none",
+          "",
+          "## Must Avoid",
+          "- none",
+          "",
+          "## Style Emphasis",
+          "- none",
+          "",
+          "## Conflicts",
+          "- none",
+          "",
+        ].join("\n"),
+        "utf-8",
+      ),
+    ]);
+
+    const planChapter = vi.spyOn(PlannerAgent.prototype, "planChapter");
+    const writeChapter = vi.spyOn(WriterAgent.prototype, "writeChapter").mockResolvedValue(
+      createWriterOutput({
+        chapterNumber: 1,
+        content: "Governed pipeline draft.",
+        wordCount: "Governed pipeline draft.".length,
+      }),
+    );
+    vi.spyOn(ContinuityAuditor.prototype, "auditChapter").mockResolvedValue(
+      createAuditResult({
+        passed: true,
+        issues: [],
+        summary: "clean",
+      }),
+    );
+
+    try {
+      await runner.writeNextChapter(bookId, 220);
+
+      expect(planChapter).toHaveBeenCalledTimes(1);
+      const writeInput = writeChapter.mock.calls[0]?.[0];
+      expect(writeInput?.chapterIntent).toContain("Track the merchant guild trail.");
+      expect(writeInput?.chapterIntent).not.toContain("\n**\n");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("logs explicit stage messages during writeNextChapter", async () => {
     const { logger, infos } = createCaptureLogger();
     const { root, runner, state, bookId } = await createRunnerFixture({

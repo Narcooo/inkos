@@ -2289,9 +2289,12 @@ ${matrix}`,
       const intentMarkdown = await readFile(runtimePath, "utf-8");
       const sections = this.parseIntentSections(intentMarkdown);
       const goal = this.readIntentScalar(sections, "Goal");
-      if (!goal) return null;
+      if (!goal || this.isInvalidPersistedIntentScalar(goal)) return null;
 
       const outlineNode = this.readIntentScalar(sections, "Outline Node");
+      if (outlineNode && outlineNode !== "(not found)" && this.isInvalidPersistedIntentScalar(outlineNode)) {
+        return null;
+      }
       const conflicts = this.readIntentList(sections, "Conflicts")
         .map((line) => {
           const separator = line.indexOf(":");
@@ -2352,6 +2355,16 @@ ${matrix}`,
       .map((line) => line.trim())
       .filter((line) => line.startsWith("-") && line !== "- none")
       .map((line) => line.replace(/^-\s*/, ""));
+  }
+
+  private isInvalidPersistedIntentScalar(value: string): boolean {
+    const normalized = value.trim();
+    if (!normalized) return true;
+    if (/^[*_`~:：|.-]+$/.test(normalized)) return true;
+    return (
+      /^\((describe|briefly describe|write)\b[\s\S]*\)$/i.test(normalized)
+      || /^（(?:在这里描述|描述|填写|写下)[\s\S]*）$/u.test(normalized)
+    );
   }
 
   private relativeToBookDir(bookDir: string, absolutePath: string): string {
