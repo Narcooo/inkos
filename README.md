@@ -177,13 +177,17 @@ inkos compose chapter 吞天魔帝
 
 ### 可靠性保障
 
-每章自动创建状态快照，`inkos write rewrite` 可回滚任意章节。写手动笔前输出自检表（上下文、资源、伏笔、风险），写完输出结算表，审计员交叉验证。文件锁防止并发写入。写后验证器 11 条硬规则自动 spot-fix。
+每章自动创建状态快照，`inkos write rewrite` 可回滚任意章节。写手动笔前输出自检表（上下文、资源、伏笔、风险），写完输出结算表，审计员交叉验证。文件锁防止并发写入。写后验证器含跨章重复检测和 11 条硬规则自动 spot-fix。
+
+伏笔系统使用 Zod schema 校验——`lastAdvancedChapter` 必须是整数，`status` 只能是 open/progressing/deferred/resolved。LLM 输出的 JSON delta 在写入前经过 `applyRuntimeStateDelta` 做 immutable 更新 + `validateRuntimeState` 结构校验。坏数据直接拒绝，不会滚雪球。
+
+用户设置的 `INKOS_LLM_MAX_TOKENS` 作为全局上限生效，`llm.extra` 中的保留键（max_tokens、temperature 等）被自动过滤，防止意外覆盖。
 
 ---
 
 ## 工作原理
 
-每一章由五个 Agent 接力完成：
+每一章由多个 Agent 接力完成，全程零人工干预：
 
 <p align="center">
   <img src="assets/screenshot-pipeline.png" width="800" alt="管线流程图">
@@ -192,8 +196,13 @@ inkos compose chapter 吞天魔帝
 | Agent | 职责 |
 |-------|------|
 | **雷达 Radar** | 扫描平台趋势和读者偏好，指导故事方向（可插拔，可跳过） |
+| **规划师 Planner** | 读取作者意图 + 当前焦点 + 记忆检索结果，产出本章意图（must-keep / must-avoid） |
+| **编排师 Composer** | 从全量真相文件中按相关性选择上下文，编译规则栈和运行时产物 |
 | **建筑师 Architect** | 规划章节结构：大纲、场景节拍、节奏控制 |
-| **写手 Writer** | 根据大纲 + 当前世界状态生成正文（两阶段：创意写作 → 状态结算） |
+| **写手 Writer** | 基于编排后的精简上下文生成正文（字数治理 + 对话引导） |
+| **观察者 Observer** | 从正文中过度提取 9 类事实（角色、位置、资源、关系、情感、信息、伏笔、时间、物理状态） |
+| **反射器 Reflector** | 输出 JSON delta（而非全量 markdown），由代码层做 Zod schema 校验后 immutable 写入 |
+| **归一化器 Normalizer** | 单 pass 压缩/扩展，将章节字数拉入允许区间 |
 | **连续性审计员 Auditor** | 对照 7 个真相文件验证草稿，33 维度检查 |
 | **修订者 Reviser** | 修复审计发现的问题 — 关键问题自动修复，其他标记给人工审核 |
 
@@ -214,6 +223,10 @@ inkos compose chapter 吞天魔帝
 | `character_matrix.md` | 角色交互矩阵：相遇记录、信息边界 |
 
 连续性审计员对照这些文件检查每一章草稿。如果角色"记起"了从未亲眼见过的事，或者拿出了两章前已经丢失的武器，审计员会捕捉到。
+
+从 0.6.0 起，真相文件的权威来源从 markdown 迁移到 `story/state/*.json`（Zod schema 校验）。Settler 不再输出完整 markdown 文件，而是输出 JSON delta，由代码层做 immutable apply + 结构校验后写入。markdown 文件仍然保留作为人类可读的投影。旧书首次运行时自动从 markdown 迁移到结构化 JSON，零人工操作。
+
+Node 22+ 环境下自动启用 SQLite 时序记忆数据库（`story/memory.db`），支持按相关性检索历史事实、伏笔和章节摘要，避免全量注入导致的上下文膨胀。
 
 <p align="center">
   <img src="assets/screenshot-state.png" width="800" alt="长期记忆快照">

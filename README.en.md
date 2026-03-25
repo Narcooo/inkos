@@ -207,13 +207,17 @@ Supports any OpenAI-compatible endpoint (`--provider custom`). Stream auto-fallb
 
 ### Reliability
 
-Every chapter creates an automatic state snapshot — `inkos write rewrite` rolls back any chapter to its pre-write state. The Writer outputs a pre-write checklist (context scope, resources, pending hooks, risks) and a post-write settlement table; the Auditor cross-validates both. File locking prevents concurrent writes. Post-write validator enforces 11 hard rules with auto spot-fix.
+Every chapter creates an automatic state snapshot — `inkos write rewrite` rolls back any chapter to its pre-write state. The Writer outputs a pre-write checklist (context scope, resources, pending hooks, risks) and a post-write settlement table; the Auditor cross-validates both. File locking prevents concurrent writes. Post-write validator includes cross-chapter repetition detection and 11 hard rules with auto spot-fix.
+
+The hook system uses Zod schema validation — `lastAdvancedChapter` must be an integer, `status` can only be open/progressing/deferred/resolved. JSON deltas from the LLM are processed through `applyRuntimeStateDelta` (immutable update) and `validateRuntimeState` (structural check) before persistence. Corrupted data is rejected, not propagated.
+
+User-configured `INKOS_LLM_MAX_TOKENS` now acts as a global cap on all API calls. Reserved keys in `llm.extra` (max_tokens, temperature, etc.) are automatically stripped to prevent accidental overrides.
 
 ---
 
 ## How It Works
 
-Each chapter is produced by five agents in sequence:
+Each chapter is produced by multiple agents in sequence, with zero human intervention:
 
 <p align="center">
   <img src="assets/screenshot-pipeline.png" width="800" alt="Pipeline diagram">
@@ -221,9 +225,14 @@ Each chapter is produced by five agents in sequence:
 
 | Agent | Responsibility |
 |-------|---------------|
-| **Radar** | Scans platform trends and reader preferences to inform story direction. Pluggable via `RadarSource` interface — skip it or bring your own data source |
+| **Radar** | Scans platform trends and reader preferences to inform story direction (pluggable, skippable) |
+| **Planner** | Reads author intent + current focus + memory retrieval results, produces chapter intent (must-keep / must-avoid) |
+| **Composer** | Selects relevant context from all truth files by relevance, compiles rule stack and runtime artifacts |
 | **Architect** | Plans chapter structure: outline, scene beats, pacing targets |
-| **Writer** | Produces prose from the plan + current world state (two-phase: creative writing → state settlement) |
+| **Writer** | Produces prose from the composed context (length-governed, dialogue-driven) |
+| **Observer** | Over-extracts 9 categories of facts from the chapter text (characters, locations, resources, relationships, emotions, information, hooks, time, physical state) |
+| **Reflector** | Outputs a JSON delta (not full markdown); code-layer applies Zod schema validation then immutable write |
+| **Normalizer** | Single-pass compress/expand to bring chapter length into the target band |
 | **Continuity Auditor** | Validates the draft against 7 canonical truth files, 33-dimension check |
 | **Reviser** | Fixes issues found by the auditor — auto-fixes critical problems, flags others for human review |
 
@@ -244,6 +253,10 @@ Every book maintains 7 truth files as the single source of truth:
 | `character_matrix.md` | Character interaction matrix: encounter records, information boundaries |
 
 The Continuity Auditor checks every draft against these files. If a character "remembers" something they never witnessed, or pulls a weapon they lost two chapters ago, the auditor catches it.
+
+Since 0.6.0, the authoritative source for truth files has moved from markdown to `story/state/*.json` (Zod schema validated). The Settler no longer outputs full markdown files — it produces a JSON delta that is immutably applied and structurally validated before persistence. Markdown files are retained as human-readable projections. Existing books auto-migrate on first run.
+
+On Node 22+, a SQLite temporal memory database (`story/memory.db`) is automatically enabled, supporting relevance-based retrieval of historical facts, hooks, and chapter summaries — preventing context bloat from full-file injection.
 
 <p align="center">
   <img src="assets/screenshot-state.png" width="800" alt="Truth files snapshot">
