@@ -118,6 +118,105 @@ describe.sequential("publish packaging", () => {
     );
   });
 
+  it("allows source workspace protocol manifests when they normalize cleanly for publish", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "inkos-publish-verify-pass-"));
+    const tempPackagesDir = join(tempRoot, "packages");
+    const tempCoreDir = join(tempPackagesDir, "core");
+    const tempCliDir = join(tempPackagesDir, "cli");
+
+    try {
+      await mkdir(tempCoreDir, { recursive: true });
+      await mkdir(tempCliDir, { recursive: true });
+
+      await writeFile(
+        join(tempRoot, "package.json"),
+        `${JSON.stringify({ name: "inkos", version: "0.5.1" }, null, 2)}\n`,
+      );
+      await writeFile(
+        join(tempCoreDir, "package.json"),
+        `${JSON.stringify({ name: "@actalk/inkos-core", version: "0.5.1" }, null, 2)}\n`,
+      );
+      await writeFile(
+        join(tempCliDir, "package.json"),
+        `${JSON.stringify(
+          {
+            name: "@actalk/inkos",
+            version: "0.5.1",
+            dependencies: {
+              "@actalk/inkos-core": "workspace:*",
+              commander: "^13.0.0",
+            },
+          },
+          null,
+          2,
+        )}\n`,
+      );
+
+      expect(() =>
+        execFileSync(
+          "node",
+          [resolve(workspaceRoot, "scripts/verify-no-workspace-protocol.mjs"), "packages/core", "packages/cli"],
+          {
+            cwd: tempRoot,
+            env: process.env,
+            encoding: "utf-8",
+            stdio: "pipe",
+          },
+        )).not.toThrow();
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects workspace protocol manifests that normalize to the wrong internal version", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "inkos-publish-verify-fail-"));
+    const tempPackagesDir = join(tempRoot, "packages");
+    const tempCoreDir = join(tempPackagesDir, "core");
+    const tempCliDir = join(tempPackagesDir, "cli");
+
+    try {
+      await mkdir(tempCoreDir, { recursive: true });
+      await mkdir(tempCliDir, { recursive: true });
+
+      await writeFile(
+        join(tempRoot, "package.json"),
+        `${JSON.stringify({ name: "inkos", version: "0.5.1" }, null, 2)}\n`,
+      );
+      await writeFile(
+        join(tempCoreDir, "package.json"),
+        `${JSON.stringify({ name: "@actalk/inkos-core", version: "0.5.1" }, null, 2)}\n`,
+      );
+      await writeFile(
+        join(tempCliDir, "package.json"),
+        `${JSON.stringify(
+          {
+            name: "@actalk/inkos",
+            version: "0.5.1",
+            dependencies: {
+              "@actalk/inkos-core": "workspace:0.5.0",
+            },
+          },
+          null,
+          2,
+        )}\n`,
+      );
+
+      expect(() =>
+        execFileSync(
+          "node",
+          [resolve(workspaceRoot, "scripts/verify-no-workspace-protocol.mjs"), "packages/cli"],
+          {
+            cwd: tempRoot,
+            env: process.env,
+            encoding: "utf-8",
+            stdio: "pipe",
+          },
+        )).toThrow(/normalizes to 0\.5\.0, expected 0\.5\.1/);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("replaces workspace dependencies before npm pack", { timeout: 30_000 }, async () => {
     const packDir = await mkdtemp(join(tmpdir(), "inkos-cli-pack-"));
 

@@ -1,15 +1,15 @@
 /**
- * Standalone verification for publish-time package manifests.
+ * Verify that source manifests are publishable once prepack normalization runs.
  *
  * Usage:
  *   node scripts/verify-no-workspace-protocol.mjs packages/cli packages/core
  *   node ../../scripts/verify-no-workspace-protocol.mjs .
  *
- * Run this only after publish versions have been rewritten.
+ * This script is safe to run on source manifests before prepack.
  *
  * Checks two invariants before publish:
- * 1. publishable dependency fields must not contain workspace: specifiers
- * 2. internal workspace dependencies must match the current workspace package version exactly
+ * 1. workspace:* / workspace:^ / workspace:~ references can be normalized to real versions
+ * 2. non-workspace internal dependencies already point at the current workspace version
  */
 
 import { access, readdir, readFile } from "node:fs/promises";
@@ -64,6 +64,14 @@ async function loadWorkspaceVersions(workspaceRoot) {
   return versions;
 }
 
+function normalizeWorkspaceSpecifier(specifier, version) {
+  const value = specifier.slice("workspace:".length);
+  if (value === "*" || value === "") return version;
+  if (value === "^") return `^${version}`;
+  if (value === "~") return `~${version}`;
+  return value;
+}
+
 let failed = false;
 const workspaceRoot = await findWorkspaceRoot(process.cwd());
 const workspaceVersions = await loadWorkspaceVersions(workspaceRoot);
@@ -79,17 +87,42 @@ for (const dirArg of dirs) {
     const deps = pkg[field];
     if (!deps) continue;
     for (const [name, specifier] of Object.entries(deps)) {
-      if (typeof specifier === "string" && specifier.startsWith("workspace:")) {
-        process.stderr.write(`FAIL: ${dir} — ${field}.${name}: ${specifier}\n`);
-        dirFailed = true;
-        failed = true;
+      const workspaceVersion = workspaceVersions.get(name);
+      if (typeof specifier !== "string") {
         continue;
       }
 
-      const workspaceVersion = workspaceVersions.get(name);
-      if (workspaceVersion && specifier !== workspaceVersion) {
+      if (specifier.startsWith("workspace:")) {
+        if (!workspaceVersion) {
+          process.stderr.write(`FAIL: ${dir} — ${field}.${name}: ${specifier} (workspace package not found)\n`);
+          dirFailed = true;
+          failed = true;
+          continue;
+        }
+
+        const normalized = normalizeWorkspaceSpecifier(specifier, workspaceVersion);
+        if (
+          normalized !== workspaceVersion
+          && normalized !== `^${workspaceVersion}`
+          && normalized !== `~${workspaceVersion}`
+        ) {
+          process.stderr.write(
+            `FAIL: ${dir} — ${field}.${name}: ${specifier} normalizes to ${normalized}, expected ${workspaceVersion}, ^${workspaceVersion}, or ~${workspaceVersion}\n`,
+          );
+          dirFailed = true;
+          failed = true;
+        }
+        continue;
+      }
+
+      if (
+        workspaceVersion
+        && specifier !== workspaceVersion
+        && specifier !== `^${workspaceVersion}`
+        && specifier !== `~${workspaceVersion}`
+      ) {
         process.stderr.write(
-          `FAIL: ${dir} — ${field}.${name}: expected ${workspaceVersion}, got ${specifier}\n`,
+          `FAIL: ${dir} — ${field}.${name}: expected ${workspaceVersion}, ^${workspaceVersion}, or ~${workspaceVersion}, got ${specifier}\n`,
         );
         dirFailed = true;
         failed = true;

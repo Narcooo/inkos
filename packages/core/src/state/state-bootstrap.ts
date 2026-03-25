@@ -89,6 +89,70 @@ export async function bootstrapStructuredStateFromMarkdown(params: {
   };
 }
 
+export async function rewriteStructuredStateFromMarkdown(params: {
+  readonly bookDir: string;
+  readonly fallbackChapter?: number;
+}): Promise<BootstrapStructuredStateResult> {
+  const storyDir = join(params.bookDir, "story");
+  const stateDir = join(storyDir, "state");
+  const manifestPath = join(stateDir, "manifest.json");
+  const currentStatePath = join(stateDir, "current_state.json");
+  const hooksPath = join(stateDir, "hooks.json");
+  const summariesPath = join(stateDir, "chapter_summaries.json");
+
+  await mkdir(stateDir, { recursive: true });
+
+  const warnings: string[] = [];
+  const existingManifest = await loadJsonIfValid(manifestPath, StateManifestSchema, warnings, "manifest.json");
+  const language = existingManifest?.language ?? await resolveRuntimeLanguage(params.bookDir);
+
+  const summariesMarkdown = await readFile(join(storyDir, "chapter_summaries.md"), "utf-8").catch(() => "");
+  const summariesState = ChapterSummariesStateSchema.parse({
+    rows: parseChapterSummariesMarkdown(summariesMarkdown),
+  });
+
+  const hooksMarkdown = await readFile(join(storyDir, "pending_hooks.md"), "utf-8").catch(() => "");
+  const hooksState = parsePendingHooksStateMarkdown(hooksMarkdown, warnings);
+
+  const inferredFallbackChapter = Math.max(
+    params.fallbackChapter ?? 0,
+    maxSummaryChapter(summariesState),
+    maxHookChapter(hooksState.hooks),
+  );
+  const currentStateMarkdown = await readFile(join(storyDir, "current_state.md"), "utf-8").catch(() => "");
+  const currentState = parseCurrentStateStateMarkdown(currentStateMarkdown, inferredFallbackChapter, warnings);
+
+  const manifest = StateManifestSchema.parse({
+    schemaVersion: 2,
+    language,
+    lastAppliedChapter: Math.max(
+      existingManifest?.lastAppliedChapter ?? 0,
+      inferredFallbackChapter,
+      currentState.chapter,
+      maxSummaryChapter(summariesState),
+      maxHookChapter(hooksState.hooks),
+    ),
+    projectionVersion: existingManifest?.projectionVersion ?? 1,
+    migrationWarnings: uniqueStrings([
+      ...(existingManifest?.migrationWarnings ?? []),
+      ...warnings,
+    ]),
+  });
+
+  await Promise.all([
+    writeFile(manifestPath, JSON.stringify(manifest, null, 2), "utf-8"),
+    writeFile(currentStatePath, JSON.stringify(currentState, null, 2), "utf-8"),
+    writeFile(hooksPath, JSON.stringify(hooksState, null, 2), "utf-8"),
+    writeFile(summariesPath, JSON.stringify(summariesState, null, 2), "utf-8"),
+  ]);
+
+  return {
+    createdFiles: [],
+    warnings: manifest.migrationWarnings,
+    manifest,
+  };
+}
+
 export function parseChapterSummariesMarkdown(markdown: string): StoredSummary[] {
   const rows = parseMarkdownTableRows(markdown)
     .filter((row) => /^\d+$/.test(row[0] ?? ""));

@@ -31,6 +31,7 @@ import { ChapterIntentSchema, type ContextPackage, type RuleStack } from "../mod
 import { buildLengthSpec, countChapterLength, formatLengthCount, isOutsideHardRange, isOutsideSoftRange, resolveLengthCountingMode, type LengthLanguage } from "../utils/length-metrics.js";
 import { analyzeLongSpanFatigue } from "../utils/long-span-fatigue.js";
 import { loadNarrativeMemorySeed, loadSnapshotCurrentStateFacts } from "../state/runtime-state-store.js";
+import { rewriteStructuredStateFromMarkdown } from "../state/state-bootstrap.js";
 import { readFile, readdir, writeFile, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -451,6 +452,7 @@ export class PipelineRunner {
       this.logStage(stageLanguage, { zh: "落盘草稿与真相文件", en: "persisting draft and truth files" });
       await writer.saveChapter(bookDir, draftOutput, gp.numericalSystem, resolvedLang);
       await writer.saveNewTruthFiles(bookDir, draftOutput, resolvedLang);
+      await this.syncLegacyStructuredStateFromMarkdown(bookDir, chapterNumber, draftOutput);
       await this.syncNarrativeMemoryIndex(bookId);
 
       // Update index
@@ -793,6 +795,7 @@ export class PipelineRunner {
       if (reviseOutput.updatedHooks !== "(伏笔池未更新)") {
         await writeFile(join(storyDir, "pending_hooks.md"), reviseOutput.updatedHooks, "utf-8");
       }
+      await this.syncLegacyStructuredStateFromMarkdown(bookDir, targetChapter);
 
       // Update index
       const updatedIndex = index.map((ch) =>
@@ -1152,6 +1155,7 @@ export class PipelineRunner {
 
     await writer.saveChapter(bookDir, persistenceOutput, gp.numericalSystem, pipelineLang);
     await writer.saveNewTruthFiles(bookDir, persistenceOutput, pipelineLang);
+    await this.syncLegacyStructuredStateFromMarkdown(bookDir, chapterNumber, persistenceOutput);
     this.logStage(stageLanguage, { zh: "同步记忆索引", en: "syncing memory indexes" });
     await this.syncNarrativeMemoryIndex(bookId);
 
@@ -1549,6 +1553,7 @@ ${matrix}`,
           postWriteErrors: [],
           postWriteWarnings: [],
         }, resolvedLanguage);
+        await this.syncLegacyStructuredStateFromMarkdown(bookDir, chapterNumber, output);
         await this.syncNarrativeMemoryIndex(input.bookId);
 
         // Update chapter index
@@ -1833,6 +1838,24 @@ ${matrix}`,
         en: `State fact sync skipped: ${String(error)}`,
       });
     }
+  }
+
+  private async syncLegacyStructuredStateFromMarkdown(
+    bookDir: string,
+    chapterNumber: number,
+    output?: {
+      readonly runtimeStateDelta?: WriteChapterOutput["runtimeStateDelta"];
+      readonly runtimeStateSnapshot?: WriteChapterOutput["runtimeStateSnapshot"];
+    },
+  ): Promise<void> {
+    if (output?.runtimeStateDelta || output?.runtimeStateSnapshot) {
+      return;
+    }
+
+    await rewriteStructuredStateFromMarkdown({
+      bookDir,
+      fallbackChapter: chapterNumber,
+    });
   }
 
   private async syncNarrativeMemoryIndex(bookId: string): Promise<void> {
