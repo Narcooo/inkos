@@ -1,10 +1,22 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as memoryRetrieval from "../utils/memory-retrieval.js";
 import { retrieveMemorySelection } from "../utils/memory-retrieval.js";
 import { MemoryDB } from "../state/memory-db.js";
+
+const require = createRequire(import.meta.url);
+const hasNodeSqlite = (() => {
+  try {
+    require("node:sqlite");
+    return true;
+  } catch {
+    return false;
+  }
+})();
+const sqliteIt = hasNodeSqlite ? it : it.skip;
 
 describe("retrieveMemorySelection", () => {
   let root = "";
@@ -63,7 +75,11 @@ describe("retrieveMemorySelection", () => {
         }),
       ]),
     );
-    expect(result.dbPath).toContain("memory.db");
+    if (hasNodeSqlite) {
+      expect(result.dbPath).toContain("memory.db");
+    } else {
+      expect(result.dbPath).toBeUndefined();
+    }
   });
 
   it("extracts mentor-focused query terms without pulling guild-route negatives into English retrieval", () => {
@@ -353,7 +369,7 @@ describe("retrieveMemorySelection", () => {
     expect(result.summaries.at(-1)?.chapter).toBe(50);
   });
 
-  it("uses existing sqlite summaries and hooks without requiring markdown truth files", async () => {
+  sqliteIt("uses existing sqlite summaries and hooks without requiring markdown truth files", async () => {
     root = await mkdtemp(join(tmpdir(), "inkos-memory-retrieval-db-test-"));
     const bookDir = join(root, "book");
     const storyDir = join(bookDir, "story");
@@ -406,5 +422,477 @@ describe("retrieveMemorySelection", () => {
     expect(result.dbPath).toContain("memory.db");
     expect(result.summaries.map((summary) => summary.chapter)).toContain(9);
     expect(result.hooks.map((hook) => hook.hookId)).toContain("mentor-debt");
+  });
+
+  sqliteIt("backfills sqlite memory from structured state instead of stale markdown truth files", async () => {
+    root = await mkdtemp(join(tmpdir(), "inkos-memory-retrieval-db-structured-test-"));
+    const bookDir = join(root, "book");
+    const storyDir = join(bookDir, "story");
+    const stateDir = join(storyDir, "state");
+    await mkdir(stateDir, { recursive: true });
+
+    await Promise.all([
+      writeFile(
+        join(storyDir, "current_state.md"),
+        [
+          "| Field | Value |",
+          "| --- | --- |",
+          "| Current Chapter | 9 |",
+          "| Current Conflict | Old markdown conflict |",
+          "",
+        ].join("\n"),
+        "utf-8",
+      ),
+      writeFile(
+        join(storyDir, "pending_hooks.md"),
+        [
+          "| hook_id | start_chapter | type | status | last_advanced | expected_payoff | notes |",
+          "| --- | --- | --- | --- | --- | --- | --- |",
+          "| markdown-hook | 1 | mystery | open | 9 | 12 | Old markdown hook |",
+          "",
+        ].join("\n"),
+        "utf-8",
+      ),
+      writeFile(
+        join(storyDir, "chapter_summaries.md"),
+        [
+          "| chapter | title | characters | events | stateChanges | hookActivity | mood | chapterType |",
+          "| --- | --- | --- | --- | --- | --- | --- | --- |",
+          "| 9 | Markdown Summary | Lin Yue | Old markdown events | Old markdown state | markdown-hook advanced | tense | fallback |",
+          "",
+        ].join("\n"),
+        "utf-8",
+      ),
+      writeFile(
+        join(stateDir, "manifest.json"),
+        JSON.stringify({
+          schemaVersion: 2,
+          language: "en",
+          lastAppliedChapter: 12,
+          projectionVersion: 1,
+          migrationWarnings: [],
+        }, null, 2),
+        "utf-8",
+      ),
+      writeFile(
+        join(stateDir, "current_state.json"),
+        JSON.stringify({
+          chapter: 12,
+          facts: [
+            {
+              subject: "protagonist",
+              predicate: "Current Conflict",
+              object: "Structured conflict should win.",
+              validFromChapter: 12,
+              validUntilChapter: null,
+              sourceChapter: 12,
+            },
+          ],
+        }, null, 2),
+        "utf-8",
+      ),
+      writeFile(
+        join(stateDir, "hooks.json"),
+        JSON.stringify({
+          hooks: [
+            {
+              hookId: "structured-hook",
+              startChapter: 10,
+              type: "relationship",
+              status: "progressing",
+              lastAdvancedChapter: 12,
+              expectedPayoff: "Structured payoff",
+              notes: "Structured hook should win.",
+            },
+          ],
+        }, null, 2),
+        "utf-8",
+      ),
+      writeFile(
+        join(stateDir, "chapter_summaries.json"),
+        JSON.stringify({
+          rows: [
+            {
+              chapter: 12,
+              title: "Structured Summary",
+              characters: "Lin Yue",
+              events: "Structured events should win.",
+              stateChanges: "Structured state should win.",
+              hookActivity: "structured-hook advanced",
+              mood: "tight",
+              chapterType: "mainline",
+            },
+          ],
+        }, null, 2),
+        "utf-8",
+      ),
+    ]);
+
+    const result = await retrieveMemorySelection({
+      bookDir,
+      chapterNumber: 13,
+      goal: "Bring the focus back to the structured hook.",
+      mustKeep: ["Structured conflict should win."],
+    });
+
+    expect(result.facts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          object: "Structured conflict should win.",
+          sourceChapter: 12,
+        }),
+      ]),
+    );
+    expect(result.hooks.map((hook) => hook.hookId)).toContain("structured-hook");
+    expect(result.hooks.map((hook) => hook.hookId)).not.toContain("markdown-hook");
+    expect(result.summaries.map((summary) => summary.chapter)).toContain(12);
+    expect(result.summaries.map((summary) => summary.title)).toContain("Structured Summary");
+  });
+
+  it("bootstraps structured runtime state from legacy markdown truth files during retrieval", async () => {
+    root = await mkdtemp(join(tmpdir(), "inkos-memory-retrieval-bootstrap-test-"));
+    const bookDir = join(root, "book");
+    const storyDir = join(bookDir, "story");
+    const stateDir = join(storyDir, "state");
+    await mkdir(storyDir, { recursive: true });
+
+    await Promise.all([
+      writeFile(
+        join(storyDir, "current_state.md"),
+        [
+          "| Field | Value |",
+          "| --- | --- |",
+          "| Current Chapter | 12 |",
+          "| Current Conflict | Mentor debt mainline vs guild safe route |",
+          "",
+        ].join("\n"),
+        "utf-8",
+      ),
+      writeFile(
+        join(storyDir, "pending_hooks.md"),
+        [
+          "| hook_id | start_chapter | type | status | last_advanced | expected_payoff | notes |",
+          "| --- | --- | --- | --- | --- | --- | --- |",
+          "| mentor-debt | 1 | relationship | open | 12 | 16 | The mentor debt remains unresolved |",
+          "",
+        ].join("\n"),
+        "utf-8",
+      ),
+      writeFile(
+        join(storyDir, "chapter_summaries.md"),
+        [
+          "| chapter | title | characters | events | stateChanges | hookActivity | mood | chapterType |",
+          "| --- | --- | --- | --- | --- | --- | --- | --- |",
+          "| 12 | Mentor Debt Echo | Lin Yue | Lin Yue returns to the mentor debt trail | Commitment hardens | mentor-debt advanced | tense | mainline |",
+          "",
+        ].join("\n"),
+        "utf-8",
+      ),
+    ]);
+
+    const result = await retrieveMemorySelection({
+      bookDir,
+      chapterNumber: 13,
+      goal: "Pull focus back to the mentor debt.",
+      mustKeep: ["Lin Yue does not abandon the mentor debt."],
+    });
+
+    const manifest = JSON.parse(await readFile(join(stateDir, "manifest.json"), "utf-8"));
+    const currentState = JSON.parse(await readFile(join(stateDir, "current_state.json"), "utf-8"));
+    const hooks = JSON.parse(await readFile(join(stateDir, "hooks.json"), "utf-8"));
+    const summaries = JSON.parse(await readFile(join(stateDir, "chapter_summaries.json"), "utf-8"));
+
+    expect(manifest.schemaVersion).toBe(2);
+    expect(currentState.chapter).toBe(12);
+    expect(hooks.hooks[0]?.hookId).toBe("mentor-debt");
+    expect(summaries.rows[0]?.title).toBe("Mentor Debt Echo");
+    expect(result.hooks.map((hook) => hook.hookId)).toContain("mentor-debt");
+  });
+
+  it("prefers structured state files over legacy markdown truth files when both exist", async () => {
+    root = await mkdtemp(join(tmpdir(), "inkos-memory-retrieval-structured-preferred-test-"));
+    const bookDir = join(root, "book");
+    const storyDir = join(bookDir, "story");
+    const stateDir = join(storyDir, "state");
+    await mkdir(stateDir, { recursive: true });
+
+    await Promise.all([
+      writeFile(
+        join(storyDir, "current_state.md"),
+        [
+          "| Field | Value |",
+          "| --- | --- |",
+          "| Current Chapter | 9 |",
+          "| Current Conflict | Old markdown conflict |",
+          "",
+        ].join("\n"),
+        "utf-8",
+      ),
+      writeFile(
+        join(storyDir, "pending_hooks.md"),
+        [
+          "| hook_id | start_chapter | type | status | last_advanced | expected_payoff | notes |",
+          "| --- | --- | --- | --- | --- | --- | --- |",
+          "| markdown-hook | 1 | mystery | open | 9 | 12 | Old markdown hook |",
+          "",
+        ].join("\n"),
+        "utf-8",
+      ),
+      writeFile(
+        join(storyDir, "chapter_summaries.md"),
+        [
+          "| chapter | title | characters | events | stateChanges | hookActivity | mood | chapterType |",
+          "| --- | --- | --- | --- | --- | --- | --- | --- |",
+          "| 9 | Markdown Summary | Lin Yue | Old markdown event | Old markdown state | markdown-hook advanced | tense | fallback |",
+          "",
+        ].join("\n"),
+        "utf-8",
+      ),
+      writeFile(join(stateDir, "manifest.json"), JSON.stringify({
+        schemaVersion: 2,
+        language: "en",
+        lastAppliedChapter: 12,
+        projectionVersion: 1,
+        migrationWarnings: [],
+      }, null, 2), "utf-8"),
+      writeFile(join(stateDir, "current_state.json"), JSON.stringify({
+        chapter: 12,
+        facts: [
+          {
+            subject: "protagonist",
+            predicate: "Current Conflict",
+            object: "Structured conflict should win.",
+            validFromChapter: 12,
+            validUntilChapter: null,
+            sourceChapter: 12,
+          },
+        ],
+      }, null, 2), "utf-8"),
+      writeFile(join(stateDir, "hooks.json"), JSON.stringify({
+        hooks: [
+          {
+            hookId: "structured-hook",
+            startChapter: 10,
+            type: "relationship",
+            status: "progressing",
+            lastAdvancedChapter: 12,
+            expectedPayoff: "Structured payoff",
+            notes: "Structured hook should win.",
+          },
+        ],
+      }, null, 2), "utf-8"),
+      writeFile(join(stateDir, "chapter_summaries.json"), JSON.stringify({
+        rows: [
+          {
+            chapter: 12,
+            title: "Structured Summary",
+            characters: "Lin Yue",
+            events: "Structured events should win.",
+            stateChanges: "Structured state should win.",
+            hookActivity: "structured-hook advanced",
+            mood: "tight",
+            chapterType: "mainline",
+          },
+        ],
+      }, null, 2), "utf-8"),
+    ]);
+
+    const result = await retrieveMemorySelection({
+      bookDir,
+      chapterNumber: 13,
+      goal: "Bring the focus back to the structured hook.",
+      mustKeep: ["Structured conflict should win."],
+    });
+
+    expect(result.facts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          object: "Structured conflict should win.",
+          sourceChapter: 12,
+        }),
+      ]),
+    );
+    expect(result.hooks.map((hook) => hook.hookId)).toContain("structured-hook");
+    expect(result.hooks.map((hook) => hook.hookId)).not.toContain("markdown-hook");
+    expect(result.summaries.map((summary) => summary.chapter)).toContain(12);
+    expect(result.summaries.map((summary) => summary.title)).toContain("Structured Summary");
+  });
+
+  it("recalls stale open hooks alongside recent governed memory selections", async () => {
+    root = await mkdtemp(join(tmpdir(), "inkos-memory-retrieval-stale-hook-test-"));
+    const bookDir = join(root, "book");
+    const storyDir = join(bookDir, "story");
+    const stateDir = join(storyDir, "state");
+    await mkdir(stateDir, { recursive: true });
+
+    await Promise.all([
+      writeFile(
+        join(stateDir, "manifest.json"),
+        JSON.stringify({
+          schemaVersion: 2,
+          language: "en",
+          lastAppliedChapter: 25,
+          projectionVersion: 1,
+          migrationWarnings: [],
+        }, null, 2),
+        "utf-8",
+      ),
+      writeFile(
+        join(stateDir, "current_state.json"),
+        JSON.stringify({
+          chapter: 25,
+          facts: [],
+        }, null, 2),
+        "utf-8",
+      ),
+      writeFile(
+        join(stateDir, "chapter_summaries.json"),
+        JSON.stringify({
+          rows: [],
+        }, null, 2),
+        "utf-8",
+      ),
+      writeFile(
+        join(stateDir, "hooks.json"),
+        JSON.stringify({
+          hooks: [
+            {
+              hookId: "recent-route",
+              startChapter: 22,
+              type: "route",
+              status: "open",
+              lastAdvancedChapter: 24,
+              expectedPayoff: "Recent route payoff",
+              notes: "Recent but not critical.",
+            },
+            {
+              hookId: "stale-debt",
+              startChapter: 3,
+              type: "relationship",
+              status: "open",
+              lastAdvancedChapter: 8,
+              expectedPayoff: "Mentor debt payoff",
+              notes: "Long-stale but still unresolved.",
+            },
+          ],
+        }, null, 2),
+        "utf-8",
+      ),
+    ]);
+
+    const result = await retrieveMemorySelection({
+      bookDir,
+      chapterNumber: 26,
+      goal: "Keep the chapter on the mainline debt conflict.",
+      mustKeep: ["The mentor debt is still unresolved."],
+    });
+
+    expect(result.hooks.map((hook) => hook.hookId)).toContain("recent-route");
+    expect(result.hooks.map((hook) => hook.hookId)).toContain("stale-debt");
+  });
+
+  it("surfaces one stale unresolved hook beyond the primary quota while excluding stale resolved hooks", async () => {
+    root = await mkdtemp(join(tmpdir(), "inkos-memory-retrieval-stale-quota-test-"));
+    const bookDir = join(root, "book");
+    const storyDir = join(bookDir, "story");
+    const stateDir = join(storyDir, "state");
+    await mkdir(stateDir, { recursive: true });
+
+    await Promise.all([
+      writeFile(
+        join(stateDir, "manifest.json"),
+        JSON.stringify({
+          schemaVersion: 2,
+          language: "en",
+          lastAppliedChapter: 40,
+          projectionVersion: 1,
+          migrationWarnings: [],
+        }, null, 2),
+        "utf-8",
+      ),
+      writeFile(
+        join(stateDir, "current_state.json"),
+        JSON.stringify({
+          chapter: 40,
+          facts: [],
+        }, null, 2),
+        "utf-8",
+      ),
+      writeFile(
+        join(stateDir, "chapter_summaries.json"),
+        JSON.stringify({
+          rows: [],
+        }, null, 2),
+        "utf-8",
+      ),
+      writeFile(
+        join(stateDir, "hooks.json"),
+        JSON.stringify({
+          hooks: [
+            {
+              hookId: "recent-route",
+              startChapter: 37,
+              type: "route",
+              status: "open",
+              lastAdvancedChapter: 39,
+              expectedPayoff: "Recent route payoff",
+              notes: "Recent route remains active.",
+            },
+            {
+              hookId: "recent-guild",
+              startChapter: 36,
+              type: "politics",
+              status: "progressing",
+              lastAdvancedChapter: 38,
+              expectedPayoff: "Guild payoff",
+              notes: "Recent guild pressure remains active.",
+            },
+            {
+              hookId: "recent-token",
+              startChapter: 35,
+              type: "artifact",
+              status: "open",
+              lastAdvancedChapter: 37,
+              expectedPayoff: "Token payoff",
+              notes: "Recent token route remains active.",
+            },
+            {
+              hookId: "stale-omega",
+              startChapter: 3,
+              type: "relationship",
+              status: "open",
+              lastAdvancedChapter: 8,
+              expectedPayoff: "Old relic payoff",
+              notes: "Dormant unresolved line.",
+            },
+            {
+              hookId: "stale-resolved",
+              startChapter: 2,
+              type: "mystery",
+              status: "resolved",
+              lastAdvancedChapter: 7,
+              expectedPayoff: "Already closed",
+              notes: "Should not be resurfaced.",
+            },
+          ],
+        }, null, 2),
+        "utf-8",
+      ),
+    ]);
+
+    const result = await retrieveMemorySelection({
+      bookDir,
+      chapterNumber: 41,
+      goal: "Keep the chapter on the harbor confrontation.",
+      mustKeep: ["The harbor confrontation must stay central."],
+    });
+
+    expect(result.hooks.map((hook) => hook.hookId)).toEqual([
+      "recent-route",
+      "recent-guild",
+      "recent-token",
+      "stale-omega",
+    ]);
+    expect(result.hooks.map((hook) => hook.hookId)).not.toContain("stale-resolved");
   });
 });

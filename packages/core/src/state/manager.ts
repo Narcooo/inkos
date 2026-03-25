@@ -2,6 +2,7 @@ import { readFile, writeFile, mkdir, readdir, stat, unlink, open } from "node:fs
 import { join } from "node:path";
 import type { BookConfig } from "../models/book.js";
 import type { ChapterMeta } from "../models/chapter.js";
+import { bootstrapStructuredStateFromMarkdown } from "./state-bootstrap.js";
 
 export class StateManager {
   constructor(private readonly projectRoot: string) {}
@@ -132,6 +133,10 @@ export class StateManager {
     return join(this.booksDir, bookId);
   }
 
+  stateDir(bookId: string): string {
+    return join(this.bookDir(bookId), "story", "state");
+  }
+
   async loadProjectConfig(): Promise<Record<string, unknown>> {
     const configPath = join(this.projectRoot, "inkos.json");
     const raw = await readFile(configPath, "utf-8");
@@ -160,6 +165,13 @@ export class StateManager {
       JSON.stringify(config, null, 2),
       "utf-8",
     );
+  }
+
+  async ensureRuntimeState(bookId: string, fallbackChapter = 0): Promise<void> {
+    await bootstrapStructuredStateFromMarkdown({
+      bookDir: this.bookDir(bookId),
+      fallbackChapter,
+    });
   }
 
   async listBooks(): Promise<ReadonlyArray<string>> {
@@ -230,6 +242,23 @@ export class StateManager {
         }
       }),
     );
+
+    const stateDir = this.stateDir(bookId);
+    const snapshotStateDir = join(snapshotDir, "state");
+    try {
+      const stateFiles = await readdir(stateDir);
+      if (stateFiles.length > 0) {
+        await mkdir(snapshotStateDir, { recursive: true });
+        await Promise.all(
+          stateFiles.map(async (fileName) => {
+            const content = await readFile(join(stateDir, fileName), "utf-8");
+            await writeFile(join(snapshotStateDir, fileName), content, "utf-8");
+          }),
+        );
+      }
+    } catch {
+      // state directory missing — skip
+    }
   }
 
   async restoreState(bookId: string, chapterNumber: number): Promise<boolean> {
@@ -264,6 +293,23 @@ export class StateManager {
           }
         }),
       );
+
+      try {
+        const snapshotStateDir = join(snapshotDir, "state");
+        const stateFiles = await readdir(snapshotStateDir);
+        if (stateFiles.length > 0) {
+          const stateDir = this.stateDir(bookId);
+          await mkdir(stateDir, { recursive: true });
+          await Promise.all(
+            stateFiles.map(async (fileName) => {
+              const content = await readFile(join(snapshotStateDir, fileName), "utf-8");
+              await writeFile(join(stateDir, fileName), content, "utf-8");
+            }),
+          );
+        }
+      } catch {
+        // snapshot structured state missing — skip
+      }
 
       return true;
     } catch {

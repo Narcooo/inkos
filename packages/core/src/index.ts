@@ -9,6 +9,32 @@ export { type DetectionHistoryEntry, type DetectionStats } from "./models/detect
 export { type StyleProfile } from "./models/style-profile.js";
 export { type LengthCountingMode, type LengthNormalizeMode, type LengthSpec, type LengthTelemetry, type LengthWarning, LengthCountingModeSchema, LengthNormalizeModeSchema, LengthSpecSchema, LengthTelemetrySchema, LengthWarningSchema } from "./models/length-governance.js";
 export {
+  type RuntimeStateLanguage,
+  type StateManifest,
+  type HookStatus,
+  type HookRecord,
+  type HooksState,
+  type ChapterSummaryRow,
+  type ChapterSummariesState,
+  type CurrentStateFact,
+  type CurrentStateState,
+  type CurrentStatePatch,
+  type HookOps,
+  type RuntimeStateDelta,
+  RuntimeStateLanguageSchema,
+  StateManifestSchema,
+  HookStatusSchema,
+  HookRecordSchema,
+  HooksStateSchema,
+  ChapterSummaryRowSchema,
+  ChapterSummariesStateSchema,
+  CurrentStateFactSchema,
+  CurrentStateStateSchema,
+  CurrentStatePatchSchema,
+  HookOpsSchema,
+  RuntimeStateDeltaSchema,
+} from "./models/runtime-state.js";
+export {
   type ChapterConflict,
   type ChapterIntent,
   type ContextSource,
@@ -59,6 +85,7 @@ export { ChapterAnalyzerAgent, type AnalyzeChapterInput, type AnalyzeChapterOutp
 export { parseWriterOutput, parseCreativeOutput, type ParsedWriterOutput, type CreativeOutput } from "./agents/writer-parser.js";
 export { buildSettlerSystemPrompt, buildSettlerUserPrompt } from "./agents/settler-prompts.js";
 export { parseSettlementOutput, type SettlementOutput } from "./agents/settler-parser.js";
+export { parseSettlerDeltaOutput, type SettlerDeltaOutput } from "./agents/settler-delta-parser.js";
 export { FanficCanonImporter, type FanficCanonOutput } from "./agents/fanfic-canon-importer.js";
 export { getFanficDimensionConfig, FANFIC_DIMENSIONS, type FanficDimensionConfig } from "./agents/fanfic-dimensions.js";
 export { buildFanficCanonSection, buildCharacterVoiceProfiles, buildFanficModeInstructions } from "./agents/fanfic-prompt-sections.js";
@@ -70,6 +97,7 @@ export { extractPOVFromOutline, filterMatrixByPOV, filterHooksByPOV } from "./ut
 export { ConsolidatorAgent } from "./agents/consolidator.js";
 export { MemoryDB, type Fact, type StoredSummary } from "./state/memory-db.js";
 export { StateValidatorAgent } from "./agents/state-validator.js";
+export { loadRuntimeStateSnapshot, buildRuntimeStateArtifacts, saveRuntimeStateSnapshot, loadNarrativeMemorySeed, loadSnapshotCurrentStateFacts, type RuntimeStateArtifacts, type NarrativeMemorySeed } from "./state/runtime-state-store.js";
 export { splitChapters, type SplitChapter } from "./utils/chapter-splitter.js";
 export { countChapterLength, resolveLengthCountingMode, formatLengthCount, buildLengthSpec, isOutsideSoftRange, isOutsideHardRange, chooseNormalizeMode, type LengthLanguage } from "./utils/length-metrics.js";
 export { createLogger, createStderrSink, createJsonLineSink, nullSink, type Logger, type LogSink, type LogLevel, type LogEntry } from "./utils/logger.js";
@@ -84,6 +112,10 @@ export { detectChapter, detectAndRewrite, loadDetectionHistory, type DetectChapt
 
 // State
 export { StateManager } from "./state/manager.js";
+export { bootstrapStructuredStateFromMarkdown } from "./state/state-bootstrap.js";
+export { renderCurrentStateProjection, renderHooksProjection, renderChapterSummariesProjection } from "./state/state-projections.js";
+export { applyRuntimeStateDelta, type RuntimeStateSnapshot } from "./state/state-reducer.js";
+export { validateRuntimeState, type RuntimeStateValidationIssue } from "./state/state-validator.js";
 
 // Notify
 export { dispatchNotification, dispatchWebhookEvent, type NotifyMessage } from "./notify/dispatcher.js";

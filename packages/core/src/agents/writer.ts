@@ -5,12 +5,14 @@ import type { BookRules } from "../models/book-rules.js";
 import { buildWriterSystemPrompt, type FanficContext } from "./writer-prompts.js";
 import { buildSettlerSystemPrompt, buildSettlerUserPrompt } from "./settler-prompts.js";
 import { buildObserverSystemPrompt, buildObserverUserPrompt } from "./observer-prompts.js";
+import { parseSettlerDeltaOutput } from "./settler-delta-parser.js";
 import { parseSettlementOutput } from "./settler-parser.js";
 import { readGenreProfile, readBookRules } from "./rules-reader.js";
 import { validatePostWrite, detectCrossChapterRepetition, type PostWriteViolation } from "./post-write-validator.js";
 import { analyzeAITells } from "./ai-tells.js";
 import type { ChapterTrace, ContextPackage, RuleStack } from "../models/input-governance.js";
 import type { LengthSpec } from "../models/length-governance.js";
+import type { RuntimeStateDelta } from "../models/runtime-state.js";
 import { buildLengthSpec } from "../utils/length-metrics.js";
 import { filterHooks, filterSummaries, filterSubplots, filterEmotionalArcs, filterCharacterMatrix } from "../utils/context-filter.js";
 import { buildGovernedMemoryEvidenceBlocks } from "../utils/governed-context.js";
@@ -22,6 +24,8 @@ import {
 } from "../utils/governed-working-set.js";
 import { extractPOVFromOutline, filterMatrixByPOV, filterHooksByPOV } from "../utils/pov-filter.js";
 import { parseCreativeOutput } from "./writer-parser.js";
+import { buildRuntimeStateArtifacts, saveRuntimeStateSnapshot, type RuntimeStateArtifacts } from "../state/runtime-state-store.js";
+import type { RuntimeStateSnapshot } from "../state/state-reducer.js";
 import { readFile, writeFile, mkdir, readdir } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -52,10 +56,13 @@ export interface WriteChapterOutput {
   readonly wordCount: number;
   readonly preWriteCheck: string;
   readonly postSettlement: string;
+  readonly runtimeStateDelta?: RuntimeStateDelta;
+  readonly runtimeStateSnapshot?: RuntimeStateSnapshot;
   readonly updatedState: string;
   readonly updatedLedger: string;
   readonly updatedHooks: string;
   readonly chapterSummary: string;
+  readonly updatedChapterSummaries?: string;
   readonly updatedSubplots: string;
   readonly updatedEmotionalArcs: string;
   readonly updatedCharacterMatrix: string;
@@ -278,6 +285,11 @@ export class WriterAgent extends BaseAgent {
     });
     const settlement = settleResult.settlement;
     const settleUsage = settleResult.usage;
+    const runtimeStateArtifacts = await this.buildRuntimeStateArtifactsIfPresent(
+      bookDir,
+      settlement.runtimeStateDelta,
+      resolvedLanguage,
+    );
 
     // ── Post-write validation (regex + rule-based, zero LLM cost) ──
     const ruleViolations = [
@@ -322,10 +334,15 @@ export class WriterAgent extends BaseAgent {
       wordCount: creative.wordCount,
       preWriteCheck: creative.preWriteCheck,
       postSettlement: settlement.postSettlement,
-      updatedState: settlement.updatedState,
+      runtimeStateDelta: settlement.runtimeStateDelta,
+      runtimeStateSnapshot: runtimeStateArtifacts?.snapshot ?? settlement.runtimeStateSnapshot,
+      updatedState: runtimeStateArtifacts?.currentStateMarkdown ?? settlement.updatedState,
       updatedLedger: settlement.updatedLedger,
-      updatedHooks: settlement.updatedHooks,
-      chapterSummary: settlement.chapterSummary,
+      updatedHooks: runtimeStateArtifacts?.hooksMarkdown ?? settlement.updatedHooks,
+      chapterSummary: settlement.runtimeStateDelta
+        ? this.renderDeltaSummaryRow(settlement.runtimeStateDelta)
+        : settlement.chapterSummary,
+      updatedChapterSummaries: runtimeStateArtifacts?.chapterSummariesMarkdown,
       updatedSubplots: settlement.updatedSubplots,
       updatedEmotionalArcs: settlement.updatedEmotionalArcs,
       updatedCharacterMatrix: settlement.updatedCharacterMatrix,
@@ -358,7 +375,13 @@ export class WriterAgent extends BaseAgent {
     readonly originalSubplots: string;
     readonly originalEmotionalArcs: string;
     readonly originalCharacterMatrix: string;
-  }): Promise<{ settlement: ReturnType<typeof parseSettlementOutput>; usage: TokenUsage }> {
+  }): Promise<{
+    settlement: ReturnType<typeof parseSettlementOutput> & {
+      runtimeStateDelta?: RuntimeStateDelta;
+      runtimeStateSnapshot?: RuntimeStateSnapshot;
+    };
+    usage: TokenUsage;
+  }> {
     // Phase 2a: Observer — extract all facts from the chapter
     const resolvedLang = params.book.language ?? params.genreProfile.language;
     const observerSystem = buildObserverSystemPrompt(params.book, params.genreProfile, resolvedLang);
@@ -422,22 +445,41 @@ export class WriterAgent extends BaseAgent {
       { maxTokens: settlerMaxTokens, temperature: 0.3 },
     );
 
-    const settlement = parseSettlementOutput(response.content, params.genreProfile);
-    const mergedSettlement = governedControlBlock
-      ? {
-          ...settlement,
-          updatedHooks: mergeTableMarkdownByKey(params.originalHooks, settlement.updatedHooks, [0]),
-          updatedSubplots: settlement.updatedSubplots
-            ? mergeTableMarkdownByKey(params.originalSubplots, settlement.updatedSubplots, [0])
-            : settlement.updatedSubplots,
-          updatedEmotionalArcs: settlement.updatedEmotionalArcs
-            ? mergeTableMarkdownByKey(params.originalEmotionalArcs, settlement.updatedEmotionalArcs, [0, 1])
-            : settlement.updatedEmotionalArcs,
-          updatedCharacterMatrix: settlement.updatedCharacterMatrix
-            ? mergeCharacterMatrixMarkdown(params.originalCharacterMatrix, settlement.updatedCharacterMatrix)
-            : settlement.updatedCharacterMatrix,
-        }
-      : settlement;
+    let mergedSettlement: ReturnType<typeof parseSettlementOutput> & {
+      runtimeStateDelta?: RuntimeStateDelta;
+      runtimeStateSnapshot?: RuntimeStateSnapshot;
+    };
+    try {
+      const deltaOutput = parseSettlerDeltaOutput(response.content);
+      mergedSettlement = {
+        postSettlement: deltaOutput.postSettlement,
+        runtimeStateDelta: deltaOutput.runtimeStateDelta,
+        updatedState: "",
+        updatedLedger: "",
+        updatedHooks: "",
+        chapterSummary: "",
+        updatedSubplots: "",
+        updatedEmotionalArcs: "",
+        updatedCharacterMatrix: "",
+      };
+    } catch {
+      const settlement = parseSettlementOutput(response.content, params.genreProfile);
+      mergedSettlement = governedControlBlock
+        ? {
+            ...settlement,
+            updatedHooks: mergeTableMarkdownByKey(params.originalHooks, settlement.updatedHooks, [0]),
+            updatedSubplots: settlement.updatedSubplots
+              ? mergeTableMarkdownByKey(params.originalSubplots, settlement.updatedSubplots, [0])
+              : settlement.updatedSubplots,
+            updatedEmotionalArcs: settlement.updatedEmotionalArcs
+              ? mergeTableMarkdownByKey(params.originalEmotionalArcs, settlement.updatedEmotionalArcs, [0, 1])
+              : settlement.updatedEmotionalArcs,
+            updatedCharacterMatrix: settlement.updatedCharacterMatrix
+              ? mergeCharacterMatrixMarkdown(params.originalCharacterMatrix, settlement.updatedCharacterMatrix)
+              : settlement.updatedCharacterMatrix,
+          }
+        : settlement;
+    }
 
     return {
       settlement: mergedSettlement,
@@ -466,12 +508,27 @@ export class WriterAgent extends BaseAgent {
       "",
       output.content,
     ].join("\n");
+    const runtimeStateArtifacts = await this.resolveRuntimeStateArtifactsForOutput(
+      bookDir,
+      output,
+      language,
+    );
 
     const writes: Array<Promise<void>> = [
       writeFile(join(chaptersDir, filename), chapterContent, "utf-8"),
-      writeFile(join(storyDir, "current_state.md"), output.updatedState, "utf-8"),
-      writeFile(join(storyDir, "pending_hooks.md"), output.updatedHooks, "utf-8"),
+      writeFile(join(storyDir, "current_state.md"), runtimeStateArtifacts?.currentStateMarkdown ?? output.updatedState, "utf-8"),
+      writeFile(join(storyDir, "pending_hooks.md"), runtimeStateArtifacts?.hooksMarkdown ?? output.updatedHooks, "utf-8"),
     ];
+
+    if (runtimeStateArtifacts?.chapterSummariesMarkdown) {
+      writes.push(
+        writeFile(join(storyDir, "chapter_summaries.md"), runtimeStateArtifacts.chapterSummariesMarkdown, "utf-8"),
+      );
+    }
+
+    if (runtimeStateArtifacts?.snapshot ?? output.runtimeStateSnapshot) {
+      writes.push(saveRuntimeStateSnapshot(bookDir, runtimeStateArtifacts?.snapshot ?? output.runtimeStateSnapshot!));
+    }
 
     if (numericalSystem) {
       writes.push(
@@ -782,7 +839,13 @@ ${overrides}\n`;
     const writes: Array<Promise<void>> = [];
 
     // Append chapter summary to chapter_summaries.md
-    if (output.chapterSummary) {
+    if (!output.runtimeStateDelta && output.updatedChapterSummaries) {
+      writes.push(writeFile(
+        join(storyDir, "chapter_summaries.md"),
+        output.updatedChapterSummaries,
+        "utf-8",
+      ));
+    } else if (!output.runtimeStateDelta && output.chapterSummary) {
       writes.push(this.appendChapterSummary(storyDir, output.chapterSummary, language));
     }
 
@@ -802,6 +865,63 @@ ${overrides}\n`;
     }
 
     await Promise.all(writes);
+  }
+
+  private renderDeltaSummaryRow(delta: RuntimeStateDelta): string {
+    if (!delta.chapterSummary) return "";
+    const summary = delta.chapterSummary;
+    const row = [
+      summary.chapter,
+      summary.title,
+      summary.characters,
+      summary.events,
+      summary.stateChanges,
+      summary.hookActivity,
+      summary.mood,
+      summary.chapterType,
+    ].map((value) => String(value).replace(/\|/g, "\\|").trim()).join(" | ");
+
+    return `| ${row} |`;
+  }
+
+  private async buildRuntimeStateArtifactsIfPresent(
+    bookDir: string,
+    delta: RuntimeStateDelta | undefined,
+    language: "zh" | "en",
+  ): Promise<RuntimeStateArtifacts | null> {
+    if (!delta) return null;
+    return buildRuntimeStateArtifacts({
+      bookDir,
+      delta,
+      language,
+    });
+  }
+
+  private async resolveRuntimeStateArtifactsForOutput(
+    bookDir: string,
+    output: WriteChapterOutput,
+    language: "zh" | "en",
+  ): Promise<RuntimeStateArtifacts | null> {
+    if (!output.runtimeStateDelta) return null;
+    if (
+      output.runtimeStateSnapshot
+      && output.updatedChapterSummaries
+      && output.updatedState
+      && output.updatedHooks
+    ) {
+      return {
+        snapshot: output.runtimeStateSnapshot,
+        currentStateMarkdown: output.updatedState,
+        hooksMarkdown: output.updatedHooks,
+        chapterSummariesMarkdown: output.updatedChapterSummaries,
+      };
+    }
+
+    return buildRuntimeStateArtifacts({
+      bookDir,
+      delta: output.runtimeStateDelta,
+      language,
+    });
   }
 
   private async appendChapterSummary(

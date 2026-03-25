@@ -30,7 +30,7 @@ import type { LengthSpec, LengthTelemetry } from "../models/length-governance.js
 import { ChapterIntentSchema, type ContextPackage, type RuleStack } from "../models/input-governance.js";
 import { buildLengthSpec, countChapterLength, formatLengthCount, isOutsideHardRange, isOutsideSoftRange, resolveLengthCountingMode, type LengthLanguage } from "../utils/length-metrics.js";
 import { analyzeLongSpanFatigue } from "../utils/long-span-fatigue.js";
-import { parseChapterSummariesMarkdown, parseCurrentStateFacts, parsePendingHooksMarkdown } from "../utils/memory-retrieval.js";
+import { loadNarrativeMemorySeed, loadSnapshotCurrentStateFacts } from "../state/runtime-state-store.js";
 import { readFile, readdir, writeFile, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -1698,6 +1698,7 @@ ${matrix}`,
       rm(join(storyDir, "memory.db"), { force: true }),
       rm(join(storyDir, "memory.db-shm"), { force: true }),
       rm(join(storyDir, "memory.db-wal"), { force: true }),
+      rm(join(storyDir, "state"), { recursive: true, force: true }),
       rm(join(storyDir, "snapshots"), { recursive: true, force: true }),
     ]);
   }
@@ -1875,11 +1876,8 @@ ${matrix}`,
         const activeFacts = new Map<string, { id: number; object: string }>();
 
         for (let chapter = 0; chapter <= uptoChapter; chapter++) {
-          const snapshotPath = join(bookDir, "story", "snapshots", String(chapter), "current_state.md");
-          const markdown = await readFile(snapshotPath, "utf-8").catch(() => "");
-          if (!markdown) continue;
-
-          const snapshotFacts = parseCurrentStateFacts(markdown, chapter);
+          const snapshotFacts = await loadSnapshotCurrentStateFacts(bookDir, chapter);
+          if (snapshotFacts.length === 0) continue;
           const nextFacts = new Map<string, Omit<Fact, "id">>();
 
           for (const fact of snapshotFacts) {
@@ -1923,17 +1921,13 @@ ${matrix}`,
   }
 
   private async rebuildNarrativeMemoryIndex(bookDir: string): Promise<void> {
-    const storyDir = join(bookDir, "story");
-    const [chapterSummaries, pendingHooks] = await Promise.all([
-      readFile(join(storyDir, "chapter_summaries.md"), "utf-8").catch(() => ""),
-      readFile(join(storyDir, "pending_hooks.md"), "utf-8").catch(() => ""),
-    ]);
+    const memorySeed = await loadNarrativeMemorySeed(bookDir);
 
     const memoryDb = await this.withMemoryIndexRetry(() => {
       const db = new MemoryDB(bookDir);
       try {
-        db.replaceSummaries(parseChapterSummariesMarkdown(chapterSummaries));
-        db.replaceHooks(parsePendingHooksMarkdown(pendingHooks));
+        db.replaceSummaries(memorySeed.summaries);
+        db.replaceHooks(memorySeed.hooks);
         return db;
       } catch (error) {
         db.close();

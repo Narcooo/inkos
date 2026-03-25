@@ -1,6 +1,12 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import {
+  ChapterSummariesStateSchema,
+  CurrentStateStateSchema,
+  HooksStateSchema,
+} from "../models/runtime-state.js";
 import { MemoryDB, type Fact, type StoredHook, type StoredSummary } from "../state/memory-db.js";
+import { bootstrapStructuredStateFromMarkdown } from "../state/state-bootstrap.js";
 
 export interface MemorySelection {
   readonly summaries: ReadonlyArray<StoredSummary>;
@@ -24,13 +30,30 @@ export async function retrieveMemorySelection(params: {
   readonly mustKeep?: ReadonlyArray<string>;
 }): Promise<MemorySelection> {
   const storyDir = join(params.bookDir, "story");
-  const [currentStateMarkdown, volumeSummariesMarkdown] = await Promise.all([
+  const stateDir = join(storyDir, "state");
+  const fallbackChapter = Math.max(0, params.chapterNumber - 1);
+
+  await bootstrapStructuredStateFromMarkdown({
+    bookDir: params.bookDir,
+    fallbackChapter,
+  }).catch(() => undefined);
+
+  const [
+    currentStateMarkdown,
+    volumeSummariesMarkdown,
+    structuredCurrentState,
+    structuredHooks,
+    structuredSummaries,
+  ] = await Promise.all([
     readFile(join(storyDir, "current_state.md"), "utf-8").catch(() => ""),
     readFile(join(storyDir, "volume_summaries.md"), "utf-8").catch(() => ""),
+    readStructuredState(join(stateDir, "current_state.json"), CurrentStateStateSchema),
+    readStructuredState(join(stateDir, "hooks.json"), HooksStateSchema),
+    readStructuredState(join(stateDir, "chapter_summaries.json"), ChapterSummariesStateSchema),
   ]);
-  const facts = parseCurrentStateFacts(
+  const facts = structuredCurrentState?.facts ?? parseCurrentStateFacts(
     currentStateMarkdown,
-    Math.max(0, params.chapterNumber - 1),
+    fallbackChapter,
   );
   const queryTerms = extractQueryTerms(
     params.goal,
@@ -46,15 +69,17 @@ export async function retrieveMemorySelection(params: {
   if (memoryDb) {
     try {
       if (memoryDb.getChapterCount() === 0) {
-        const summariesMarkdown = await readFile(join(storyDir, "chapter_summaries.md"), "utf-8").catch(() => "");
-        const summaries = parseChapterSummariesMarkdown(summariesMarkdown);
+        const summaries = structuredSummaries?.rows ?? parseChapterSummariesMarkdown(
+          await readFile(join(storyDir, "chapter_summaries.md"), "utf-8").catch(() => ""),
+        );
         if (summaries.length > 0) {
           memoryDb.replaceSummaries(summaries);
         }
       }
       if (memoryDb.getActiveHooks().length === 0) {
-        const hooksMarkdown = await readFile(join(storyDir, "pending_hooks.md"), "utf-8").catch(() => "");
-        const hooks = parsePendingHooksMarkdown(hooksMarkdown);
+        const hooks = structuredHooks?.hooks ?? parsePendingHooksMarkdown(
+          await readFile(join(storyDir, "pending_hooks.md"), "utf-8").catch(() => ""),
+        );
         if (hooks.length > 0) {
           memoryDb.replaceHooks(hooks);
         }
@@ -69,7 +94,7 @@ export async function retrieveMemorySelection(params: {
           params.chapterNumber,
           queryTerms,
         ),
-        hooks: selectRelevantHooks(memoryDb.getActiveHooks(), queryTerms),
+        hooks: selectRelevantHooks(memoryDb.getActiveHooks(), queryTerms, params.chapterNumber),
         facts: selectRelevantFacts(memoryDb.getCurrentFacts(), queryTerms),
         volumeSummaries,
         dbPath: join(storyDir, "memory.db"),
@@ -83,12 +108,12 @@ export async function retrieveMemorySelection(params: {
     readFile(join(storyDir, "chapter_summaries.md"), "utf-8").catch(() => ""),
     readFile(join(storyDir, "pending_hooks.md"), "utf-8").catch(() => ""),
   ]);
-  const summaries = parseChapterSummariesMarkdown(summariesMarkdown);
-  const hooks = parsePendingHooksMarkdown(hooksMarkdown);
+  const summaries = structuredSummaries?.rows ?? parseChapterSummariesMarkdown(summariesMarkdown);
+  const hooks = structuredHooks?.hooks ?? parsePendingHooksMarkdown(hooksMarkdown);
 
   return {
     summaries: selectRelevantSummaries(summaries, params.chapterNumber, queryTerms),
-    hooks: selectRelevantHooks(hooks, queryTerms),
+    hooks: selectRelevantHooks(hooks, queryTerms, params.chapterNumber),
     facts: selectRelevantFacts(facts, queryTerms),
     volumeSummaries,
   };
@@ -174,6 +199,18 @@ export function renderHookSnapshot(
 function openMemoryDB(bookDir: string): MemoryDB | null {
   try {
     return new MemoryDB(bookDir);
+  } catch {
+    return null;
+  }
+}
+
+async function readStructuredState<T>(
+  path: string,
+  schema: { parse(value: unknown): T },
+): Promise<T | null> {
+  try {
+    const raw = await readFile(path, "utf-8");
+    return schema.parse(JSON.parse(raw));
   } catch {
     return null;
   }
@@ -415,6 +452,10 @@ function inferFactSubject(label: string): string {
   return "current_state";
 }
 
+function isUnresolvedHook(status: string): boolean {
+  return status.trim().length === 0 || /open|待定|推进|active|progressing/i.test(status);
+}
+
 function selectRelevantSummaries(
   summaries: ReadonlyArray<StoredSummary>,
   chapterNumber: number,
@@ -444,8 +485,9 @@ function selectRelevantSummaries(
 function selectRelevantHooks(
   hooks: ReadonlyArray<StoredHook>,
   queryTerms: ReadonlyArray<string>,
+  chapterNumber: number,
 ): StoredHook[] {
-  return hooks
+  const ranked = hooks
     .map((hook) => ({
       hook,
       score: scoreHook(hook, queryTerms),
@@ -454,10 +496,30 @@ function selectRelevantHooks(
         queryTerms,
       ),
     }))
-    .filter((entry) => entry.matched || entry.hook.status.trim().length === 0 || /open|待定|推进|active/i.test(entry.hook.status))
+    .filter((entry) => entry.matched || isUnresolvedHook(entry.hook.status));
+
+  const recentCutoff = Math.max(0, chapterNumber - 5);
+  const staleCutoff = Math.max(0, chapterNumber - 10);
+  const primary = ranked
+    .filter((entry) => (
+      entry.matched
+      || entry.hook.lastAdvancedChapter >= recentCutoff
+      || entry.hook.startChapter >= recentCutoff
+    ))
     .sort((left, right) => right.score - left.score || right.hook.lastAdvancedChapter - left.hook.lastAdvancedChapter)
-    .slice(0, 3)
-    .map((entry) => entry.hook);
+    .slice(0, 3);
+
+  const selectedIds = new Set(primary.map((entry) => entry.hook.hookId));
+  const stale = ranked
+    .filter((entry) => (
+      !selectedIds.has(entry.hook.hookId)
+      && entry.hook.lastAdvancedChapter <= staleCutoff
+      && isUnresolvedHook(entry.hook.status)
+    ))
+    .sort((left, right) => left.hook.lastAdvancedChapter - right.hook.lastAdvancedChapter || right.score - left.score)
+    .slice(0, 1);
+
+  return [...primary, ...stale].map((entry) => entry.hook);
 }
 
 function selectRelevantFacts(

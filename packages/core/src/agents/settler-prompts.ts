@@ -73,62 +73,64 @@ ${buildSettlerOutputFormat(genreProfile)}
 }
 
 function buildSettlerOutputFormat(gp: GenreProfile): string {
-  const postSettlement = gp.numericalSystem
-    ? `=== POST_SETTLEMENT ===
-（如有数值变动，必须输出Markdown表格）
-| 结算项 | 本章记录 | 备注 |
-|--------|----------|------|
-| 资源账本 | 期初X / 增量+Y / 期末Z | 无增量写+0 |
-| 重要资源 | 资源名 -> 贡献+Y（依据） | 无写"无" |
-| 伏笔变动 | 新增/回收/延后 Hook | 同步更新伏笔池 |`
-    : `=== POST_SETTLEMENT ===
-（如有伏笔变动，必须输出）
-| 结算项 | 本章记录 | 备注 |
-|--------|----------|------|
-| 伏笔变动 | 新增/回收/延后 Hook | 同步更新伏笔池 |`;
+  const chapterTypeExample = gp.chapterTypes.length > 0
+    ? gp.chapterTypes[0]
+    : "主线推进";
 
-  const updatedLedger = gp.numericalSystem
-    ? `\n=== UPDATED_LEDGER ===\n(更新后的完整资源账本，Markdown表格格式)`
-    : "";
+  return `=== POST_SETTLEMENT ===
+（简要说明本章有哪些状态变动、伏笔推进、结算注意事项；允许 Markdown 表格或要点）
 
-  return `${postSettlement}
+=== RUNTIME_STATE_DELTA ===
+（必须输出 JSON，不要输出 Markdown，不要加解释）
+\`\`\`json
+{
+  "chapter": 12,
+  "currentStatePatch": {
+    "currentLocation": "可选",
+    "protagonistState": "可选",
+    "currentGoal": "可选",
+    "currentConstraint": "可选",
+    "currentAlliances": "可选",
+    "currentConflict": "可选"
+  },
+  "hookOps": {
+    "upsert": [
+      {
+        "hookId": "mentor-oath",
+        "startChapter": 8,
+        "type": "relationship",
+        "status": "progressing",
+        "lastAdvancedChapter": 12,
+        "expectedPayoff": "揭开师债真相",
+        "notes": "本章为何推进/延后/回收"
+      }
+    ],
+    "resolve": ["已回收的 hookId"],
+    "defer": ["需要标记延后的 hookId"]
+  },
+  "chapterSummary": {
+    "chapter": 12,
+    "title": "本章标题",
+    "characters": "角色1,角色2",
+    "events": "一句话概括关键事件",
+    "stateChanges": "一句话概括状态变化",
+    "hookActivity": "mentor-oath advanced",
+    "mood": "紧绷",
+    "chapterType": "${chapterTypeExample}"
+  },
+  "subplotOps": [],
+  "emotionalArcOps": [],
+  "characterMatrixOps": [],
+  "notes": []
+}
+\`\`\`
 
-=== UPDATED_STATE ===
-(更新后的完整状态卡，Markdown表格格式)
-${updatedLedger}
-=== UPDATED_HOOKS ===
-(更新后的完整伏笔池，Markdown表格格式)
-
-=== CHAPTER_SUMMARY ===
-(本章摘要，Markdown表格格式，必须包含以下列)
-| 章节 | 标题 | 出场人物 | 关键事件 | 状态变化 | 伏笔动态 | 情绪基调 | 章节类型 |
-|------|------|----------|----------|----------|----------|----------|----------|
-| N | 本章标题 | 角色1,角色2 | 一句话概括 | 关键变化 | H01埋设/H02推进 | 情绪走向 | ${gp.chapterTypes.length > 0 ? gp.chapterTypes.join("/") : "过渡/冲突/高潮/收束"} |
-
-=== UPDATED_SUBPLOTS ===
-(更新后的完整支线进度板，Markdown表格格式)
-| 支线ID | 支线名 | 相关角色 | 起始章 | 最近活跃章 | 距今章数 | 状态 | 进度概述 | 回收ETA |
-|--------|--------|----------|--------|------------|----------|------|----------|---------|
-
-=== UPDATED_EMOTIONAL_ARCS ===
-(更新后的完整情感弧线，Markdown表格格式)
-| 角色 | 章节 | 情绪状态 | 触发事件 | 强度(1-10) | 弧线方向 |
-|------|------|----------|----------|------------|----------|
-
-=== UPDATED_CHARACTER_MATRIX ===
-(更新后的角色交互矩阵，分三个子表)
-
-### 角色档案
-| 角色 | 核心标签 | 反差细节 | 说话风格 | 性格底色 | 与主角关系 | 核心动机 | 当前目标 |
-|------|----------|----------|----------|----------|------------|----------|----------|
-
-### 相遇记录
-| 角色A | 角色B | 首次相遇章 | 最近交互章 | 关系性质 | 关系变化 |
-|-------|-------|------------|------------|----------|----------|
-
-### 信息边界
-| 角色 | 已知信息 | 未知信息 | 信息来源章 |
-|------|----------|----------|------------|`;
+规则：
+1. 只输出增量，不要重写完整 truth files
+2. 所有章节号字段都必须是整数，不能写自然语言
+3. 如果本章推进了旧 hook，lastAdvancedChapter 必须等于当前章号
+4. 如果回收或延后 hook，必须放在 resolve / defer 数组里
+5. chapterSummary.chapter 必须等于当前章节号`;
 }
 
 export function buildSettlerUserPrompt(params: {

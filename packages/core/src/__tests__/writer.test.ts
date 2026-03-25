@@ -214,6 +214,149 @@ describe("WriterAgent", () => {
     }
   });
 
+  it("builds structured runtime-state artifacts when settler returns a delta", async () => {
+    const root = await mkdtemp(join(tmpdir(), "inkos-writer-runtime-state-test-"));
+    const bookDir = join(root, "book");
+    const storyDir = join(bookDir, "story");
+    await mkdir(storyDir, { recursive: true });
+
+    await Promise.all([
+      writeFile(join(storyDir, "story_bible.md"), "# Story Bible\n\n- The jade seal cannot be destroyed.\n", "utf-8"),
+      writeFile(join(storyDir, "volume_outline.md"), "# Volume Outline\n\n## Chapter 3\nTrace the debt through the river-port ledger.\n", "utf-8"),
+      writeFile(join(storyDir, "style_guide.md"), "# Style Guide\n\n- Keep the prose restrained.\n", "utf-8"),
+      writeFile(join(storyDir, "current_state.md"), [
+        "# Current State",
+        "",
+        "| Field | Value |",
+        "| --- | --- |",
+        "| Current Chapter | 2 |",
+        "| Current Goal | Find the vanished mentor |",
+        "| Current Conflict | Guild pressure keeps colliding with the debt trail |",
+        "",
+      ].join("\n"), "utf-8"),
+      writeFile(join(storyDir, "pending_hooks.md"), [
+        "| hook_id | start_chapter | type | status | last_advanced | expected_payoff | notes |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
+        "| mentor-debt | 1 | relationship | open | 2 | 6 | Still unresolved |",
+        "",
+      ].join("\n"), "utf-8"),
+      writeFile(join(storyDir, "chapter_summaries.md"), [
+        "| chapter | title | characters | events | stateChanges | hookActivity | mood | chapterType |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| 2 | Old Ledger | Lin Yue | Lin Yue finds the old ledger | Debt sharpens | mentor-debt advanced | tense | mainline |",
+        "",
+      ].join("\n"), "utf-8"),
+    ]);
+
+    const agent = new WriterAgent({
+      client: {
+        provider: "openai",
+        apiFormat: "chat",
+        stream: false,
+        defaults: {
+          temperature: 0.7,
+          maxTokens: 4096,
+          thinkingBudget: 0, maxTokensCap: null,
+          extra: {},
+        },
+      },
+      model: "test-model",
+      projectRoot: root,
+    });
+
+    vi.spyOn(WriterAgent.prototype as never, "chat" as never)
+      .mockResolvedValueOnce({
+        content: [
+          "=== CHAPTER_TITLE ===",
+          "River Ledger",
+          "",
+          "=== CHAPTER_CONTENT ===",
+          "Lin Yue follows the debt into the river-port ledger.",
+          "",
+          "=== PRE_WRITE_CHECK ===",
+          "- ok",
+        ].join("\n"),
+        usage: ZERO_USAGE,
+      })
+      .mockResolvedValueOnce({
+        content: "=== OBSERVATIONS ===\n- observed",
+        usage: ZERO_USAGE,
+      })
+      .mockResolvedValueOnce({
+        content: [
+          "=== POST_SETTLEMENT ===",
+          "- mentor-debt advanced",
+          "",
+          "=== RUNTIME_STATE_DELTA ===",
+          "```json",
+          JSON.stringify({
+            chapter: 3,
+            currentStatePatch: {
+              currentGoal: "Trace the debt through the river-port ledger.",
+              currentConflict: "Guild pressure keeps colliding with the debt trail.",
+            },
+            hookOps: {
+              upsert: [
+                {
+                  hookId: "mentor-debt",
+                  startChapter: 1,
+                  type: "relationship",
+                  status: "progressing",
+                  lastAdvancedChapter: 3,
+                  expectedPayoff: "Reveal the debt.",
+                  notes: "The ledger clue sharpens the line.",
+                },
+              ],
+              resolve: [],
+              defer: [],
+            },
+            chapterSummary: {
+              chapter: 3,
+              title: "River Ledger",
+              characters: "Lin Yue",
+              events: "Lin Yue follows the debt into the river-port ledger.",
+              stateChanges: "The debt line sharpens.",
+              hookActivity: "mentor-debt advanced",
+              mood: "tense",
+              chapterType: "investigation",
+            },
+            notes: [],
+          }, null, 2),
+          "```",
+        ].join("\n"),
+        usage: ZERO_USAGE,
+      });
+
+    try {
+      const output = await agent.writeChapter({
+        book: {
+          id: "writer-book",
+          title: "Writer Book",
+          platform: "tomato",
+          genre: "xuanhuan",
+          status: "active",
+          targetChapters: 20,
+          chapterWordCount: 2200,
+          language: "en",
+          createdAt: "2026-03-25T00:00:00.000Z",
+          updatedAt: "2026-03-25T00:00:00.000Z",
+        },
+        bookDir,
+        chapterNumber: 3,
+        lengthSpec: buildLengthSpec(2200, "en"),
+      });
+
+      expect(output.runtimeStateDelta?.chapter).toBe(3);
+      expect(output.runtimeStateSnapshot?.manifest.lastAppliedChapter).toBe(3);
+      expect(output.updatedState).toContain("Trace the debt through the river-port ledger.");
+      expect(output.updatedHooks).toContain("mentor-debt");
+      expect(output.updatedChapterSummaries).toContain("River Ledger");
+      expect(output.chapterSummary).toContain("| 3 | River Ledger |");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("logs localized phase messages for Chinese books", async () => {
     const root = await mkdtemp(join(tmpdir(), "inkos-writer-test-"));
     const bookDir = join(root, "book");

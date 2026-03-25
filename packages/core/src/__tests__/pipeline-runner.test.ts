@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createRequire } from "node:module";
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,6 +18,18 @@ import type { ChapterMeta } from "../models/chapter.js";
 import { MemoryDB } from "../state/memory-db.js";
 import * as memoryDbModule from "../state/memory-db.js";
 import { countChapterLength } from "../utils/length-metrics.js";
+
+const require = createRequire(import.meta.url);
+const hasNodeSqlite = (() => {
+  try {
+    require("node:sqlite");
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
+const sqliteIt = hasNodeSqlite ? it : it.skip;
 
 const ZERO_USAGE = {
   promptTokens: 0,
@@ -461,7 +474,7 @@ describe("PipelineRunner", () => {
     }
   });
 
-  it("syncs current-state facts into memory.db after drafting a chapter", async () => {
+  sqliteIt("syncs current-state facts into memory.db after drafting a chapter", async () => {
     const { root, runner, state, bookId } = await createRunnerFixture();
     const chapterOneState = createStateCard({
       chapter: 1,
@@ -531,6 +544,101 @@ describe("PipelineRunner", () => {
             }),
           ]),
         );
+      } finally {
+        memoryDb.close();
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  sqliteIt("syncs narrative memory from structured runtime state instead of stale markdown projections", async () => {
+    const { root, runner, state, bookId } = await createRunnerFixture();
+    const storyDir = join(state.bookDir(bookId), "story");
+    const stateDir = join(storyDir, "state");
+    await mkdir(stateDir, { recursive: true });
+
+    await Promise.all([
+      writeFile(
+        join(storyDir, "chapter_summaries.md"),
+        [
+          "| chapter | title | characters | events | stateChanges | hookActivity | mood | chapterType |",
+          "| --- | --- | --- | --- | --- | --- | --- | --- |",
+          "| 1 | Markdown Summary | Lin Yue | Old markdown event | Old markdown state | markdown-hook advanced | tense | fallback |",
+          "",
+        ].join("\n"),
+        "utf-8",
+      ),
+      writeFile(
+        join(storyDir, "pending_hooks.md"),
+        [
+          "| hook_id | start_chapter | type | status | last_advanced | expected_payoff | notes |",
+          "| --- | --- | --- | --- | --- | --- | --- |",
+          "| markdown-hook | 1 | mystery | open | 1 | 4 | Old markdown hook |",
+          "",
+        ].join("\n"),
+        "utf-8",
+      ),
+      writeFile(join(stateDir, "manifest.json"), JSON.stringify({
+        schemaVersion: 2,
+        language: "en",
+        lastAppliedChapter: 3,
+        projectionVersion: 1,
+        migrationWarnings: [],
+      }, null, 2), "utf-8"),
+      writeFile(join(stateDir, "current_state.json"), JSON.stringify({
+        chapter: 3,
+        facts: [],
+      }, null, 2), "utf-8"),
+      writeFile(join(stateDir, "hooks.json"), JSON.stringify({
+        hooks: [
+          {
+            hookId: "structured-hook",
+            startChapter: 2,
+            type: "relationship",
+            status: "progressing",
+            lastAdvancedChapter: 3,
+            expectedPayoff: "Reveal the mentor ledger.",
+            notes: "Structured hook should win.",
+          },
+        ],
+      }, null, 2), "utf-8"),
+      writeFile(join(stateDir, "chapter_summaries.json"), JSON.stringify({
+        rows: [
+          {
+            chapter: 3,
+            title: "Structured Summary",
+            characters: "Lin Yue",
+            events: "Structured runtime state event.",
+            stateChanges: "Structured runtime state shift.",
+            hookActivity: "structured-hook advanced",
+            mood: "grim",
+            chapterType: "mainline",
+          },
+        ],
+      }, null, 2), "utf-8"),
+    ]);
+
+    try {
+      await (runner as unknown as {
+        syncNarrativeMemoryIndex: (targetBookId: string) => Promise<void>;
+      }).syncNarrativeMemoryIndex(bookId);
+
+      const memoryDb = new MemoryDB(state.bookDir(bookId));
+      try {
+        expect(memoryDb.getSummaries(1, 10)).toEqual([
+          expect.objectContaining({
+            chapter: 3,
+            title: "Structured Summary",
+            events: "Structured runtime state event.",
+          }),
+        ]);
+        expect(memoryDb.getActiveHooks()).toEqual([
+          expect.objectContaining({
+            hookId: "structured-hook",
+            status: "progressing",
+          }),
+        ]);
       } finally {
         memoryDb.close();
       }
@@ -631,7 +739,7 @@ describe("PipelineRunner", () => {
     }
   });
 
-  it("recovers when sqlite-unavailable signature is transient and probe succeeds", async () => {
+  sqliteIt("recovers when sqlite-unavailable signature is transient and probe succeeds", async () => {
     const { logger, warnings } = createCaptureLogger();
     const { root, runner, state, bookId } = await createRunnerFixture({
       logger,
@@ -707,7 +815,7 @@ describe("PipelineRunner", () => {
     }
   });
 
-  it("retries transient sqlite busy errors during narrative memory sync", async () => {
+  sqliteIt("retries transient sqlite busy errors during narrative memory sync", async () => {
     const { logger, warnings } = createCaptureLogger();
     const { root, runner, state, bookId } = await createRunnerFixture({
       logger,
@@ -1579,6 +1687,234 @@ describe("PipelineRunner", () => {
     await rm(root, { recursive: true, force: true });
   });
 
+  it("persists structured runtime state and rendered projections from writer delta output", async () => {
+    const { root, runner, state, bookId } = await createRunnerFixture({
+      inputGovernanceMode: "legacy",
+    });
+
+    vi.spyOn(WriterAgent.prototype, "writeChapter").mockResolvedValue(
+      createWriterOutput({
+        content: "Lin Yue follows the debt into the river-port ledger.",
+        wordCount: countChapterLength("Lin Yue follows the debt into the river-port ledger.", "en_words"),
+        postWriteErrors: [],
+        postWriteWarnings: [],
+        runtimeStateDelta: {
+          chapter: 1,
+          currentStatePatch: {
+            currentGoal: "Follow the debt through the river-port ledger.",
+            currentConflict: "Guild pressure keeps pulling against the debt trail.",
+          },
+          hookOps: {
+            upsert: [
+              {
+                hookId: "mentor-debt",
+                startChapter: 1,
+                type: "relationship",
+                status: "open",
+                lastAdvancedChapter: 1,
+                expectedPayoff: "Reveal why the mentor vanished.",
+                notes: "The river-port ledger sharpens the debt line.",
+              },
+            ],
+            resolve: [],
+            defer: [],
+          },
+          chapterSummary: {
+            chapter: 1,
+            title: "River Ledger",
+            characters: "Lin Yue",
+            events: "Lin Yue follows the debt into the river-port ledger.",
+            stateChanges: "The debt line sharpens.",
+            hookActivity: "mentor-debt advanced",
+            mood: "tense",
+            chapterType: "investigation",
+          },
+          notes: [],
+        },
+      }),
+    );
+    vi.spyOn(ContinuityAuditor.prototype, "auditChapter").mockResolvedValue(
+      createAuditResult({
+        passed: true,
+        issues: [],
+        summary: "clean",
+      }),
+    );
+
+    await runner.writeNextChapter(bookId);
+
+    const storyDir = join(state.bookDir(bookId), "story");
+    const currentState = await readFile(join(storyDir, "current_state.md"), "utf-8");
+    const hooks = await readFile(join(storyDir, "pending_hooks.md"), "utf-8");
+    const summaries = await readFile(join(storyDir, "chapter_summaries.md"), "utf-8");
+    const manifest = JSON.parse(await readFile(join(storyDir, "state", "manifest.json"), "utf-8"));
+    const stateCurrent = JSON.parse(await readFile(join(storyDir, "state", "current_state.json"), "utf-8"));
+    const stateHooks = JSON.parse(await readFile(join(storyDir, "state", "hooks.json"), "utf-8"));
+    const stateSummaries = JSON.parse(await readFile(join(storyDir, "state", "chapter_summaries.json"), "utf-8"));
+
+    expect(currentState).toContain("Follow the debt through the river-port ledger.");
+    expect(hooks).toContain("mentor-debt");
+    expect(summaries).toContain("River Ledger");
+    expect(manifest.lastAppliedChapter).toBe(1);
+    expect(stateCurrent.chapter).toBe(1);
+    expect(stateHooks.hooks[0]?.hookId).toBe("mentor-debt");
+    expect(stateSummaries.rows[0]?.title).toBe("River Ledger");
+
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it("does not corrupt persisted runtime state when writer delta is invalid", async () => {
+    const { root, runner, state, bookId } = await createRunnerFixture({
+      inputGovernanceMode: "legacy",
+    });
+    const storyDir = join(state.bookDir(bookId), "story");
+    await mkdir(join(storyDir, "state"), { recursive: true });
+    await Promise.all([
+      writeFile(join(storyDir, "current_state.md"), createStateCard({
+        chapter: 0,
+        location: "Ashen ferry crossing",
+        protagonistState: "Lin Yue still hides the oath token.",
+        goal: "Find the vanished mentor.",
+        conflict: "The mentor debt is still personal.",
+      }), "utf-8"),
+      writeFile(join(storyDir, "pending_hooks.md"), "# Pending Hooks\n", "utf-8"),
+      writeFile(join(storyDir, "chapter_summaries.md"), "# Chapter Summaries\n", "utf-8"),
+      writeFile(join(storyDir, "state", "manifest.json"), JSON.stringify({
+        schemaVersion: 2,
+        language: "en",
+        lastAppliedChapter: 0,
+        projectionVersion: 1,
+        migrationWarnings: [],
+      }, null, 2), "utf-8"),
+      writeFile(join(storyDir, "state", "current_state.json"), JSON.stringify({
+        chapter: 0,
+        facts: [],
+      }, null, 2), "utf-8"),
+      writeFile(join(storyDir, "state", "hooks.json"), JSON.stringify({
+        hooks: [],
+      }, null, 2), "utf-8"),
+      writeFile(join(storyDir, "state", "chapter_summaries.json"), JSON.stringify({
+        rows: [],
+      }, null, 2), "utf-8"),
+    ]);
+
+    const beforeState = await readFile(join(storyDir, "current_state.md"), "utf-8");
+    const beforeManifest = await readFile(join(storyDir, "state", "manifest.json"), "utf-8");
+
+    vi.spyOn(WriterAgent.prototype, "writeChapter").mockResolvedValue(
+      createWriterOutput({
+        content: "Broken chapter body.",
+        wordCount: countChapterLength("Broken chapter body.", "en_words"),
+        postWriteErrors: [],
+        postWriteWarnings: [],
+        runtimeStateDelta: {
+          chapter: 0,
+          hookOps: {
+            upsert: [],
+            resolve: [],
+            defer: [],
+          },
+          notes: [],
+        } as unknown as NonNullable<ReturnType<typeof createWriterOutput>["runtimeStateDelta"]>,
+      }),
+    );
+    vi.spyOn(ContinuityAuditor.prototype, "auditChapter").mockResolvedValue(
+      createAuditResult({
+        passed: true,
+        issues: [],
+        summary: "clean",
+      }),
+    );
+
+    await expect(runner.writeNextChapter(bookId)).rejects.toThrow();
+
+    await expect(readFile(join(storyDir, "current_state.md"), "utf-8")).resolves.toBe(beforeState);
+    await expect(readFile(join(storyDir, "state", "manifest.json"), "utf-8")).resolves.toBe(beforeManifest);
+
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it("rolls back persisted runtime state when writer delta contains natural-language numeric drift", async () => {
+    const { root, runner, state, bookId } = await createRunnerFixture({
+      inputGovernanceMode: "legacy",
+    });
+    const storyDir = join(state.bookDir(bookId), "story");
+    await mkdir(join(storyDir, "state"), { recursive: true });
+    await Promise.all([
+      writeFile(join(storyDir, "current_state.md"), createStateCard({
+        chapter: 0,
+        location: "Ashen ferry crossing",
+        protagonistState: "Lin Yue still hides the oath token.",
+        goal: "Find the vanished mentor.",
+        conflict: "The mentor debt is still personal.",
+      }), "utf-8"),
+      writeFile(join(storyDir, "pending_hooks.md"), "# Pending Hooks\n", "utf-8"),
+      writeFile(join(storyDir, "chapter_summaries.md"), "# Chapter Summaries\n", "utf-8"),
+      writeFile(join(storyDir, "state", "manifest.json"), JSON.stringify({
+        schemaVersion: 2,
+        language: "en",
+        lastAppliedChapter: 0,
+        projectionVersion: 1,
+        migrationWarnings: [],
+      }, null, 2), "utf-8"),
+      writeFile(join(storyDir, "state", "current_state.json"), JSON.stringify({
+        chapter: 0,
+        facts: [],
+      }, null, 2), "utf-8"),
+      writeFile(join(storyDir, "state", "hooks.json"), JSON.stringify({
+        hooks: [],
+      }, null, 2), "utf-8"),
+      writeFile(join(storyDir, "state", "chapter_summaries.json"), JSON.stringify({
+        rows: [],
+      }, null, 2), "utf-8"),
+    ]);
+
+    const beforeState = await readFile(join(storyDir, "current_state.md"), "utf-8");
+    const beforeManifest = await readFile(join(storyDir, "state", "manifest.json"), "utf-8");
+
+    vi.spyOn(WriterAgent.prototype, "writeChapter").mockResolvedValue(
+      createWriterOutput({
+        content: "Broken chapter body.",
+        wordCount: countChapterLength("Broken chapter body.", "en_words"),
+        postWriteErrors: [],
+        postWriteWarnings: [],
+        runtimeStateDelta: {
+          chapter: 1,
+          hookOps: {
+            upsert: [
+              {
+                hookId: "mentor-debt",
+                startChapter: 1,
+                type: "relationship",
+                status: "open",
+                lastAdvancedChapter: "chapter one",
+                expectedPayoff: "Reveal the debt.",
+                notes: "Bad numeric drift.",
+              },
+            ],
+            resolve: [],
+            defer: [],
+          },
+          notes: [],
+        } as unknown as NonNullable<ReturnType<typeof createWriterOutput>["runtimeStateDelta"]>,
+      }),
+    );
+    vi.spyOn(ContinuityAuditor.prototype, "auditChapter").mockResolvedValue(
+      createAuditResult({
+        passed: true,
+        issues: [],
+        summary: "clean",
+      }),
+    );
+
+    await expect(runner.writeNextChapter(bookId)).rejects.toThrow();
+
+    await expect(readFile(join(storyDir, "current_state.md"), "utf-8")).resolves.toBe(beforeState);
+    await expect(readFile(join(storyDir, "state", "manifest.json"), "utf-8")).resolves.toBe(beforeManifest);
+
+    await rm(root, { recursive: true, force: true });
+  });
+
   it("reports only resumed chapters in import results", async () => {
     const { root, runner, state, bookId } = await createRunnerFixture();
     const now = "2026-03-19T00:00:00.000Z";
@@ -1635,7 +1971,7 @@ describe("PipelineRunner", () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  it("rebuilds fact history from imported chapter snapshots", async () => {
+  sqliteIt("rebuilds fact history from imported chapter snapshots", async () => {
     const { root, runner, state, bookId } = await createRunnerFixture();
 
     vi.spyOn(ArchitectAgent.prototype, "generateFoundationFromImport").mockResolvedValue({
@@ -1711,6 +2047,87 @@ describe("PipelineRunner", () => {
               object: "The merchant guild now contests the mentor trail.",
               validFromChapter: 2,
               sourceChapter: 2,
+            }),
+          ]),
+        );
+      } finally {
+        memoryDb.close();
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  sqliteIt("rebuilds fact history from structured snapshot state instead of stale markdown snapshots", async () => {
+    const { root, runner, state, bookId } = await createRunnerFixture();
+    const storyDir = join(state.bookDir(bookId), "story");
+    const snapshotOneDir = join(storyDir, "snapshots", "1");
+    const snapshotOneStateDir = join(snapshotOneDir, "state");
+    await mkdir(snapshotOneStateDir, { recursive: true });
+
+    await Promise.all([
+      writeFile(
+        join(snapshotOneDir, "current_state.md"),
+        createStateCard({
+          chapter: 1,
+          location: "Old markdown ferry crossing",
+          protagonistState: "Markdown state still hides the oath token.",
+          goal: "Follow the markdown trail.",
+          conflict: "Old markdown conflict.",
+        }),
+        "utf-8",
+      ),
+      writeFile(join(snapshotOneStateDir, "current_state.json"), JSON.stringify({
+        chapter: 1,
+        facts: [
+          {
+            subject: "current",
+            predicate: "Current Location",
+            object: "Structured watchtower",
+            validFromChapter: 1,
+            validUntilChapter: null,
+            sourceChapter: 1,
+          },
+          {
+            subject: "protagonist",
+            predicate: "Current Conflict",
+            object: "Structured conflict replaces markdown drift.",
+            validFromChapter: 1,
+            validUntilChapter: null,
+            sourceChapter: 1,
+          },
+        ],
+      }, null, 2), "utf-8"),
+    ]);
+
+    try {
+      await (runner as unknown as {
+        syncCurrentStateFactHistory: (targetBookId: string, uptoChapter: number) => Promise<void>;
+      }).syncCurrentStateFactHistory(bookId, 1);
+
+      const memoryDb = new MemoryDB(state.bookDir(bookId));
+      try {
+        expect(memoryDb.getCurrentFacts()).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              predicate: "Current Location",
+              object: "Structured watchtower",
+              validFromChapter: 1,
+            }),
+            expect.objectContaining({
+              predicate: "Current Conflict",
+              object: "Structured conflict replaces markdown drift.",
+              validFromChapter: 1,
+            }),
+          ]),
+        );
+        expect(memoryDb.getCurrentFacts()).not.toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              object: "Old markdown ferry crossing",
+            }),
+            expect.objectContaining({
+              object: "Old markdown conflict.",
             }),
           ]),
         );
@@ -2060,7 +2477,7 @@ describe("PipelineRunner", () => {
     }
   });
 
-  it("rebuilds current facts from the revised chapter snapshot", async () => {
+  sqliteIt("rebuilds current facts from the revised chapter snapshot", async () => {
     const { root, runner, state, bookId } = await createRunnerFixture();
     const storyDir = join(state.bookDir(bookId), "story");
     const chaptersDir = join(state.bookDir(bookId), "chapters");

@@ -15,3 +15,5 @@ test-project/
 .worktrees/
 docs/
 novel-to-comic-research.docx
+.pnpm-store/
+tmp/

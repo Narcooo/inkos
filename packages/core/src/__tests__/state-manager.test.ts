@@ -262,6 +262,30 @@ describe("StateManager", () => {
       expect(hooks).toBe("# Hooks at ch1");
     });
 
+    it("copies structured runtime state into snapshot/state when present", async () => {
+      const stateDir = manager.stateDir(bookId);
+      await mkdir(stateDir, { recursive: true });
+      await writeFile(
+        join(stateDir, "manifest.json"),
+        JSON.stringify({
+          schemaVersion: 2,
+          language: "en",
+          lastAppliedChapter: 1,
+          projectionVersion: 1,
+          migrationWarnings: [],
+        }, null, 2),
+        "utf-8",
+      );
+
+      await manager.snapshotState(bookId, 1);
+
+      const snapshotManifest = await readFile(
+        join(manager.bookDir(bookId), "story", "snapshots", "1", "state", "manifest.json"),
+        "utf-8",
+      );
+      expect(snapshotManifest).toContain("\"schemaVersion\": 2");
+    });
+
     it("restores state from a previous snapshot", async () => {
       await manager.snapshotState(bookId, 1);
 
@@ -298,6 +322,41 @@ describe("StateManager", () => {
         "utf-8",
       );
       expect(ledger).toBe("# Ledger at ch1");
+    });
+
+    it("restores structured runtime state files from snapshot/state", async () => {
+      const stateDir = manager.stateDir(bookId);
+      await mkdir(stateDir, { recursive: true });
+      await writeFile(
+        join(stateDir, "manifest.json"),
+        JSON.stringify({
+          schemaVersion: 2,
+          language: "en",
+          lastAppliedChapter: 1,
+          projectionVersion: 1,
+          migrationWarnings: [],
+        }, null, 2),
+        "utf-8",
+      );
+
+      await manager.snapshotState(bookId, 1);
+      await writeFile(
+        join(stateDir, "manifest.json"),
+        JSON.stringify({
+          schemaVersion: 2,
+          language: "en",
+          lastAppliedChapter: 9,
+          projectionVersion: 1,
+          migrationWarnings: [],
+        }, null, 2),
+        "utf-8",
+      );
+
+      const restored = await manager.restoreState(bookId, 1);
+      expect(restored).toBe(true);
+
+      const manifest = await readFile(join(stateDir, "manifest.json"), "utf-8");
+      expect(manifest).toContain("\"lastAppliedChapter\": 1");
     });
 
     it("returns false when restoring from non-existent snapshot", async () => {
@@ -415,6 +474,12 @@ describe("StateManager", () => {
         join(tempDir, "books", "my-book"),
       );
     });
+
+    it("stateDir returns <bookDir>/story/state", () => {
+      expect(manager.stateDir("my-book")).toBe(
+        join(tempDir, "books", "my-book", "story", "state"),
+      );
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -489,6 +554,55 @@ describe("StateManager", () => {
       expect(authorIntent).toContain("# 作者意图");
       expect(currentFocus).toContain("# 当前聚焦");
       expect(currentFocus).not.toContain("# Current Focus");
+    });
+
+    it("bootstraps structured runtime state from legacy markdown truth files", async () => {
+      const bookId = "runtime-state-book";
+      const storyDir = join(manager.bookDir(bookId), "story");
+      await mkdir(storyDir, { recursive: true });
+      await Promise.all([
+        writeFile(
+          join(storyDir, "current_state.md"),
+          [
+            "# Current State",
+            "",
+            "| Field | Value |",
+            "| --- | --- |",
+            "| Current Chapter | 3 |",
+            "| Current Goal | Trace the mentor debt |",
+            "",
+          ].join("\n"),
+          "utf-8",
+        ),
+        writeFile(
+          join(storyDir, "pending_hooks.md"),
+          [
+            "| hook_id | start_chapter | type | status | last_advanced | expected_payoff | notes |",
+            "| --- | --- | --- | --- | --- | --- | --- |",
+            "| mentor-debt | 1 | relationship | open | 3 | 10 | Still unresolved |",
+            "",
+          ].join("\n"),
+          "utf-8",
+        ),
+        writeFile(
+          join(storyDir, "chapter_summaries.md"),
+          [
+            "| chapter | title | characters | events | stateChanges | hookActivity | mood | chapterType |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- |",
+            "| 3 | River Ledger | Lin Yue | He checks the old ledger | Debt sharpens | mentor-debt advanced | tense | mainline |",
+            "",
+          ].join("\n"),
+          "utf-8",
+        ),
+      ]);
+
+      await manager.ensureRuntimeState(bookId, 3);
+
+      const manifest = await readFile(join(manager.stateDir(bookId), "manifest.json"), "utf-8");
+      const currentState = await readFile(join(manager.stateDir(bookId), "current_state.json"), "utf-8");
+
+      expect(manifest).toContain("\"schemaVersion\": 2");
+      expect(currentState).toContain("\"chapter\": 3");
     });
   });
 });

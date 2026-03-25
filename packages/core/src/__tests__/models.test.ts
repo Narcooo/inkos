@@ -23,6 +23,13 @@ import {
   LengthTelemetrySchema,
   LengthWarningSchema,
 } from "../models/length-governance.js";
+import {
+  RuntimeStateDeltaSchema,
+  StateManifestSchema,
+  HooksStateSchema,
+  ChapterSummariesStateSchema,
+  CurrentStateStateSchema,
+} from "../models/runtime-state.js";
 
 // ---------------------------------------------------------------------------
 // BookConfig
@@ -701,5 +708,128 @@ describe("Length governance schemas", () => {
 
     expect(result.chapter).toBe(12);
     expect(result.actual).toBe(3100);
+  });
+});
+
+describe("Runtime state schemas", () => {
+  it("accepts a valid state manifest", () => {
+    const result = StateManifestSchema.parse({
+      schemaVersion: 2,
+      language: "en",
+      lastAppliedChapter: 12,
+      projectionVersion: 1,
+      migrationWarnings: [],
+    });
+
+    expect(result.language).toBe("en");
+    expect(result.lastAppliedChapter).toBe(12);
+  });
+
+  it("accepts hook, summary, and current-state payloads", () => {
+    const hooks = HooksStateSchema.parse({
+      hooks: [
+        {
+          hookId: "mentor-debt",
+          startChapter: 1,
+          type: "relationship",
+          status: "open",
+          lastAdvancedChapter: 12,
+          expectedPayoff: "Reveal the debt",
+          notes: "Still unresolved",
+        },
+      ],
+    });
+    const summaries = ChapterSummariesStateSchema.parse({
+      rows: [
+        {
+          chapter: 12,
+          title: "River Ledger",
+          characters: "Lin Yue",
+          events: "Lin Yue checks the old ledger",
+          stateChanges: "Debt sharpens",
+          hookActivity: "mentor-debt advanced",
+          mood: "tense",
+          chapterType: "mainline",
+        },
+      ],
+    });
+    const currentState = CurrentStateStateSchema.parse({
+      chapter: 12,
+      facts: [
+        {
+          subject: "protagonist",
+          predicate: "Current Goal",
+          object: "Trace the mentor debt",
+          validFromChapter: 12,
+          validUntilChapter: null,
+          sourceChapter: 12,
+        },
+      ],
+    });
+
+    expect(hooks.hooks[0]?.hookId).toBe("mentor-debt");
+    expect(summaries.rows[0]?.title).toBe("River Ledger");
+    expect(currentState.chapter).toBe(12);
+  });
+
+  it("accepts a valid runtime-state delta", () => {
+    const result = RuntimeStateDeltaSchema.parse({
+      chapter: 12,
+      currentStatePatch: {
+        currentGoal: "Trace the mentor debt",
+        currentConflict: "Guild pressure keeps colliding with the debt trail",
+      },
+      hookOps: {
+        upsert: [
+          {
+            hookId: "mentor-debt",
+            startChapter: 1,
+            type: "relationship",
+            status: "progressing",
+            lastAdvancedChapter: 12,
+            expectedPayoff: "Reveal the debt",
+            notes: "Ledger clue sharpens the line",
+          },
+        ],
+        resolve: [],
+        defer: [],
+      },
+      chapterSummary: {
+        chapter: 12,
+        title: "River Ledger",
+        characters: "Lin Yue",
+        events: "Lin Yue checks the old ledger",
+        stateChanges: "Debt sharpens",
+        hookActivity: "mentor-debt advanced",
+        mood: "tense",
+        chapterType: "mainline",
+      },
+      notes: [],
+    });
+
+    expect(result.chapter).toBe(12);
+    expect(result.hookOps.upsert[0]?.hookId).toBe("mentor-debt");
+  });
+
+  it("rejects natural-language numeric drift in runtime-state delta hooks", () => {
+    expect(() =>
+      RuntimeStateDeltaSchema.parse({
+        chapter: 12,
+        hookOps: {
+          upsert: [
+            {
+              hookId: "mentor-debt",
+              startChapter: 1,
+              type: "relationship",
+              status: "open",
+              lastAdvancedChapter: "chapter twelve",
+            },
+          ],
+          resolve: [],
+          defer: [],
+        },
+        notes: [],
+      }),
+    ).toThrow();
   });
 });

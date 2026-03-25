@@ -1,10 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createRequire } from "node:module";
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BookConfig } from "../models/book.js";
 import type { PlanChapterOutput } from "../agents/planner.js";
 import { ComposerAgent } from "../agents/composer.js";
+
+const require = createRequire(import.meta.url);
+const hasNodeSqlite = (() => {
+  try {
+    require("node:sqlite");
+    return true;
+  } catch {
+    return false;
+  }
+})();
 
 describe("ComposerAgent", () => {
   let root: string;
@@ -206,7 +217,78 @@ describe("ComposerAgent", () => {
     expect(selectedSources).toContain("story/pending_hooks.md#mentor-oath");
     expect(selectedSources).toContain("story/chapter_summaries.md#9");
     expect(selectedSources).not.toContain("story/pending_hooks.md");
-    await expect(stat(join(storyDir, "memory.db"))).resolves.toBeTruthy();
+    if (hasNodeSqlite) {
+      await expect(stat(join(storyDir, "memory.db"))).resolves.toBeTruthy();
+    }
+  });
+
+  it("surfaces stale unresolved hook evidence in governed context selection", async () => {
+    const stateDir = join(storyDir, "state");
+    await mkdir(stateDir, { recursive: true });
+
+    await Promise.all([
+      writeFile(join(stateDir, "manifest.json"), JSON.stringify({
+        schemaVersion: 2,
+        language: "en",
+        lastAppliedChapter: 25,
+        projectionVersion: 1,
+        migrationWarnings: [],
+      }, null, 2), "utf-8"),
+      writeFile(join(stateDir, "current_state.json"), JSON.stringify({
+        chapter: 25,
+        facts: [],
+      }, null, 2), "utf-8"),
+      writeFile(join(stateDir, "chapter_summaries.json"), JSON.stringify({
+        rows: [],
+      }, null, 2), "utf-8"),
+      writeFile(join(stateDir, "hooks.json"), JSON.stringify({
+        hooks: [
+          {
+            hookId: "recent-route",
+            startChapter: 22,
+            type: "route",
+            status: "open",
+            lastAdvancedChapter: 24,
+            expectedPayoff: "Recent route payoff",
+            notes: "Recent but not critical.",
+          },
+          {
+            hookId: "stale-debt",
+            startChapter: 3,
+            type: "relationship",
+            status: "open",
+            lastAdvancedChapter: 8,
+            expectedPayoff: "Mentor debt payoff",
+            notes: "Long-stale but still unresolved.",
+          },
+        ],
+      }, null, 2), "utf-8"),
+    ]);
+
+    const composer = new ComposerAgent({
+      client: {} as ConstructorParameters<typeof ComposerAgent>[0]["client"],
+      model: "test-model",
+      projectRoot: root,
+      bookId: book.id,
+    });
+
+    const result = await composer.composeChapter({
+      book,
+      bookDir,
+      chapterNumber: 26,
+      plan: {
+        ...plan,
+        intent: {
+          ...plan.intent,
+          chapter: 26,
+          goal: "Keep the chapter on the mainline debt conflict.",
+        },
+      },
+    });
+
+    const selectedSources = result.contextPackage.selectedContext.map((entry) => entry.source);
+    expect(selectedSources).toContain("story/pending_hooks.md#recent-route");
+    expect(selectedSources).toContain("story/pending_hooks.md#stale-debt");
   });
 
   it("adds current-state fact evidence retrieved from sqlite-backed memory", async () => {
