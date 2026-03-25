@@ -2977,6 +2977,122 @@ describe("PipelineRunner", () => {
     }
   });
 
+  it("re-audits revisions against updated state overrides instead of stale on-disk truth files", async () => {
+    const { root, runner, state, bookId } = await createRunnerFixture();
+    const storyDir = join(state.bookDir(bookId), "story");
+    const chaptersDir = join(state.bookDir(bookId), "chapters");
+    const originalBody = "Taryn kept one hand on the annexe key and listened at the door.";
+    const revisedBody = `${originalBody}\n\nHe checked the seal again before he moved.`;
+
+    await state.saveBookConfig(bookId, {
+      ...(await state.loadBookConfig(bookId)),
+      platform: "other",
+      genre: "progression",
+      language: "en",
+      chapterWordCount: 1800,
+    });
+
+    await Promise.all([
+      writeFile(join(chaptersDir, "0001_First.md"), `# Chapter 1: First\n\nOpening chapter.`, "utf-8"),
+      writeFile(join(chaptersDir, "0002_Test_Chapter.md"), `# Chapter 2: Test Chapter\n\n${originalBody}`, "utf-8"),
+      writeFile(join(storyDir, "current_state.md"), createStateCard({
+        chapter: 1,
+        location: "Orsden archive lower hall",
+        protagonistState: "Taryn is still moving under Renn's first warning.",
+        goal: "Reach the annexe.",
+        conflict: "The archive is already compromised.",
+      }), "utf-8"),
+      writeFile(join(storyDir, "pending_hooks.md"), "# Pending Hooks\n", "utf-8"),
+    ]);
+    await state.saveChapterIndex(bookId, [
+      {
+        number: 1,
+        title: "First",
+        status: "ready-for-review",
+        wordCount: countChapterLength("Opening chapter.", "en_words"),
+        createdAt: "2026-03-19T00:00:00.000Z",
+        updatedAt: "2026-03-19T00:00:00.000Z",
+        auditIssues: [],
+        lengthWarnings: [],
+      },
+      {
+        number: 2,
+        title: "Test Chapter",
+        status: "audit-failed",
+        wordCount: countChapterLength(originalBody, "en_words"),
+        createdAt: "2026-03-19T00:00:00.000Z",
+        updatedAt: "2026-03-19T00:00:00.000Z",
+        auditIssues: [],
+        lengthWarnings: [],
+      },
+    ]);
+
+    const auditChapter = vi.spyOn(ContinuityAuditor.prototype, "auditChapter")
+      .mockResolvedValueOnce(
+        createAuditResult({
+          passed: false,
+          issues: [{
+            severity: "warning",
+            category: "Pacing Check",
+            description: "The beat needs a firmer end stop.",
+            suggestion: "Tighten the closing move.",
+          }],
+          summary: "needs revision",
+        }),
+      )
+      .mockImplementationOnce(async (_bookDir, _chapterContent, chapterNumber, _genre, options) => {
+        const overrideState = (options as { truthFileOverrides?: { currentState?: string } } | undefined)
+          ?.truthFileOverrides?.currentState;
+        if (chapterNumber === 2 && overrideState?.includes("| Current Chapter | 2 |")) {
+          return createAuditResult({
+            passed: true,
+            issues: [],
+            summary: "clean",
+          });
+        }
+
+        return createAuditResult({
+          passed: false,
+          issues: [{
+            severity: "critical",
+            category: "Chronicle Drift Check",
+            description: "The chapter is presented as 'chapter 2', but the supplied Current State Card still lists 'Current Chapter | 1'.",
+            suggestion: "Sync the state card before re-audit.",
+          }],
+          summary: "stale state card",
+        });
+      });
+
+    vi.spyOn(ReviserAgent.prototype, "reviseChapter").mockResolvedValue(
+      createReviseOutput({
+        revisedContent: revisedBody,
+        wordCount: countChapterLength(revisedBody, "en_words"),
+        fixedIssues: ["- Synced the annexe beat and tightened the ending."],
+        updatedState: createStateCard({
+          chapter: 2,
+          location: "East annexe corridor",
+          protagonistState: "Taryn is pressed against the annexe door with the true key in hand.",
+          goal: "Open the annexe before the cart clears the court.",
+          conflict: "A forged key and rival searchers have turned lawful access into a trap.",
+        }),
+        updatedHooks: "# Pending Hooks\n",
+      }),
+    );
+
+    try {
+      const result = await runner.reviseDraft(bookId, 2);
+      const savedIndex = await state.loadChapterIndex(bookId);
+
+      expect(auditChapter).toHaveBeenCalledTimes(2);
+      expect(result.applied).toBe(true);
+      expect(result.status).toBe("ready-for-review");
+      expect(savedIndex[1]?.status).toBe("ready-for-review");
+      expect(savedIndex[1]?.auditIssues).toEqual([]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("uses chapter length telemetry target for manual revise when available", async () => {
     const { root, runner, state, bookId } = await createRunnerFixture();
     const storyDir = join(state.bookDir(bookId), "story");

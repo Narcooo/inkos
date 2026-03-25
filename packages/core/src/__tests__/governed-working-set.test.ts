@@ -1,7 +1,42 @@
 import { describe, expect, it } from "vitest";
-import { buildGovernedCharacterMatrixWorkingSet } from "../utils/governed-working-set.js";
+import {
+  buildGovernedCharacterMatrixWorkingSet,
+  buildGovernedHookWorkingSet,
+} from "../utils/governed-working-set.js";
 
 describe("governed-working-set", () => {
+  it("filters out far-future hooks from the governed hook working set", () => {
+    const hooks = [
+      "| hook_id | 起始章节 | 类型 | 状态 | 最近推进 | 预期回收 | 备注 |",
+      "| --- | --- | --- | --- | --- | --- | --- |",
+      "| opening-call | 1 | mystery | open | 0 | 8 | 匿名来电开篇出现 |",
+      "| nearby-ledger | 4 | evidence | open | 0 | 12 | 近期开启的账本线 |",
+      "| future-pr-machine | 22 | conspiracy | open | 0 | 60 | 远期舆情操盘线 |",
+      "| future-template | 45 | system | open | 0 | 80 | 远期系统性话术线 |",
+    ].join("\n");
+
+    const filtered = buildGovernedHookWorkingSet({
+      hooksMarkdown: hooks,
+      contextPackage: {
+        chapter: 1,
+        selectedContext: [
+          {
+            source: "story/pending_hooks.md#opening-call",
+            reason: "Current chapter opening hook.",
+            excerpt: "mystery | open | 8 | 匿名来电开篇出现",
+          },
+        ],
+      },
+      chapterNumber: 1,
+      language: "zh",
+    });
+
+    expect(filtered).toContain("| opening-call | 1 | mystery | open | 0 | 8 | 匿名来电开篇出现 |");
+    expect(filtered).toContain("| nearby-ledger | 4 | evidence | open | 0 | 12 | 近期开启的账本线 |");
+    expect(filtered).not.toContain("future-pr-machine");
+    expect(filtered).not.toContain("future-template");
+  });
+
   it("filters character matrix by exact governed character mentions instead of broad capitalized tokens", () => {
     const matrix = [
       "# Character Matrix",

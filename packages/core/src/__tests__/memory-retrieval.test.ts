@@ -896,6 +896,108 @@ describe("retrieveMemorySelection", () => {
     expect(result.hooks.map((hook) => hook.hookId)).not.toContain("stale-resolved");
   });
 
+  it("does not surface far-future unstarted hooks in early chapter retrieval", async () => {
+    root = await mkdtemp(join(tmpdir(), "inkos-memory-retrieval-future-hook-gate-test-"));
+    const bookDir = join(root, "book");
+    const storyDir = join(bookDir, "story");
+    const stateDir = join(storyDir, "state");
+    await mkdir(stateDir, { recursive: true });
+
+    await Promise.all([
+      writeFile(
+        join(stateDir, "manifest.json"),
+        JSON.stringify({
+          schemaVersion: 2,
+          language: "zh",
+          lastAppliedChapter: 0,
+          projectionVersion: 1,
+          migrationWarnings: [],
+        }, null, 2),
+        "utf-8",
+      ),
+      writeFile(
+        join(stateDir, "current_state.json"),
+        JSON.stringify({
+          chapter: 0,
+          facts: [],
+        }, null, 2),
+        "utf-8",
+      ),
+      writeFile(
+        join(stateDir, "chapter_summaries.json"),
+        JSON.stringify({
+          rows: [],
+        }, null, 2),
+        "utf-8",
+      ),
+      writeFile(
+        join(stateDir, "hooks.json"),
+        JSON.stringify({
+          hooks: [
+            {
+              hookId: "future-gault",
+              startChapter: 54,
+              type: "threat",
+              status: "open",
+              lastAdvancedChapter: 0,
+              expectedPayoff: "Late assembly loss",
+              notes: "Far-future disruption only.",
+            },
+            {
+              hookId: "future-ledger-trial",
+              startChapter: 22,
+              type: "institutional",
+              status: "open",
+              lastAdvancedChapter: 0,
+              expectedPayoff: "Late court hearing",
+              notes: "Far-future institutional clash.",
+            },
+            {
+              hookId: "opening-call",
+              startChapter: 1,
+              type: "mystery",
+              status: "open",
+              lastAdvancedChapter: 0,
+              expectedPayoff: "Trace the anonymous caller",
+              notes: "Opening anonymous call.",
+            },
+            {
+              hookId: "nearby-ledger",
+              startChapter: 4,
+              type: "evidence",
+              status: "open",
+              lastAdvancedChapter: 0,
+              expectedPayoff: "Find the first ledger fragment",
+              notes: "Near-future evidence reveal.",
+            },
+            {
+              hookId: "future-final-choice",
+              startChapter: 71,
+              type: "climax",
+              status: "open",
+              lastAdvancedChapter: 0,
+              expectedPayoff: "Final disclosure choice",
+              notes: "Endgame only.",
+            },
+          ],
+        }, null, 2),
+        "utf-8",
+      ),
+    ]);
+
+    const result = await retrieveMemorySelection({
+      bookDir,
+      chapterNumber: 1,
+      goal: "稳住开篇压力，不提前展开远期线。",
+      mustKeep: ["匿名来电必须留在开篇。"],
+    });
+
+    expect(result.hooks.map((hook) => hook.hookId)).toEqual([
+      "opening-call",
+      "nearby-ledger",
+    ]);
+  });
+
   it("does not resurface a resolved hook just because mustKeep shares an artifact term", async () => {
     root = await mkdtemp(join(tmpdir(), "inkos-memory-retrieval-resolved-artifact-test-"));
     const bookDir = join(root, "book");

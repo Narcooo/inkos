@@ -184,6 +184,64 @@ describe("PlannerAgent", () => {
     expect(result.intent.goal).not.toContain("Advance chapter 3 with clear narrative focus.");
   });
 
+  it("uses the next paragraph for bold standalone English chapter labels instead of capturing markdown markers", async () => {
+    book = {
+      ...book,
+      genre: "other",
+      language: "en",
+    };
+
+    await Promise.all([
+      writeFile(
+        join(storyDir, "current_focus.md"),
+        [
+          "# Current Focus",
+          "",
+          "## Active Focus",
+          "",
+          "(Describe what the next 1-3 chapters should prioritize.)",
+          "",
+        ].join("\n"),
+        "utf-8",
+      ),
+      writeFile(
+        join(storyDir, "volume_outline.md"),
+        [
+          "## Volume 1 - The Dead Examiner",
+          "**Chapter Range:** 1-12",
+          "",
+          "**Key Turning Points:**",
+          "- Ch1: Renn dies after summoning Taryn to review irregular treaty folios.",
+          "",
+          "### Golden First Three Chapters Rule",
+          "",
+          "**Chapter 2:**",
+          "Show Taryn's edge through action, not exposition. He uses registry numbering logic to identify which folios are decoys and which conceal a ledger fragment.",
+          "",
+        ].join("\n"),
+        "utf-8",
+      ),
+    ]);
+
+    const planner = new PlannerAgent({
+      client: {} as ConstructorParameters<typeof PlannerAgent>[0]["client"],
+      model: "test-model",
+      projectRoot: root,
+      bookId: book.id,
+    });
+
+    const result = await planner.planChapter({
+      book,
+      bookDir,
+      chapterNumber: 2,
+    });
+
+    expect(result.intent.outlineNode).toContain("Show Taryn's edge through action");
+    expect(result.intent.outlineNode).not.toBe("**");
+    expect(result.intent.goal).toContain("Show Taryn's edge through action");
+    expect(result.intent.goal).not.toBe("**");
+  });
+
   it("preserves hard facts from state and canon in mustKeep", async () => {
     const planner = new PlannerAgent({
       client: {} as ConstructorParameters<typeof PlannerAgent>[0]["client"],

@@ -22,6 +22,8 @@ export interface VolumeSummarySelection {
   readonly anchor: string;
 }
 
+export const DEFAULT_HOOK_LOOKAHEAD_CHAPTERS = 3;
+
 export async function retrieveMemorySelection(params: {
   readonly bookDir: string;
   readonly chapterNumber: number;
@@ -508,8 +510,7 @@ function selectRelevantHooks(
   const primary = ranked
     .filter((entry) => (
       entry.matched
-      || entry.hook.lastAdvancedChapter >= recentCutoff
-      || entry.hook.startChapter >= recentCutoff
+      || isHookWithinChapterWindow(entry.hook, chapterNumber, 5)
     ))
     .sort((left, right) => right.score - left.score || right.hook.lastAdvancedChapter - left.hook.lastAdvancedChapter)
     .slice(0, 3);
@@ -518,6 +519,7 @@ function selectRelevantHooks(
   const stale = ranked
     .filter((entry) => (
       !selectedIds.has(entry.hook.hookId)
+      && !isFuturePlannedHook(entry.hook, chapterNumber)
       && entry.hook.lastAdvancedChapter <= staleCutoff
       && isUnresolvedHook(entry.hook.status)
     ))
@@ -612,6 +614,41 @@ function scoreHook(hook: StoredHook, queryTerms: ReadonlyArray<string>): number 
   const freshness = Math.max(0, hook.lastAdvancedChapter);
   const termScore = queryTerms.reduce((score, term) => score + (includesTerm(text, term) ? Math.max(8, term.length * 2) : 0), 0);
   return termScore + freshness;
+}
+
+export function isFuturePlannedHook(
+  hook: StoredHook,
+  chapterNumber: number,
+  lookahead: number = DEFAULT_HOOK_LOOKAHEAD_CHAPTERS,
+): boolean {
+  return hook.lastAdvancedChapter <= 0 && hook.startChapter > chapterNumber + lookahead;
+}
+
+export function isHookWithinChapterWindow(
+  hook: StoredHook,
+  chapterNumber: number,
+  recentWindow: number = 5,
+  lookahead: number = DEFAULT_HOOK_LOOKAHEAD_CHAPTERS,
+): boolean {
+  const recentCutoff = Math.max(0, chapterNumber - recentWindow);
+
+  if (hook.lastAdvancedChapter > 0 && hook.lastAdvancedChapter >= recentCutoff) {
+    return true;
+  }
+
+  if (hook.lastAdvancedChapter > 0) {
+    return false;
+  }
+
+  if (hook.startChapter <= 0) {
+    return true;
+  }
+
+  if (hook.startChapter >= recentCutoff && hook.startChapter <= chapterNumber) {
+    return true;
+  }
+
+  return hook.startChapter > chapterNumber && hook.startChapter <= chapterNumber + lookahead;
 }
 
 function matchesAny(text: string, queryTerms: ReadonlyArray<string>): boolean {

@@ -4,6 +4,7 @@ import type { GenreProfile } from "../models/genre-profile.js";
 import { readGenreProfile } from "./rules-reader.js";
 import { writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import { renderHookSnapshot } from "../utils/memory-retrieval.js";
 
 export interface ArchitectOutput {
   readonly storyBible: string;
@@ -194,9 +195,19 @@ enableFullCastTracking: false
 
     const pendingHooksPrompt = resolvedLanguage === "en"
       ? `Initial hook pool (Markdown table):
-| hook_id | start_chapter | type | status | latest_progress | expected_payoff | notes |`
+| hook_id | start_chapter | type | status | last_advanced_chapter | expected_payoff | notes |
+
+Rules for the hook table:
+- Column 5 must be a pure chapter number, never natural-language description
+- During book creation, all planned hooks are still unapplied, so last_advanced_chapter = 0
+- If you want to describe the initial clue/signal, put it in notes instead of column 5`
       : `初始伏笔池（Markdown表格）：
-| hook_id | 起始章节 | 类型 | 状态 | 最近推进 | 预期回收 | 备注 |`;
+| hook_id | 起始章节 | 类型 | 状态 | 最近推进 | 预期回收 | 备注 |
+
+伏笔表规则：
+- 第5列必须是纯数字章节号，不能写自然语言描述
+- 建书阶段所有伏笔都还没正式推进，所以第5列统一填 0
+- 如果要说明“初始线索/最初信号”，写进备注，不要写进第5列`;
 
     const finalRequirementsPrompt = resolvedLanguage === "en"
       ? `Generated content must:
@@ -652,9 +663,10 @@ prohibitions:
       if (!section) {
         return `[${name} 生成失败，需要重新生成]`;
       }
-      return name === "pending_hooks"
-        ? this.stripTrailingAssistantCoda(section)
-        : section;
+      if (name !== "pending_hooks") {
+        return section;
+      }
+      return this.normalizePendingHooksSection(this.stripTrailingAssistantCoda(section));
     };
 
     return {
@@ -679,5 +691,72 @@ prohibitions:
     }
 
     return lines.slice(0, cutoff).join("\n").trimEnd();
+  }
+
+  private normalizePendingHooksSection(section: string): string {
+    const rows = section
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith("|"))
+      .filter((line) => !line.includes("---"))
+      .map((line) => line.split("|").slice(1, -1).map((cell) => cell.trim()))
+      .filter((cells) => cells.some(Boolean));
+
+    if (rows.length === 0) {
+      return section;
+    }
+
+    const dataRows = rows.filter((row) => (row[0] ?? "").toLowerCase() !== "hook_id");
+    if (dataRows.length === 0) {
+      return section;
+    }
+
+    const language: "zh" | "en" = /[\u4e00-\u9fff]/.test(section) ? "zh" : "en";
+    const normalizedHooks = dataRows.map((row, index) => {
+      const rawProgress = row[4] ?? "";
+      const normalizedProgress = this.parseHookChapterNumber(rawProgress);
+      const seedNote = normalizedProgress === 0 && this.hasNarrativeProgress(rawProgress)
+        ? (language === "zh" ? `初始线索：${rawProgress}` : `initial signal: ${rawProgress}`)
+        : "";
+      const notes = this.mergeHookNotes(row[6] ?? "", seedNote, language);
+
+      return {
+        hookId: row[0] || `hook-${index + 1}`,
+        startChapter: this.parseHookChapterNumber(row[1]),
+        type: row[2] ?? "",
+        status: row[3] ?? "open",
+        lastAdvancedChapter: normalizedProgress,
+        expectedPayoff: row[5] ?? "",
+        notes,
+      };
+    });
+
+    return renderHookSnapshot(normalizedHooks, language);
+  }
+
+  private parseHookChapterNumber(value: string | undefined): number {
+    if (!value) return 0;
+    const match = value.match(/\d+/);
+    return match ? parseInt(match[0], 10) : 0;
+  }
+
+  private hasNarrativeProgress(value: string | undefined): boolean {
+    const normalized = (value ?? "").trim().toLowerCase();
+    if (!normalized) return false;
+    return !["0", "none", "n/a", "na", "-", "无", "未推进"].includes(normalized);
+  }
+
+  private mergeHookNotes(notes: string, seedNote: string, language: "zh" | "en"): string {
+    const trimmedNotes = notes.trim();
+    const trimmedSeed = seedNote.trim();
+    if (!trimmedSeed) {
+      return trimmedNotes;
+    }
+    if (!trimmedNotes) {
+      return trimmedSeed;
+    }
+    return language === "zh"
+      ? `${trimmedNotes}（${trimmedSeed}）`
+      : `${trimmedNotes} (${trimmedSeed})`;
   }
 }

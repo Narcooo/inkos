@@ -298,16 +298,22 @@ export class PlannerAgent extends BaseAgent {
       new RegExp(`^(?:[-*]\\s+)?(?:\\*\\*)?第\\s*${chapterNumber}\\s*章(?:[:：-])?(?:\\*\\*)?\\s*(.+)$`),
     ];
 
-    const inlineMatch = lines
-      .map((line) => ({
-        line,
-        match: inlinePatterns
-          .map((pattern) => line.match(pattern))
-          .find((result): result is RegExpMatchArray => Boolean(result?.[1]?.trim())),
-      }))
-      .find((entry) => entry.match);
-    if (inlineMatch?.match?.[1]) {
-      return inlineMatch.match[1].trim();
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index]!;
+      const match = inlinePatterns
+        .map((pattern) => line.match(pattern))
+        .find((result): result is RegExpMatchArray => Boolean(result));
+      if (!match) continue;
+
+      const inlineContent = this.cleanOutlineContent(match[1]);
+      if (inlineContent) {
+        return inlineContent;
+      }
+
+      const nextContent = this.findNextOutlineContent(lines, index + 1);
+      if (nextContent) {
+        return nextContent;
+      }
     }
 
     const heading = lines.find((line) => chapterPatterns.some((pattern) => pattern.test(line)));
@@ -316,6 +322,36 @@ export class PlannerAgent extends BaseAgent {
     const headingIndex = lines.indexOf(heading);
     const nextLine = lines[headingIndex + 1];
     return nextLine && !nextLine.startsWith("#") ? nextLine : heading.replace(/^#+\s*/, "");
+  }
+
+  private cleanOutlineContent(content?: string): string | undefined {
+    const cleaned = content?.trim();
+    if (!cleaned) return undefined;
+    if (/^[*_`~:：-]+$/.test(cleaned)) return undefined;
+    return cleaned;
+  }
+
+  private findNextOutlineContent(lines: ReadonlyArray<string>, startIndex: number): string | undefined {
+    for (let index = startIndex; index < lines.length; index += 1) {
+      const line = lines[index]!;
+      if (!line || line.startsWith("#")) {
+        continue;
+      }
+
+      if (
+        /^(?:[-*]\s+)?(?:\*\*)?Chapter\s*\d+(?:[:：-])?(?:\*\*)?\s*$/i.test(line)
+        || /^(?:[-*]\s+)?(?:\*\*)?第\s*\d+\s*章(?:[:：-])?(?:\*\*)?\s*$/.test(line)
+      ) {
+        return undefined;
+      }
+
+      const cleaned = this.cleanOutlineContent(line);
+      if (cleaned) {
+        return cleaned;
+      }
+    }
+
+    return undefined;
   }
 
   private hasKeywordOverlap(left: string, right: string): boolean {

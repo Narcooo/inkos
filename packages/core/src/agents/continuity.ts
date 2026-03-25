@@ -325,9 +325,14 @@ export class ContinuityAuditor extends BaseAgent {
       chapterIntent?: string;
       contextPackage?: ContextPackage;
       ruleStack?: RuleStack;
+      truthFileOverrides?: {
+        currentState?: string;
+        ledger?: string;
+        hooks?: string;
+      };
     },
   ): Promise<AuditResult> {
-    const [currentState, ledger, hooks, styleGuideRaw, subplotBoard, emotionalArcs, characterMatrix, chapterSummaries, parentCanon, fanficCanon, volumeOutline] =
+    const [diskCurrentState, diskLedger, diskHooks, styleGuideRaw, subplotBoard, emotionalArcs, characterMatrix, chapterSummaries, parentCanon, fanficCanon, volumeOutline] =
       await Promise.all([
         this.readFileSafe(join(bookDir, "story/current_state.md")),
         this.readFileSafe(join(bookDir, "story/particle_ledger.md")),
@@ -341,6 +346,9 @@ export class ContinuityAuditor extends BaseAgent {
         this.readFileSafe(join(bookDir, "story/fanfic_canon.md")),
         this.readFileSafe(join(bookDir, "story/volume_outline.md")),
       ]);
+    const currentState = options?.truthFileOverrides?.currentState ?? diskCurrentState;
+    const ledger = options?.truthFileOverrides?.ledger ?? diskLedger;
+    const hooks = options?.truthFileOverrides?.hooks ?? diskHooks;
 
     const hasParentCanon = parentCanon !== "(文件不存在)";
     const hasFanficCanon = fanficCanon !== "(文件不存在)";

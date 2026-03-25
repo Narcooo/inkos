@@ -717,8 +717,20 @@ export class PipelineRunner {
               chapterIntent: reviseControlInput.plan.intentMarkdown,
               contextPackage: reviseControlInput.composed.contextPackage,
               ruleStack: reviseControlInput.composed.ruleStack,
+              truthFileOverrides: {
+                currentState: reviseOutput.updatedState !== "(状态卡未更新)" ? reviseOutput.updatedState : undefined,
+                ledger: reviseOutput.updatedLedger !== "(账本未更新)" ? reviseOutput.updatedLedger : undefined,
+                hooks: reviseOutput.updatedHooks !== "(伏笔池未更新)" ? reviseOutput.updatedHooks : undefined,
+              },
             }
-          : { temperature: 0 },
+          : {
+              temperature: 0,
+              truthFileOverrides: {
+                currentState: reviseOutput.updatedState !== "(状态卡未更新)" ? reviseOutput.updatedState : undefined,
+                ledger: reviseOutput.updatedLedger !== "(账本未更新)" ? reviseOutput.updatedLedger : undefined,
+                hooks: reviseOutput.updatedHooks !== "(伏笔池未更新)" ? reviseOutput.updatedHooks : undefined,
+              },
+            },
       });
       const effectivePostRevision = this.restoreActionableAuditIfLost(
         preRevision,
@@ -2155,6 +2167,11 @@ ${matrix}`,
       chapterIntent?: string;
       contextPackage?: ContextPackage;
       ruleStack?: RuleStack;
+      truthFileOverrides?: {
+        currentState?: string;
+        ledger?: string;
+        hooks?: string;
+      };
     };
   }): Promise<{
     auditResult: AuditResult;

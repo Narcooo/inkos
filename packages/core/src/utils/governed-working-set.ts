@@ -1,5 +1,9 @@
 import type { ContextPackage } from "../models/input-governance.js";
-import { parsePendingHooksMarkdown, renderHookSnapshot } from "./memory-retrieval.js";
+import {
+  isHookWithinChapterWindow,
+  parsePendingHooksMarkdown,
+  renderHookSnapshot,
+} from "./memory-retrieval.js";
 
 export function buildGovernedHookWorkingSet(params: {
   readonly hooksMarkdown: string;
@@ -24,11 +28,9 @@ export function buildGovernedHookWorkingSet(params: {
       .map((entry) => entry.source.slice("story/pending_hooks.md#".length))
       .filter(Boolean),
   );
-  const recentCutoff = Math.max(0, params.chapterNumber - (params.keepRecent ?? 5));
   const workingSet = hooks.filter((hook) =>
     selectedIds.has(hook.hookId)
-      || hook.lastAdvancedChapter >= recentCutoff
-      || hook.startChapter >= recentCutoff,
+      || isHookWithinChapterWindow(hook, params.chapterNumber, params.keepRecent ?? 5),
   );
 
   if (workingSet.length === 0 || workingSet.length >= hooks.length) {
