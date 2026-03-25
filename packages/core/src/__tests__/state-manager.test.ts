@@ -604,5 +604,55 @@ describe("StateManager", () => {
       expect(manifest).toContain("\"schemaVersion\": 2");
       expect(currentState).toContain("\"chapter\": 3");
     });
+
+    it("does not treat future hook start chapters as lastAppliedChapter during bootstrap", async () => {
+      const bookId = "runtime-state-future-hooks-book";
+      const storyDir = join(manager.bookDir(bookId), "story");
+      await mkdir(storyDir, { recursive: true });
+      await Promise.all([
+        writeFile(
+          join(storyDir, "current_state.md"),
+          [
+            "# Current State",
+            "",
+            "| Field | Value |",
+            "| --- | --- |",
+            "| Current Chapter | 1 |",
+            "| Current Goal | Survive the harbor fallout |",
+            "",
+          ].join("\n"),
+          "utf-8",
+        ),
+        writeFile(
+          join(storyDir, "pending_hooks.md"),
+          [
+            "| hook_id | start_chapter | type | status | last_advanced | expected_payoff | notes |",
+            "| --- | --- | --- | --- | --- | --- | --- |",
+            "| long-payoff-1 | 108 | mystery | open | 1 | 108 | Future payoff anchor |",
+            "| long-payoff-2 | 181 | relationship | open | 1 | 181 | Even later payoff anchor |",
+            "",
+          ].join("\n"),
+          "utf-8",
+        ),
+        writeFile(
+          join(storyDir, "chapter_summaries.md"),
+          [
+            "| chapter | title | characters | events | stateChanges | hookActivity | mood | chapterType |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- |",
+            "| 1 | Harbor Ash | Lin Yue | He survives the harbor fallout | The debt line opens | long-payoff-1 seeded | tense | opening |",
+            "",
+          ].join("\n"),
+          "utf-8",
+        ),
+      ]);
+
+      await manager.ensureRuntimeState(bookId, 1);
+
+      const manifest = JSON.parse(
+        await readFile(join(manager.stateDir(bookId), "manifest.json"), "utf-8"),
+      ) as { lastAppliedChapter: number };
+
+      expect(manifest.lastAppliedChapter).toBe(1);
+    });
   });
 });

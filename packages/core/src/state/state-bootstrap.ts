@@ -418,8 +418,10 @@ function maxSummaryChapter(state: ChapterSummariesState): number {
 }
 
 function maxHookChapter(hooks: ReadonlyArray<StoredHook>): number {
+  // Only count lastAdvancedChapter — startChapter is a future plan marker,
+  // not an indication that state has been applied up to that chapter.
   return hooks.reduce(
-    (max, hook) => Math.max(max, hook.startChapter, hook.lastAdvancedChapter),
+    (max, hook) => Math.max(max, hook.lastAdvancedChapter),
     0,
   );
 }
