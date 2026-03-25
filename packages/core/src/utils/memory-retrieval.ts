@@ -55,14 +55,19 @@ export async function retrieveMemorySelection(params: {
     currentStateMarkdown,
     fallbackChapter,
   );
-  const queryTerms = extractQueryTerms(
+  const narrativeQueryTerms = extractQueryTerms(
+    params.goal,
+    params.outlineNode,
+    [],
+  );
+  const factQueryTerms = extractQueryTerms(
     params.goal,
     params.outlineNode,
     params.mustKeep ?? [],
   );
   const volumeSummaries = selectRelevantVolumeSummaries(
     parseVolumeSummariesMarkdown(volumeSummariesMarkdown),
-    queryTerms,
+    narrativeQueryTerms,
   );
 
   const memoryDb = openMemoryDB(params.bookDir);
@@ -92,10 +97,10 @@ export async function retrieveMemorySelection(params: {
         summaries: selectRelevantSummaries(
           memoryDb.getSummaries(1, Math.max(1, params.chapterNumber - 1)),
           params.chapterNumber,
-          queryTerms,
+          narrativeQueryTerms,
         ),
-        hooks: selectRelevantHooks(memoryDb.getActiveHooks(), queryTerms, params.chapterNumber),
-        facts: selectRelevantFacts(memoryDb.getCurrentFacts(), queryTerms),
+        hooks: selectRelevantHooks(memoryDb.getActiveHooks(), narrativeQueryTerms, params.chapterNumber),
+        facts: selectRelevantFacts(memoryDb.getCurrentFacts(), factQueryTerms),
         volumeSummaries,
         dbPath: join(storyDir, "memory.db"),
       };
@@ -112,9 +117,9 @@ export async function retrieveMemorySelection(params: {
   const hooks = structuredHooks?.hooks ?? parsePendingHooksMarkdown(hooksMarkdown);
 
   return {
-    summaries: selectRelevantSummaries(summaries, params.chapterNumber, queryTerms),
-    hooks: selectRelevantHooks(hooks, queryTerms, params.chapterNumber),
-    facts: selectRelevantFacts(facts, queryTerms),
+    summaries: selectRelevantSummaries(summaries, params.chapterNumber, narrativeQueryTerms),
+    hooks: selectRelevantHooks(hooks, narrativeQueryTerms, params.chapterNumber),
+    facts: selectRelevantFacts(facts, factQueryTerms),
     volumeSummaries,
   };
 }

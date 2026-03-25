@@ -895,4 +895,78 @@ describe("retrieveMemorySelection", () => {
     ]);
     expect(result.hooks.map((hook) => hook.hookId)).not.toContain("stale-resolved");
   });
+
+  it("does not resurface a resolved hook just because mustKeep shares an artifact term", async () => {
+    root = await mkdtemp(join(tmpdir(), "inkos-memory-retrieval-resolved-artifact-test-"));
+    const bookDir = join(root, "book");
+    const storyDir = join(bookDir, "story");
+    const stateDir = join(storyDir, "state");
+    await mkdir(stateDir, { recursive: true });
+
+    await Promise.all([
+      writeFile(
+        join(stateDir, "manifest.json"),
+        JSON.stringify({
+          schemaVersion: 2,
+          language: "en",
+          lastAppliedChapter: 10,
+          projectionVersion: 1,
+          migrationWarnings: [],
+        }, null, 2),
+        "utf-8",
+      ),
+      writeFile(
+        join(stateDir, "current_state.json"),
+        JSON.stringify({
+          chapter: 10,
+          facts: [],
+        }, null, 2),
+        "utf-8",
+      ),
+      writeFile(
+        join(stateDir, "chapter_summaries.json"),
+        JSON.stringify({
+          rows: [],
+        }, null, 2),
+        "utf-8",
+      ),
+      writeFile(
+        join(stateDir, "hooks.json"),
+        JSON.stringify({
+          hooks: [
+            {
+              hookId: "mentor-oath",
+              startChapter: 8,
+              type: "relationship",
+              status: "open",
+              lastAdvancedChapter: 9,
+              expectedPayoff: "Mentor oath payoff",
+              notes: "Mentor oath debt with Lin Yue",
+            },
+            {
+              hookId: "old-seal",
+              startChapter: 3,
+              type: "artifact",
+              status: "resolved",
+              lastAdvancedChapter: 3,
+              expectedPayoff: "Seal already recovered",
+              notes: "Jade seal already recovered.",
+            },
+          ],
+        }, null, 2),
+        "utf-8",
+      ),
+    ]);
+
+    const result = await retrieveMemorySelection({
+      bookDir,
+      chapterNumber: 11,
+      goal: "Bring the focus back to the mentor oath conflict with Lin Yue.",
+      outlineNode: "Track the merchant guild's escape route.",
+      mustKeep: ["The jade seal cannot be destroyed."],
+    });
+
+    expect(result.hooks.map((hook) => hook.hookId)).toContain("mentor-oath");
+    expect(result.hooks.map((hook) => hook.hookId)).not.toContain("old-seal");
+  });
 });
