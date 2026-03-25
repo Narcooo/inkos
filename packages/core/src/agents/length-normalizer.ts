@@ -139,7 +139,11 @@ ${input.chapterContent}`;
 
     const stripped = this.stripCommonWrappers(trimmed);
     if (stripped !== undefined) {
-      return stripped || fallbackContent;
+      // Empty after stripping = response was only wrapper text, use original
+      if (!stripped) return fallbackContent;
+      // Guard: if stripping removed more than 50% of content, the regex was too aggressive.
+      if (stripped.length < trimmed.length * 0.5) return trimmed;
+      return stripped;
     }
 
     return trimmed;

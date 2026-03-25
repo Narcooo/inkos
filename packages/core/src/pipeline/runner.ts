@@ -1807,6 +1807,20 @@ ${matrix}`,
       chapterIntent: params.chapterIntent,
     });
 
+    // Safety net: if normalizer output is less than 25% of original, it was too destructive.
+    // Reject and keep original content.
+    if (normalized.finalCount < writerCount * 0.25) {
+      this.logWarn(this.languageFromLengthSpec(params.lengthSpec), {
+        zh: `字数归一化被拒绝：第${params.chapterNumber}章 ${writerCount} -> ${normalized.finalCount}（砍了${Math.round((1 - normalized.finalCount / writerCount) * 100)}%，超过安全阈值）`,
+        en: `Length normalization rejected for chapter ${params.chapterNumber}: ${writerCount} -> ${normalized.finalCount} (cut ${Math.round((1 - normalized.finalCount / writerCount) * 100)}%, exceeds safety threshold)`,
+      });
+      return {
+        content: params.chapterContent,
+        wordCount: writerCount,
+        applied: false,
+      };
+    }
+
     this.logInfo(this.languageFromLengthSpec(params.lengthSpec), {
       zh: `审计前字数归一化：第${params.chapterNumber}章 ${writerCount} -> ${normalized.finalCount}`,
       en: `Length normalization before audit for chapter ${params.chapterNumber}: ${writerCount} -> ${normalized.finalCount}`,
