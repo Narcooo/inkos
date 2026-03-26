@@ -271,18 +271,20 @@ async function loadOrBootstrapSummaries(params: {
     "chapter_summaries.json",
   );
   if (existing) {
+    // Always deduplicate even when loading from JSON (stale data may have duplicates)
+    const dedupedExisting = deduplicateSummaryRows(existing.rows);
+    if (dedupedExisting.length < existing.rows.length) {
+      const repaired = ChapterSummariesStateSchema.parse({ rows: dedupedExisting });
+      await writeFile(params.statePath, JSON.stringify(repaired, null, 2), "utf-8");
+      return repaired;
+    }
     return existing;
   }
 
   const markdown = await readFile(join(params.storyDir, "chapter_summaries.md"), "utf-8").catch(() => "");
   const rawRows = parseChapterSummariesMarkdown(markdown);
-  // Deduplicate: keep last occurrence per chapter number (latest is most up-to-date)
-  const deduped = new Map<number, (typeof rawRows)[number]>();
-  for (const row of rawRows) {
-    deduped.set(row.chapter, row);
-  }
   const summariesState = ChapterSummariesStateSchema.parse({
-    rows: [...deduped.values()].sort((a, b) => a.chapter - b.chapter),
+    rows: deduplicateSummaryRows(rawRows),
   });
   await writeFile(params.statePath, JSON.stringify(summariesState, null, 2), "utf-8");
   params.createdFiles.push("chapter_summaries.json");
@@ -417,6 +419,14 @@ async function loadJsonIfValid<T>(
     }
     return null;
   }
+}
+
+function deduplicateSummaryRows<T extends { chapter: number }>(rows: ReadonlyArray<T>): T[] {
+  const byChapter = new Map<number, T>();
+  for (const row of rows) {
+    byChapter.set(row.chapter, row);
+  }
+  return [...byChapter.values()].sort((a, b) => a.chapter - b.chapter);
 }
 
 function maxSummaryChapter(state: ChapterSummariesState): number {

@@ -210,6 +210,9 @@ describe("runtime-state-store memory helpers", () => {
       }, null, 2), "utf-8"),
     ]);
 
-    await expect(loadRuntimeStateSnapshot(bookDir)).rejects.toThrow(/duplicate_summary_chapter/i);
+    // Duplicates are auto-repaired (deduped, keeping last occurrence), not rejected
+    const snapshot = await loadRuntimeStateSnapshot(bookDir);
+    expect(snapshot.chapterSummaries.rows).toHaveLength(1);
+    expect(snapshot.chapterSummaries.rows[0]?.title).toBe("重复河埠对账");
   });
 });
