@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const readFileMock = vi.fn();
@@ -67,6 +68,8 @@ describe("daemon command", () => {
   });
 
   it("removes the pid file when startup fails after writing it", async () => {
+    const expectedPidPath = join("/project", "inkos.pid");
+
     readFileMock.mockRejectedValueOnce(new Error("missing pid"));
     writeFileMock.mockResolvedValue(undefined);
     unlinkMock.mockResolvedValue(undefined);
@@ -83,8 +86,8 @@ describe("daemon command", () => {
       upCommand.parseAsync(["node", "up", "--quiet"]),
     ).rejects.toMatchObject({ code: 1 });
 
-    expect(writeFileMock).toHaveBeenCalledWith("/project/inkos.pid", expect.any(String), "utf-8");
-    expect(unlinkMock).toHaveBeenCalledWith("/project/inkos.pid");
+    expect(writeFileMock).toHaveBeenCalledWith(expectedPidPath, expect.any(String), "utf-8");
+    expect(unlinkMock).toHaveBeenCalledWith(expectedPidPath);
 
     exitSpy.mockRestore();
   });

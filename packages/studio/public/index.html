@@ -15,8 +15,250 @@
     </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;700;900&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Noto+Serif+SC:wght@400;700;900&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="./app.css" />
+
+    <!-- ======== REDESIGNED LAYOUT OVERRIDES ======== -->
+    <style>
+      /* ----- Design Tokens (OLED Dark + Professional Editor) ----- */
+      :root {
+        --topbar-h: 56px;
+        --sidebar-w: 260px;
+        --nav-tab-h: 44px;
+        --radius: 10px;
+        --radius-sm: 6px;
+        --radius-xs: 4px;
+        --font-code: "Fira Code", "Cascadia Code", "JetBrains Mono", monospace;
+        --font-body: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+        --font-serif: "Noto Serif SC", "Source Han Serif SC", "Songti SC", serif;
+        --color-primary: #2563EB;
+        --color-cta: #F97316;
+        --color-dark-bg: #0f1117;
+        --color-surface: #1a1d27;
+        --color-border: #2a2d37;
+        --ease: cubic-bezier(0.4, 0, 0.2, 1);
+      }
+
+      :root[data-theme="dark"] {
+        --bg: var(--color-dark-bg);
+        --bg-surface: var(--color-surface);
+        --border: var(--color-border);
+        --text: #e4e4e7;
+        --text-muted: #9ca3af;
+        --primary: var(--color-primary);
+        --accent: var(--color-cta);
+      }
+
+      /* ----- Global ----- */
+      .clickable { cursor: pointer; }
+      button, [role="button"], a, select, .nav-tab, .sub-tab, .sidebar-action, .chip {
+        cursor: pointer;
+      }
+      button, .nav-tab, .sub-tab {
+        min-height: 44px;
+        min-width: 44px;
+      }
+
+      /* ----- App Shell ----- */
+      .app {
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+        overflow: hidden;
+        font-family: var(--font-body);
+      }
+
+      /* ----- TOPBAR ----- */
+      .topbar {
+        display: flex;
+        align-items: center;
+        height: var(--topbar-h);
+        padding: 0 16px;
+        border-bottom: 1px solid var(--border);
+        gap: 12px;
+        flex-shrink: 0;
+        z-index: 100;
+      }
+      .topbar-left {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-shrink: 0;
+      }
+      .topbar-logo {
+        font-size: 1.15rem;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+      }
+
+      /* --- Nav Tabs (center) --- */
+      .topbar-center {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex: 1;
+        gap: 4px;
+      }
+      .nav-tab {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 0 16px;
+        height: 40px;
+        border: none;
+        background: transparent;
+        color: var(--text-muted);
+        font-size: 0.875rem;
+        font-weight: 500;
+        border-radius: var(--radius-sm);
+        transition: all 0.15s var(--ease);
+        white-space: nowrap;
+        font-family: inherit;
+      }
+      .nav-tab:hover {
+        background: var(--bg-hover, rgba(255,255,255,0.06));
+        color: var(--text);
+      }
+      .nav-tab.active {
+        background: var(--color-primary);
+        color: #fff;
+      }
+      .nav-tab.disabled {
+        opacity: 0.35;
+        pointer-events: none;
+      }
+      .nav-tab svg { flex-shrink: 0; }
+
+      /* --- Topbar Right --- */
+      .topbar-right {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-shrink: 0;
+      }
+      .topbar-status {
+        font-family: var(--font-code);
+        font-size: 0.75rem;
+        color: var(--text-muted);
+        max-width: 200px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      /* ----- APP BODY ----- */
+      .app-body {
+        display: flex;
+        flex: 1;
+        overflow: hidden;
+      }
+
+      /* ----- SIDEBAR (Editor only) ----- */
+      .sidebar {
+        width: var(--sidebar-w);
+        flex-shrink: 0;
+        display: flex;
+        flex-direction: column;
+        border-right: 1px solid var(--border);
+        overflow: hidden;
+        transition: width 0.2s var(--ease), opacity 0.2s var(--ease);
+      }
+      .sidebar.hidden {
+        width: 0;
+        opacity: 0;
+        overflow: hidden;
+        border-right: none;
+        pointer-events: none;
+      }
+      .sidebar-book-select-wrapper {
+        padding: 12px;
+        border-bottom: 1px solid var(--border);
+        flex-shrink: 0;
+      }
+      .sidebar-book-select-wrapper select {
+        width: 100%;
+        font-size: 0.85rem;
+      }
+      .sidebar-tree {
+        flex: 1;
+        overflow-y: auto;
+        padding: 8px;
+      }
+      .sidebar-empty {
+        padding: 24px 16px;
+        color: var(--text-muted);
+        font-size: 0.85rem;
+        text-align: center;
+      }
+      .sidebar-footer {
+        display: none; /* Navigation moved to topbar */
+      }
+
+      /* ----- MAIN AREA ----- */
+      .main {
+        flex: 1;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+      }
+
+      /* ----- TOOLS SUB-TAB BAR ----- */
+      .tools-subtab-bar {
+        display: flex;
+        align-items: center;
+        gap: 2px;
+        padding: 8px 16px;
+        border-bottom: 1px solid var(--border);
+        flex-shrink: 0;
+      }
+      .sub-tab {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 0 14px;
+        height: 36px;
+        border: 1px solid transparent;
+        background: transparent;
+        color: var(--text-muted);
+        font-size: 0.8rem;
+        font-weight: 500;
+        border-radius: var(--radius-xs);
+        transition: all 0.15s var(--ease);
+        white-space: nowrap;
+        font-family: inherit;
+      }
+      .sub-tab:hover {
+        background: var(--bg-hover, rgba(255,255,255,0.06));
+        color: var(--text);
+      }
+      .sub-tab.active {
+        border-color: var(--color-primary);
+        color: var(--color-primary);
+        background: rgba(37, 99, 235, 0.08);
+      }
+      .sub-tab svg { flex-shrink: 0; }
+
+      /* ----- Active View System ----- */
+      .view-panel { display: none; flex-direction: column; flex: 1; overflow: hidden; }
+      .view-panel.active-view { display: flex; }
+
+      /* ----- Tools container ----- */
+      .tools-container { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+      .tools-content { flex: 1; overflow-y: auto; }
+
+      /* Keep legacy view classes working */
+      .dashboard-view, .editor-view, .chat-view,
+      .llm-logs-view, .upload-view, .analytics-view,
+      .knowledge-view, .content-view, .create-view, .write-view { display: none; }
+      .dashboard-view.active-view, .editor-view.active-view, .chat-view.active-view,
+      .llm-logs-view.active-view, .upload-view.active-view, .analytics-view.active-view,
+      .knowledge-view.active-view, .content-view.active-view, .create-view.active-view,
+      .write-view.active-view { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+
+      /* ----- Misc polish ----- */
+      .font-code { font-family: var(--font-code); }
+      .font-serif { font-family: var(--font-serif); }
+    </style>
   </head>
   <body>
     <div class="app">
@@ -28,13 +270,33 @@
           </button>
           <span class="topbar-logo ink-text font-serif">InkOS</span>
         </div>
-        <div class="topbar-center">
-          <select class="topbar-book-select" id="book-select">
-            <option value="">-- 选择书籍 --</option>
-          </select>
-        </div>
+
+        <!-- Nav Tabs (center) -->
+        <nav class="topbar-center" aria-label="Main navigation">
+          <!-- Dashboard / 书架 -->
+          <button class="nav-tab active" id="nav-dashboard" data-view="dashboard" type="button">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+            <span>书架</span>
+          </button>
+          <!-- Editor / 编辑 -->
+          <button class="nav-tab disabled" id="nav-editor" data-view="editor" type="button">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+            <span>编辑</span>
+          </button>
+          <!-- AI Chat -->
+          <button class="nav-tab" id="nav-chat" data-view="chat" type="button">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+            <span>AI</span>
+          </button>
+          <!-- Tools / 工具 -->
+          <button class="nav-tab" id="nav-tools" data-view="tools" type="button">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+            <span>工具</span>
+          </button>
+        </nav>
+
         <div class="topbar-right">
-          <span class="topbar-status" id="app-status"></span>
+          <span class="topbar-status font-code" id="app-status"></span>
           <button class="theme-toggle" id="theme-toggle" type="button" title="Toggle theme">
             <svg id="theme-icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
             <svg id="theme-icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="display:none"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
@@ -47,25 +309,40 @@
 
       <!-- ======== BODY: SIDEBAR + MAIN ======== -->
       <div class="app-body">
-        <!-- SIDEBAR -->
-        <aside class="sidebar" id="sidebar">
+        <!-- SIDEBAR (visible in Editor view, holds book select + chapter tree) -->
+        <aside class="sidebar hidden" id="sidebar">
+          <div class="sidebar-book-select-wrapper">
+            <select class="topbar-book-select" id="book-select">
+              <option value="">-- 选择书籍 --</option>
+            </select>
+          </div>
           <div class="sidebar-tree" id="sidebar-tree">
             <div class="sidebar-empty">选择书籍后显示导航</div>
           </div>
           <div class="sidebar-footer">
-            <button class="sidebar-action" id="nav-dashboard" type="button">&#x1f4da; 书架</button>
-            <button class="sidebar-action" id="nav-create" type="button">+ 创建新书</button>
-            <button class="sidebar-action" id="nav-upload" type="button">&#x1f4e4; 导入</button>
-            <button class="sidebar-action" id="nav-knowledge" type="button">&#x1f4d6; 知识库</button>
-            <button class="sidebar-action" id="nav-llm-logs" type="button">&#x1f4ca; 调用日志</button>
-            <button class="sidebar-action sidebar-action--primary" id="nav-chat" type="button">&#x1f4ac; 返回对话</button>
+            <button class="sidebar-action" id="nav-create" type="button">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              创建新书
+            </button>
+            <button class="sidebar-action" id="nav-upload" type="button" style="display:none">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              导入
+            </button>
+            <button class="sidebar-action" id="nav-knowledge" type="button" style="display:none">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+              知识库
+            </button>
+            <button class="sidebar-action" id="nav-llm-logs" type="button" style="display:none">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+              调用日志
+            </button>
           </div>
         </aside>
 
         <!-- MAIN AREA -->
         <main class="main" id="main-area">
 
-          <!-- DASHBOARD VIEW (default) -->
+          <!-- ====== DASHBOARD VIEW (default) ====== -->
           <section class="dashboard-view active-view" id="dashboard-view">
             <div class="dashboard-header">
               <h1 class="ink-text font-serif">落笔生花，一字千金。</h1>
@@ -74,12 +351,15 @@
             <div id="dashboard-content"></div>
           </section>
 
-          <!-- EDITOR VIEW (three-column) -->
+          <!-- ====== EDITOR VIEW (three-column) ====== -->
           <section class="editor-view" id="editor-view">
             <!-- Editor Top Bar -->
             <div class="editor-topbar">
               <div class="editor-topbar-left">
-                <button class="btn ghost btn-sm" id="editor-back" type="button">&#x2190; 书架</button>
+                <button class="btn ghost btn-sm" id="editor-back" type="button">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+                  书架
+                </button>
                 <span class="editor-book-title font-serif" id="editor-book-title"></span>
               </div>
               <div class="editor-topbar-center">
@@ -88,9 +368,11 @@
                 <button class="editor-mode-btn" data-mode="settings" type="button">设置</button>
               </div>
               <div class="editor-topbar-right">
-                <span class="editor-wordcount" id="editor-wordcount"></span>
+                <span class="editor-wordcount font-code" id="editor-wordcount"></span>
                 <span class="editor-save-status" id="editor-save-status"></span>
-                <button class="btn ghost btn-sm" id="editor-analytics" type="button" title="分析">&#x1f4ca;</button>
+                <button class="btn ghost btn-sm" id="editor-analytics" type="button" title="分析">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+                </button>
                 <button class="btn ghost btn-sm" id="editor-toggle-ai" type="button" title="Toggle AI panel">AI</button>
               </div>
             </div>
@@ -142,7 +424,9 @@
                     <div class="tab-panel-header">
                       <span class="font-serif">预设</span>
                       <span class="section-tag">PRESETS</span>
-                      <button class="btn ghost btn-xs" id="preset-create-btn" type="button" title="新建预设">+</button>
+                      <button class="btn ghost btn-xs" id="preset-create-btn" type="button" title="新建预设">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                      </button>
                     </div>
                     <div class="preset-list" id="preset-list">
                       <div class="sidebar-empty">暂无预设</div>
@@ -157,8 +441,12 @@
                   <button class="toolbar-btn" data-cmd="bold" type="button" title="加粗"><strong>B</strong></button>
                   <button class="toolbar-btn" data-cmd="italic" type="button" title="斜体"><em>I</em></button>
                   <button class="toolbar-btn" data-cmd="heading" type="button" title="标题">H</button>
-                  <button class="toolbar-btn" data-cmd="ul" type="button" title="列表">&#x2022;</button>
-                  <button class="toolbar-btn" data-cmd="quote" type="button" title="引用">&ldquo;</button>
+                  <button class="toolbar-btn" data-cmd="ul" type="button" title="列表">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="4" cy="6" r="1" fill="currentColor"/><circle cx="4" cy="12" r="1" fill="currentColor"/><circle cx="4" cy="18" r="1" fill="currentColor"/></svg>
+                  </button>
+                  <button class="toolbar-btn" data-cmd="quote" type="button" title="引用">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 21c3 0 7-1 7-8V5c0-1.25-.756-2.017-2-2H4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2 1 0 1 0 1 1v1c0 1-1 2-2 2s-1 .008-1 1.031V21z"/><path d="M15 21c3 0 7-1 7-8V5c0-1.25-.757-2.017-2-2h-4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2h.75c0 2.25.25 4-2.75 4v3z"/></svg>
+                  </button>
                   <span class="toolbar-sep"></span>
                   <button class="toolbar-btn" data-cmd="detect" type="button" title="AIGC 检测">检测</button>
                   <button class="toolbar-btn" data-cmd="preview" type="button" title="预览/编辑">预览</button>
@@ -166,8 +454,8 @@
                 <textarea class="editor-textarea" id="editor-textarea" placeholder="开始书写..."></textarea>
                 <div class="editor-preview" id="editor-preview" style="display:none"></div>
                 <div class="editor-statusbar">
-                  <span id="editor-char-count">0 字</span>
-                  <span id="editor-cursor-pos"></span>
+                  <span class="font-code" id="editor-char-count">0 字</span>
+                  <span class="font-code" id="editor-cursor-pos"></span>
                 </div>
               </div>
 
@@ -241,7 +529,10 @@
                           <input type="text" class="prediction-model-input" placeholder="模型名称 (如 gpt-4o)">
                         </div>
                       </div>
-                      <button class="btn ghost btn-sm" id="prediction-add-model" type="button">+ 添加模型</button>
+                      <button class="btn ghost btn-sm" id="prediction-add-model" type="button">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                        添加模型
+                      </button>
                     </div>
                     <button class="btn accent btn-sm" id="prediction-generate" type="button">开始抽卡</button>
                     <div class="prediction-results">
@@ -256,115 +547,222 @@
             </div>
           </section>
 
-          <!-- CHAT VIEW -->
+          <!-- ====== CHAT VIEW (ChatGPT-style centered layout) ====== -->
           <section class="chat-view" id="chat-view">
+            <!-- Scrollable message area -->
             <div class="chat-messages" id="chat-messages">
-              <div class="chat-welcome">
+              <!-- Welcome shown when empty, hidden once conversation starts -->
+              <div class="chat-welcome" id="chat-welcome">
                 <div class="chat-welcome-icon">
                   <svg width="48" height="48" viewBox="0 0 48 48" fill="none"><rect x="4" y="8" width="40" height="28" rx="6" stroke="currentColor" stroke-width="2.5"/><path d="M16 24h16M16 20h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M18 36l-4 6M30 36l4 6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
                 </div>
                 <h2>InkOS Studio</h2>
-                <p>AI 小说写作工作台 &mdash; 对话优先，从这里开始</p>
+                <p>AI 小说写作助手 &mdash; 有什么我能帮你的？</p>
               </div>
             </div>
-            <div class="chat-chips" id="chat-chips">
-              <button class="chip" type="button" data-action="write-next">写下一章</button>
-              <button class="chip" type="button" data-action="audit">审计最新章节</button>
-              <button class="chip" type="button" data-action="world-state">查看世界状态</button>
-              <button class="chip" type="button" data-action="export">导出全书</button>
+            <!-- Centered input + chips cluster -->
+            <div class="chat-composer" id="chat-composer">
+              <div class="chat-input-bar">
+                <textarea id="chat-input" rows="1" placeholder="输入你的想法..."></textarea>
+                <button class="btn-send" id="send-chat" type="button" title="Send">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                </button>
+              </div>
+              <div class="chat-chips" id="chat-chips">
+                <button class="chip" type="button" data-action="write-next">写下一章</button>
+                <button class="chip" type="button" data-action="audit">审计最新章节</button>
+                <button class="chip" type="button" data-action="world-state">查看世界状态</button>
+                <button class="chip" type="button" data-action="export">导出全书</button>
+              </div>
             </div>
-            <div class="chat-input-bar">
-              <textarea id="chat-input" rows="1" placeholder="输入你的想法..."></textarea>
-              <button class="btn-send" id="send-chat" type="button" title="Send">
-                <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M4 10l12-6-4 6 4 6-12-6z" fill="currentColor"/></svg>
+          </section>
+
+          <!-- ====== TOOLS VIEW (unified container) ====== -->
+          <section class="view-panel tools-container" id="tools-view">
+            <!-- Tools sub-tab navigation -->
+            <nav class="tools-subtab-bar" aria-label="Tools navigation">
+              <!-- Import -->
+              <button class="sub-tab active" data-tool="import" type="button">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                <span>导入</span>
               </button>
-            </div>
-          </section>
+              <!-- Export -->
+              <button class="sub-tab" data-tool="export" type="button">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                <span>导出</span>
+              </button>
+              <!-- Analytics -->
+              <button class="sub-tab" data-tool="analytics" type="button">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+                <span>分析</span>
+              </button>
+              <!-- Knowledge -->
+              <button class="sub-tab" data-tool="knowledge" type="button">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+                <span>知识库</span>
+              </button>
+              <!-- LLM Logs -->
+              <button class="sub-tab" data-tool="logs" type="button">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                <span>日志</span>
+              </button>
+            </nav>
 
-          <!-- LLM LOGS VIEW -->
-          <section class="llm-logs-view" id="llm-logs-view">
-            <div class="llm-logs-header">
-              <h2 class="font-serif">LLM 调用日志</h2>
-              <div style="display:flex;gap:8px;align-items:center">
-                <input type="date" id="llm-logs-date" class="form-input-sm">
-                <button class="btn ghost btn-sm" id="llm-logs-refresh" type="button">刷新</button>
-              </div>
-            </div>
-            <div class="llm-logs-content" id="llm-logs-content">
-              <div class="sidebar-empty">点击刷新加载日志</div>
-            </div>
-          </section>
-
-          <!-- UPLOAD VIEW -->
-          <section class="upload-view" id="upload-view">
-            <div class="upload-header">
-              <h2 class="font-serif">文件上传 & 章节导入</h2>
-            </div>
-            <div class="upload-body">
-              <div class="upload-dropzone" id="upload-dropzone">
-                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                <p>拖拽 .txt 文件到此处</p>
-                <button class="btn ghost btn-sm" id="upload-select-btn" type="button">或点击选择文件</button>
-                <input type="file" id="upload-file-input" accept=".txt" style="display:none">
-              </div>
-              <div class="upload-status" id="upload-status"></div>
-              <div class="upload-preview" id="upload-preview"></div>
-              <div class="upload-progress" id="upload-progress"></div>
-            </div>
-          </section>
-
-          <!-- ANALYTICS VIEW -->
-          <section class="analytics-view" id="analytics-view">
-            <div class="analytics-header">
-              <h2 class="font-serif">书籍分析</h2>
-            </div>
-            <div class="analytics-content" id="analytics-content">
-              <div class="sidebar-empty">请先选择书籍</div>
-            </div>
-          </section>
-
-          <!-- KNOWLEDGE VIEW (番茄 + 知识库) -->
-          <section class="knowledge-view" id="knowledge-view">
-            <div class="knowledge-layout">
-              <!-- Left: Fanqie Search + Knowledge List -->
-              <div class="knowledge-left">
-                <div class="knowledge-section">
-                  <h3 class="font-serif">番茄小说搜索</h3>
-                  <div class="fanqie-search-bar">
-                    <input type="text" id="fanqie-search-input" placeholder="搜索小说标题或作者...">
-                    <button class="btn accent btn-sm" id="fanqie-search-btn" type="button">搜索</button>
+            <!-- Tools content panels -->
+            <div class="tools-content">
+              <!-- Import sub-panel (wraps upload-view content) -->
+              <div class="tool-panel active-view" id="tool-import" data-tool="import">
+                <section class="upload-view active-view" id="upload-view" style="display:flex;flex-direction:column;flex:1;overflow:hidden">
+                  <div class="upload-header">
+                    <h2 class="font-serif">文件上传 &amp; 章节导入</h2>
                   </div>
-                  <div class="fanqie-results" id="fanqie-results"></div>
-                </div>
-                <div class="knowledge-section">
-                  <div class="knowledge-section-header">
-                    <h3 class="font-serif">知识库</h3>
-                    <button class="btn ghost btn-sm" id="knowledge-refresh" type="button">刷新</button>
+                  <div class="upload-body">
+                    <div class="upload-dropzone" id="upload-dropzone">
+                      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                      <p>拖拽 .txt 文件到此处</p>
+                      <button class="btn ghost btn-sm" id="upload-select-btn" type="button">或点击选择文件</button>
+                      <input type="file" id="upload-file-input" accept=".txt" style="display:none">
+                    </div>
+                    <div class="upload-status" id="upload-status"></div>
+                    <div class="upload-preview" id="upload-preview"></div>
+                    <div class="upload-progress" id="upload-progress"></div>
                   </div>
-                  <div class="knowledge-list" id="knowledge-list">
-                    <div class="sidebar-empty">暂无知识库条目</div>
-                  </div>
-                  <details class="knowledge-manual" style="margin-top:12px">
-                    <summary>手动分析</summary>
-                    <label class="form-field"><span>标题</span><input id="knowledge-manual-title" type="text" placeholder="小说标题"></label>
-                    <label class="form-field"><span>内容片段</span><textarea id="knowledge-manual-content" rows="4" placeholder="粘贴小说片段..."></textarea></label>
-                    <button class="btn accent btn-sm" id="knowledge-manual-analyze" type="button">开始解剖</button>
-                  </details>
-                </div>
+                </section>
               </div>
-              <!-- Right: Knowledge Detail -->
-              <div class="knowledge-right" id="knowledge-detail">
-                <div class="sidebar-empty">选择知识库条目查看7维度分析</div>
+
+              <!-- Export sub-panel (wraps write-view content) -->
+              <div class="tool-panel" id="tool-export" data-tool="export" style="display:none">
+                <section class="write-view active-view" id="write-view" style="display:flex;flex-direction:column;flex:1;overflow:auto">
+                  <div class="form-page">
+                    <div class="form-page-header">
+                      <h2>写下一章</h2>
+                    </div>
+                    <form class="form-grid" id="write-form">
+                      <label class="form-field">
+                        <span>选择书籍</span>
+                        <select name="bookId" id="write-book"></select>
+                      </label>
+                      <label class="form-field">
+                        <span>连写数量</span>
+                        <input name="count" type="number" min="1" value="1" />
+                      </label>
+                      <label class="form-field">
+                        <span>覆盖字数（可选）</span>
+                        <input name="words" type="number" min="200" placeholder="默认使用书籍设置" />
+                      </label>
+                      <label class="form-field span-2">
+                        <span>创作指导（可选）</span>
+                        <textarea name="context" rows="3" placeholder="本章重点、人物冲突、伏笔..."></textarea>
+                      </label>
+                      <button class="btn accent span-2" type="submit">开始写作</button>
+                    </form>
+                    <div class="form-page-header" style="margin-top:32px">
+                      <h2>导出书籍</h2>
+                    </div>
+                    <form class="form-grid" id="export-form">
+                      <label class="form-field">
+                        <span>选择书籍</span>
+                        <select name="bookId" id="export-book"></select>
+                      </label>
+                      <label class="form-field">
+                        <span>格式</span>
+                        <select name="format">
+                          <option value="txt">txt</option>
+                          <option value="md">md</option>
+                          <option value="epub">epub</option>
+                        </select>
+                      </label>
+                      <label class="form-field span-2">
+                        <span>输出路径（可选）</span>
+                        <input name="output" type="text" placeholder="留空使用默认路径" />
+                      </label>
+                      <label class="form-check span-2">
+                        <input type="checkbox" name="approvedOnly" />
+                        <span>仅导出已通过章节</span>
+                      </label>
+                      <button class="btn accent span-2" type="submit">导出文件</button>
+                    </form>
+                  </div>
+                </section>
+              </div>
+
+              <!-- Analytics sub-panel -->
+              <div class="tool-panel" id="tool-analytics" data-tool="analytics" style="display:none">
+                <section class="analytics-view active-view" id="analytics-view" style="display:flex;flex-direction:column;flex:1;overflow:auto">
+                  <div class="analytics-header">
+                    <h2 class="font-serif">书籍分析</h2>
+                  </div>
+                  <div class="analytics-content" id="analytics-content">
+                    <div class="sidebar-empty">请先选择书籍</div>
+                  </div>
+                </section>
+              </div>
+
+              <!-- Knowledge sub-panel -->
+              <div class="tool-panel" id="tool-knowledge" data-tool="knowledge" style="display:none">
+                <section class="knowledge-view active-view" id="knowledge-view" style="display:flex;flex-direction:column;flex:1;overflow:auto">
+                  <div class="knowledge-layout">
+                    <!-- Left: Fanqie Search + Knowledge List -->
+                    <div class="knowledge-left">
+                      <div class="knowledge-section">
+                        <h3 class="font-serif">番茄小说搜索</h3>
+                        <div class="fanqie-search-bar">
+                          <input type="text" id="fanqie-search-input" placeholder="搜索小说标题或作者...">
+                          <button class="btn accent btn-sm" id="fanqie-search-btn" type="button">搜索</button>
+                        </div>
+                        <div class="fanqie-results" id="fanqie-results"></div>
+                      </div>
+                      <div class="knowledge-section">
+                        <div class="knowledge-section-header">
+                          <h3 class="font-serif">知识库</h3>
+                          <button class="btn ghost btn-sm" id="knowledge-refresh" type="button">刷新</button>
+                        </div>
+                        <div class="knowledge-list" id="knowledge-list">
+                          <div class="sidebar-empty">暂无知识库条目</div>
+                        </div>
+                        <details class="knowledge-manual" style="margin-top:12px">
+                          <summary>手动分析</summary>
+                          <label class="form-field"><span>标题</span><input id="knowledge-manual-title" type="text" placeholder="小说标题"></label>
+                          <label class="form-field"><span>内容片段</span><textarea id="knowledge-manual-content" rows="4" placeholder="粘贴小说片段..."></textarea></label>
+                          <button class="btn accent btn-sm" id="knowledge-manual-analyze" type="button">开始解剖</button>
+                        </details>
+                      </div>
+                    </div>
+                    <!-- Right: Knowledge Detail -->
+                    <div class="knowledge-right" id="knowledge-detail">
+                      <div class="sidebar-empty">选择知识库条目查看7维度分析</div>
+                    </div>
+                  </div>
+                </section>
+              </div>
+
+              <!-- LLM Logs sub-panel -->
+              <div class="tool-panel" id="tool-logs" data-tool="logs" style="display:none">
+                <section class="llm-logs-view active-view" id="llm-logs-view" style="display:flex;flex-direction:column;flex:1;overflow:auto">
+                  <div class="llm-logs-header">
+                    <h2 class="font-serif">LLM 调用日志</h2>
+                    <div style="display:flex;gap:8px;align-items:center">
+                      <input type="date" id="llm-logs-date" class="form-input-sm">
+                      <button class="btn ghost btn-sm" id="llm-logs-refresh" type="button">刷新</button>
+                    </div>
+                  </div>
+                  <div class="llm-logs-content" id="llm-logs-content">
+                    <div class="sidebar-empty">点击刷新加载日志</div>
+                  </div>
+                </section>
               </div>
             </div>
           </section>
 
-          <!-- CONTENT VIEW -->
+          <!-- ====== CONTENT VIEW ====== -->
           <section class="content-view" id="content-view">
             <div class="content-header">
               <div class="content-breadcrumb" id="content-breadcrumb"></div>
               <div class="content-actions">
-                <button class="btn ghost" id="back-to-chat" type="button">&#x2190; 对话</button>
+                <button class="btn ghost" id="back-to-chat" type="button">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+                  返回
+                </button>
                 <button class="btn ghost" id="toggle-edit" type="button">编辑</button>
                 <button class="btn accent" id="save-content" type="button" style="display:none">保存</button>
               </div>
@@ -373,12 +771,15 @@
             <textarea class="content-editor" id="content-editor" style="display:none"></textarea>
           </section>
 
-          <!-- CREATE BOOK VIEW -->
+          <!-- ====== CREATE BOOK VIEW ====== -->
           <section class="create-view" id="create-view">
             <div class="form-page">
               <div class="form-page-header">
                 <h2>创建新书</h2>
-                <button class="btn ghost" id="create-back" type="button">&#x2190; 返回</button>
+                <button class="btn ghost" id="create-back" type="button">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+                  返回
+                </button>
               </div>
               <form class="form-grid" id="create-form">
                 <label class="form-field">
@@ -425,61 +826,6 @@
                   <span>创建后立即写第 1 章</span>
                 </label>
                 <button class="btn accent span-2" type="submit">创建书籍</button>
-              </form>
-            </div>
-          </section>
-
-          <!-- WRITE NEXT VIEW -->
-          <section class="write-view" id="write-view">
-            <div class="form-page">
-              <div class="form-page-header">
-                <h2>写下一章</h2>
-                <button class="btn ghost" id="write-back" type="button">&#x2190; 返回</button>
-              </div>
-              <form class="form-grid" id="write-form">
-                <label class="form-field">
-                  <span>选择书籍</span>
-                  <select name="bookId" id="write-book"></select>
-                </label>
-                <label class="form-field">
-                  <span>连写数量</span>
-                  <input name="count" type="number" min="1" value="1" />
-                </label>
-                <label class="form-field">
-                  <span>覆盖字数（可选）</span>
-                  <input name="words" type="number" min="200" placeholder="默认使用书籍设置" />
-                </label>
-                <label class="form-field span-2">
-                  <span>创作指导（可选）</span>
-                  <textarea name="context" rows="3" placeholder="本章重点、人物冲突、伏笔..."></textarea>
-                </label>
-                <button class="btn accent span-2" type="submit">开始写作</button>
-              </form>
-              <div class="form-page-header" style="margin-top:32px">
-                <h2>导出书籍</h2>
-              </div>
-              <form class="form-grid" id="export-form">
-                <label class="form-field">
-                  <span>选择书籍</span>
-                  <select name="bookId" id="export-book"></select>
-                </label>
-                <label class="form-field">
-                  <span>格式</span>
-                  <select name="format">
-                    <option value="txt">txt</option>
-                    <option value="md">md</option>
-                    <option value="epub">epub</option>
-                  </select>
-                </label>
-                <label class="form-field span-2">
-                  <span>输出路径（可选）</span>
-                  <input name="output" type="text" placeholder="留空使用默认路径" />
-                </label>
-                <label class="form-check span-2">
-                  <input type="checkbox" name="approvedOnly" />
-                  <span>仅导出已通过章节</span>
-                </label>
-                <button class="btn accent span-2" type="submit">导出文件</button>
               </form>
             </div>
           </section>
@@ -589,7 +935,7 @@
 
             <!-- Connectivity & Info -->
             <details class="settings-section">
-              <summary><h3>连通性 & 信息</h3></summary>
+              <summary><h3>连通性 &amp; 信息</h3></summary>
               <div class="settings-row">
                 <button class="btn ghost" id="run-doctor" type="button">检测连通性</button>
                 <span class="settings-doctor-status" id="doctor-status">未检测</span>

@@ -3,6 +3,7 @@ import { state } from "./state.js";
 import { $, requestJson, runAction, showToast } from "./utils.js";
 import { setView } from "./views.js";
 import { buildSidebarTree } from "./sidebar.js";
+import { renderDashboard } from "./dashboard.js";
 
 export async function createBook(e, loadBooks) {
   e.preventDefault();
@@ -22,9 +23,11 @@ export async function createBook(e, loadBooks) {
     };
 
     const res = await requestJson("/api/book", { method: "POST", body: JSON.stringify(body) });
-    showToast(`书籍已创建: ${res.bookId || body.title}`);
+    const bookId = res.data?.bookId || body.title;
+    showToast(`书籍已创建: ${bookId}`);
     if (loadBooks) await loadBooks();
-    setView("chat");
+    setView("dashboard");
+    await renderDashboard();
   });
 }
 

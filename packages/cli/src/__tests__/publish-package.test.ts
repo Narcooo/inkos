@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -9,12 +10,21 @@ const testDir = dirname(fileURLToPath(import.meta.url));
 const cliDir = resolve(testDir, "..", "..");
 const workspaceRoot = resolve(cliDir, "..", "..");
 
-async function extractPackedPackageJson(packDir: string) {
-  execFileSync("npm", ["pack", "--pack-destination", packDir], {
-    cwd: cliDir,
+function runNpm(args: string[], cwd: string) {
+  const npmCliPath = resolve(dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js");
+  if (!existsSync(npmCliPath)) {
+    throw new Error(`npm-cli.js not found at ${npmCliPath}`);
+  }
+
+  return execFileSync(process.execPath, [npmCliPath, ...args], {
+    cwd,
     env: process.env,
     encoding: "utf-8",
   });
+}
+
+async function extractPackedPackageJson(packDir: string) {
+  runNpm(["pack", "--pack-destination", packDir], cliDir);
 
   const tgzFiles = (await readdir(packDir)).filter((name) => name.endsWith(".tgz"));
   if (tgzFiles.length !== 1) {

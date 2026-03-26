@@ -84,7 +84,8 @@ export async function runDoctor() {
   await runAction("检测连通性...", async () => {
     const res = await requestJson("/api/doctor");
     const stdout = res.stdout ?? "";
-    if (res.exitCode === 0) {
+    const exitCode = res.exitCode ?? res.code;
+    if (exitCode === 0) {
       statusEl.textContent = "连通正常";
       statusEl.className = "settings-doctor-status ok";
     } else {

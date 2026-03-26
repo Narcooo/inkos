@@ -16,7 +16,7 @@ vi.mock("node:child_process", () => ({
 }));
 
 vi.mock("../utils.js", () => ({
-  findProjectRoot: vi.fn(() => "/project"),
+  findProjectRoot: vi.fn(() => "/repo/project"),
   log: logMock,
   logError: logErrorMock,
 }));
@@ -27,9 +27,9 @@ describe("studio command", () => {
     vi.resetModules();
   });
 
-  it("launches TypeScript sources through tsx in monorepo mode", async () => {
+  it("launches the monorepo studio server through node", async () => {
     accessMock.mockImplementation(async (path: string) => {
-      if (path === "/studio/src/api/index.ts") {
+      if (path.replaceAll("\\", "/") === "/repo/packages/studio/server.cjs") {
         return;
       }
       throw new Error(`missing: ${path}`);
@@ -38,20 +38,24 @@ describe("studio command", () => {
     const { studioCommand } = await import("../commands/studio.js");
     await studioCommand.parseAsync(["node", "studio", "--port", "9001"]);
 
-    expect(spawnMock).toHaveBeenCalledWith(
-      "npx",
-      ["tsx", "/studio/src/api/index.ts"],
-      expect.objectContaining({
-        cwd: "/project",
-        stdio: "inherit",
-        env: expect.objectContaining({ INKOS_STUDIO_PORT: "9001" }),
-      }),
-    );
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    const call = spawnMock.mock.calls[0];
+    expect(call).toBeDefined();
+    if (!call) throw new Error("spawn was not called");
+    const [command, args, options] = call as unknown as [string, string[], { cwd: string; stdio: string; env: Record<string, string> }];
+    expect(command).toBe("node");
+    expect(args).toHaveLength(1);
+    expect(args[0]!.replaceAll("\\", "/")).toBe("/repo/packages/studio/server.cjs");
+    expect(options.cwd).toBe("/repo/project");
+    expect(options.stdio).toBe("inherit");
+    expect(options.env.PORT).toBe("9001");
+    expect(options.env.INKOS_PROJECT_ROOT).toBe("/repo/project");
+    expect(options.env.INKOS_REPO_ROOT.replaceAll("\\", "/")).toBe("/repo");
   });
 
-  it("launches built JavaScript entries through node", async () => {
+  it("launches the installed studio server package through node", async () => {
     accessMock.mockImplementation(async (path: string) => {
-      if (path === "/project/node_modules/@actalk/inkos-studio/dist/api/index.js") {
+      if (path.replaceAll("\\", "/") === "/repo/project/node_modules/@actalk/inkos-studio/server.cjs") {
         return;
       }
       throw new Error(`missing: ${path}`);
@@ -60,14 +64,17 @@ describe("studio command", () => {
     const { studioCommand } = await import("../commands/studio.js");
     await studioCommand.parseAsync(["node", "studio", "--port", "4567"]);
 
-    expect(spawnMock).toHaveBeenCalledWith(
-      "node",
-      ["/project/node_modules/@actalk/inkos-studio/dist/api/index.js"],
-      expect.objectContaining({
-        cwd: "/project",
-        stdio: "inherit",
-        env: expect.objectContaining({ INKOS_STUDIO_PORT: "4567" }),
-      }),
-    );
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    const call = spawnMock.mock.calls[0];
+    expect(call).toBeDefined();
+    if (!call) throw new Error("spawn was not called");
+    const [command, args, options] = call as unknown as [string, string[], { cwd: string; stdio: string; env: Record<string, string> }];
+    expect(command).toBe("node");
+    expect(args).toHaveLength(1);
+    expect(args[0]!.replaceAll("\\", "/")).toBe("/repo/project/node_modules/@actalk/inkos-studio/server.cjs");
+    expect(options.cwd).toBe("/repo/project");
+    expect(options.stdio).toBe("inherit");
+    expect(options.env.PORT).toBe("4567");
+    expect(options.env.INKOS_PROJECT_ROOT).toBe("/repo/project");
   });
 });

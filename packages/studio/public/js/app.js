@@ -1,7 +1,7 @@
 // InkOS Studio — Entry Module
 import { state } from "./state.js";
 import { $, escapeHtml, requestJson, autoResizeInput } from "./utils.js";
-import { setView } from "./views.js";
+import { setView, switchToolTab, setEditorTabEnabled, toggleSidebar } from "./views.js";
 import { getTheme, toggleTheme, updateThemeIcon } from "./theme.js";
 import { buildSidebarTree } from "./sidebar.js";
 import { renderChatMessages, sendChatMessage, handleQuickAction } from "./chat.js";
@@ -42,6 +42,9 @@ async function loadBooks() {
     }
   } catch { state.books = []; }
   populateBookSelect();
+
+  // Enable editor tab if a book is selected
+  setEditorTabEnabled(!!state.activeBookId);
 }
 
 async function refreshAll() {
@@ -52,7 +55,7 @@ async function refreshAll() {
   }
 }
 
-// ── Topbar ──
+// ── Book Select ──
 
 function populateBookSelect() {
   const sel = $("book-select");
@@ -79,6 +82,7 @@ function onBookChange() {
   const bookId = $("book-select").value;
   state.activeBookId = bookId;
   state.chatContext.bookId = bookId;
+  setEditorTabEnabled(!!bookId);
   if (bookId) {
     buildSidebarTree(bookId);
   } else {
@@ -86,9 +90,24 @@ function onBookChange() {
   }
 }
 
-function toggleSidebar() {
-  state.sidebarCollapsed = !state.sidebarCollapsed;
-  $("sidebar").parentElement.classList.toggle("sidebar-collapsed", state.sidebarCollapsed);
+// ── Topbar Nav Tab Switching ──
+
+function handleNavTab(viewName) {
+  if (viewName === "editor") {
+    if (!state.activeBookId) return; // disabled state
+    openEditor(state.activeBookId);
+    return;
+  }
+  if (viewName === "tools") {
+    setView("tools");
+    return;
+  }
+  if (viewName === "dashboard") {
+    setView("dashboard");
+    renderDashboard();
+    return;
+  }
+  setView(viewName);
 }
 
 // ── Event Binding ──
@@ -98,6 +117,26 @@ function bindEvents() {
   $("sidebar-toggle").addEventListener("click", toggleSidebar);
   $("book-select").addEventListener("change", onBookChange);
   $("settings-btn").addEventListener("click", openSettings);
+
+  // Topbar nav tabs
+  document.querySelectorAll(".nav-tab").forEach(tab => {
+    tab.addEventListener("click", () => {
+      if (tab.classList.contains("disabled")) return;
+      handleNavTab(tab.dataset.view);
+    });
+  });
+
+  // Tools sub-tabs
+  document.querySelectorAll(".sub-tab").forEach(tab => {
+    tab.addEventListener("click", () => {
+      const toolName = tab.dataset.tool;
+      switchToolTab(toolName);
+      // Trigger data loading for specific tools
+      if (toolName === "analytics") renderAnalytics();
+      if (toolName === "knowledge") renderKnowledgeList();
+      if (toolName === "logs") renderLLMLogs();
+    });
+  });
 
   // Settings modal
   $("settings-close").addEventListener("click", closeSettings);
@@ -110,26 +149,9 @@ function bindEvents() {
   $("save-settings").addEventListener("click", () => saveSettings(loadMeta));
   $("run-doctor").addEventListener("click", runDoctor);
 
-  // Sidebar footer
-  $("nav-chat").addEventListener("click", backToChat);
-  $("nav-create").addEventListener("click", () => setView("create"));
-  const navDash = $("nav-dashboard");
-  if (navDash) navDash.addEventListener("click", () => {
-    setView("dashboard");
-    renderDashboard();
-  });
-  const navUpload = $("nav-upload");
-  if (navUpload) navUpload.addEventListener("click", () => setView("upload"));
-  const navKnowledge = $("nav-knowledge");
-  if (navKnowledge) navKnowledge.addEventListener("click", () => {
-    setView("knowledge");
-    renderKnowledgeList();
-  });
-  const navLogs = $("nav-llm-logs");
-  if (navLogs) navLogs.addEventListener("click", () => {
-    setView("llm-logs");
-    renderLLMLogs();
-  });
+  // Sidebar footer (create button)
+  const navCreate = $("nav-create");
+  if (navCreate) navCreate.addEventListener("click", () => setView("create"));
 
   // Chat
   $("send-chat").addEventListener("click", sendChatMessage);
@@ -154,12 +176,11 @@ function bindEvents() {
 
   // Create form
   $("create-form").addEventListener("submit", (e) => createBook(e, loadBooks));
-  $("create-back").addEventListener("click", () => setView("chat"));
+  $("create-back").addEventListener("click", () => setView("dashboard"));
 
   // Write / export forms
   $("write-form").addEventListener("submit", writeNext);
   $("export-form").addEventListener("submit", exportBook);
-  $("write-back").addEventListener("click", () => setView("chat"));
 }
 
 // ── Boot ──

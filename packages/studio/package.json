@@ -8,7 +8,9 @@
   "scripts": {
     "dev": "node server.cjs",
     "start": "node server.cjs",
-    "build:exe": "pkg server.cjs --targets node18-win-x64 --output dist/inkos-studio.exe --assets public/**/*"
+    "build:exe": "pkg server.cjs --targets node18-win-x64 --output dist/inkos-studio.exe && node -e \"require('fs').cpSync('public','dist/public',{recursive:true})\"",
+    "build:exe:linux": "pkg server.cjs --targets node18-linux-x64 --output dist/inkos-studio && node -e \"require('fs').cpSync('public','dist/public',{recursive:true})\"",
+    "build:exe:mac": "pkg server.cjs --targets node18-macos-x64 --output dist/inkos-studio && node -e \"require('fs').cpSync('public','dist/public',{recursive:true})\""
   },
   "devDependencies": {
     "pkg": "^5.8.1"

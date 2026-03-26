@@ -11,30 +11,23 @@ export const studioCommand = new Command("studio")
     const root = findProjectRoot();
     const port = opts.port;
 
-    // Look for studio's built server entry
-    const studioPaths = [
-      join(root, "node_modules", "@actalk", "inkos-studio", "dist", "api", "index.js"),
-      join(root, "..", "studio", "src", "api", "index.ts"),
+    const studioCandidates = [
+      { entry: join(root, "packages", "studio", "server.cjs"), repoRoot: root },
+      { entry: join(root, "..", "packages", "studio", "server.cjs"), repoRoot: join(root, "..") },
+      { entry: join(root, "node_modules", "@actalk", "inkos-studio", "server.cjs"), repoRoot: undefined },
     ];
 
-    // Try to find tsx or ts-node for running TypeScript
-    // In dev (monorepo), run studio's TS source directly via tsx
-    const studioDir = join(root, "..", "studio");
     let studioEntry: string | undefined;
+    let repoRoot: string | undefined;
 
-    try {
-      await access(join(studioDir, "src", "api", "index.ts"));
-      studioEntry = join(studioDir, "src", "api", "index.ts");
-    } catch {
-      // Not in monorepo — look for built JS
-      for (const p of studioPaths) {
-        try {
-          await access(p);
-          studioEntry = p;
-          break;
-        } catch {
-          // continue
-        }
+    for (const candidate of studioCandidates) {
+      try {
+        await access(candidate.entry);
+        studioEntry = candidate.entry;
+        repoRoot = candidate.repoRoot;
+        break;
+      } catch {
+        // continue
       }
     }
 
@@ -49,14 +42,15 @@ export const studioCommand = new Command("studio")
 
     log(`Starting InkOS Studio on http://localhost:${port}`);
 
-    const launch = studioEntry.endsWith(".ts")
-      ? { command: "npx", args: ["tsx", studioEntry] }
-      : { command: "node", args: [studioEntry] };
-
-    const child = spawn(launch.command, launch.args, {
+    const child = spawn("node", [studioEntry], {
       cwd: root,
       stdio: "inherit",
-      env: { ...process.env, INKOS_STUDIO_PORT: port },
+      env: {
+        ...process.env,
+        PORT: port,
+        INKOS_PROJECT_ROOT: root,
+        ...(repoRoot ? { INKOS_REPO_ROOT: repoRoot } : {}),
+      },
     });
 
     child.on("error", (e) => {

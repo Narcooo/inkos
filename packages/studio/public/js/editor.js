@@ -2,8 +2,8 @@
 import { state } from "./state.js";
 import { $, escapeHtml, requestJson, fetchSSE, runAction, showToast, autoResizeInput } from "./utils.js";
 import { renderMarkdown } from "./markdown.js";
-import { setView } from "./views.js";
-import { STORY_FILES, TRUTH_FILES } from "./sidebar.js";
+import { setView, setEditorTabEnabled } from "./views.js";
+import { STORY_FILES, TRUTH_FILES, ICON } from "./sidebar.js";
 import { renderDashboard } from "./dashboard.js";
 import { renderPresetList } from "./presets.js";
 import { renderAnalytics } from "./analytics.js";
@@ -17,6 +17,7 @@ let autoSaveTimer = null;
 export function openEditor(bookId) {
   state.activeBookId = bookId;
   state.chatContext.bookId = bookId;
+  setEditorTabEnabled(true);
   setView("editor");
 
   // Set title
@@ -178,7 +179,7 @@ async function loadChapterTree(bookId) {
       : meta?.status === "audit-failed" ? '<span class="tree-node-badge fail">&#x2717;</span>'
       : "";
     return `<button class="tree-node" data-type="chapter" data-file="${escapeHtml(file)}">
-      <span class="tree-node-icon">\ud83d\udcc4</span>
+      <span class="tree-node-icon">${ICON.chapter}</span>
       <span class="tree-node-label">${escapeHtml(label)}</span>
       ${badge}
     </button>`;
@@ -218,10 +219,10 @@ async function loadWorldTree(bookId) {
 async function loadOutlineTree(bookId) {
   const tree = $("editor-outline-tree");
   const outlineFiles = [
-    { file: "story_bible.md", label: "L1 故事圣经", icon: "\ud83d\udcd6" },
-    { file: "volume_outline.md", label: "L2 全书大纲", icon: "\ud83d\udccb" },
-    { file: "chapter_summaries.md", label: "L3 章节摘要", icon: "\ud83d\udcdd" },
-    { file: "book_rules.md", label: "写作规则", icon: "\ud83d\udccf" },
+    { file: "story_bible.md", label: "L1 故事圣经", icon: ICON.bible },
+    { file: "volume_outline.md", label: "L2 全书大纲", icon: ICON.outline },
+    { file: "chapter_summaries.md", label: "L3 章节摘要", icon: ICON.summary },
+    { file: "book_rules.md", label: "写作规则", icon: ICON.rules },
   ];
 
   tree.innerHTML = outlineFiles.map(f => `

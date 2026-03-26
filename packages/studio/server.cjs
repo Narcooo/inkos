@@ -6,25 +6,66 @@ const os = require("node:os");
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
 const { pathToFileURL } = require("node:url");
+const { resolveCliPath, resolveCorePath } = require("./server-runtime.cjs");
 
-function detectPackagedRepoRoot() {
-  const exeDir = path.dirname(process.execPath);
-  const candidate = path.resolve(exeDir, "..", "..", "..");
-  if (existsSync(path.join(candidate, "packages", "cli", "dist", "index.js"))) {
-    return candidate;
+// ── Portable Data Path ──
+// User data lives in ~/.inkos/ so exe updates never touch user data.
+// Override with INKOS_PROJECT_ROOT or INKOS_REPO_ROOT env vars.
+
+function detectRepoRoot() {
+  if (process.pkg) {
+    // Packaged exe: check if repo structure exists alongside exe
+    const exeDir = path.dirname(process.execPath);
+    const candidate = path.resolve(exeDir, "..", "..", "..");
+    if (existsSync(path.join(candidate, "packages", "cli", "dist", "index.js"))) {
+      return candidate;
+    }
+    return null; // No repo found — standalone exe mode
   }
-  return process.cwd();
+  return path.resolve(__dirname, "..", "..");
 }
 
 const repoRoot = process.env.INKOS_REPO_ROOT
   ? path.resolve(process.env.INKOS_REPO_ROOT)
-  : (process.pkg ? detectPackagedRepoRoot() : path.resolve(__dirname, "..", ".."));
-const projectRoot = process.env.INKOS_PROJECT_ROOT ?? path.join(repoRoot, "project");
-const cliPath = path.join(repoRoot, "packages", "cli", "dist", "index.js");
-const packagedPublicDir = path.join(repoRoot, "packages", "studio", "public");
-const publicDir = process.pkg && existsSync(packagedPublicDir)
-  ? packagedPublicDir
-  : path.join(__dirname, "public");
+  : detectRepoRoot();
+
+// Data directory: ~/.inkos/data (survives exe updates)
+const userDataDir = path.join(os.homedir(), ".inkos", "data");
+const projectRoot = process.env.INKOS_PROJECT_ROOT
+  ?? (repoRoot ? path.join(repoRoot, "project") : userDataDir);
+
+// CLI path (only available in full repo install)
+const cliPath = resolveCliPath({
+  env: process.env,
+  repoRoot,
+  projectRoot,
+  currentDir: __dirname,
+});
+const corePath = resolveCorePath({
+  env: process.env,
+  repoRoot,
+  projectRoot,
+  currentDir: __dirname,
+});
+
+// Static files: embedded snapshot next to exe, or dev path
+function resolvePublicDir() {
+  if (process.pkg) {
+    // 1. Check for /public next to exe
+    const exePublic = path.join(path.dirname(process.execPath), "public");
+    if (existsSync(exePublic)) return exePublic;
+    // 2. Check repo structure
+    if (repoRoot) {
+      const repoPublic = path.join(repoRoot, "packages", "studio", "public");
+      if (existsSync(repoPublic)) return repoPublic;
+    }
+    // 3. Snapshot inside pkg (if assets were included)
+    return path.join(__dirname, "public");
+  }
+  return path.join(__dirname, "public");
+}
+const publicDir = resolvePublicDir();
+
 const briefPath = path.join(projectRoot, "brief.md");
 const globalEnvPath = path.join(os.homedir(), ".inkos", ".env");
 let coreModulePromise;
@@ -116,11 +157,11 @@ function resolveNodeBin() {
 }
 
 async function runInkOS(args) {
-  if (!existsSync(cliPath)) {
+  if (!cliPath) {
     return {
       code: 1,
       stdout: "",
-      stderr: `CLI not found at ${cliPath}. Run pnpm build in the repo root first.`,
+      stderr: "CLI not found. Install @actalk/inkos or run from the repo root with packages/cli built.",
     };
   }
 
@@ -363,7 +404,10 @@ async function deleteKnowledge(id) {
 
 async function getCoreModule() {
   if (!coreModulePromise) {
-    const coreEntry = pathToFileURL(path.join(repoRoot, "packages", "core", "dist", "index.js")).href;
+    if (!corePath) {
+      throw new Error("InkOS core not found. Install @actalk/inkos-core or run from the repo root with packages/core built.");
+    }
+    const coreEntry = pathToFileURL(corePath).href;
     coreModulePromise = import(coreEntry);
   }
   return coreModulePromise;
@@ -1892,7 +1936,12 @@ server.on("error", (error) => {
   }
 });
 
-server.listen(port, host, () => {
+server.listen(port, host, async () => {
+  // Ensure data directories exist (safe for first run and updates)
+  await mkdir(projectRoot, { recursive: true });
+  await mkdir(path.join(projectRoot, ".inkos"), { recursive: true });
+  await mkdir(path.join(os.homedir(), ".inkos"), { recursive: true });
+
   // eslint-disable-next-line no-console
   console.log(`InkOS Studio running at http://${host}:${port}`);
   // eslint-disable-next-line no-console
