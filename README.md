@@ -354,9 +354,43 @@ inkos agent "先扫描市场趋势，然后根据结果创建一本新书"
 
 `[id]` 参数在项目只有一本书时可省略，自动检测。所有命令支持 `--json` 输出结构化数据。`draft` / `write next` / `plan chapter` / `compose chapter` 支持 `--context` 传入创作指导，`--words` 覆盖每章目标字数。`book create` 支持 `--brief <file>` 传入创作简报（你的脑洞/设定文档），Architect 会基于此生成设定而非凭空创作。`plan chapter` / `compose chapter` 不要求在线 LLM，可在配置 API Key 之前先检查输入治理结果。
 
+## InkOS Studio（预览版）
+
+InkOS Studio 是本地 Web 工作台，用来审阅和编辑书稿。用户入口保持不变：
+
+```bash
+inkos studio
+```
+
+### 如何构建与运行
+
+Monorepo 仓库内运行：
+
+```bash
+pnpm install
+pnpm --filter @actalk/inkos-studio build
+pnpm --filter @actalk/inkos build
+inkos studio --port 4567
+```
+
+如果你手动把私有 `@actalk/inkos-studio` 包接到 `node_modules` 里，需要确保同时存在 `dist/api/index.js` 和 `dist/web/index.html`，再执行 `inkos studio`。这不是当前已发布 CLI 的默认安装路径。
+
+### v1 已支持
+
+- 仅本地使用：launcher 和 API 面向 `localhost`，不是远程多人部署方案。
+- 章节工作台：支持章节阅读、审阅、显式保存修改，以及 approve / reject 审核动作。
+- 真相文件查看：可快速只读浏览 story memory。
+- 运行控制台：支持 `draft`、`audit`、`revise`、`write next`，并显示流式日志和结果。
+
+### 当前限制
+
+- v1 的 truth files 仍然只读；章节可在 Studio 里编辑，但 truth files 仍建议通过 CLI 流程更新。
+- 当前定位是单机本地工作流，暂不提供鉴权、协作或部署能力。
+- 启动器需要同时找到可运行的 Studio 服务端和已构建的前端资源。在 monorepo 里，这意味着 `packages/studio/src/api/index.ts` 配合 `packages/studio/dist/web/index.html`，或完整构建后的 `packages/studio/dist` 目录。
+
 ## 路线图
 
-- [ ] `packages/studio` Web UI 审阅编辑界面（Vite + React + Hono）
+- [ ] Studio v2：truth file 编辑、局部干预工具、更多工作流覆盖
 - [ ] 局部干预（重写半章 + 级联更新后续 truth 文件）
 - [ ] 自定义 agent 插件系统
 - [ ] 平台格式导出（起点、番茄等）

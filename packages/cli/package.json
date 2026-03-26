@@ -22,6 +22,7 @@
     "prepublishOnly": "node ../../scripts/verify-no-workspace-protocol.mjs .",
     "build": "tsc",
     "dev": "tsc --watch",
+    "pretest": "pnpm --filter @actalk/inkos-core build && pnpm build",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit"
   },

@@ -360,9 +360,43 @@ inkos agent "Create a progression fantasy about a mage who can only use one spel
 
 `[id]` is auto-detected when the project has only one book. All commands support `--json` for structured output. `draft` / `write next` / `plan chapter` / `compose chapter` accept `--context` for steering, and `--words` overrides the target chapter size. `book create` supports `--brief <file>` to pass a creative brief — the Architect builds from your ideas instead of generating from scratch. `plan chapter` / `compose chapter` do not require a live LLM, so you can inspect governed inputs before finishing API setup.
 
+## InkOS Studio (Preview)
+
+InkOS Studio is the local web workbench for reviewing and editing books. The CLI entrypoint stays the same:
+
+```bash
+inkos studio
+```
+
+### Build and run
+
+Monorepo checkout:
+
+```bash
+pnpm install
+pnpm --filter @actalk/inkos-studio build
+pnpm --filter @actalk/inkos build
+inkos studio --port 4567
+```
+
+Manual package layout: if you wire the private `@actalk/inkos-studio` package into `node_modules` yourself, make sure both `dist/api/index.js` and `dist/web/index.html` exist before running `inkos studio`. This is not part of the current published CLI flow.
+
+### What v1 supports
+
+- Local-only launcher and API; Studio is meant for `localhost`, not remote multi-user hosting.
+- Chapter workspace with read/review flow, explicit chapter saves, and review approve/reject actions.
+- Truth files viewer for fast inspection of story memory.
+- Run console with `draft`, `audit`, `revise`, and `write next` actions plus streaming logs/results.
+
+### Current limitations
+
+- Truth files are read-only in v1; edit chapters in Studio, but update truth files through CLI flows.
+- Studio focuses on single-user local workflows and does not add auth, collaboration, or deployment tooling yet.
+- The launcher needs a runnable Studio server plus built web assets. In the monorepo that means `packages/studio/src/api/index.ts` together with `packages/studio/dist/web/index.html`, or a fully built `packages/studio/dist` tree.
+
 ## Roadmap
 
-- [ ] `packages/studio` Web UI for review and editing (Vite + React + Hono)
+- [ ] Studio v2: truth-file editing, richer intervention tools, and broader workflow coverage
 - [ ] Partial chapter intervention (rewrite half a chapter + cascade truth file updates)
 - [ ] Novel-to-comic pipeline (truth files → storyboard → manga pages)
 - [ ] Custom agent plugin system
