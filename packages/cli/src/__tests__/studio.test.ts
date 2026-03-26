@@ -49,6 +49,7 @@ describe("studio command", () => {
     expect(options.cwd).toBe("/repo/project");
     expect(options.stdio).toBe("inherit");
     expect(options.env.PORT).toBe("9001");
+    expect(options.env.INKOS_STUDIO_PORT).toBe("9001");
     expect(options.env.INKOS_PROJECT_ROOT).toBe("/repo/project");
     expect(options.env.INKOS_REPO_ROOT.replaceAll("\\", "/")).toBe("/repo");
   });
@@ -75,6 +76,7 @@ describe("studio command", () => {
     expect(options.cwd).toBe("/repo/project");
     expect(options.stdio).toBe("inherit");
     expect(options.env.PORT).toBe("4567");
+    expect(options.env.INKOS_STUDIO_PORT).toBe("4567");
     expect(options.env.INKOS_PROJECT_ROOT).toBe("/repo/project");
   });
 });

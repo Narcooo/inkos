@@ -48,6 +48,7 @@ export const studioCommand = new Command("studio")
       env: {
         ...process.env,
         PORT: port,
+        INKOS_STUDIO_PORT: port,
         INKOS_PROJECT_ROOT: root,
         ...(repoRoot ? { INKOS_REPO_ROOT: repoRoot } : {}),
       },

@@ -7,6 +7,13 @@ const path = require("node:path");
 const { randomUUID } = require("node:crypto");
 const { pathToFileURL } = require("node:url");
 const { resolveCliPath, resolveCorePath } = require("./server-runtime.cjs");
+const {
+  buildImportRegex,
+  createUploadResponse,
+  ensureRuntimeDirs,
+  isSafeUploadFileId,
+  resolveServerPort,
+} = require("./server-safety.cjs");
 
 // ── Portable Data Path ──
 // User data lives in ~/.inkos/ so exe updates never touch user data.
@@ -71,7 +78,7 @@ const globalEnvPath = path.join(os.homedir(), ".inkos", ".env");
 let coreModulePromise;
 
 const host = process.env.HOST ?? "127.0.0.1";
-const port = Number.parseInt(process.env.PORT ?? "8799", 10);
+const port = resolveServerPort(process.env);
 
 const proxyEnv = {
   HTTP_PROXY: process.env.HTTP_PROXY ?? "http://127.0.0.1:7890",
@@ -1130,13 +1137,13 @@ async function handleApi(req, res, url) {
     const firstTitle = matches[0]?.[0] ?? "(未检测到章节)";
 
     return sendJson(res, 200, {
-      ok: true,
-      fileId,
-      filePath,
-      size: buffer.length,
-      chapterCount,
-      firstTitle,
-      totalChars: text.length,
+      ...createUploadResponse({
+        fileId,
+        size: buffer.length,
+        chapterCount,
+        firstTitle,
+        totalChars: text.length,
+      }),
     });
   }
 
@@ -1148,6 +1155,7 @@ async function handleApi(req, res, url) {
 
     if (!fileId || !bookId) return sendJson(res, 400, { ok: false, error: "fileId and bookId required" });
     if (!isSafeBookId(bookId)) return sendJson(res, 400, { ok: false, error: "Invalid bookId" });
+    if (!isSafeUploadFileId(fileId)) return sendJson(res, 400, { ok: false, error: "Invalid fileId" });
 
     const uploadPath = path.join(projectRoot, ".inkos-tmp", "uploads", `${fileId}.txt`);
     let text;
@@ -1155,7 +1163,12 @@ async function handleApi(req, res, url) {
       return sendJson(res, 404, { ok: false, error: "Upload file not found" });
     }
 
-    const regex = new RegExp(pattern, "g");
+    let regex;
+    try {
+      regex = buildImportRegex(pattern);
+    } catch (error) {
+      return sendJson(res, 400, { ok: false, error: error.message });
+    }
     const matches = [...text.matchAll(regex)];
     if (!matches.length) return sendJson(res, 400, { ok: false, error: "No chapters detected" });
 
@@ -1936,20 +1949,30 @@ server.on("error", (error) => {
   }
 });
 
-server.listen(port, host, async () => {
-  // Ensure data directories exist (safe for first run and updates)
-  await mkdir(projectRoot, { recursive: true });
-  await mkdir(path.join(projectRoot, ".inkos"), { recursive: true });
-  await mkdir(path.join(os.homedir(), ".inkos"), { recursive: true });
+async function startServer() {
+  await ensureRuntimeDirs({
+    projectRoot,
+    homeDir: os.homedir(),
+    mkdirFn: mkdir,
+    pathModule: path,
+  });
 
-  // eslint-disable-next-line no-console
-  console.log(`InkOS Studio running at http://${host}:${port}`);
-  // eslint-disable-next-line no-console
-  console.log(`Project root: ${projectRoot}`);
+  server.listen(port, host, () => {
+    // eslint-disable-next-line no-console
+    console.log(`InkOS Studio running at http://${host}:${port}`);
+    // eslint-disable-next-line no-console
+    console.log(`Project root: ${projectRoot}`);
 
-  const autoOpenEnv = process.env.INKOS_AUTO_OPEN;
-  const shouldOpen = autoOpenEnv ? autoOpenEnv !== "0" : Boolean(process.pkg);
-  if (shouldOpen) {
-    openBrowser(`http://${host}:${port}`);
-  }
+    const autoOpenEnv = process.env.INKOS_AUTO_OPEN;
+    const shouldOpen = autoOpenEnv ? autoOpenEnv !== "0" : Boolean(process.pkg);
+    if (shouldOpen) {
+      openBrowser(`http://${host}:${port}`);
+    }
+  });
+}
+
+startServer().catch((error) => {
+  // eslint-disable-next-line no-console
+  console.error(`InkOS Studio failed to initialize: ${String(error)}`);
+  process.exitCode = 1;
 });
