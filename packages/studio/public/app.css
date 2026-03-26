@@ -36,6 +36,8 @@
 
   /* Layout */
   --topbar-h: 56px;
+  /* Base token kept for compatibility; the final 260px Studio shell value is
+     intentionally overridden by the redesign block near the end of this file. */
   --sidebar-w: 240px;
 
   /* Semantic aliases for backward compatibility */
@@ -2591,4 +2593,289 @@ summary,
 .fanqie-card,
 .knowledge-dim-tab {
   cursor: pointer;
+}
+
+/* ============================================================
+   REDESIGNED LAYOUT OVERRIDES
+   Migrated from index.html to keep the effective values in one place.
+   These rules intentionally stay at the end so the former inline values
+   continue to win over earlier base styles.
+   ============================================================ */
+:root {
+  --topbar-h: 56px;
+  --sidebar-w: 260px;
+  --nav-tab-h: 44px;
+  --radius: 10px;
+  --radius-sm: 6px;
+  --radius-xs: 4px;
+  --font-code: "Fira Code", "Cascadia Code", "JetBrains Mono", monospace;
+  --font-body: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  --font-serif: "Noto Serif SC", "Source Han Serif SC", "Songti SC", serif;
+  --color-primary: #2563eb;
+  --color-cta: #f97316;
+  --color-dark-bg: #0f1117;
+  --color-surface: #1a1d27;
+  --color-border: #2a2d37;
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+:root[data-theme="dark"] {
+  --bg: var(--color-dark-bg);
+  --bg-surface: var(--color-surface);
+  --border: var(--color-border);
+  --text: #e4e4e7;
+  --text-muted: #9ca3af;
+  --primary: var(--color-primary);
+  --accent: var(--color-cta);
+}
+
+.clickable {
+  cursor: pointer;
+}
+button,
+[role="button"],
+a,
+select,
+.nav-tab,
+.sub-tab,
+.sidebar-action,
+.chip {
+  cursor: pointer;
+}
+button,
+.nav-tab,
+.sub-tab {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+  font-family: var(--font-body);
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  height: var(--topbar-h);
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+  gap: 12px;
+  flex-shrink: 0;
+  z-index: 100;
+}
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.topbar-logo {
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.topbar-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  gap: 4px;
+}
+.nav-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 16px;
+  height: 40px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  font-weight: 500;
+  border-radius: var(--radius-sm);
+  transition: all 0.15s var(--ease);
+  white-space: nowrap;
+  font-family: inherit;
+}
+.nav-tab:hover {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.06));
+  color: var(--text);
+}
+.nav-tab.active {
+  background: var(--color-primary);
+  color: #fff;
+}
+.nav-tab.disabled {
+  opacity: 0.35;
+  pointer-events: none;
+}
+.nav-tab svg {
+  flex-shrink: 0;
+}
+
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.topbar-status {
+  font-family: var(--font-code);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+.sidebar {
+  width: var(--sidebar-w);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  overflow: hidden;
+  transition: width 0.2s var(--ease), opacity 0.2s var(--ease);
+}
+.sidebar.hidden {
+  width: 0;
+  opacity: 0;
+  overflow: hidden;
+  border-right: none;
+  pointer-events: none;
+}
+.sidebar-book-select-wrapper {
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.sidebar-book-select-wrapper select {
+  width: 100%;
+  font-size: 0.85rem;
+}
+.sidebar-tree {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+.sidebar-empty {
+  padding: 24px 16px;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  text-align: center;
+}
+.sidebar-footer {
+  display: none; /* Navigation moved to topbar */
+}
+
+.main {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.tools-subtab-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.sub-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px;
+  height: 36px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-weight: 500;
+  border-radius: var(--radius-xs);
+  transition: all 0.15s var(--ease);
+  white-space: nowrap;
+  font-family: inherit;
+}
+.sub-tab:hover {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.06));
+  color: var(--text);
+}
+.sub-tab.active {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  background: rgba(37, 99, 235, 0.08);
+}
+.sub-tab svg {
+  flex-shrink: 0;
+}
+
+.view-panel {
+  display: none;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+.view-panel.active-view {
+  display: flex;
+}
+
+.tools-container {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+.tools-content {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.dashboard-view,
+.editor-view,
+.chat-view,
+.llm-logs-view,
+.upload-view,
+.analytics-view,
+.knowledge-view,
+.content-view,
+.create-view,
+.write-view {
+  display: none;
+}
+.dashboard-view.active-view,
+.editor-view.active-view,
+.chat-view.active-view,
+.llm-logs-view.active-view,
+.upload-view.active-view,
+.analytics-view.active-view,
+.knowledge-view.active-view,
+.content-view.active-view,
+.create-view.active-view,
+.write-view.active-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+
+.font-code {
+  font-family: var(--font-code);
+}
+.font-serif {
+  font-family: var(--font-serif);
 }
