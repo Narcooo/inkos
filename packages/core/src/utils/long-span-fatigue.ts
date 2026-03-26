@@ -16,6 +16,14 @@ export interface AnalyzeLongSpanFatigueInput {
   readonly language?: "zh" | "en";
 }
 
+export interface EnglishVarianceBrief {
+  readonly highFrequencyPhrases: ReadonlyArray<string>;
+  readonly repeatedOpeningPatterns: ReadonlyArray<string>;
+  readonly repeatedEndingShapes: ReadonlyArray<string>;
+  readonly sceneObligation: string;
+  readonly text: string;
+}
+
 interface SummaryRow {
   readonly chapter: number;
   readonly title: string;
@@ -26,6 +34,44 @@ interface SummaryRow {
 const SENTENCE_SIMILARITY_THRESHOLD = 0.72;
 const CHINESE_PUNCTUATION = /[，。！？；：“”‘’（）《》、\s\-—…·]/g;
 const ENGLISH_PUNCTUATION = /[^a-z0-9]+/gi;
+
+export async function buildEnglishVarianceBrief(params: {
+  readonly bookDir: string;
+  readonly chapterNumber: number;
+}): Promise<EnglishVarianceBrief | null> {
+  const chapterBodies = await loadPreviousChapterBodies(params.bookDir, params.chapterNumber, 24);
+  if (chapterBodies.length < 2) {
+    return null;
+  }
+
+  const summaryRows = await loadSummaryRows(join(params.bookDir, "story", "chapter_summaries.md"));
+  const recentRows = summaryRows
+    .filter((row) => row.chapter < params.chapterNumber)
+    .sort((left, right) => left.chapter - right.chapter)
+    .slice(-3);
+
+  const highFrequencyPhrases = collectRepeatedEnglishPhrases(chapterBodies);
+  const repeatedOpeningPatterns = collectRepeatedBoundaryPatterns(chapterBodies, "opening");
+  const repeatedEndingShapes = collectRepeatedBoundaryPatterns(chapterBodies, "ending");
+  const sceneObligation = chooseSceneObligation(recentRows, repeatedOpeningPatterns, repeatedEndingShapes);
+
+  const lines = [
+    "## English Variance Brief",
+    "",
+    `- High-frequency phrases to avoid: ${formatEnglishList(highFrequencyPhrases)}`,
+    `- Repeated opening patterns to avoid: ${formatEnglishList(repeatedOpeningPatterns)}`,
+    `- Repeated ending patterns to avoid: ${formatEnglishList(repeatedEndingShapes)}`,
+    `- Scene obligation: ${sceneObligation}`,
+  ];
+
+  return {
+    highFrequencyPhrases,
+    repeatedOpeningPatterns,
+    repeatedEndingShapes,
+    sceneObligation,
+    text: lines.join("\n"),
+  };
+}
 
 export async function analyzeLongSpanFatigue(
   input: AnalyzeLongSpanFatigueInput,
@@ -71,6 +117,28 @@ async function loadSummaryRows(path: string): Promise<SummaryRow[]> {
       .split("\n")
       .map((line) => parseSummaryRow(line))
       .filter((row): row is SummaryRow => row !== null);
+  } catch {
+    return [];
+  }
+}
+
+async function loadPreviousChapterBodies(
+  bookDir: string,
+  currentChapter: number,
+  limit: number,
+): Promise<string[]> {
+  const chaptersDir = join(bookDir, "chapters");
+  try {
+    const files = await readdir(chaptersDir);
+    const previousFiles = files
+      .map((file) => ({ file, chapter: Number.parseInt(file.slice(0, 4), 10) }))
+      .filter((entry) => Number.isFinite(entry.chapter) && entry.chapter < currentChapter && entry.file.endsWith(".md"))
+      .sort((left, right) => left.chapter - right.chapter)
+      .slice(-limit);
+
+    return Promise.all(
+      previousFiles.map((entry) => readFile(join(chaptersDir, entry.file), "utf-8")),
+    );
   } catch {
     return [];
   }
@@ -225,6 +293,85 @@ function buildSentencePatternIssue(
   };
 }
 
+function collectRepeatedEnglishPhrases(chapterBodies: ReadonlyArray<string>): string[] {
+  const counts = new Map<string, number>();
+
+  for (const body of chapterBodies) {
+    const tokens = body
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]+/gi, " ")
+      .split(/\s+/)
+      .filter((token) => token.length >= 3)
+      .filter((token) => !ENGLISH_STOP_WORDS.has(token));
+    const seen = new Set<string>();
+
+    for (let index = 0; index <= tokens.length - 3; index += 1) {
+      const phrase = `${tokens[index]} ${tokens[index + 1]} ${tokens[index + 2]}`;
+      seen.add(phrase);
+    }
+
+    for (const phrase of seen) {
+      counts.set(phrase, (counts.get(phrase) ?? 0) + 1);
+    }
+  }
+
+  return [...counts.entries()]
+    .filter(([, count]) => count >= 2)
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .slice(0, 3)
+    .map(([phrase]) => phrase);
+}
+
+function collectRepeatedBoundaryPatterns(
+  chapterBodies: ReadonlyArray<string>,
+  boundary: "opening" | "ending",
+): string[] {
+  const counts = new Map<string, number>();
+
+  for (const body of chapterBodies) {
+    const sentence = extractBoundarySentence(body, boundary);
+    if (!sentence) continue;
+
+    const tokens = sentence
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]+/gi, " ")
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 4);
+    if (tokens.length < 2) continue;
+
+    const pattern = tokens.join(" ");
+    counts.set(pattern, (counts.get(pattern) ?? 0) + 1);
+  }
+
+  return [...counts.entries()]
+    .filter(([, count]) => count >= 2)
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .slice(0, 3)
+    .map(([pattern]) => pattern);
+}
+
+function chooseSceneObligation(
+  rows: ReadonlyArray<SummaryRow>,
+  repeatedOpenings: ReadonlyArray<string>,
+  repeatedEndings: ReadonlyArray<string>,
+): string {
+  const recentTypes = rows
+    .map((row) => row.chapterType.trim().toLowerCase())
+    .filter((type) => type.length > 0);
+
+  if (recentTypes.length >= 3 && recentTypes.every((type) => type === recentTypes[0])) {
+    return "confrontation under pressure";
+  }
+  if (repeatedEndings.length > 0) {
+    return "discovery under pressure";
+  }
+  if (repeatedOpenings.length > 0) {
+    return "negotiation with withholding";
+  }
+  return "concealment with active pushback";
+}
+
 function extractBoundarySentence(content: string, boundary: "opening" | "ending"): string | null {
   const flattened = content
     .split("\n")
@@ -273,6 +420,10 @@ function summarizeSentence(sentence: string, language: "zh" | "en"): string {
   return collapsed.slice(0, 12);
 }
 
+function formatEnglishList(values: ReadonlyArray<string>): string {
+  return values.length > 0 ? values.join(", ") : "none";
+}
+
 function diceCoefficient(left: string, right: string): number {
   if (left === right) return 1;
   if (left.length < 2 || right.length < 2) return 0;
@@ -303,3 +454,25 @@ function isMeaningfulValue(value: string): boolean {
   const normalized = value.trim().toLowerCase();
   return normalized.length > 0 && normalized !== "none" && normalized !== "(none)" && normalized !== "无";
 }
+
+const ENGLISH_STOP_WORDS = new Set([
+  "the",
+  "and",
+  "but",
+  "with",
+  "from",
+  "into",
+  "that",
+  "this",
+  "there",
+  "again",
+  "while",
+  "after",
+  "before",
+  "were",
+  "was",
+  "had",
+  "has",
+  "have",
+  "kept",
+]);

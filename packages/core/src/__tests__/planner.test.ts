@@ -454,4 +454,213 @@ describe("PlannerAgent", () => {
     ]));
     expect(result.intent.mustKeep).not.toContain("--");
   });
+
+  it("emits hook agenda into chapter intent and runtime markdown", async () => {
+    const stateDir = join(storyDir, "state");
+    await mkdir(stateDir, { recursive: true });
+
+    await Promise.all([
+      writeFile(
+        join(stateDir, "manifest.json"),
+        JSON.stringify({
+          schemaVersion: 2,
+          language: "en",
+          lastAppliedChapter: 25,
+          projectionVersion: 1,
+          migrationWarnings: [],
+        }, null, 2),
+        "utf-8",
+      ),
+      writeFile(
+        join(stateDir, "current_state.json"),
+        JSON.stringify({
+          chapter: 25,
+          facts: [],
+        }, null, 2),
+        "utf-8",
+      ),
+      writeFile(
+        join(stateDir, "chapter_summaries.json"),
+        JSON.stringify({
+          rows: [],
+        }, null, 2),
+        "utf-8",
+      ),
+      writeFile(
+        join(stateDir, "hooks.json"),
+        JSON.stringify({
+          hooks: [
+            {
+              hookId: "recent-route",
+              startChapter: 23,
+              type: "route",
+              status: "open",
+              lastAdvancedChapter: 25,
+              expectedPayoff: "Recent route payoff",
+              notes: "Recent route remains active.",
+            },
+            {
+              hookId: "ready-payoff",
+              startChapter: 12,
+              type: "mystery",
+              status: "progressing",
+              lastAdvancedChapter: 24,
+              expectedPayoff: "Reveal the hidden room mastermind",
+              notes: "The chapter is close to the reveal point.",
+            },
+            {
+              hookId: "stale-debt",
+              startChapter: 3,
+              type: "relationship",
+              status: "open",
+              lastAdvancedChapter: 8,
+              expectedPayoff: "Mentor debt payoff",
+              notes: "Long-stale but still unresolved.",
+            },
+          ],
+        }, null, 2),
+        "utf-8",
+      ),
+    ]);
+
+    book = {
+      ...book,
+      genre: "other",
+      language: "en",
+    };
+
+    const planner = new PlannerAgent({
+      client: {} as ConstructorParameters<typeof PlannerAgent>[0]["client"],
+      model: "test-model",
+      projectRoot: root,
+      bookId: book.id,
+    });
+
+    const result = await planner.planChapter({
+      book,
+      bookDir,
+      chapterNumber: 26,
+      externalContext: "Keep the chapter on the mainline debt conflict.",
+    });
+
+    expect(result.intent.hookAgenda.mustAdvance).toEqual(["recent-route", "ready-payoff"]);
+    expect(result.intent.hookAgenda.eligibleResolve).toEqual(["ready-payoff"]);
+    expect(result.intent.hookAgenda.staleDebt).toEqual(["stale-debt"]);
+
+    const intentMarkdown = await readFile(result.runtimePath, "utf-8");
+    expect(intentMarkdown).toContain("## Hook Agenda");
+    expect(intentMarkdown).toContain("recent-route");
+    expect(intentMarkdown).toContain("ready-payoff");
+    expect(intentMarkdown).toContain("stale-debt");
+  });
+
+  it("builds stale debt agenda from broader active hooks than the retrieval subset", async () => {
+    const stateDir = join(storyDir, "state");
+    await mkdir(stateDir, { recursive: true });
+
+    await Promise.all([
+      writeFile(
+        join(stateDir, "manifest.json"),
+        JSON.stringify({
+          schemaVersion: 2,
+          language: "en",
+          lastAppliedChapter: 25,
+          projectionVersion: 1,
+          migrationWarnings: [],
+        }, null, 2),
+        "utf-8",
+      ),
+      writeFile(
+        join(stateDir, "current_state.json"),
+        JSON.stringify({
+          chapter: 25,
+          facts: [],
+        }, null, 2),
+        "utf-8",
+      ),
+      writeFile(
+        join(stateDir, "chapter_summaries.json"),
+        JSON.stringify({
+          rows: [],
+        }, null, 2),
+        "utf-8",
+      ),
+      writeFile(
+        join(stateDir, "hooks.json"),
+        JSON.stringify({
+          hooks: [
+            {
+              hookId: "recent-route",
+              startChapter: 23,
+              type: "route",
+              status: "open",
+              lastAdvancedChapter: 25,
+              expectedPayoff: "Recent route payoff",
+              notes: "Keep the route central.",
+            },
+            {
+              hookId: "recent-guild",
+              startChapter: 22,
+              type: "politics",
+              status: "progressing",
+              lastAdvancedChapter: 24,
+              expectedPayoff: "Guild pressure payoff",
+              notes: "Guild pressure remains active.",
+            },
+            {
+              hookId: "recent-token",
+              startChapter: 21,
+              type: "artifact",
+              status: "open",
+              lastAdvancedChapter: 23,
+              expectedPayoff: "Token route payoff",
+              notes: "Token route remains active.",
+            },
+            {
+              hookId: "stale-omega",
+              startChapter: 3,
+              type: "relationship",
+              status: "open",
+              lastAdvancedChapter: 8,
+              expectedPayoff: "Old debt payoff",
+              notes: "Dormant unresolved line.",
+            },
+            {
+              hookId: "stale-sable",
+              startChapter: 4,
+              type: "mystery",
+              status: "open",
+              lastAdvancedChapter: 9,
+              expectedPayoff: "Archive payoff",
+              notes: "Another dormant unresolved line.",
+            },
+          ],
+        }, null, 2),
+        "utf-8",
+      ),
+    ]);
+
+    book = {
+      ...book,
+      genre: "other",
+      language: "en",
+    };
+
+    const planner = new PlannerAgent({
+      client: {} as ConstructorParameters<typeof PlannerAgent>[0]["client"],
+      model: "test-model",
+      projectRoot: root,
+      bookId: book.id,
+    });
+
+    const result = await planner.planChapter({
+      book,
+      bookDir,
+      chapterNumber: 26,
+      externalContext: "Keep the chapter on the route pressure.",
+    });
+
+    expect(result.intent.hookAgenda.mustAdvance).toEqual(["recent-route", "recent-guild"]);
+    expect(result.intent.hookAgenda.staleDebt).toEqual(["stale-omega", "stale-sable"]);
+  });
 });

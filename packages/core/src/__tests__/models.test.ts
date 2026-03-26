@@ -504,11 +504,27 @@ describe("ChapterIntentSchema", () => {
           resolution: "allow local outline deferral",
         },
       ],
+      hookAgenda: {
+        mustAdvance: ["H019"],
+        eligibleResolve: ["H045"],
+        staleDebt: ["H023", "H027"],
+        avoidNewHookFamilies: [
+          "anonymous-source-restatement",
+          "mechanism-restatement",
+        ],
+      },
     });
 
     expect(result.chapter).toBe(12);
     expect(result.goal).toContain("mentor conflict");
     expect(result.conflicts).toHaveLength(1);
+    expect(result.hookAgenda.mustAdvance).toEqual(["H019"]);
+    expect(result.hookAgenda.eligibleResolve).toEqual(["H045"]);
+    expect(result.hookAgenda.staleDebt).toEqual(["H023", "H027"]);
+    expect(result.hookAgenda.avoidNewHookFamilies).toEqual([
+      "anonymous-source-restatement",
+      "mechanism-restatement",
+    ]);
   });
 
   it("defaults optional arrays to empty", () => {
@@ -521,6 +537,10 @@ describe("ChapterIntentSchema", () => {
     expect(result.mustAvoid).toEqual([]);
     expect(result.styleEmphasis).toEqual([]);
     expect(result.conflicts).toEqual([]);
+    expect(result.hookAgenda.mustAdvance).toEqual([]);
+    expect(result.hookAgenda.eligibleResolve).toEqual([]);
+    expect(result.hookAgenda.staleDebt).toEqual([]);
+    expect(result.hookAgenda.avoidNewHookFamilies).toEqual([]);
   });
 
   it("rejects invalid chapter numbers", () => {
@@ -791,6 +811,7 @@ describe("Runtime state schemas", () => {
             notes: "Ledger clue sharpens the line",
           },
         ],
+        mention: ["ledger-whisper"],
         resolve: [],
         defer: [],
       },
@@ -809,6 +830,7 @@ describe("Runtime state schemas", () => {
 
     expect(result.chapter).toBe(12);
     expect(result.hookOps.upsert[0]?.hookId).toBe("mentor-debt");
+    expect(result.hookOps.mention).toEqual(["ledger-whisper"]);
   });
 
   it("rejects natural-language numeric drift in runtime-state delta hooks", () => {

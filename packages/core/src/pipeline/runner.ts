@@ -1115,7 +1115,11 @@ export class PipelineRunner {
     });
     auditResult = {
       ...auditResult,
-      issues: [...auditResult.issues, ...longSpanFatigue.issues],
+      issues: [
+        ...auditResult.issues,
+        ...longSpanFatigue.issues,
+        ...(persistenceOutput.hookHealthIssues ?? []),
+      ],
     };
     finalWordCount = persistenceOutput.wordCount;
     const lengthWarnings = this.buildLengthWarnings(
@@ -1655,6 +1659,7 @@ ${matrix}`,
       ...analyzed,
       postWriteErrors: [],
       postWriteWarnings: [],
+      hookHealthIssues: output.hookHealthIssues,
       tokenUsage: output.tokenUsage,
     };
   }

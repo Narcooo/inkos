@@ -8,6 +8,7 @@ import {
 export function buildGovernedHookWorkingSet(params: {
   readonly hooksMarkdown: string;
   readonly contextPackage: ContextPackage;
+  readonly chapterIntent?: string;
   readonly chapterNumber: number;
   readonly language: "zh" | "en";
   readonly keepRecent?: number;
@@ -28,8 +29,10 @@ export function buildGovernedHookWorkingSet(params: {
       .map((entry) => entry.source.slice("story/pending_hooks.md#".length))
       .filter(Boolean),
   );
+  const agendaIds = collectHookAgendaIds(params.chapterIntent);
   const workingSet = hooks.filter((hook) =>
     selectedIds.has(hook.hookId)
+      || agendaIds.has(hook.hookId)
       || isHookWithinChapterWindow(hook, params.chapterNumber, params.keepRecent ?? 5),
   );
 
@@ -38,6 +41,56 @@ export function buildGovernedHookWorkingSet(params: {
   }
 
   return renderHookSnapshot(workingSet, params.language);
+}
+
+function collectHookAgendaIds(chapterIntent?: string): Set<string> {
+  if (!chapterIntent || chapterIntent.trim().length === 0) {
+    return new Set();
+  }
+
+  const ids = new Set<string>();
+  const lines = chapterIntent.split("\n");
+  let inHookAgenda = false;
+  let captureIds = false;
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+
+    if (line === "## Hook Agenda") {
+      inHookAgenda = true;
+      captureIds = false;
+      continue;
+    }
+
+    if (!inHookAgenda) {
+      continue;
+    }
+
+    if (line.startsWith("## ") && line !== "## Hook Agenda") {
+      break;
+    }
+
+    if (line === "### Must Advance" || line === "### Eligible Resolve" || line === "### Stale Debt") {
+      captureIds = true;
+      continue;
+    }
+
+    if (line.startsWith("### ")) {
+      captureIds = false;
+      continue;
+    }
+
+    if (!captureIds || !line.startsWith("- ")) {
+      continue;
+    }
+
+    const value = line.slice(2).trim();
+    if (value && value.toLowerCase() !== "none") {
+      ids.add(value);
+    }
+  }
+
+  return ids;
 }
 
 export function mergeTableMarkdownByKey(

@@ -192,4 +192,112 @@ describe("applyRuntimeStateDelta", () => {
       }),
     ).toThrow(/unknown hook/i);
   });
+
+  it("keeps mention-only hooks from mutating lastAdvancedChapter", () => {
+    const result = applyRuntimeStateDelta({
+      snapshot: {
+        manifest: {
+          schemaVersion: 2,
+          language: "en",
+          lastAppliedChapter: 11,
+          projectionVersion: 1,
+          migrationWarnings: [],
+        },
+        currentState: {
+          chapter: 11,
+          facts: [],
+        },
+        hooks: {
+          hooks: [
+            {
+              hookId: "mentor-debt",
+              startChapter: 1,
+              type: "relationship",
+              status: "open",
+              lastAdvancedChapter: 8,
+              expectedPayoff: "Reveal the debt.",
+              notes: "Still unresolved.",
+            },
+          ],
+        },
+        chapterSummaries: {
+          rows: [],
+        },
+      },
+      delta: RuntimeStateDeltaSchema.parse({
+        chapter: 12,
+        hookOps: {
+          upsert: [],
+          mention: ["mentor-debt"],
+          resolve: [],
+          defer: [],
+        },
+        notes: [],
+      }),
+    });
+
+    expect(result.hooks.hooks).toEqual([
+      expect.objectContaining({
+        hookId: "mentor-debt",
+        lastAdvancedChapter: 8,
+        status: "open",
+      }),
+    ]);
+  });
+
+  it("rejects duplicate restated hook families when a new hook upsert overlaps an active hook", () => {
+    expect(() =>
+      applyRuntimeStateDelta({
+        snapshot: {
+          manifest: {
+            schemaVersion: 2,
+            language: "en",
+            lastAppliedChapter: 11,
+            projectionVersion: 1,
+            migrationWarnings: [],
+          },
+          currentState: {
+            chapter: 11,
+            facts: [],
+          },
+          hooks: {
+            hooks: [
+              {
+                hookId: "anonymous-source-scope",
+                startChapter: 3,
+                type: "source-risk",
+                status: "open",
+                lastAdvancedChapter: 8,
+                expectedPayoff: "Reveal how much the anonymous source already knew about the route and address.",
+                notes: "Still unresolved anonymous source knowledge question.",
+              },
+            ],
+          },
+          chapterSummaries: {
+            rows: [],
+          },
+        },
+        delta: RuntimeStateDeltaSchema.parse({
+          chapter: 12,
+          hookOps: {
+            upsert: [
+              {
+                hookId: "anonymous-source-restated",
+                startChapter: 12,
+                type: "source-risk",
+                status: "open",
+                lastAdvancedChapter: 12,
+                expectedPayoff: "Reveal how much the anonymous source already knew about the route.",
+                notes: "Anonymous source knowledge question restated with slightly different wording.",
+              },
+            ],
+            mention: [],
+            resolve: [],
+            defer: [],
+          },
+          notes: [],
+        }),
+      }),
+    ).toThrow(/duplicate active hook/i);
+  });
 });

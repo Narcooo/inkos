@@ -10,6 +10,7 @@ import {
   type RuntimeStateDelta,
   type StateManifest,
 } from "../models/runtime-state.js";
+import { evaluateHookAdmission } from "../utils/hook-governance.js";
 import { validateRuntimeState } from "./state-validator.js";
 
 export interface RuntimeStateSnapshot {
@@ -76,6 +77,21 @@ function applyHookOps(hooksState: HooksState, delta: RuntimeStateDelta): HooksSt
   const hooksById = new Map(hooksState.hooks.map((hook) => [hook.hookId, { ...hook }]));
 
   for (const hook of delta.hookOps.upsert) {
+    if (!hooksById.has(hook.hookId)) {
+      const admission = evaluateHookAdmission({
+        candidate: {
+          type: hook.type,
+          expectedPayoff: hook.expectedPayoff,
+          notes: hook.notes,
+        },
+        activeHooks: [...hooksById.values()].filter((candidate) => candidate.status !== "resolved"),
+      });
+
+      if (!admission.admit && admission.reason === "duplicate_family") {
+        throw new Error(`duplicate active hook family: ${hook.hookId} overlaps ${admission.matchedHookId}`);
+      }
+    }
+
     hooksById.set(hook.hookId, { ...hook });
   }
 

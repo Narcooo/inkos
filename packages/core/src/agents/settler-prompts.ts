@@ -18,11 +18,12 @@ export function buildSettlerSystemPrompt(
   const hookRules = `
 ## 伏笔追踪规则（严格执行）
 
-- 新伏笔：正文中出现的暗示、悬念、未解之谜 → 新增 hook_id，标注起始章=${isEnglish ? "current chapter" : "当前章"}、类型、状态=待定
-- 推进伏笔：已有伏笔在本章有新进展 → **必须**更新"最近推进"列为当前章节号，更新状态和备注
+- 新伏笔：只有当正文中出现一个会延续到后续章节、且有具体回收方向的未解问题时，才新增 hook_id。不要为旧 hook 的换说法、重述、抽象总结再开新 hook
+- 提及伏笔：已有伏笔在本章被提到，但没有新增信息、没有改变读者或角色对该问题的理解 → 放入 mention 数组，不要更新最近推进
+- 推进伏笔：已有伏笔在本章出现了新的事实、证据、关系变化、风险升级或范围收缩 → **必须**更新"最近推进"列为当前章节号，更新状态和备注
 - 回收伏笔：伏笔在本章被明确揭示、解决、或不再成立 → 状态改为"已回收"，备注回收方式
 - 延后伏笔：超过5章未推进 → 标注"延后"，备注原因
-- **铁律**：每次输出 UPDATED_HOOKS 时，逐条检查所有伏笔的"最近推进"列。如果某伏笔在本章正文中有任何相关内容（哪怕只是间接提及），必须更新其"最近推进"为当前章节号。不要让伏笔僵死。`;
+- **铁律**：不要把“再次提到”“换个说法重述”“抽象复盘”当成推进。只有状态真的变了，才更新最近推进。只是出现过的旧 hook，放进 mention 数组。`;
 
   const fullCastBlock = bookRules?.enableFullCastTracking
     ? `\n## 全员追踪\nPOST_SETTLEMENT 必须额外包含：本章出场角色清单、角色间关系变动、未出场但被提及的角色。`
@@ -105,6 +106,7 @@ function buildSettlerOutputFormat(gp: GenreProfile): string {
         "notes": "本章为何推进/延后/回收"
       }
     ],
+    "mention": ["本章只是被提到、没有真实推进的 hookId"],
     "resolve": ["已回收的 hookId"],
     "defer": ["需要标记延后的 hookId"]
   },
@@ -128,9 +130,10 @@ function buildSettlerOutputFormat(gp: GenreProfile): string {
 规则：
 1. 只输出增量，不要重写完整 truth files
 2. 所有章节号字段都必须是整数，不能写自然语言
-3. 如果本章推进了旧 hook，lastAdvancedChapter 必须等于当前章号
-4. 如果回收或延后 hook，必须放在 resolve / defer 数组里
-5. chapterSummary.chapter 必须等于当前章节号`;
+3. 如果旧 hook 只是被提到、没有真实状态变化，把它放进 mention，不要更新 lastAdvancedChapter
+4. 如果本章推进了旧 hook，lastAdvancedChapter 必须等于当前章号
+5. 如果回收或延后 hook，必须放在 resolve / defer 数组里
+6. chapterSummary.chapter 必须等于当前章节号`;
 }
 
 export function buildSettlerUserPrompt(params: {

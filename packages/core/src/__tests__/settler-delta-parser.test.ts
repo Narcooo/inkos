@@ -85,6 +85,7 @@ describe("parseSettlerDeltaOutput", () => {
         chapter: 20,
         hookOps: {
           upsert: [],
+          mention: ["mentor-oath"],
           resolve: ["old-seal"],
           defer: ["guild-route"],
         },
@@ -93,6 +94,7 @@ describe("parseSettlerDeltaOutput", () => {
       "```",
     ].join("\n"));
 
+    expect(result.runtimeStateDelta.hookOps.mention).toEqual(["mentor-oath"]);
     expect(result.runtimeStateDelta.hookOps.resolve).toEqual(["old-seal"]);
     expect(result.runtimeStateDelta.hookOps.defer).toEqual(["guild-route"]);
   });

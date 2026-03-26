@@ -146,4 +146,16 @@ describe("validatePostWrite", () => {
     const result = validatePostWrite(content, baseProfile, null);
     expect(result).toHaveLength(0);
   });
+
+  it("warns when an English multi-character scene has almost no direct exchange", () => {
+    const content = [
+      "Mara cornered Taryn in the archive and kept the ledger between them.",
+      "Mara demanded a clear answer about the missing page while Taryn refused to meet her eyes.",
+      "Taryn stepped back toward the window and Mara followed without letting the pressure break.",
+    ].join(" ");
+
+    const result = validatePostWrite(content, baseProfile, null, "en");
+    expect(findRule(result, "Dialogue pressure")).toBeDefined();
+    expect(findRule(result, "Dialogue pressure")?.severity).toBe("warning");
+  });
 });

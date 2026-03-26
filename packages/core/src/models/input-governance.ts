@@ -8,6 +8,15 @@ export const ChapterConflictSchema = z.object({
 
 export type ChapterConflict = z.infer<typeof ChapterConflictSchema>;
 
+export const HookAgendaSchema = z.object({
+  mustAdvance: z.array(z.string().min(1)).default([]),
+  eligibleResolve: z.array(z.string().min(1)).default([]),
+  staleDebt: z.array(z.string().min(1)).default([]),
+  avoidNewHookFamilies: z.array(z.string().min(1)).default([]),
+});
+
+export type HookAgenda = z.infer<typeof HookAgendaSchema>;
+
 export const ChapterIntentSchema = z.object({
   chapter: z.number().int().min(1),
   goal: z.string().min(1),
@@ -16,6 +25,12 @@ export const ChapterIntentSchema = z.object({
   mustAvoid: z.array(z.string()).default([]),
   styleEmphasis: z.array(z.string()).default([]),
   conflicts: z.array(ChapterConflictSchema).default([]),
+  hookAgenda: HookAgendaSchema.default({
+    mustAdvance: [],
+    eligibleResolve: [],
+    staleDebt: [],
+    avoidNewHookFamilies: [],
+  }),
 });
 
 export type ChapterIntent = z.infer<typeof ChapterIntentSchema>;

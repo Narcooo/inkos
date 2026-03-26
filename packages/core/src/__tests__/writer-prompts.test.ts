@@ -107,4 +107,31 @@ describe("buildWriterSystemPrompt", () => {
     expect(prompt).toContain("Do not reveal the mastermind");
     expect(prompt).toContain("Keep the prose restrained");
   });
+
+  it("tells governed English prompts to obey variance briefs and include resistance-bearing exchanges", () => {
+    const prompt = buildWriterSystemPrompt(
+      {
+        ...BOOK,
+        language: "en",
+      },
+      {
+        ...GENRE,
+        language: "en",
+        name: "General",
+      },
+      null,
+      "# Book Rules",
+      "# Genre Body",
+      "# Style Guide\n\nKeep the prose restrained.",
+      undefined,
+      3,
+      "creative",
+      undefined,
+      "en",
+      "governed",
+    );
+
+    expect(prompt).toContain("English Variance Brief");
+    expect(prompt).toContain("resistance-bearing exchange");
+  });
 });

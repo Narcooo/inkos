@@ -103,6 +103,15 @@ export { countChapterLength, resolveLengthCountingMode, formatLengthCount, build
 export { createLogger, createStderrSink, createJsonLineSink, nullSink, type Logger, type LogSink, type LogLevel, type LogEntry } from "./utils/logger.js";
 export { loadProjectConfig, GLOBAL_CONFIG_DIR, GLOBAL_ENV_PATH } from "./utils/config-loader.js";
 export { computeAnalytics, type AnalyticsData, type TokenStats } from "./utils/analytics.js";
+export {
+  collectStaleHookDebt,
+  evaluateHookAdmission,
+  classifyHookDisposition,
+  type HookAdmissionCandidate,
+  type HookAdmissionDecision,
+  type HookDisposition,
+} from "./utils/hook-governance.js";
+export { analyzeHookHealth } from "./utils/hook-health.js";
 
 // Pipeline
 export { PipelineRunner, type PipelineConfig, type ChapterPipelineResult, type DraftResult, type PlanChapterResult, type ComposeChapterResult, type ReviseResult, type TruthFiles, type BookStatusInfo, type ImportChaptersInput, type ImportChaptersResult, type TokenUsageSummary } from "./pipeline/runner.js";

@@ -26,6 +26,9 @@ import { extractPOVFromOutline, filterMatrixByPOV, filterHooksByPOV } from "../u
 import { parseCreativeOutput } from "./writer-parser.js";
 import { buildRuntimeStateArtifacts, saveRuntimeStateSnapshot, type RuntimeStateArtifacts } from "../state/runtime-state-store.js";
 import type { RuntimeStateSnapshot } from "../state/state-reducer.js";
+import { parsePendingHooksMarkdown } from "../utils/memory-retrieval.js";
+import { analyzeHookHealth } from "../utils/hook-health.js";
+import { buildEnglishVarianceBrief } from "../utils/long-span-fatigue.js";
 import { readFile, writeFile, mkdir, readdir } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -68,6 +71,12 @@ export interface WriteChapterOutput {
   readonly updatedCharacterMatrix: string;
   readonly postWriteErrors: ReadonlyArray<PostWriteViolation>;
   readonly postWriteWarnings: ReadonlyArray<PostWriteViolation>;
+  readonly hookHealthIssues?: ReadonlyArray<{
+    readonly severity: "critical" | "warning" | "info";
+    readonly category: string;
+    readonly description: string;
+    readonly suggestion: string;
+  }>;
   readonly tokenUsage?: TokenUsage;
 }
 
@@ -135,6 +144,12 @@ export class WriterAgent extends BaseAgent {
     const governedMemoryBlocks = input.contextPackage
       ? buildGovernedMemoryEvidenceBlocks(input.contextPackage)
       : undefined;
+    const englishVarianceBrief = resolvedLanguage === "en"
+      ? await buildEnglishVarianceBrief({
+          bookDir,
+          chapterNumber,
+        })
+      : null;
 
     // Build fanfic context if fanfic_canon.md exists
     const fanficContext: FanficContext | undefined = hasFanficCanon && bookRules?.fanficMode
@@ -162,6 +177,7 @@ export class WriterAgent extends BaseAgent {
           trace: input.trace,
           lengthSpec: resolvedLengthSpec,
           language: book.language ?? genreProfile.language,
+          varianceBrief: englishVarianceBrief?.text,
         })
       : (() => {
           // Smart context filtering: inject only relevant parts of truth files
@@ -232,6 +248,7 @@ export class WriterAgent extends BaseAgent {
       ? buildGovernedHookWorkingSet({
           hooksMarkdown: hooks,
           contextPackage: input.contextPackage,
+          chapterIntent: input.chapterIntent,
           chapterNumber,
           language: resolvedLanguage,
         })
@@ -290,6 +307,17 @@ export class WriterAgent extends BaseAgent {
       settlement.runtimeStateDelta,
       resolvedLanguage,
     );
+    const priorHookIds = new Set(parsePendingHooksMarkdown(hooks).map((hook) => hook.hookId));
+    const hookHealthIssues = settlement.runtimeStateDelta
+      && (runtimeStateArtifacts?.snapshot ?? settlement.runtimeStateSnapshot)
+      ? analyzeHookHealth({
+          language: resolvedLanguage,
+          chapterNumber,
+          hooks: (runtimeStateArtifacts?.snapshot ?? settlement.runtimeStateSnapshot)!.hooks.hooks,
+          delta: settlement.runtimeStateDelta,
+          existingHookIds: [...priorHookIds],
+        })
+      : [];
 
     // ── Post-write validation (regex + rule-based, zero LLM cost) ──
     const ruleViolations = [
@@ -316,6 +344,15 @@ export class WriterAgent extends BaseAgent {
         en: `AI-tell check: ${aiTellIssues.length} issues in chapter ${chapterNumber}`,
       });
       for (const issue of aiTellIssues) {
+        this.ctx.logger?.warn(`[${issue.severity}] ${issue.category}: ${issue.description}`);
+      }
+    }
+    if (hookHealthIssues.length > 0) {
+      this.logWarn(resolvedLanguage, {
+        zh: `伏笔健康：第${chapterNumber}章发现 ${hookHealthIssues.length} 条警告`,
+        en: `Hook health: ${hookHealthIssues.length} warning(s) in chapter ${chapterNumber}`,
+      });
+      for (const issue of hookHealthIssues) {
         this.ctx.logger?.warn(`[${issue.severity}] ${issue.category}: ${issue.description}`);
       }
     }
@@ -348,6 +385,7 @@ export class WriterAgent extends BaseAgent {
       updatedCharacterMatrix: settlement.updatedCharacterMatrix,
       postWriteErrors,
       postWriteWarnings,
+      hookHealthIssues,
       tokenUsage,
     };
   }
@@ -662,6 +700,7 @@ ${lengthRequirementBlock}
     readonly trace?: ChapterTrace;
     readonly lengthSpec: LengthSpec;
     readonly language?: "zh" | "en";
+    readonly varianceBrief?: string;
   }): string {
     const contextSections = params.contextPackage.selectedContext
       .map((entry) => [
@@ -685,6 +724,9 @@ ${lengthRequirementBlock}
       ? params.trace.notes.map((note) => `- ${note}`).join("\n")
       : "- none";
     const lengthRequirementBlock = this.buildLengthRequirementBlock(params.lengthSpec, params.language ?? "zh");
+    const varianceBlock = params.varianceBrief
+      ? `\n${params.varianceBrief}\n`
+      : "";
 
     if (params.language === "en") {
       return `Write chapter ${params.chapterNumber}.
@@ -706,6 +748,7 @@ ${overrideLines}
 ## Trace Notes
 ${traceNotes}
 
+${varianceBlock}
 ${lengthRequirementBlock}
 - Output PRE_WRITE_CHECK first, then the chapter
 - Output only PRE_WRITE_CHECK, CHAPTER_TITLE, and CHAPTER_CONTENT blocks`;
@@ -730,6 +773,7 @@ ${overrideLines}
 ## 追踪说明
 ${traceNotes}
 
+${varianceBlock}
 ${lengthRequirementBlock}
 - 先输出写作自检表，再写正文
 - 只需输出 PRE_WRITE_CHECK、CHAPTER_TITLE、CHAPTER_CONTENT 三个区块`;

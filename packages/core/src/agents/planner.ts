@@ -4,7 +4,12 @@ import { BaseAgent } from "./base.js";
 import type { BookConfig } from "../models/book.js";
 import { parseBookRules } from "../models/book-rules.js";
 import { ChapterIntentSchema, type ChapterConflict, type ChapterIntent } from "../models/input-governance.js";
-import { renderHookSnapshot, renderSummarySnapshot, retrieveMemorySelection } from "../utils/memory-retrieval.js";
+import {
+  buildPlannerHookAgenda,
+  renderHookSnapshot,
+  renderSummarySnapshot,
+  retrieveMemorySelection,
+} from "../utils/memory-retrieval.js";
 
 export interface PlanChapterInput {
   readonly book: BookConfig;
@@ -70,6 +75,10 @@ export class PlannerAgent extends BaseAgent {
       outlineNode: planningAnchor,
       mustKeep,
     });
+    const hookAgenda = buildPlannerHookAgenda({
+      hooks: memorySelection.activeHooks,
+      chapterNumber: input.chapterNumber,
+    });
 
     const intent = ChapterIntentSchema.parse({
       chapter: input.chapterNumber,
@@ -79,6 +88,7 @@ export class PlannerAgent extends BaseAgent {
       mustAvoid,
       styleEmphasis,
       conflicts,
+      hookAgenda,
     });
 
     const runtimePath = join(runtimeDir, `chapter-${String(input.chapterNumber).padStart(4, "0")}.intent.md`);
@@ -387,6 +397,27 @@ export class PlannerAgent extends BaseAgent {
     const styleEmphasis = intent.styleEmphasis.length > 0
       ? intent.styleEmphasis.map((item) => `- ${item}`).join("\n")
       : "- none";
+    const hookAgenda = [
+      "### Must Advance",
+      intent.hookAgenda.mustAdvance.length > 0
+        ? intent.hookAgenda.mustAdvance.map((item) => `- ${item}`).join("\n")
+        : "- none",
+      "",
+      "### Eligible Resolve",
+      intent.hookAgenda.eligibleResolve.length > 0
+        ? intent.hookAgenda.eligibleResolve.map((item) => `- ${item}`).join("\n")
+        : "- none",
+      "",
+      "### Stale Debt",
+      intent.hookAgenda.staleDebt.length > 0
+        ? intent.hookAgenda.staleDebt.map((item) => `- ${item}`).join("\n")
+        : "- none",
+      "",
+      "### Avoid New Hook Families",
+      intent.hookAgenda.avoidNewHookFamilies.length > 0
+        ? intent.hookAgenda.avoidNewHookFamilies.map((item) => `- ${item}`).join("\n")
+        : "- none",
+    ].join("\n");
 
     return [
       "# Chapter Intent",
@@ -405,6 +436,9 @@ export class PlannerAgent extends BaseAgent {
       "",
       "## Style Emphasis",
       styleEmphasis,
+      "",
+      "## Hook Agenda",
+      hookAgenda,
       "",
       "## Conflicts",
       conflictLines,

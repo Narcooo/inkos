@@ -103,7 +103,9 @@ function buildGovernedInputContract(language: "zh" | "en", governed: boolean): s
 - Chapter-specific steering comes from the provided chapter intent and composed context package.
 - The outline is the default plan, not unconditional global supremacy.
 - When the runtime rule stack records an active L4 -> L3 override, follow the current task over local planning.
-- Keep hard guardrails compact: canon, continuity facts, and explicit prohibitions still win.`;
+- Keep hard guardrails compact: canon, continuity facts, and explicit prohibitions still win.
+- If an English Variance Brief is provided, obey it: avoid the listed phrase/opening/ending patterns and satisfy the scene obligation.
+- In multi-character scenes, include at least one resistance-bearing exchange instead of reducing the beat to summary or explanation.`;
   }
 
   return `## 输入治理契约
@@ -111,7 +113,9 @@ function buildGovernedInputContract(language: "zh" | "en", governed: boolean): s
 - 本章具体写什么，以提供给你的 chapter intent 和 composed context package 为准。
 - 卷纲是默认规划，不是全局最高规则。
 - 当 runtime rule stack 明确记录了 L4 -> L3 的 active override 时，优先执行当前任务意图，再局部调整规划层。
-- 真正不能突破的只有硬护栏：世界设定、连续性事实、显式禁令。`;
+- 真正不能突破的只有硬护栏：世界设定、连续性事实、显式禁令。
+- 如果提供了 English Variance Brief，必须主动避开其中列出的高频短语、重复开头和重复结尾模式，并完成 scene obligation。
+- 多角色场景里，至少给出一轮带阻力的直接交锋，不要把人物关系写成纯解释或纯总结。`;
 }
 
 function buildLengthGuidance(lengthSpec: LengthSpec, language: "zh" | "en"): string {

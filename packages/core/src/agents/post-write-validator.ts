@@ -348,6 +348,21 @@ function validatePostWriteEnglish(
     });
   }
 
+  // 2.5. Multi-character scene with almost no direct exchange
+  const quotedLines = content.match(/"[^"]+"/g) ?? [];
+  const englishNames = [...new Set(
+    (content.match(/\b[A-Z][a-z]{2,}\b/g) ?? [])
+      .filter((name) => !ENGLISH_NAME_STOP_WORDS.has(name)),
+  )];
+  if (englishNames.length >= 2 && quotedLines.length < 2 && content.length >= 120) {
+    violations.push({
+      rule: "Dialogue pressure",
+      severity: "warning",
+      description: `Multi-character scene appears to rely on narration with almost no direct exchange (${englishNames.slice(0, 3).join(", ")}).`,
+      suggestion: "Add at least one resistance-bearing exchange so characters push back, withhold, or pressure each other directly.",
+    });
+  }
+
   // 3. Book-specific prohibitions
   if (bookRules?.prohibitions) {
     for (const prohibition of bookRules.prohibitions) {
@@ -381,3 +396,16 @@ function validatePostWriteEnglish(
 
   return violations;
 }
+
+const ENGLISH_NAME_STOP_WORDS = new Set([
+  "The",
+  "And",
+  "But",
+  "When",
+  "While",
+  "After",
+  "Before",
+  "Even",
+  "Then",
+  "They",
+]);

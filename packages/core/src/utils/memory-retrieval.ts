@@ -1,16 +1,21 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { HookAgenda } from "../models/input-governance.js";
 import {
   ChapterSummariesStateSchema,
   CurrentStateStateSchema,
   HooksStateSchema,
+  type HookRecord,
+  type HookStatus,
 } from "../models/runtime-state.js";
 import { MemoryDB, type Fact, type StoredHook, type StoredSummary } from "../state/memory-db.js";
 import { bootstrapStructuredStateFromMarkdown } from "../state/state-bootstrap.js";
+import { collectStaleHookDebt } from "./hook-governance.js";
 
 export interface MemorySelection {
   readonly summaries: ReadonlyArray<StoredSummary>;
   readonly hooks: ReadonlyArray<StoredHook>;
+  readonly activeHooks: ReadonlyArray<StoredHook>;
   readonly facts: ReadonlyArray<Fact>;
   readonly volumeSummaries: ReadonlyArray<VolumeSummarySelection>;
   readonly dbPath?: string;
@@ -95,13 +100,16 @@ export async function retrieveMemorySelection(params: {
         memoryDb.replaceCurrentFacts(facts);
       }
 
+      const activeHooks = memoryDb.getActiveHooks();
+
       return {
         summaries: selectRelevantSummaries(
           memoryDb.getSummaries(1, Math.max(1, params.chapterNumber - 1)),
           params.chapterNumber,
           narrativeQueryTerms,
         ),
-        hooks: selectRelevantHooks(memoryDb.getActiveHooks(), narrativeQueryTerms, params.chapterNumber),
+        hooks: selectRelevantHooks(activeHooks, narrativeQueryTerms, params.chapterNumber),
+        activeHooks,
         facts: selectRelevantFacts(memoryDb.getCurrentFacts(), factQueryTerms),
         volumeSummaries,
         dbPath: join(storyDir, "memory.db"),
@@ -117,10 +125,12 @@ export async function retrieveMemorySelection(params: {
   ]);
   const summaries = structuredSummaries?.rows ?? parseChapterSummariesMarkdown(summariesMarkdown);
   const hooks = structuredHooks?.hooks ?? parsePendingHooksMarkdown(hooksMarkdown);
+  const activeHooks = filterActiveHooks(hooks);
 
   return {
     summaries: selectRelevantSummaries(summaries, params.chapterNumber, narrativeQueryTerms),
-    hooks: selectRelevantHooks(hooks, narrativeQueryTerms, params.chapterNumber),
+    hooks: selectRelevantHooks(activeHooks, narrativeQueryTerms, params.chapterNumber),
+    activeHooks,
     facts: selectRelevantFacts(facts, factQueryTerms),
     volumeSummaries,
   };
@@ -201,6 +211,51 @@ export function renderHookSnapshot(
       hook.notes,
     ].map((cell) => escapeTableCell(String(cell))).join(" | ")).map((row) => `| ${row} |`),
   ].join("\n");
+}
+
+export function buildPlannerHookAgenda(params: {
+  readonly hooks: ReadonlyArray<StoredHook>;
+  readonly chapterNumber: number;
+  readonly maxMustAdvance?: number;
+  readonly maxEligibleResolve?: number;
+  readonly maxStaleDebt?: number;
+}): HookAgenda {
+  const agendaHooks = params.hooks
+    .map(normalizeStoredHook)
+    .filter((hook) => !isFuturePlannedHook(hook, params.chapterNumber, 0))
+    .filter((hook) => hook.status !== "resolved" && hook.status !== "deferred");
+  const mustAdvance = agendaHooks
+    .slice()
+    .sort((left, right) => (
+      right.lastAdvancedChapter - left.lastAdvancedChapter
+      || left.startChapter - right.startChapter
+      || left.hookId.localeCompare(right.hookId)
+    ))
+    .slice(0, params.maxMustAdvance ?? 2)
+    .map((hook) => hook.hookId);
+  const staleDebt = collectStaleHookDebt({
+    hooks: agendaHooks,
+    chapterNumber: params.chapterNumber,
+  })
+    .slice(0, params.maxStaleDebt ?? 2)
+    .map((hook) => hook.hookId);
+  const eligibleResolve = agendaHooks
+    .filter((hook) => hook.startChapter <= params.chapterNumber - 3)
+    .filter((hook) => hook.lastAdvancedChapter >= params.chapterNumber - 2)
+    .sort((left, right) => (
+      left.startChapter - right.startChapter
+      || right.lastAdvancedChapter - left.lastAdvancedChapter
+      || left.hookId.localeCompare(right.hookId)
+    ))
+    .slice(0, params.maxEligibleResolve ?? 1)
+    .map((hook) => hook.hookId);
+
+  return {
+    mustAdvance,
+    eligibleResolve,
+    staleDebt,
+    avoidNewHookFamilies: [],
+  };
 }
 
 function openMemoryDB(bookDir: string): MemoryDB | null {
@@ -614,6 +669,29 @@ function scoreHook(hook: StoredHook, queryTerms: ReadonlyArray<string>): number 
   const freshness = Math.max(0, hook.lastAdvancedChapter);
   const termScore = queryTerms.reduce((score, term) => score + (includesTerm(text, term) ? Math.max(8, term.length * 2) : 0), 0);
   return termScore + freshness;
+}
+
+function normalizeStoredHook(hook: StoredHook): HookRecord {
+  return {
+    hookId: hook.hookId,
+    startChapter: Math.max(0, hook.startChapter),
+    type: hook.type,
+    status: normalizeStoredHookStatus(hook.status),
+    lastAdvancedChapter: Math.max(0, hook.lastAdvancedChapter),
+    expectedPayoff: hook.expectedPayoff,
+    notes: hook.notes,
+  };
+}
+
+function normalizeStoredHookStatus(status: string): HookStatus {
+  if (/^(resolved|closed|done|已回收|已解决)$/i.test(status.trim())) return "resolved";
+  if (/^(deferred|paused|hold|延后|延期|搁置|暂缓)$/i.test(status.trim())) return "deferred";
+  if (/^(progressing|advanced|重大推进|持续推进)$/i.test(status.trim())) return "progressing";
+  return "open";
+}
+
+function filterActiveHooks(hooks: ReadonlyArray<StoredHook>): StoredHook[] {
+  return hooks.filter((hook) => normalizeStoredHookStatus(hook.status) !== "resolved");
 }
 
 export function isFuturePlannedHook(

@@ -84,6 +84,7 @@ export type CurrentStatePatch = z.infer<typeof CurrentStatePatchSchema>;
 
 export const HookOpsSchema = z.object({
   upsert: z.array(HookRecordSchema).default([]),
+  mention: z.array(z.string().min(1)).default([]),
   resolve: z.array(z.string().min(1)).default([]),
   defer: z.array(z.string().min(1)).default([]),
 });
@@ -97,6 +98,7 @@ export const RuntimeStateDeltaSchema = z.object({
   currentStatePatch: CurrentStatePatchSchema.optional(),
   hookOps: HookOpsSchema.default({
     upsert: [],
+    mention: [],
     resolve: [],
     defer: [],
   }),

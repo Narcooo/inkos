@@ -37,6 +37,52 @@ describe("governed-working-set", () => {
     expect(filtered).not.toContain("future-template");
   });
 
+  it("includes hook agenda debt items even when they are not selected or recent", () => {
+    const hooks = [
+      "| hook_id | start_chapter | type | status | last_advanced | expected_payoff | notes |",
+      "| --- | --- | --- | --- | --- | --- | --- |",
+      "| mentor-oath | 8 | relationship | open | 99 | 101 | Mentor oath debt with Lin Yue |",
+      "| stale-ledger | 14 | mystery | open | 70 | 120 | Old ledger debt is dormant but unresolved |",
+      "| future-pr-machine | 45 | system | open | 0 | 80 | Future hook should stay hidden |",
+    ].join("\n");
+
+    const filtered = buildGovernedHookWorkingSet({
+      hooksMarkdown: hooks,
+      contextPackage: {
+        chapter: 100,
+        selectedContext: [
+          {
+            source: "story/pending_hooks.md#mentor-oath",
+            reason: "Carry forward unresolved hook.",
+            excerpt: "relationship | open | 101 | Mentor oath debt with Lin Yue",
+          },
+        ],
+      },
+      chapterIntent: [
+        "# Chapter Intent",
+        "",
+        "## Hook Agenda",
+        "### Must Advance",
+        "- mentor-oath",
+        "",
+        "### Eligible Resolve",
+        "- none",
+        "",
+        "### Stale Debt",
+        "- stale-ledger",
+        "",
+        "### Avoid New Hook Families",
+        "- none",
+      ].join("\n"),
+      chapterNumber: 100,
+      language: "en",
+    });
+
+    expect(filtered).toContain("mentor-oath");
+    expect(filtered).toContain("stale-ledger");
+    expect(filtered).not.toContain("future-pr-machine");
+  });
+
   it("filters character matrix by exact governed character mentions instead of broad capitalized tokens", () => {
     const matrix = [
       "# Character Matrix",

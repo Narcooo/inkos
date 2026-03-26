@@ -2734,6 +2734,71 @@ describe("PipelineRunner", () => {
     }
   });
 
+  it("feeds hook health warnings back into pipeline audit and drift correction", async () => {
+    const { root, runner, state, bookId } = await createRunnerFixture();
+    const storyDir = join(state.bookDir(bookId), "story");
+
+    await Promise.all([
+      writeFile(join(storyDir, "current_state.md"), createStateCard({
+        chapter: 2,
+        location: "Ashen ferry crossing",
+        protagonistState: "Lin Yue still hides the oath token.",
+        goal: "Find the vanished mentor.",
+        conflict: "The debt trail keeps narrowing.",
+      }), "utf-8"),
+      writeFile(join(storyDir, "pending_hooks.md"), "# Pending Hooks\n", "utf-8"),
+      writeFile(join(storyDir, "chapter_summaries.md"), "# Chapter Summaries\n", "utf-8"),
+    ]);
+
+    vi.spyOn(WriterAgent.prototype, "writeChapter").mockResolvedValue(
+      createWriterOutput({
+        chapterNumber: 3,
+        title: "回声",
+        content: "夜色慢慢压低了屋檐。林越先停在门外，随后才抬手去碰那道旧债印。",
+        wordCount: "夜色慢慢压低了屋檐。林越先停在门外，随后才抬手去碰那道旧债印。".length,
+        updatedState: createStateCard({
+          chapter: 3,
+          location: "Ashen ferry crossing",
+          protagonistState: "Lin Yue still hides the oath token.",
+          goal: "Find the vanished mentor.",
+          conflict: "The debt trail keeps narrowing.",
+        }),
+        updatedLedger: "",
+        updatedHooks: "# Pending Hooks\n",
+        chapterSummary: "| 3 | 回声 | 林越 | 继续潜伏 | 目标未变 | 债印未解 | 克制 | 布局 |",
+        hookHealthIssues: [{
+          severity: "warning",
+          category: "伏笔债务",
+          description: "活跃伏笔过多，且本章没有处理陈旧债务。",
+          suggestion: "下一章优先推进或延后至少一个僵死伏笔。",
+        }],
+      }),
+    );
+    vi.spyOn(ContinuityAuditor.prototype, "auditChapter").mockResolvedValue(
+      createAuditResult({
+        passed: true,
+        issues: [],
+        summary: "ok",
+      }),
+    );
+
+    try {
+      const result = await runner.writeNextChapter(bookId);
+      const currentState = await readFile(join(storyDir, "current_state.md"), "utf-8");
+      const savedIndex = await state.loadChapterIndex(bookId);
+
+      expect(result.auditResult.issues.some((issue) => issue.category === "伏笔债务")).toBe(true);
+      expect(currentState).toContain("伏笔债务");
+      expect(savedIndex[0]?.auditIssues).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining("活跃伏笔过多"),
+        ]),
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("defaults manual reviseDraft to spot-fix when mode is omitted", async () => {
     const { root, runner, state, bookId } = await createRunnerFixture();
     const storyDir = join(state.bookDir(bookId), "story");
