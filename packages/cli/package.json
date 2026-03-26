@@ -1,6 +1,6 @@
 {
   "name": "@actalk/inkos",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "InkOS CLI — multi-agent novel production system",
   "type": "module",
   "bin": {
@@ -26,7 +26,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@actalk/inkos-core": "workspace:*",
+    "@actalk/inkos-core": "0.6.0",
     "commander": "^13.0.0",
     "dotenv": "^16.4.0",
     "epub-gen-memory": "^1.0.10",
