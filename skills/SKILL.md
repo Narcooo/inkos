@@ -1,15 +1,20 @@
 ---
 name: inkos
 description: Autonomous novel writing CLI agent - use for creative fiction writing, novel generation, style imitation, chapter continuation/import, EPUB export, AIGC detection, and fan fiction. Native English support with 10 built-in English genre profiles (LitRPG, Progression Fantasy, Isekai, Cultivation, System Apocalypse, Dungeon Core, Romantasy, Sci-Fi, Tower Climber, Cozy Fantasy). Also supports Chinese web novel genres (xuanhuan, xianxia, urban, horror, other). Multi-agent pipeline, two-phase writer (creative + settlement), 33-dimension auditing, token usage analytics, creative brief input, structured logging (JSON Lines), multi-model routing, and custom OpenAI-compatible provider support.
-version: 1.5.0
+version: 2.0.0
 metadata: { "openclaw": { "emoji": "📖", "requires": { "bins": ["inkos", "node"], "env": [] }, "primaryEnv": "", "homepage": "https://github.com/Narcooo/inkos", "install": [{ "id": "npm", "kind": "node", "package": "@actalk/inkos", "label": "Install InkOS (npm)" }] } }
 ---
 
 # InkOS - Autonomous Novel Writing Agent
 
-InkOS is a CLI tool for autonomous fiction writing powered by LLM agents. It orchestrates a 5-agent pipeline (Radar → Architect → Writer → Auditor → Reviser) to generate, audit, and revise novel content with style consistency and quality control.
+InkOS is a CLI tool for autonomous fiction writing powered by LLM agents. It orchestrates a multi-agent pipeline (Radar → Planner → Composer → Architect → Writer → Observer → Reflector → Normalizer → Auditor → Reviser) to generate, audit, and revise novel content with zero human intervention per chapter.
 
-The Writer uses a two-phase architecture: Phase 1 (creative writing, temp 0.7) produces the chapter text, then Phase 2 (state settlement, temp 0.3) updates all truth files for long-term consistency.
+The pipeline operates in three phases:
+- **Phase 1 (Creative Writing, temp 0.7)**: Planner generates chapter intent with hook agenda, Composer selects relevant context, Writer produces prose with length governance and dialogue-driven guidance.
+- **Phase 2 (State Settlement, temp 0.3)**: Observer over-extracts 9 categories of facts, Reflector outputs a JSON delta (not full markdown), code-layer applies Zod schema validation and immutable state update. Hook operations use upsert/mention/resolve/defer semantics.
+- **Phase 3 (Quality Loop)**: Normalizer adjusts chapter length, Auditor runs 33-dimension check including hook health analysis, Reviser auto-fixes critical issues. Self-correction loop runs until all critical issues clear.
+
+Truth files are persisted as schema-validated JSON (`story/state/*.json`) with markdown projections for human readability. SQLite temporal memory database (`story/memory.db`) enables relevance-based retrieval on Node 22+.
 
 ## When to Use InkOS
 
@@ -343,14 +348,20 @@ InkOS maintains 7 files per book for coherence:
 - **Emotional Arcs**: Character emotional progression
 - **Pending Hooks**: Unresolved cliffhangers and promises to reader
 
-All agents reference these to maintain long-term consistency. During `import chapters`, these files are reverse-engineered from existing content via the ChapterAnalyzerAgent.
+All agents reference these to maintain long-term consistency. Since 0.6.0, truth files are backed by schema-validated JSON in `story/state/` with automatic bootstrap from markdown for legacy books. During `import chapters`, these files are reverse-engineered from existing content via the ChapterAnalyzerAgent.
 
-### Two-Phase Writer Architecture
-The Writer agent operates in two phases:
-- **Phase 1 (Creative)**: Generates the chapter text at temperature 0.7 for creative expression. Only outputs chapter title and content.
-- **Phase 2 (Settlement)**: Updates all truth files at temperature 0.3 for precise state tracking. Ensures world state, character arcs, and plot hooks stay consistent.
+### Multi-Phase Writer Architecture
+The Writer operates across multiple phases with specialized agents:
+- **Planner**: Generates chapter intent with structured hook agenda (mustAdvance, eligibleResolve, staleDebt) based on memory retrieval.
+- **Composer**: Selects relevant context from truth files by relevance scoring, compiles rule stack and runtime artifacts.
+- **Phase 1 (Creative, temp 0.7)**: Generates prose with length governance, English variance brief (anti-repetition), and dialogue-driven guidance.
+- **Phase 2a (Observer, temp 0.5)**: Over-extracts 9 categories of facts from the chapter text.
+- **Phase 2b (Reflector, temp 0.3)**: Outputs a JSON delta with hookOps (upsert/mention/resolve/defer), currentStatePatch, and chapterSummary. Code-layer validates via Zod schema and applies immutably.
+- **Normalizer**: Single-pass compress/expand to bring chapter length into the target band. Safety net rejects destructive normalization (>75% content loss).
+- **Auditor**: 33-dimension check including hook health analysis (stale debt, burst detection, no-advance warnings).
+- **Reviser**: Auto-fixes critical issues, self-correction loop until clean.
 
-This separation allows creative freedom in writing while maintaining rigorous continuity tracking.
+Truth files use structured JSON (`story/state/*.json`) as the authoritative source, with markdown projections for human readability. Hook admission control prevents duplicate/family hooks from inflating the hook table.
 
 ### Context Guidance
 The `--context` parameter provides directional hints to the Writer and Architect:
@@ -462,5 +473,5 @@ inkos down
 
 - **Homepage**: https://github.com/Narcooo/inkos
 - **Configuration**: Stored in project root after `inkos init`
-- **Truth files**: Located in `.inkos/` directory per book
+- **Truth files**: Located in `books/<id>/story/` per book, with structured JSON in `story/state/`
 - **Logs**: Check output of `inkos doctor` for troubleshooting
