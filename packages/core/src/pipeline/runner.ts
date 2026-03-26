@@ -33,7 +33,7 @@ import { analyzeLongSpanFatigue } from "../utils/long-span-fatigue.js";
 import { loadNarrativeMemorySeed, loadSnapshotCurrentStateFacts } from "../state/runtime-state-store.js";
 import { rewriteStructuredStateFromMarkdown } from "../state/state-bootstrap.js";
 import { readFile, readdir, writeFile, mkdir, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 
 export interface PipelineConfig {
   readonly client: LLMClient;
@@ -2387,8 +2387,7 @@ ${matrix}`,
   }
 
   private relativeToBookDir(bookDir: string, absolutePath: string): string {
-    const prefix = `${bookDir}/`;
-    return absolutePath.startsWith(prefix) ? absolutePath.slice(prefix.length) : absolutePath;
+    return relative(bookDir, absolutePath).replaceAll("\\", "/");
   }
 
   private async emitWebhook(
