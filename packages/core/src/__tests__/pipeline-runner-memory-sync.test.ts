@@ -230,6 +230,7 @@ describe("PipelineRunner structured-state memory sync", () => {
               notes: "Structured hook should win.",
             },
           ],
+          mention: [],
           resolve: [],
           defer: [],
         },

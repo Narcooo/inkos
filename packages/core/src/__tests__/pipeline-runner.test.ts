@@ -1798,6 +1798,7 @@ describe("PipelineRunner", () => {
                 notes: "The river-port ledger sharpens the debt line.",
               },
             ],
+            mention: [],
             resolve: [],
             defer: [],
           },

@@ -72,6 +72,12 @@ describe("ComposerAgent", () => {
             resolution: "allow local outline deferral",
           },
         ],
+        hookAgenda: {
+          mustAdvance: [],
+          eligibleResolve: [],
+          staleDebt: [],
+          avoidNewHookFamilies: [],
+        },
       },
       intentMarkdown: "# Chapter Intent\n",
       plannerInputs: [
