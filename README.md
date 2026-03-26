@@ -354,6 +354,25 @@ inkos agent "先扫描市场趋势，然后根据结果创建一本新书"
 
 `[id]` 参数在项目只有一本书时可省略，自动检测。所有命令支持 `--json` 输出结构化数据。`draft` / `write next` / `plan chapter` / `compose chapter` 支持 `--context` 传入创作指导，`--words` 覆盖每章目标字数。`book create` 支持 `--brief <file>` 传入创作简报（你的脑洞/设定文档），Architect 会基于此生成设定而非凭空创作。`plan chapter` / `compose chapter` 不要求在线 LLM，可在配置 API Key 之前先检查输入治理结果。
 
+## 更新日志
+
+### v0.6
+
+**结构化状态 + 伏笔治理 + 字数治理**
+
+重点解决三个长篇写作的系统性问题：**20+ 章后上下文膨胀导致写作变慢甚至 400 报错**（Settler 全量注入 → JSON delta + 选择性检索）、**伏笔只加不收、回收率接近 0%**（Planner 排班 + Settler 盲区修补 + 审计追债）、**字数偏差 50%+ 且 normalizer 可能毁章**（LengthSpec + 安全网）。
+
+- 管线升级为 10-agent：新增 Planner、Composer、Observer、Reflector、Normalizer
+- 真相文件迁移到 `story/state/*.json`（Zod 校验），Settler 输出 JSON delta 而非全量 markdown，旧书自动迁移
+- Node 22+ 启用 SQLite 时序记忆数据库，按相关性检索历史事实
+- Planner 生成 `hookAgenda` 排班伏笔推进与回收，Settler working set 扩展覆盖 dormant debt
+- hookOps 新增 `mention` 语义防止假推进，`analyzeHookHealth` 审计伏笔债务，`evaluateHookAdmission` 拦截重复伏笔
+- 字数治理：`LengthSpec` + Normalizer 单 pass 修正，安全网防止归一化毁章
+- 用户 `INKOS_LLM_MAX_TOKENS` 作为全局上限生效，`llm.extra` 保留键自动过滤
+- 跨章重复检测、对话驱动引导、English variance brief、多角色场景阻力要求
+- 章节摘要去重、ESM node:sqlite 修复、consolidate 全角括号兼容
+- 双语 CLI 输出和日志
+
 ## 路线图
 
 - [ ] `packages/studio` Web UI 审阅编辑界面（Vite + React + Hono）

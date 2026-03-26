@@ -360,6 +360,25 @@ inkos agent "Create a progression fantasy about a mage who can only use one spel
 
 `[id]` is auto-detected when the project has only one book. All commands support `--json` for structured output. `draft` / `write next` / `plan chapter` / `compose chapter` accept `--context` for steering, and `--words` overrides the target chapter size. `book create` supports `--brief <file>` to pass a creative brief — the Architect builds from your ideas instead of generating from scratch. `plan chapter` / `compose chapter` do not require a live LLM, so you can inspect governed inputs before finishing API setup.
 
+## Changelog
+
+### v0.6
+
+**Structured State + Hook Governance + Length Governance**
+
+Addresses three systemic long-form writing problems: **context bloat after 20+ chapters causing slowdowns and 400 errors** (Settler full injection → JSON delta + selective retrieval), **hooks only accumulate, never resolve, ~0% payoff rate** (Planner scheduling + Settler blind spot fix + audit debt tracking), **word count deviation 50%+ and normalizer destroying chapters** (LengthSpec + safety net).
+
+- Pipeline upgraded to 10 agents: adds Planner, Composer, Observer, Reflector, Normalizer
+- Truth files moved to `story/state/*.json` (Zod validated); Settler outputs JSON delta instead of full markdown; legacy books auto-migrate
+- SQLite temporal memory database on Node 22+ for relevance-based retrieval
+- Planner generates `hookAgenda` to schedule hook advancement and payoff; Settler working set expanded to cover dormant debt
+- New `mention` semantics prevents fake hook advancement; `analyzeHookHealth` audits hook debt; `evaluateHookAdmission` blocks duplicate hooks
+- Length governance: `LengthSpec` + Normalizer single-pass correction with safety net against destructive normalization
+- User `INKOS_LLM_MAX_TOKENS` acts as global cap; reserved keys in `llm.extra` auto-stripped
+- Cross-chapter repetition detection, dialogue-driven guidance, English variance brief, multi-character scene resistance
+- Chapter summary dedup, ESM node:sqlite fix, consolidate full-width parenthesis support
+- Bilingual CLI output and logging
+
 ## Roadmap
 
 - [ ] `packages/studio` Web UI for review and editing (Vite + React + Hono)
