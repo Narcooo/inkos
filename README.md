@@ -76,7 +76,7 @@ INKOS_LLM_API_KEY=                                 # API Key
 INKOS_LLM_MODEL=                                   # 模型名
 
 # 可选
-# INKOS_LLM_TEMPERATURE=0.7                       # 温度
+# INKOS_LLM_TEMPERATURE=0.7                       # 默认温度（Writer 会按章节类型自动调节 0.6-0.85）
 # INKOS_LLM_MAX_TOKENS=8192                        # 最大输出 token
 # INKOS_LLM_THINKING_BUDGET=0                      # Anthropic 扩展思考预算
 ```
@@ -235,6 +235,8 @@ inkos agent "先扫描市场趋势，然后根据结果创建一本新书"
 | `inkos import chapters [id] --from <path>` | 导入已有章节续写（`--split`、`--resume-from`） |
 | `inkos analytics [id]` / `inkos stats [id]` | 书籍数据分析（审计通过率、高频问题、章节排名、token 用量） |
 | `inkos update` | 更新到最新版本 |
+| `inkos revise-light [id] [n]` | 轻量修订（只用章节文本 + 指令，不加载真相文件）。`--context` 或 `--context-file` 传入修改指令 |
+| `inkos settle [id] [n]` | 事后真相文件同步。从已确认章节内容反向更新状态卡/伏笔/账本等 |
 | `inkos up / down` | 启动/停止守护进程（`-q` 静默模式，自动写入 `inkos.log`） |
 
 `[id]` 参数在项目只有一本书时可省略，自动检测。所有命令支持 `--json` 输出结构化数据。`draft`/`write next` 支持 `--context` 传入创作指导，`--words` 覆盖每章字数。`book create` 支持 `--brief <file>` 传入创作简报（你的脑洞/设定文档），Architect 会基于此生成设定而非凭空创作。
@@ -338,6 +340,12 @@ TypeScript 单仓库，pnpm workspaces 管理。
 - [x] Stream 自动降级（中转站不支持 SSE 时自动回退 sync，兼容智谱/Gemini 等）
 - [x] 本地小模型兼容（fallback 解析 + 流中断部分内容恢复）
 - [x] 创作简报（`book create --brief` 传入你的脑洞，基于此生成设定）
+- [x] 轻量修订 + 事后结算（`revise-light` + `settle`，拆分修订与状态同步）
+- [x] 动态 Temperature（按章节类型自动调节 0.6-0.85，高潮→高温，对话→低温）
+- [x] 章节感知 Word Count（高潮章 +20%，过渡章 -15%，自动调节每章目标字数）
+- [x] Pipeline Dry Run（零 LLM 消耗验证配置、预估 token 用量、检查预算决策）
+- [x] Truth File 读取缓存（同一章管线内 4 次读取 → 1 次，减少 IO）
+- [x] Writer Prompt 压缩（~18% 令牌节省，合并方法论 + 紧凑表格）
 - [ ] `packages/studio` Web UI 审阅编辑界面（Vite + React + Hono）
 - [ ] 局部干预（重写半章 + 级联更新后续 truth 文件）
 - [ ] 英文小说全面适配（English genre profiles, prompts, audit rules, post-write validator）

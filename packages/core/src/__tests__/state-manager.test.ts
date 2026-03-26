@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, rm, writeFile, readFile, mkdir, stat } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, readFile, readdir, mkdir, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { StateManager } from "../state/manager.js";
@@ -361,6 +361,92 @@ describe("StateManager", () => {
       expect(manager.bookDir("my-book")).toBe(
         join(tempDir, "books", "my-book"),
       );
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // readChapterContent
+  // -------------------------------------------------------------------------
+
+  describe("readChapterContent", () => {
+    const bookId = "read-ch-book";
+
+    beforeEach(async () => {
+      const chaptersDir = join(manager.bookDir(bookId), "chapters");
+      await mkdir(chaptersDir, { recursive: true });
+      await writeFile(
+        join(chaptersDir, "0001_test_chapter.md"),
+        "# 第1章 测试章节\n\n这是正文内容。\n第二段。",
+        "utf-8",
+      );
+    });
+
+    it("reads chapter content stripping the title line", async () => {
+      const content = await manager.readChapterContent(bookId, 1);
+      expect(content).toBe("这是正文内容。\n第二段。");
+      expect(content).not.toContain("# 第1章");
+    });
+
+    it("throws when chapter file does not exist", async () => {
+      await expect(manager.readChapterContent(bookId, 99)).rejects.toThrow(
+        /Chapter 99 file not found/,
+      );
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // saveChapterRevision / listChapterRevisions
+  // -------------------------------------------------------------------------
+
+  describe("saveChapterRevision / listChapterRevisions", () => {
+    const bookId = "rev-book";
+
+    beforeEach(async () => {
+      const chaptersDir = join(manager.bookDir(bookId), "chapters");
+      await mkdir(chaptersDir, { recursive: true });
+    });
+
+    it("saves the first revision as v1.md", async () => {
+      const version = await manager.saveChapterRevision(bookId, 1, "original content");
+      expect(version).toBe(1);
+
+      const revPath = join(
+        manager.bookDir(bookId), "chapters", "revisions", "1", "v1.md",
+      );
+      const saved = await readFile(revPath, "utf-8");
+      expect(saved).toBe("original content");
+    });
+
+    it("auto-increments version numbers", async () => {
+      await manager.saveChapterRevision(bookId, 2, "v1 content");
+      const v2 = await manager.saveChapterRevision(bookId, 2, "v2 content");
+      const v3 = await manager.saveChapterRevision(bookId, 2, "v3 content");
+
+      expect(v2).toBe(2);
+      expect(v3).toBe(3);
+
+      const revDir = join(
+        manager.bookDir(bookId), "chapters", "revisions", "2",
+      );
+      const files = await readdir(revDir);
+      expect(files.sort()).toEqual(["v1.md", "v2.md", "v3.md"]);
+    });
+
+    it("listChapterRevisions returns empty array when no revisions exist", async () => {
+      const revisions = await manager.listChapterRevisions(bookId, 1);
+      expect(revisions).toEqual([]);
+    });
+
+    it("listChapterRevisions returns sorted revisions", async () => {
+      await manager.saveChapterRevision(bookId, 3, "first");
+      await manager.saveChapterRevision(bookId, 3, "second");
+
+      const revisions = await manager.listChapterRevisions(bookId, 3);
+      expect(revisions).toHaveLength(2);
+      expect(revisions[0]!.version).toBe(1);
+      expect(revisions[1]!.version).toBe(2);
+      expect(revisions[0]!.filePath).toContain("v1.md");
+      expect(revisions[1]!.filePath).toContain("v2.md");
     });
   });
 });

@@ -6,6 +6,7 @@ import type { QualityGates, DetectionConfig } from "../models/project.js";
 import { dispatchWebhookEvent } from "../notify/dispatcher.js";
 import { detectChapter, detectAndRewrite } from "./detection-runner.js";
 import type { Logger } from "../utils/logger.js";
+import { cronNextRunMs } from "../utils/cron-calc.js";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -26,7 +27,7 @@ export interface SchedulerConfig extends PipelineConfig {
 
 interface ScheduledTask {
   readonly name: string;
-  readonly intervalMs: number;
+  intervalMs: number;
   timer?: ReturnType<typeof setInterval>;
 }
 
@@ -80,31 +81,19 @@ export class Scheduler {
     // Run write cycle immediately on start, then schedule
     await this.runWriteCycle();
 
-    // Schedule recurring write cycle
-    const writeCycleMs = this.cronToMs(this.config.writeCron);
-    const writeTask: ScheduledTask = {
-      name: "write-cycle",
-      intervalMs: writeCycleMs,
-    };
-    writeTask.timer = setInterval(() => {
-      this.runWriteCycle().catch((e) => {
+    // Schedule recurring write cycle — [R6] usa cronNextRunMs para soportar crons fijos
+    this.scheduleCronTask("write-cycle", this.config.writeCron, () => {
+      return this.runWriteCycle().catch((e) => {
         this.config.onError?.("scheduler", e as Error);
       });
-    }, writeCycleMs);
-    this.tasks.push(writeTask);
+    });
 
     // Schedule radar scan
-    const radarMs = this.cronToMs(this.config.radarCron);
-    const radarTask: ScheduledTask = {
-      name: "radar-scan",
-      intervalMs: radarMs,
-    };
-    radarTask.timer = setInterval(() => {
-      this.runRadarScan().catch((e) => {
+    this.scheduleCronTask("radar-scan", this.config.radarCron, () => {
+      return this.runRadarScan().catch((e) => {
         this.config.onError?.("radar", e as Error);
       });
-    }, radarMs);
-    this.tasks.push(radarTask);
+    });
   }
 
   stop(): void {
@@ -429,41 +418,44 @@ export class Scheduler {
   }
 
   private async readChapterContent(bookDir: string, chapterNumber: number): Promise<string> {
-    const { readdir } = await import("node:fs/promises");
-    const chaptersDir = join(bookDir, "chapters");
-    const files = await readdir(chaptersDir);
-    const paddedNum = String(chapterNumber).padStart(4, "0");
-    const chapterFile = files.find((f) => f.startsWith(paddedNum) && f.endsWith(".md"));
-    if (!chapterFile) {
-      throw new Error(`Chapter ${chapterNumber} file not found in ${chaptersDir}`);
-    }
-    const raw = await readFile(join(chaptersDir, chapterFile), "utf-8");
-    const lines = raw.split("\n");
-    const contentStart = lines.findIndex((l, i) => i > 0 && l.trim().length > 0);
-    return contentStart >= 0 ? lines.slice(contentStart).join("\n") : raw;
+    // Extraer bookId del path: bookDir = <projectRoot>/books/<bookId>
+    const bookId = bookDir.split(/[/\\]/).pop()!;
+    return this.state.readChapterContent(bookId, chapterNumber);
   }
 
-  private cronToMs(cron: string): number {
-    const parts = cron.split(" ");
-    if (parts.length < 5) return 24 * 60 * 60 * 1000;
+  /**
+   * [R6] Planifica una tarea recurrente usando cronNextRunMs.
+   * Usa setTimeout recursivo para recalcular el delay antes de cada ejecucion,
+   * lo cual soporta crons de tiempo fijo (e.g. `30 8 * * *`).
+   */
+  private scheduleCronTask(
+    name: string,
+    cronExpr: string,
+    callback: () => void | Promise<void>,
+  ): void {
+    const delayMs = cronNextRunMs(cronExpr);
+    const task: ScheduledTask = {
+      name,
+      intervalMs: delayMs,
+    };
 
-    const minute = parts[0]!;
-    const hour = parts[1]!;
+    const scheduleNext = () => {
+      if (!this.running) return;
+      const nextMs = cronNextRunMs(cronExpr);
+      task.intervalMs = nextMs;
+      task.timer = setTimeout(async () => {
+        await callback();
+        scheduleNext();
+      }, nextMs);
+    };
 
-    // "*/N * * * *" → every N minutes
-    if (minute.startsWith("*/")) {
-      const interval = parseInt(minute.slice(2), 10);
-      return interval * 60 * 1000;
-    }
+    // Primer disparo
+    task.timer = setTimeout(async () => {
+      await callback();
+      scheduleNext();
+    }, delayMs);
 
-    // "0 */N * * *" → every N hours
-    if (hour.startsWith("*/")) {
-      const interval = parseInt(hour.slice(2), 10);
-      return interval * 60 * 60 * 1000;
-    }
-
-    // Fixed time → treat as daily
-    return 24 * 60 * 60 * 1000;
+    this.tasks.push(task);
   }
 
   private sleep(ms: number): Promise<void> {

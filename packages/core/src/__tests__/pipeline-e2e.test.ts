@@ -54,11 +54,27 @@ vi.mock("../llm/provider.js", async (importOriginal) => {
         };
       }
 
-      // ── Writer Phase 1: creative writing (网络小说作家) ──
+      // ── Layered Writer Phase 1: creative writing ──
+      if (systemContent.includes("网络小说作家") && messages.some((m: any) => m.content.includes("L1: 任务目标"))) {
+        return {
+          content: buildCreativeResponse(),
+          usage: { promptTokens: 300, completionTokens: 500, totalTokens: 800 },
+        };
+      }
+
+      // ── Writer Phase 1: creative writing (legacy fallback) ──
       if (systemContent.includes("网络小说作家")) {
         return {
           content: buildCreativeResponse(),
           usage: { promptTokens: 150, completionTokens: 500, totalTokens: 650 },
+        };
+      }
+
+      // ── Truth Guard: semantic audit (真值守卫) ──
+      if (systemContent.includes("真值守卫") || systemContent.includes("Truth Guard")) {
+        return {
+          content: "[]", // No conflicts by default
+          usage: { promptTokens: 50, completionTokens: 10, totalTokens: 60 },
         };
       }
 
@@ -363,7 +379,7 @@ describe("PipelineRunner E2E (mock LLM)", () => {
     });
 
     it("produces a DraftResult with valid fields", async () => {
-      const result = await runner.writeDraft(testBook.id);
+      const result = await runner.writeDraft(testBook.id, undefined, undefined, true);
 
       expect(result.chapterNumber).toBe(1);
       expect(result.title).toBe("悬崖边的觉醒");
@@ -372,7 +388,7 @@ describe("PipelineRunner E2E (mock LLM)", () => {
     });
 
     it("writes the chapter file to disk", async () => {
-      const result = await runner.writeDraft(testBook.id);
+      const result = await runner.writeDraft(testBook.id, undefined, undefined, true);
 
       const content = await readFile(result.filePath, "utf-8");
       expect(content).toContain("# 第1章");
@@ -380,7 +396,7 @@ describe("PipelineRunner E2E (mock LLM)", () => {
     });
 
     it("updates truth files on disk", async () => {
-      await runner.writeDraft(testBook.id);
+      await runner.writeDraft(testBook.id, undefined, undefined, true);
       const storyDir = join(tempDir, "books", testBook.id, "story");
 
       const state = await readFile(join(storyDir, "current_state.md"), "utf-8");
@@ -391,7 +407,7 @@ describe("PipelineRunner E2E (mock LLM)", () => {
     });
 
     it("updates chapter index with status drafted", async () => {
-      await runner.writeDraft(testBook.id);
+      await runner.writeDraft(testBook.id, undefined, undefined, true);
 
       const status = await runner.getBookStatus(testBook.id);
       expect(status.chaptersWritten).toBe(1);
@@ -400,17 +416,35 @@ describe("PipelineRunner E2E (mock LLM)", () => {
     });
 
     it("makes 2 LLM calls (creative + settlement)", async () => {
-      await runner.writeDraft(testBook.id);
+      await runner.writeDraft(testBook.id, undefined, undefined, true);
       // Writer: 1 creative + 1 settlement = 2 calls
       expect(chatCallCount).toBe(2);
     });
 
     it("creates a snapshot after writing", async () => {
-      await runner.writeDraft(testBook.id);
+      await runner.writeDraft(testBook.id, undefined, undefined, true);
 
       const snapshotDir = join(tempDir, "books", testBook.id, "story", "snapshots", "1");
       const snapshotFiles = await readdir(snapshotDir);
       expect(snapshotFiles).toContain("current_state.md");
+    });
+
+    it("works correctly using the default Layered pipeline", async () => {
+      // This test does NOT pass useLegacy: true, so it uses the new Layered default
+      const result = await runner.writeDraft(testBook.id);
+
+      expect(result.chapterNumber).toBe(1);
+      expect(result.title).toBe("悬崖边的觉醒");
+      expect(result.wordCount).toBeGreaterThan(0);
+      
+      // Verify LLM calls for Layered: 
+      // S0: TaskCard (1) 
+      // S1: ContextRouting (0 - logic only) 
+      // S2: CreativeWrite (1) 
+      // S3: Review (0 - validator only)
+      // S5: Settlement (1)
+      // Total so far: 1 (Architect) + 3 (Layered writer steps) = 4
+      expect(chatCallCount).toBe(4); 
     });
   });
 
@@ -421,7 +455,7 @@ describe("PipelineRunner E2E (mock LLM)", () => {
   describe("auditDraft — chapter quality audit", () => {
     beforeEach(async () => {
       await runner.initBook(testBook);
-      await runner.writeDraft(testBook.id);
+      await runner.writeDraft(testBook.id, undefined, undefined, true);
       chatCallCount = 0;
       chatCallLog = [];
     });
@@ -492,7 +526,7 @@ describe("PipelineRunner E2E (mock LLM)", () => {
     });
 
     it("tracks word count across chapters", async () => {
-      await runner.writeDraft(testBook.id);
+      await runner.writeDraft(testBook.id, undefined, undefined, true);
 
       const status = await runner.getBookStatus(testBook.id);
       expect(status.totalWords).toBeGreaterThan(0);
@@ -510,7 +544,7 @@ describe("PipelineRunner E2E (mock LLM)", () => {
       expect((await runner.getBookStatus(testBook.id)).chaptersWritten).toBe(0);
 
       // 2. Write
-      const draft = await runner.writeDraft(testBook.id);
+      const draft = await runner.writeDraft(testBook.id, undefined, undefined, true);
       expect(draft.chapterNumber).toBe(1);
       expect(draft.title.length).toBeGreaterThan(0);
 
@@ -532,7 +566,7 @@ describe("PipelineRunner E2E (mock LLM)", () => {
 
     it("persists all files to disk correctly", async () => {
       await runner.initBook(testBook);
-      await runner.writeDraft(testBook.id);
+      await runner.writeDraft(testBook.id, undefined, undefined, true);
 
       const bookDir = join(tempDir, "books", testBook.id);
 

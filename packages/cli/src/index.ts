@@ -23,6 +23,8 @@ import { styleCommand } from "./commands/style.js";
 import { analyticsCommand } from "./commands/analytics.js";
 import { importCommand } from "./commands/import.js";
 import { fanficCommand } from "./commands/fanfic.js";
+import { reviseLightCommand } from "./commands/revise-light.js";
+import { settleCommand } from "./commands/settle.js";
 
 const require = createRequire(import.meta.url);
 const { version } = require("../package.json") as { version: string };
@@ -56,5 +58,7 @@ program.addCommand(styleCommand);
 program.addCommand(analyticsCommand);
 program.addCommand(importCommand);
 program.addCommand(fanficCommand);
+program.addCommand(reviseLightCommand);
+program.addCommand(settleCommand);
 
 program.parse();

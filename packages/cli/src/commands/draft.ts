@@ -10,6 +10,7 @@ export const draftCommand = new Command("draft")
   .option("--context-file <path>", "Read guidance from file")
   .option("--json", "Output JSON")
   .option("-q, --quiet", "Suppress console output")
+  .option("--legacy", "Use legacy single-agent pipeline instead of layered 6-step")
   .action(async (bookIdArg: string | undefined, opts) => {
     try {
       const config = await loadConfig();
@@ -23,7 +24,7 @@ export const draftCommand = new Command("draft")
 
       if (!opts.json) log(`Writing draft for "${bookId}"...`);
 
-      const result = await pipeline.writeDraft(bookId, context, wordCount);
+      const result = await pipeline.writeDraft(bookId, context, wordCount, opts.legacy === true);
 
       if (opts.json) {
         log(JSON.stringify(result, null, 2));

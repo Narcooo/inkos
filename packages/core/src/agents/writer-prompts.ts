@@ -2,6 +2,7 @@ import type { BookConfig } from "../models/book.js";
 import type { GenreProfile } from "../models/genre-profile.js";
 import type { BookRules } from "../models/book-rules.js";
 import { buildEnglishCoreRules, buildEnglishAntiAIRules, buildEnglishCharacterMethod, buildEnglishPreWriteChecklist, buildEnglishGenreIntro } from "./en-prompt-sections.js";
+import { loadPromptTemplateSync } from "../utils/prompt-loader.js";
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -75,6 +76,13 @@ function buildGenreIntro(book: BookConfig, gp: GenreProfile): string {
 // ---------------------------------------------------------------------------
 
 function buildCoreRules(book: BookConfig): string {
+  // [R3] Intenta cargar desde template externo con interpolacion
+  const fromTemplate = loadPromptTemplateSync("zh-core-rules.md", {
+    chapterWordCount: book.chapterWordCount,
+  });
+  if (fromTemplate) return fromTemplate;
+
+  // Fallback inline (se usa si el archivo de template no existe)
   return `## 核心规则
 
 1. 以简体中文工作，句子长短交替，段落适合手机阅读（3-5行/段）
@@ -135,6 +143,11 @@ function buildCoreRules(book: BookConfig): string {
 // ---------------------------------------------------------------------------
 
 function buildAntiAIExamples(): string {
+  // [R3] Intenta cargar desde template externo
+  const fromTemplate = loadPromptTemplateSync("zh-anti-ai.md");
+  if (fromTemplate) return fromTemplate;
+
+  // Fallback inline
   return `## 去AI味：反例→正例对照
 
 以下对照表展示AI常犯的"味道"问题和修正方法。正文必须贴近正例风格。
@@ -180,6 +193,13 @@ function buildAntiAIExamples(): string {
 // ---------------------------------------------------------------------------
 
 function buildCharacterPsychologyMethod(): string {
+  // [R3] Las 5 funciones de metodologia se cargan desde un unico template
+  // Solo la primera funcion intenta cargar el template completo;
+  // las demas retornan vacio si el template ya fue cargado por esta.
+  const fromTemplate = loadPromptTemplateSync("zh-methodology.md");
+  if (fromTemplate) return fromTemplate;
+
+  // Fallback inline
   return `## 六步走人物心理分析
 
 每个重要角色在关键场景中的行为，必须经过以下六步推导：
@@ -199,6 +219,8 @@ function buildCharacterPsychologyMethod(): string {
 // ---------------------------------------------------------------------------
 
 function buildSupportingCharacterMethod(): string {
+  // [R3] Si el template combinado ya fue cargado, evitar duplicacion
+  if (loadPromptTemplateSync("zh-methodology.md")) return "";
   return `## 配角设计方法论
 
 ### 配角B面原则
@@ -222,6 +244,7 @@ function buildSupportingCharacterMethod(): string {
 // ---------------------------------------------------------------------------
 
 function buildReaderPsychologyMethod(): string {
+  if (loadPromptTemplateSync("zh-methodology.md")) return "";
   return `## 读者心理学框架
 
 写作时同步考虑读者的心理状态：
@@ -239,6 +262,7 @@ function buildReaderPsychologyMethod(): string {
 // ---------------------------------------------------------------------------
 
 function buildEmotionalPacingMethod(): string {
+  if (loadPromptTemplateSync("zh-methodology.md")) return "";
   return `## 情感节点设计
 
 关系发展（友情、爱情、从属）必须经过事件驱动的节点递进：
@@ -255,6 +279,7 @@ function buildEmotionalPacingMethod(): string {
 // ---------------------------------------------------------------------------
 
 function buildImmersionTechniques(): string {
+  if (loadPromptTemplateSync("zh-methodology.md")) return "";
   return `## 代入感技法
 
 - **自然信息交代**：角色身份/外貌/背景通过行动和对话带出，禁止"资料卡式"直接罗列

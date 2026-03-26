@@ -1,11 +1,14 @@
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { readFileSafe } from "../utils/read-file-safe.js";
+import { readAllStoryFiles, readTruthFiles, readStateFiles, readViewFiles } from "../utils/story-files.js";
 import { readGenreProfile } from "./rules-reader.js";
 import { readBookRules } from "./rules-reader.js";
 import { applyBudget, type BudgetBlock, type BudgetResult } from "../utils/context-budget.js";
 import { buildSlidingWindowSummaries } from "../utils/summary-compressor.js";
 import { buildRecentChapterFull, buildRecentChapterTail } from "../utils/recent-chapter-compressor.js";
+import { routeForCreativeWrite } from "./context-router.js";
+import type { ChapterTaskCard, RoutedContext } from "./context-layers.js";
 import type { BookConfig } from "../models/book.js";
 import type { GenreProfile } from "../models/genre-profile.js";
 import type { BookRules } from "../models/book-rules.js";
@@ -60,6 +63,9 @@ export interface WriterContext {
 /** Presupuesto de tokens por defecto para el prompt del Writer (deja ~28k para output) */
 const DEFAULT_CONTEXT_BUDGET = 100_000;
 
+/** Número de capítulos recientes a cargar como contexto */
+const DEFAULT_RECENT_WINDOW = 3;
+
 // ---------------------------------------------------------------------------
 // Función principal de ensamblaje
 // ---------------------------------------------------------------------------
@@ -77,11 +83,12 @@ export async function buildWriterContext(
   opts?: {
     readonly externalContext?: string;
     readonly contextBudget?: number;
+    readonly recentWindow?: number;
     readonly logger?: Logger;
   },
 ): Promise<WriterContext> {
   // ── Paso 1: leer archivos en paralelo ──
-  const raw = await readAllTruthFiles(bookDir, chapterNumber);
+  const raw = await readAllTruthFiles(bookDir, chapterNumber, opts?.recentWindow);
 
   // ── Paso 2: cargar perfil de género y reglas ──
   const { profile: genreProfile, body: genreBody } =
@@ -121,30 +128,24 @@ export async function buildWriterContext(
 
 const FALLBACK = "(文件尚未创建)";
 
-async function readAllTruthFiles(bookDir: string, chapterNumber: number): Promise<WriterRawFiles> {
+async function readAllTruthFiles(bookDir: string, chapterNumber: number, recentWindow?: number): Promise<WriterRawFiles> {
   const storyDir = join(bookDir, "story");
 
-  const [
-    storyBible, volumeOutline, styleGuide, currentState, ledger, hooks,
-    chapterSummaries, subplotBoard, emotionalArcs, characterMatrix, styleProfileRaw,
-    parentCanon,
-  ] = await Promise.all([
-    readFileSafe(join(storyDir, "story_bible.md"), FALLBACK),
-    readFileSafe(join(storyDir, "volume_outline.md"), FALLBACK),
-    readFileSafe(join(storyDir, "style_guide.md"), FALLBACK),
-    readFileSafe(join(storyDir, "current_state.md"), FALLBACK),
-    readFileSafe(join(storyDir, "particle_ledger.md"), FALLBACK),
-    readFileSafe(join(storyDir, "pending_hooks.md"), FALLBACK),
-    readFileSafe(join(storyDir, "chapter_summaries.md"), FALLBACK),
-    readFileSafe(join(storyDir, "subplot_board.md"), FALLBACK),
-    readFileSafe(join(storyDir, "emotional_arcs.md"), FALLBACK),
-    readFileSafe(join(storyDir, "character_matrix.md"), FALLBACK),
-    readFileSafe(join(storyDir, "style_profile.json"), FALLBACK),
-    readFileSafe(join(storyDir, "parent_canon.md"), FALLBACK),
-  ]);
-
-  const fanficCanon = await readFileSafe(join(storyDir, "fanfic_canon.md"), FALLBACK);
-  const recentChapters = await loadRecentChapters(bookDir, chapterNumber);
+  const sf = await readAllStoryFiles(storyDir, FALLBACK);
+  const storyBible = sf.storyBible;
+  const volumeOutline = sf.volumeOutline;
+  const styleGuide = sf.styleGuide;
+  const currentState = sf.currentState;
+  const ledger = sf.particleLedger;
+  const hooks = sf.pendingHooks;
+  const chapterSummaries = sf.chapterSummaries;
+  const subplotBoard = sf.subplotBoard;
+  const emotionalArcs = sf.emotionalArcs;
+  const characterMatrix = sf.characterMatrix;
+  const styleProfileRaw = sf.styleProfile;
+  const parentCanon = sf.parentCanon;
+  const fanficCanon = sf.fanficCanon;
+  const recentChapters = await loadRecentChapters(bookDir, chapterNumber, recentWindow);
 
   return {
     storyBible, volumeOutline, styleGuide, currentState, ledger, hooks,
@@ -153,10 +154,14 @@ async function readAllTruthFiles(bookDir: string, chapterNumber: number): Promis
   };
 }
 
-/** Lee el último capítulo escrito como contexto reciente. */
+/**
+ * Carga los últimos N capítulos como contexto para el Writer.
+ * @param windowSize Número de capítulos recientes (por defecto 3)
+ */
 export async function loadRecentChapters(
   bookDir: string,
   _currentChapter: number,
+  windowSize: number = DEFAULT_RECENT_WINDOW,
 ): Promise<string> {
   const chaptersDir = join(bookDir, "chapters");
   try {
@@ -164,7 +169,7 @@ export async function loadRecentChapters(
     const mdFiles = files
       .filter((f) => f.endsWith(".md") && !f.startsWith("index"))
       .sort()
-      .slice(-1);
+      .slice(-windowSize);
 
     if (mdFiles.length === 0) return "";
 
@@ -176,6 +181,45 @@ export async function loadRecentChapters(
   } catch {
     return "";
   }
+}
+
+/**
+ * Genera niveles de degradación para N capítulos recientes:
+ * - L0: todos los capítulos completos
+ * - L1: último capítulo completo + capítulos anteriores solo tail
+ * - L2: solo último capítulo completo
+ * - L3: solo último capítulo tail
+ */
+export function buildRecentChaptersLevels(recentChapters: string): string[] {
+  if (!recentChapters) return [""];
+
+  // Separar por el delimitador de capítulos
+  const chapters = recentChapters.split(/\n\n---\n\n/);
+  if (chapters.length <= 1) {
+    // Solo un capítulo — degradación simple
+    return [
+      buildRecentChapterFull(recentChapters),
+      buildRecentChapterTail(recentChapters),
+    ];
+  }
+
+  const lastChapter = chapters[chapters.length - 1]!;
+  const olderChapters = chapters.slice(0, -1);
+
+  // L0: todos completos
+  const l0 = chapters.join("\n\n---\n\n");
+
+  // L1: último completo + anteriores solo tail
+  const olderTails = olderChapters.map((c) => buildRecentChapterTail(c));
+  const l1 = [...olderTails, lastChapter].join("\n\n---\n\n");
+
+  // L2: solo último capítulo completo
+  const l2 = lastChapter;
+
+  // L3: solo último capítulo tail
+  const l3 = buildRecentChapterTail(lastChapter);
+
+  return [l0, l1, l2, l3];
 }
 
 // ---------------------------------------------------------------------------
@@ -208,17 +252,20 @@ export function buildStyleFingerprint(styleProfileRaw: string): string | undefin
 export function extractDialogueFingerprints(recentChapters: string, _storyBible: string): string {
   if (!recentChapters) return "";
 
-  const dialogueRegex = /(?:(.{1,6})(?:说道|道|喝道|冷声道|笑道|怒道|低声道|大声道|喝骂道|冷笑道|沉声道|喊道|叫道|问道|答道)\s*[：:]\s*["""「]([^"""」]+)["""」])|["""「]([^"""」]{2,})["""」]/g;
+  const dialogueRegex = /(?:(.{1,6})(?:说道|道|喝道|冷声道|笑道|怒道|低声道|大声道|喝骂道|冷笑道|沉声道|喊道|叫道|问道|答道|嗤笑|冷哼|沉吟|悠然道|呢喃|低语|反问|呵斥)\s*[：:]\s*["「]([^"」]+)["」])|["「]([^"」]{2,})["」]/g;
 
   const characterDialogues = new Map<string, string[]>();
   let match: RegExpExecArray | null;
+  let lastSpeaker: string | undefined;
 
   while ((match = dialogueRegex.exec(recentChapters)) !== null) {
-    const speaker = match[1]?.trim();
+    const speaker = match[1]?.trim() ?? lastSpeaker;
     const line = match[2] ?? match[3] ?? "";
+    
     if (speaker && line.length > 1) {
       const existing = characterDialogues.get(speaker) ?? [];
       characterDialogues.set(speaker, [...existing, line]);
+      if (match[1]) lastSpeaker = speaker; // Solo actualizar lastSpeaker si hubo tag explícito
     }
   }
 
@@ -336,10 +383,7 @@ function buildAndApplyBudget(
     { name: "current_state", priority: 0, required: true, levels: [raw.currentState] },
     // P1: se pueden reducir pero son de alto valor
     { name: "story_bible", priority: 1, levels: [raw.storyBible] },
-    { name: "recent_chapters", priority: 1, levels: [
-      buildRecentChapterFull(raw.recentChapters),
-      buildRecentChapterTail(raw.recentChapters),
-    ] },
+    { name: "recent_chapters", priority: 1, levels: buildRecentChaptersLevels(raw.recentChapters) },
     { name: "chapter_summaries", priority: 1, levels: [compressedSummaries] },
     // P2: se degradan de forma prioritaria
     { name: "subplot_board", priority: 2, levels: [raw.subplotBoard] },
@@ -349,8 +393,8 @@ function buildAndApplyBudget(
     // P3: se descartan primero
     { name: "dialogue_fingerprints", priority: 3, levels: [derived.dialogueFingerprints] },
     { name: "style_fingerprint", priority: 3, levels: [derived.styleFingerprint ?? ""] },
-    { name: "parent_canon", priority: 3, levels: [derived.hasParentCanon ? raw.parentCanon : ""] },
-    { name: "fanfic_canon", priority: 2, levels: [derived.hasFanficCanon ? raw.fanficCanon : ""] },
+    { name: "parent_canon", priority: 2, levels: [derived.hasParentCanon ? raw.parentCanon : ""] },
+    { name: "fanfic_canon", priority: 3, levels: [derived.hasFanficCanon ? raw.fanficCanon : ""] },
   ].filter((b) => b.levels.some((l) => l.length > 0));
 
   // Ledger solo si el género tiene sistema numérico
@@ -385,3 +429,111 @@ function buildAndApplyBudget(
 
   return budgetResult;
 }
+
+// ---------------------------------------------------------------------------
+// Layered Context Bridge — conecta la lectura existente con el nuevo router
+// ---------------------------------------------------------------------------
+
+/**
+ * Construye un contexto enrutado por capas (cinco capas) para la generación creativa.
+ *
+ * Esta función actúa como puente entre la infraestructura de lectura existente
+ * (WriterRawFiles + WriterDerivedContext) y el nuevo sistema de capas (RoutedContext).
+ *
+ * Uso: reemplaza buildAndApplyBudget para consumidores que migran al nuevo pipeline.
+ * Los consumidores legacy pueden seguir usando buildWriterContext + buildAndApplyBudget.
+ */
+export interface LayeredContextBundle {
+  readonly routedContext: RoutedContext;
+  readonly genreProfile: GenreProfile;
+  readonly genreBody: string;
+  readonly bookRules: BookRules | null;
+  readonly bookRulesBody: string;
+  readonly styleGuide: string;
+}
+
+export async function buildLayeredContext(
+  projectRoot: string,
+  bookDir: string,
+  book: BookConfig,
+  chapterNumber: number,
+  taskCard: ChapterTaskCard,
+  chapterType: string,
+  opts?: {
+    readonly recentChapterContent?: string;
+    readonly auditDriftCorrection?: string;
+    readonly recentViolations?: readonly string[];
+    readonly styleModuleIds?: readonly string[];
+    readonly styleModulesContent?: string;
+    /** [R5] Si se proporciona, el presupuesto de contexto se calcula como maxModelTokens * 0.6 */
+    readonly maxModelTokens?: number;
+    readonly logger?: Logger;
+  },
+): Promise<LayeredContextBundle> {
+  const storyDir = join(bookDir, "story");
+
+  // Leer archivos clasificados por tripartita
+  const [truth, state, view] = await Promise.all([
+    readTruthFiles(storyDir),
+    readStateFiles(storyDir),
+    readViewFiles(storyDir),
+  ]);
+
+  // Leer materiales derivados necesarios para el router
+  const parsedRules = await readBookRules(bookDir);
+  const bookRules = parsedRules?.rules ?? null;
+  const bookRulesBody = parsedRules?.body ?? "";
+  const styleFingerprint = buildStyleFingerprint(view.styleProfile);
+
+  // Obtener contenido del capítulo reciente si no se proporcionó
+  let recentContent = opts?.recentChapterContent ?? "";
+  if (!recentContent && chapterNumber > 1) {
+    try {
+      const chaptersDir = join(bookDir, "chapters");
+      const files = await readdir(chaptersDir);
+      const paddedPrev = String(chapterNumber - 1).padStart(4, "0");
+      const prevFile = files.find((f) => f.startsWith(paddedPrev) && f.endsWith(".md"));
+      if (prevFile) {
+        const raw = await readFile(join(chaptersDir, prevFile), "utf-8");
+        recentContent = buildRecentChapterTail(raw);
+      }
+    } catch {
+      // No crítico — si no se puede leer, L3 lo maneja graciosamente
+    }
+  }
+
+  // Leer perfil de género
+  const { profile: genreProfile, body: genreBody } = await readGenreProfile(projectRoot, book.genre);
+
+  const routedContext = routeForCreativeWrite(
+    taskCard,
+    truth,
+    state,
+    view,
+    bookRules,
+    genreProfile,
+    chapterNumber,
+    chapterType,
+    book.chapterWordCount,
+    book.targetChapters,
+    {
+      recentChapterContent: recentContent,
+      auditDriftCorrection: opts?.auditDriftCorrection,
+      recentViolations: opts?.recentViolations,
+      styleModuleIds: opts?.styleModuleIds,
+      styleModulesContent: opts?.styleModulesContent,
+      styleFingerprint,
+      dialogueFingerprints: extractDialogueFingerprints(recentContent, truth.storyBible),
+    },
+  );
+
+  return { 
+    routedContext, 
+    genreProfile, 
+    genreBody, 
+    bookRules, 
+    bookRulesBody, 
+    styleGuide: truth.styleGuide 
+  };
+}
+

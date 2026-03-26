@@ -1,0 +1,36 @@
+{
+  "scenario": "chapter-1-xuanhuan-baseline",
+  "capturedAt": "2026-03-26T00:00:00.000Z",
+  "pipelineVersion": "v2-layered",
+  "files": {
+    "story_bible.md": "## 01_世界观\n灵气复苏的异世界大陆，分五大宗门。\n\n## 02_主角\n林风，散修出身，觉醒吞噬金手指，性格果断狠辣。\n\n## 03_势力与人物\n五大宗门：天剑宗、炎火宗、寒冰谷、万兽山、天机阁。\n陈青——天剑宗天才弟子，嫉妒主角。\n\n## 04_地理与环境\n大荒域、灵山、灵石矿脉\n\n## 05_书名与简介\n《吞噬万界》\n灵气复苏，一个散修少年觉醒了吞噬能力……",
+    "volume_outline.md": "## 第一卷 起始（第1-20章）\n核心冲突：主角在宗门试炼中崛起。",
+    "current_state.md": "| 字段 | 值 |\n|------|-----|\n| 当前章节 | 1 |\n| 当前位置 | 大荒域悬崖下方 |\n| 主角状态 | 首次觉醒吞噬之力 |\n| 当前目标 | 寻找安全的修炼地点 |",
+    "chapter_0001.md": "# 悬崖边的觉醒\n\n林风站在悬崖边，看着脚下的云海翻涌。"
+  },
+  "metadata": {
+    "chapterNumber": 1,
+    "expectedSections": [
+      "PRE_WRITE_CHECK",
+      "CHAPTER_TITLE",
+      "CHAPTER_CONTENT",
+      "POST_SETTLEMENT",
+      "UPDATED_STATE",
+      "UPDATED_HOOKS",
+      "CHAPTER_SUMMARY"
+    ],
+    "expectedSettlementKeys": [
+      "story_bible",
+      "volume_outline",
+      "current_state",
+      "pending_hooks",
+      "chapter_summaries"
+    ],
+    "expectedOutputFields": {
+      "chapterTitle": "悬崖边的觉醒",
+      "hasPreWriteCheck": true,
+      "hasPostSettlement": true,
+      "hasUpdatedState": true
+    }
+  }
+}

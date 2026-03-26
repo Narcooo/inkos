@@ -15,6 +15,7 @@ import type { RadarSource } from "../agents/radar-source.js";
 import { readGenreProfile } from "../agents/rules-reader.js";
 import { analyzeAITells } from "../agents/ai-tells.js";
 import { analyzeSensitiveWords } from "../agents/sensitive-words.js";
+import type { PostWriteViolation } from "../agents/post-write-validator.js";
 import { StateManager } from "../state/manager.js";
 import { dispatchNotification, dispatchWebhookEvent } from "../notify/dispatcher.js";
 import type { WebhookEvent } from "../notify/webhook.js";
@@ -24,6 +25,7 @@ import type { AuditResult, AuditIssue } from "../agents/continuity.js";
 import type { RadarResult } from "../agents/radar.js";
 import { PipelineContext } from "./pipeline-context.js";
 import { ImportPipeline } from "./import-pipeline.js";
+import { LayeredPipelineRunner, type LayeredChapterResult } from "./layered-runner.js";
 import { readFileSafe } from "../utils/read-file-safe.js";
 import { readFile, readdir, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -166,8 +168,75 @@ export class PipelineRunner {
     await this.state.snapshotState(book.id, 0);
   }
 
-  /** Write a single draft chapter. Saves chapter file + truth files + index + snapshot. */
-  async writeDraft(bookId: string, context?: string, wordCount?: number): Promise<DraftResult> {
+  /** Write a single draft chapter. Saves chapter file + truth files + index + snapshot.
+   *  Defaults to the Layered 6-step pipeline. Pass `useLegacy: true` to use pre-v1.6 path. */
+  async writeDraft(bookId: string, context?: string, wordCount?: number, useLegacy = false): Promise<DraftResult> {
+    if (!useLegacy) {
+      // Layered path: run full pipeline, return only draft-relevant fields
+      const releaseLock = await this.state.acquireBookLock(bookId);
+      try {
+        const loadedBook = await this.state.loadBookConfig(bookId);
+        const book = wordCount ? { ...loadedBook, chapterWordCount: wordCount } : loadedBook;
+
+        // Inyectar contexto externo a través de la configuración del layered runner
+        const layeredConfig = context
+          ? { ...this.config, externalContext: context }
+          : this.config;
+        const layered = new LayeredPipelineRunner(layeredConfig);
+
+        const chapterNumber = await this.state.getNextChapterNumber(bookId);
+        const layeredResult = await layered.run(book, chapterNumber);
+
+        // Build file path from chapter number + title
+        const bookDir = this.state.bookDir(bookId);
+        const chaptersDir = join(bookDir, 'chapters');
+        const paddedNum = String(layeredResult.chapterNumber).padStart(4, '0');
+        const sanitized = layeredResult.title.replace(/[/\\?%*:|"<>]/g, '').replace(/\s+/g, '_').slice(0, 50);
+        const filePath = join(chaptersDir, `${paddedNum}_${sanitized}.md`);
+
+        // Save chapter file
+        await mkdir(chaptersDir, { recursive: true });
+        await writeFile(filePath, `# 第${chapterNumber}章 ${layeredResult.title}\n\n${layeredResult.content}`, "utf-8");
+
+        // Update chapter index
+        const existingIndex = await this.state.loadChapterIndex(bookId);
+        const now = new Date().toISOString();
+        const newEntry: ChapterMeta = {
+          number: chapterNumber,
+          title: layeredResult.title,
+          status: "drafted",
+          wordCount: layeredResult.wordCount,
+          createdAt: now,
+          updatedAt: now,
+          auditIssues: [],
+          ...(layeredResult.telemetry ? { tokenUsage: PipelineRunner.telemetryToUsage(layeredResult.telemetry) } : {}),
+        };
+        await this.state.saveChapterIndex(bookId, [...existingIndex, newEntry]);
+
+        // Snapshot
+        await this.state.snapshotState(bookId, chapterNumber);
+
+        await this.emitWebhook("chapter-complete", bookId, chapterNumber, {
+          title: layeredResult.title,
+          wordCount: layeredResult.wordCount,
+        });
+
+        return {
+          chapterNumber: layeredResult.chapterNumber,
+          title: layeredResult.title,
+          wordCount: layeredResult.wordCount,
+          filePath,
+          tokenUsage: layeredResult.telemetry
+            ? PipelineRunner.telemetryToUsage(layeredResult.telemetry)
+            : undefined,
+        };
+      } finally {
+        await releaseLock();
+      }
+    }
+
+    // Legacy path
+    this.config.logger?.info('Using legacy pipeline path (explicitly requested)');
     const releaseLock = await this.state.acquireBookLock(bookId);
     try {
       const book = await this.state.loadBookConfig(bookId);
@@ -417,15 +486,58 @@ export class PipelineRunner {
   // Full pipeline (convenience — runs draft + audit + revise in one shot)
   // ---------------------------------------------------------------------------
 
-  async writeNextChapter(bookId: string, wordCount?: number, temperatureOverride?: number): Promise<ChapterPipelineResult> {
+  /**
+   * Full pipeline: write + audit + revise.
+   * Defaults to the Layered 6-step pipeline (S0→S5).
+   * Pass `useLegacy: true` to fall back to the pre-v1.6 single-agent path.
+   */
+  async writeNextChapter(bookId: string, wordCount?: number, temperatureOverride?: number, useLegacy = false): Promise<ChapterPipelineResult> {
+    if (useLegacy) {
+      this.config.logger?.info('Using legacy pipeline path (explicitly requested)');
+      const releaseLock = await this.state.acquireBookLock(bookId);
+      try {
+        return await this._writeNextChapterLocked(bookId, wordCount, temperatureOverride);
+      } finally {
+        await releaseLock();
+      }
+    }
+
+    // Default: Layered pipeline
     const releaseLock = await this.state.acquireBookLock(bookId);
     try {
-      return await this._writeNextChapterLocked(bookId, wordCount, temperatureOverride);
+      const loadedBook = await this.state.loadBookConfig(bookId);
+      const book = wordCount ? { ...loadedBook, chapterWordCount: wordCount } : loadedBook;
+
+      const chapterNumber = await this.state.getNextChapterNumber(bookId);
+      const layeredResult = await this.runLayeredChapter(book, chapterNumber);
+
+      // Adapt LayeredChapterResult → ChapterPipelineResult
+      const auditResult: AuditResult = {
+        passed: layeredResult.postWriteErrors.length === 0,
+        issues: [
+          ...layeredResult.postWriteErrors.map((e: PostWriteViolation) => ({ severity: 'critical' as const, category: e.rule, description: e.description, suggestion: e.suggestion })),
+          ...layeredResult.postWriteWarnings.map((w: PostWriteViolation) => ({ severity: 'warning' as const, category: w.rule, description: w.description, suggestion: w.suggestion })),
+        ],
+        summary: layeredResult.postWriteErrors.length === 0 ? 'All checks passed.' : `${layeredResult.postWriteErrors.length} errors found.`,
+      };
+
+      return {
+        chapterNumber: layeredResult.chapterNumber,
+        title: layeredResult.title,
+        wordCount: layeredResult.wordCount,
+        auditResult,
+        revised: layeredResult.correctionApplied,
+        status: auditResult.passed ? 'ready-for-review' : 'audit-failed',
+        tokenUsage: layeredResult.telemetry
+          ? PipelineRunner.telemetryToUsage(layeredResult.telemetry)
+          : undefined,
+      };
     } finally {
       await releaseLock();
     }
   }
 
+  /** @deprecated Internal method of the legacy pipeline. */
   private async _writeNextChapterLocked(bookId: string, wordCount?: number, temperatureOverride?: number): Promise<ChapterPipelineResult> {
     const book = await this.state.loadBookConfig(bookId);
     const bookDir = this.state.bookDir(bookId);
@@ -779,6 +891,17 @@ export class PipelineRunner {
     };
   }
 
+  /** Convierte ChapterTelemetry.agentTokens[] en un TokenUsageSummary plano. */
+  private static telemetryToUsage(t: { readonly agentTokens: ReadonlyArray<{ readonly promptTokens: number; readonly completionTokens: number; readonly totalTokens: number }> }): TokenUsageSummary {
+    let prompt = 0, completion = 0, total = 0;
+    for (const rec of t.agentTokens) {
+      prompt += rec.promptTokens;
+      completion += rec.completionTokens;
+      total += rec.totalTokens;
+    }
+    return { promptTokens: prompt, completionTokens: completion, totalTokens: total };
+  }
+
   // ---------------------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------------------
@@ -813,4 +936,23 @@ export class PipelineRunner {
     const contentStart = lines.findIndex((l, i) => i > 0 && l.trim().length > 0);
     return contentStart >= 0 ? lines.slice(contentStart).join("\n") : raw;
   }
+
+  // ===========================
+  // Layered Pipeline: delegates to LayeredPipelineRunner (R1)
+  // ===========================
+
+  /**
+   * Ejecuta el pipeline de seis pasos para un capitulo.
+   * Delegado a LayeredPipelineRunner para mantener runner.ts enfocado.
+   */
+  async runLayeredChapter(
+    book: BookConfig,
+    chapterNumber: number,
+  ): Promise<LayeredChapterResult> {
+    const layered = new LayeredPipelineRunner(this.config);
+    return layered.run(book, chapterNumber);
+  }
 }
+
+// [R1] Re-export del modulo extraido para compatibilidad
+export type { LayeredChapterResult };

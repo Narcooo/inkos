@@ -169,6 +169,18 @@ const TOOLS: ReadonlyArray<ToolDefinition> = [
       required: ["bookId", "fileName", "content"],
     },
   },
+  {
+    name: "diff_chapter",
+    description: "对比章节的当前版本与修订前版本。仅在章节经过修订后有历史版本可对比。",
+    parameters: {
+      type: "object",
+      properties: {
+        bookId: { type: "string", description: "书籍ID" },
+        chapterNumber: { type: "number", description: "章节号（不填则对比最新章）" },
+      },
+      required: ["bookId"],
+    },
+  },
 ];
 
 export interface AgentLoopOptions {
@@ -210,6 +222,7 @@ export async function runAgentLoop(
 | import_canon | 从正传导入正典参照，启用番外模式 |
 | import_chapters | 导入已有章节，反推所有真相文件，支持续写 |
 | write_truth_file | 直接修改真相文件（大纲、世界观、规则、状态等），用于扩展/调整设定 |
+| diff_chapter | 对比章节修订前后的版本差异 |
 
 ## 长期记忆
 
@@ -470,6 +483,22 @@ async function executeTool(
         file: `story/${fileName}`,
         written: true,
         size: content.length,
+      });
+    }
+
+    case "diff_chapter": {
+      const result = await pipeline.diffDraft(
+        args.bookId as string,
+        args.chapterNumber as number | undefined,
+      );
+      return JSON.stringify({
+        chapterNumber: result.chapterNumber,
+        revisionCount: result.revisionCount,
+        hasPreviousVersion: result.previousContent !== null,
+        currentLength: result.currentContent.length,
+        previousLength: result.previousContent?.length ?? 0,
+        currentPreview: result.currentContent.slice(0, 500),
+        previousPreview: result.previousContent?.slice(0, 500) ?? null,
       });
     }
 

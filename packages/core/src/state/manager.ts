@@ -257,6 +257,73 @@ export class StateManager {
       return false;
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // Chapter content helpers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Lee el contenido de un capítulo, eliminando la línea de título.
+   * Centraliza la lógica duplicada en runner.ts y scheduler.ts.
+   */
+  async readChapterContent(bookId: string, chapterNumber: number): Promise<string> {
+    const chaptersDir = join(this.bookDir(bookId), "chapters");
+    const files = await readdir(chaptersDir);
+    const paddedNum = String(chapterNumber).padStart(4, "0");
+    const chapterFile = files.find((f) => f.startsWith(paddedNum) && f.endsWith(".md"));
+    if (!chapterFile) {
+      throw new Error(`Chapter ${chapterNumber} file not found in ${chaptersDir}`);
+    }
+    const raw = await readFile(join(chaptersDir, chapterFile), "utf-8");
+    // Eliminar la línea de título y la línea en blanco siguiente
+    const lines = raw.split("\n");
+    const contentStart = lines.findIndex((l, i) => i > 0 && l.trim().length > 0);
+    return contentStart >= 0 ? lines.slice(contentStart).join("\n") : raw;
+  }
+
+  /**
+   * Guarda una copia del contenido del capítulo antes de sobrescribirlo.
+   * Devuelve el número de versión asignado.
+   */
+  async saveChapterRevision(
+    bookId: string,
+    chapterNumber: number,
+    content: string,
+  ): Promise<number> {
+    const revisionsDir = join(
+      this.bookDir(bookId), "chapters", "revisions", String(chapterNumber),
+    );
+    await mkdir(revisionsDir, { recursive: true });
+    const existing = await readdir(revisionsDir).catch(() => []);
+    const version = existing.filter((f) => f.startsWith("v") && f.endsWith(".md")).length + 1;
+    await writeFile(join(revisionsDir, `v${version}.md`), content, "utf-8");
+    return version;
+  }
+
+  /**
+   * Lista todas las revisiones archivadas de un capítulo.
+   * Devuelve un array ordenado por versión (ascendente).
+   */
+  async listChapterRevisions(
+    bookId: string,
+    chapterNumber: number,
+  ): Promise<ReadonlyArray<{ readonly version: number; readonly filePath: string }>> {
+    const revisionsDir = join(
+      this.bookDir(bookId), "chapters", "revisions", String(chapterNumber),
+    );
+    try {
+      const files = await readdir(revisionsDir);
+      return files
+        .filter((f) => f.startsWith("v") && f.endsWith(".md"))
+        .map((f) => {
+          const version = parseInt(f.slice(1, -3), 10);
+          return { version, filePath: join(revisionsDir, f) };
+        })
+        .sort((a, b) => a.version - b.version);
+    } catch {
+      return [];
+    }
+  }
 }
 
 // --- Helpers del módulo ---

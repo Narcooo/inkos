@@ -25,6 +25,7 @@ export const ChapterMetaSchema = z.object({
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
   auditIssues: z.array(z.string()).default([]),
+  revisionCount: z.number().int().default(0).optional(),
   reviewNote: z.string().optional(),
   detectionScore: z.number().min(0).max(1).optional(),
   detectionProvider: z.string().optional(),

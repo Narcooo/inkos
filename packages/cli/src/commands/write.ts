@@ -18,6 +18,7 @@ writeCommand
   .option("--context-file <path>", "Read guidance from file")
   .option("--json", "Output JSON")
   .option("-q, --quiet", "Suppress console output")
+  .option("--legacy", "Use legacy single-agent pipeline instead of layered 6-step")
   .action(async (bookIdArg: string | undefined, opts) => {
     try {
       const config = await loadConfig();
@@ -34,7 +35,7 @@ writeCommand
       for (let i = 0; i < count; i++) {
         if (!opts.json) log(`[${i + 1}/${count}] Writing chapter for "${bookId}"...`);
 
-        const result = await pipeline.writeNextChapter(bookId, wordCount);
+        const result = await pipeline.writeNextChapter(bookId, wordCount, undefined, opts.legacy === true);
         results.push(result);
 
         if (!opts.json) {

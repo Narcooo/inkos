@@ -76,7 +76,7 @@ INKOS_LLM_API_KEY=                                 # API Key
 INKOS_LLM_MODEL=                                   # Model name
 
 # Optional
-# INKOS_LLM_TEMPERATURE=0.7                       # Temperature
+# INKOS_LLM_TEMPERATURE=0.7                       # Default temperature (Writer auto-tunes 0.6-0.85 by chapter type)
 # INKOS_LLM_MAX_TOKENS=8192                        # Max output tokens
 # INKOS_LLM_THINKING_BUDGET=0                      # Anthropic extended thinking budget
 ```
@@ -235,6 +235,8 @@ inkos agent "Scan market trends first, then create a new book based on results"
 | `inkos import chapters [id] --from <path>` | Import existing chapters for continuation (`--split`, `--resume-from`) |
 | `inkos analytics [id]` / `inkos stats [id]` | Book analytics (audit pass rate, top issues, chapter ranking, token usage) |
 | `inkos update` | Update to latest version |
+| `inkos revise-light [id] [n]` | Lightweight revision (chapter text + instructions only, no truth files). `--context` or `--context-file` |
+| `inkos settle [id] [n]` | Post-hoc truth file sync. Reads confirmed chapter and updates state/hooks/ledger |
 | `inkos up / down` | Start/stop daemon (`-q` quiet mode, auto-writes `inkos.log`) |
 
 `[id]` is auto-detected when the project has only one book. All commands support `--json` for structured output. `draft`/`write next` support `--context` for writing guidance and `--words` to override per-chapter word count. `book create` supports `--brief <file>` to pass a creative brief (your brainstorming/worldbuilding doc) — the Architect builds from your ideas instead of generating from scratch.
@@ -320,6 +322,12 @@ TypeScript monorepo managed with pnpm workspaces.
 - [x] Stream auto-fallback (auto sync retry when SSE fails — compatible with Zhipu, Gemini proxies, etc.)
 - [x] Local model compatibility (fallback parsing + partial response recovery on stream interruption)
 - [x] Creative brief (`book create --brief` — pass your brainstorming doc, Architect builds from it)
+- [x] Lightweight revision + post-hoc settlement (`revise-light` + `settle`, decouple editing from state sync)
+- [x] Dynamic temperature (auto-tunes 0.6–0.85 by chapter type: climax→high, dialogue→low)
+- [x] Chapter-aware word count (climax +20%, transition -15%, auto-adjusts per-chapter target)
+- [x] Pipeline dry run (zero LLM cost config verification, token estimation, budget decisions)
+- [x] Truth file read cache (4 reads → 1 per chapter pipeline, reduced IO)
+- [x] Writer prompt compression (~18% token savings, merged methodology + compact tables)
 - [ ] `packages/studio` Web UI for review and editing (Vite + React + Hono)
 - [ ] Partial chapter intervention (rewrite half a chapter + cascade truth file updates)
 - [ ] Full English novel support (English genre profiles, prompts, audit rules, post-write validator)

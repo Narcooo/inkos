@@ -133,5 +133,6 @@ export function parseWriterOutput(
     updatedSubplots: extract("UPDATED_SUBPLOTS"),
     updatedEmotionalArcs: extract("UPDATED_EMOTIONAL_ARCS"),
     updatedCharacterMatrix: extract("UPDATED_CHARACTER_MATRIX"),
+    budgetDropped: [],
   };
 }

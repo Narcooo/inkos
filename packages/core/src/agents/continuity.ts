@@ -3,6 +3,7 @@ import type { GenreProfile } from "../models/genre-profile.js";
 import type { BookRules } from "../models/book-rules.js";
 import { readGenreProfile, readBookRules } from "./rules-reader.js";
 import { readFile, readdir } from "node:fs/promises";
+import { readAllStoryFiles, type StoryFiles } from "../utils/story-files.js";
 import { join } from "node:path";
 
 export interface AuditResult {
@@ -63,6 +64,23 @@ const DIMENSION_MAP: Record<number, string> = {
   36: "关系动态",
   37: "正典事件一致性",
 };
+
+/**
+ * Dimensiones Tier-2 — núcleo narrativo para auditoría ligera.
+ * Solo estas dimensiones se evalúan en el paso rápido.
+ */
+export const TIER2_DIMENSION_IDS: ReadonlyArray<number> = [
+  1,  // OOC检查
+  2,  // 时间线检查
+  3,  // 设定冲突
+  5,  // 数值检查
+  6,  // 伏笔检查
+  9,  // 信息越界
+  19, // 视角一致性
+  27, // 敏感词检查
+  32, // 读者期待管理
+  33, // 大纲偏离检测
+];
 
 function buildDimensionList(
   gp: GenreProfile,
@@ -215,22 +233,20 @@ export class ContinuityAuditor extends BaseAgent {
     chapterContent: string,
     chapterNumber: number,
     genre?: string,
-    options?: { temperature?: number },
+    options?: { temperature?: number; storyFiles?: StoryFiles },
   ): Promise<AuditResult> {
-    const [currentState, ledger, hooks, styleGuideRaw, subplotBoard, emotionalArcs, characterMatrix, chapterSummaries, parentCanon, volumeOutline, fanficCanon] =
-      await Promise.all([
-        this.readFileSafe(join(bookDir, "story/current_state.md")),
-        this.readFileSafe(join(bookDir, "story/particle_ledger.md")),
-        this.readFileSafe(join(bookDir, "story/pending_hooks.md")),
-        this.readFileSafe(join(bookDir, "story/style_guide.md")),
-        this.readFileSafe(join(bookDir, "story/subplot_board.md")),
-        this.readFileSafe(join(bookDir, "story/emotional_arcs.md")),
-        this.readFileSafe(join(bookDir, "story/character_matrix.md")),
-        this.readFileSafe(join(bookDir, "story/chapter_summaries.md")),
-        this.readFileSafe(join(bookDir, "story/parent_canon.md")),
-        this.readFileSafe(join(bookDir, "story/volume_outline.md")),
-        this.readFileSafe(join(bookDir, "story/fanfic_canon.md")),
-      ]);
+    const sf = options?.storyFiles ?? await readAllStoryFiles(join(bookDir, "story"));
+    const currentState = sf.currentState;
+    const ledger = sf.particleLedger;
+    const hooks = sf.pendingHooks;
+    const styleGuideRaw = sf.styleGuide;
+    const subplotBoard = sf.subplotBoard;
+    const emotionalArcs = sf.emotionalArcs;
+    const characterMatrix = sf.characterMatrix;
+    const chapterSummaries = sf.chapterSummaries;
+    const parentCanon = sf.parentCanon;
+    const volumeOutline = sf.volumeOutline;
+    const fanficCanon = sf.fanficCanon;
 
     const hasParentCanon = parentCanon !== "(文件不存在)";
 
@@ -341,6 +357,100 @@ ${chapterContent}`;
       ? await this.chatWithSearch(chatMessages, chatOptions)
       : await this.chat(chatMessages, chatOptions);
 
+    const result = this.parseAuditResult(response.content);
+    return { ...result, tokenUsage: response.usage };
+  }
+
+  /**
+   * Auditoría Tier-2: solo dimensiones núcleo + contexto reducido.
+   * Diseñado para ser rápido y barato. Si pasa, se omite Tier-3.
+   */
+  async auditChapterLight(
+    bookDir: string,
+    chapterContent: string,
+    chapterNumber: number,
+    genre?: string,
+    options?: { temperature?: number; storyFiles?: StoryFiles },
+  ): Promise<AuditResult> {
+    const sf = options?.storyFiles ?? await readAllStoryFiles(join(bookDir, "story"));
+
+    // Contexto reducido: solo lo esencial para las dimensiones núcleo
+    const currentState = sf.currentState;
+    const hooks = sf.pendingHooks;
+    const volumeOutline = sf.volumeOutline;
+    const ledger = sf.particleLedger;
+
+    const previousChapter = await this.loadPreviousChapter(bookDir, chapterNumber);
+
+    const genreId = genre ?? "other";
+    const { profile: gp } = await readGenreProfile(this.ctx.projectRoot, genreId);
+    const parsedRules = await readBookRules(bookDir);
+    const bookRules = parsedRules?.rules ?? null;
+
+    // Construir solo las dimensiones Tier-2 activas para este género
+    const fullDims = buildDimensionList(gp, bookRules, false);
+    const tier2Set = new Set(TIER2_DIMENSION_IDS);
+    const lightDims = fullDims.filter((d) => tier2Set.has(d.id));
+
+    const dimList = lightDims
+      .map((d) => `${d.id}. ${d.name}${d.note ? `（${d.note}）` : ""}`)
+      .join("\n");
+
+    const protagonistBlock = bookRules?.protagonist
+      ? `\n主角人设锁定：${bookRules.protagonist.name}，${bookRules.protagonist.personalityLock.join("、")}`
+      : "";
+
+    const systemPrompt = `你是一位${gp.name}网络小说审稿编辑。请对章节进行快速审查，只关注核心叙事一致性问题。${protagonistBlock}
+
+审查维度：
+${dimList}
+
+输出格式必须为 JSON：
+{
+  "passed": true/false,
+  "issues": [
+    {
+      "severity": "critical|warning|info",
+      "category": "审查维度名称",
+      "description": "具体问题描述",
+      "suggestion": "修改建议"
+    }
+  ],
+  "summary": "一句话总结审查结论"
+}
+
+只有当存在 critical 级别问题时，passed 才为 false。`;
+
+    const ledgerBlock = gp.numericalSystem
+      ? `\n## 资源账本\n${ledger}`
+      : "";
+
+    const outlineBlock = volumeOutline !== "(文件不存在)"
+      ? `\n## 卷纲\n${volumeOutline}\n`
+      : "";
+
+    const prevChapterBlock = previousChapter
+      ? `\n## 上一章全文\n${previousChapter}\n`
+      : "";
+
+    const userPrompt = `请快速审查第${chapterNumber}章。
+
+## 当前状态卡
+${currentState}
+${ledgerBlock}
+## 伏笔池
+${hooks}
+${outlineBlock}${prevChapterBlock}
+## 待审章节内容
+${chapterContent}`;
+
+    const chatMessages = [
+      { role: "system" as const, content: systemPrompt },
+      { role: "user" as const, content: userPrompt },
+    ];
+    const chatOptions = { temperature: options?.temperature ?? 0.3, maxTokens: 4096 };
+
+    const response = await this.chat(chatMessages, chatOptions);
     const result = this.parseAuditResult(response.content);
     return { ...result, tokenUsage: response.usage };
   }

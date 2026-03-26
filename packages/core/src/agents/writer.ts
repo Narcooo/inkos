@@ -7,8 +7,9 @@ import { buildSettlerSystemPrompt, buildSettlerUserPrompt } from "./settler-prom
 import { parseSettlementOutput } from "./settler-parser.js";
 import { validatePostWrite, type PostWriteViolation } from "./post-write-validator.js";
 import { analyzeAITells } from "./ai-tells.js";
-import { parseCreativeOutput } from "./writer-parser.js";
+import { parseCreativeOutput, type CreativeOutput } from "./writer-parser.js";
 import { buildWriterContext } from "./writer-context.js";
+import { type RoutedContext } from "./context-layers.js";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -47,6 +48,19 @@ export interface WriteChapterOutput {
   readonly postWriteErrors: ReadonlyArray<PostWriteViolation>;
   readonly postWriteWarnings: ReadonlyArray<PostWriteViolation>;
   readonly tokenUsage?: TokenUsage;
+}
+
+export interface RunCreativeWriteInput {
+  readonly book: BookConfig;
+  readonly routedContext: RoutedContext;
+  readonly genreProfile: GenreProfile;
+  readonly genreBody: string;
+  readonly bookRules: BookRules | null;
+  readonly bookRulesBody: string;
+  readonly styleGuide: string;
+  readonly language: "zh" | "en";
+  readonly wordCountOverride: number;
+  readonly temperatureOverride?: number;
 }
 
 export class WriterAgent extends BaseAgent {
@@ -357,8 +371,6 @@ ${params.volumeOutline}
 - 只需输出 PRE_WRITE_CHECK、CHAPTER_TITLE、CHAPTER_CONTENT 三个区块`;
   }
 
-
-
   /** Save new truth files (summaries, subplots, emotional arcs, character matrix). */
   async saveNewTruthFiles(bookDir: string, output: WriteChapterOutput): Promise<void> {
     const storyDir = join(bookDir, "story");
@@ -408,12 +420,103 @@ ${params.volumeOutline}
     }
   }
 
-
-
   private sanitizeFilename(title: string): string {
     return title
       .replace(/[/\\?%*:|"<>]/g, "")
       .replace(/\s+/g, "_")
       .slice(0, 50);
+  }
+
+  async runCreativeWrite(input: RunCreativeWriteInput): Promise<CreativeOutput & { tokenUsage: TokenUsage }> {
+    const { book, routedContext, genreProfile, genreBody, bookRules, bookRulesBody, styleGuide, language } = input;
+    const { task, style } = routedContext;
+
+    const creativeSystemPrompt = buildWriterSystemPrompt(
+      book,
+      genreProfile,
+      bookRules,
+      bookRulesBody,
+      genreBody,
+      styleGuide,
+      style.styleFingerprint,
+      task.chapterNumber,
+      "creative",
+      language,
+    );
+
+    const creativeUserPrompt = this.buildLayeredUserPrompt(routedContext);
+
+    const creativeTemperature = input.temperatureOverride ?? 0.7;
+    const creativeMaxTokens = Math.max(8192, Math.ceil(input.wordCountOverride * 2));
+
+    const response = await this.chat(
+      [
+        { role: "system", content: creativeSystemPrompt },
+        { role: "user", content: creativeUserPrompt },
+      ],
+      { maxTokens: creativeMaxTokens, temperature: creativeTemperature },
+    );
+
+    const creative = parseCreativeOutput(task.chapterNumber, response.content, language);
+
+    return {
+      ...creative,
+      tokenUsage: response.usage,
+    };
+  }
+
+  private buildLayeredUserPrompt(ctx: RoutedContext): string {
+    const { task, risk, continuity, style, truthSlice } = ctx;
+
+    return `请续写第${task.chapterNumber}章（章节类型：${task.chapterType}）。
+
+## L1: 任务目标
+- 目标字数：${task.wordTarget}字
+- 章节目标：${task.taskCard.chapterGoal}
+- 核心压力：${task.taskCard.corePressure}
+- 钩子类型：${task.taskCard.hookType}
+- 活跃支线：${task.taskCard.activeLines.join(", ")}
+- 禁止动作：${task.taskCard.forbiddenMoves.join(", ") || "无"}
+
+## L2: 风险控制
+- 禁用词：${risk.blacklistTerms.join(", ") || "无"}
+- 禁忌方向：${risk.forbiddenDirections.join(", ") || "无"}
+- 历史修正：${risk.auditDriftCorrection || "无"}
+${risk.fatigueWordBudget ? `- 疲劳词约束：${risk.fatigueWordBudget}\n` : ""}${risk.recentViolations.length > 0 ? `- 近期违规提醒（重点规避）：\n  * ${risk.recentViolations.join("\n  * ")}\n` : ""}
+
+## L3: 连贯性锚点
+### 前情提要
+${continuity.previousChapterTail || "这是第一章，无前文"}
+### 当前状态
+${continuity.currentAnchor}
+### 关键伏笔
+${continuity.relevantHooks}
+### 历史摘要
+${continuity.recentSummaryLines}
+### 人际张力
+${continuity.relationTensions || "无特殊张力"}
+
+## L4: 风格化约束
+- 对话指纹：${style.dialogueFingerprints}
+${style.modulesContent ? `### 风格模块\n${style.modulesContent}` : ""}
+
+## L5: 剧情/设定切片
+### 卷纲切片
+${truthSlice.relevantOutlineSlice}
+### 角色设定
+${truthSlice.relevantCharacterSettings}
+### 世界观规则
+${truthSlice.relevantWorldRules}
+### 伏笔约束
+${truthSlice.relevantLongTermHooks}
+
+要求：
+- 正文不少于${task.wordTarget}字
+- 严格遵守L2中的风险禁忌
+- 确保L3中的剧情连贯性
+- 融入L4中的特定风格和对话指纹
+- 对应L5中的卷纲进度，严禁跳剧情
+- 先输出 === PRE_WRITE_CHECK === 写作自检表，再开始正文
+- 只需输出 PRE_WRITE_CHECK、CHAPTER_TITLE、CHAPTER_CONTENT 三个区块`;
   }
 }

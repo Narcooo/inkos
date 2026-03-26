@@ -15,8 +15,8 @@ export { createLLMClient, chatCompletion, chatWithTools, createStreamMonitor, Pa
 export { BaseAgent, type AgentContext } from "./agents/base.js";
 export { ArchitectAgent, type ArchitectOutput } from "./agents/architect.js";
 export { WriterAgent, type WriteChapterInput, type WriteChapterOutput, type TokenUsage } from "./agents/writer.js";
-export { ContinuityAuditor, type AuditResult, type AuditIssue } from "./agents/continuity.js";
-export { ReviserAgent, type ReviseOutput, type ReviseMode } from "./agents/reviser.js";
+export { ContinuityAuditor, TIER2_DIMENSION_IDS, type AuditResult, type AuditIssue } from "./agents/continuity.js";
+export { ReviserAgent, type ReviseOutput, type ReviseMode, type ReviseLightOutput, type SettlementOutput, type TriSettlementInput, type TriSettlementOutput, type TruthCandidate } from "./agents/reviser.js";
 export { RadarAgent, type RadarResult, type RadarRecommendation } from "./agents/radar.js";
 export { FanqieRadarSource, QidianRadarSource, TextRadarSource, type RadarSource, type PlatformRankings, type RankingEntry } from "./agents/radar-source.js";
 export { readGenreProfile, readBookRules, listAvailableGenres, getBuiltinGenresDir } from "./agents/rules-reader.js";
@@ -30,16 +30,31 @@ export { validatePostWrite, type PostWriteViolation } from "./agents/post-write-
 export { ChapterAnalyzerAgent, type AnalyzeChapterInput, type AnalyzeChapterOutput } from "./agents/chapter-analyzer.js";
 export { parseWriterOutput, parseCreativeOutput, type ParsedWriterOutput, type CreativeOutput } from "./agents/writer-parser.js";
 export { buildSettlerSystemPrompt, buildSettlerUserPrompt } from "./agents/settler-prompts.js";
-export { parseSettlementOutput, type SettlementOutput } from "./agents/settler-parser.js";
+export { parseSettlementOutput } from "./agents/settler-parser.js";
 export { FanficCanonImporter } from "./agents/fanfic-canon-importer.js";
+
+// Layered Context Routing (new pipeline)
+export { type LayeredContextBundle, buildLayeredContext, extractDialogueFingerprints } from "./agents/writer-context.js";
+export { type ChapterTaskCard, type RoutedContext, type TruthFiles as LayeredTruthFiles, type StateFiles, type ViewFiles, type TaskLayer, type RiskLayer, type ContinuityLayer, type StyleLayer, type TruthSliceLayer, buildTaskLayer, buildRiskLayer, buildContinuityLayer, buildTruthSliceLayer } from "./agents/context-layers.js";
+export { routeForCreativeWrite, routeForCorrection, routeForSettlement, validateCreativeWriteContext } from "./agents/context-router.js";
+export { type StyleModule, getStyleModule, listModules, selectModulesForChapterType, combineModuleContent, combineRevisionChecks } from "./agents/style-modules.js";
+export { TaskCardAgent } from "./agents/task-card-agent.js";
+export { CorrectionAgent } from "./agents/correction-agent.js";
+export { evaluateTruthCandidates, type GuardMode, type GuardResult, type GuardDecision } from "./agents/truth-guard.js";
+export { routeStyle, type StyleRouteResult } from "./agents/style-router.js";
+export { detectFaults, detectStateContamination, decideCorrectionPath, extractCorrectionRules, type FaultType, type FaultSignal, type FaultResponse } from "./agents/fault-handler.js";
 
 // Utils
 export { fetchUrl } from "./utils/web-search.js";
 export { splitChapters, type SplitChapter } from "./utils/chapter-splitter.js";
+export { readAllStoryFiles, readTruthFiles, readStateFiles, readViewFiles, type StoryFiles } from "./utils/story-files.js";
+export { buildParagraphDiff, formatDiffForSettler, shouldUseIncrementalSettle, type ParagraphDiff, type ParagraphChange } from "./utils/paragraph-diff.js";
 export { createLogger, createStderrSink, createJsonLineSink, nullSink, type Logger, type LogSink, type LogLevel, type LogEntry } from "./utils/logger.js";
 
 // Pipeline
 export { PipelineRunner, type PipelineConfig, type ChapterPipelineResult, type DraftResult, type ReviseResult, type TruthFiles, type BookStatusInfo, type ImportChaptersInput, type ImportChaptersResult, type TokenUsageSummary } from "./pipeline/runner.js";
+export { shouldUseLight, classifyIssues, formatIssuesAsInstructions, type ClassifiedIssues } from "./pipeline/revision-router.js";
+export { PipelineTelemetry, aggregateAgentCosts, analyzeDimensionTrends, analyzeContextBudgetTrends, type ChapterTelemetry, type AgentTokenRecord, type ContextBudgetSummary, type DimensionQuality, type PipelineAgent } from "./pipeline/pipeline-telemetry.js";
 export { Scheduler, type SchedulerConfig } from "./pipeline/scheduler.js";
 export { runAgentLoop, AGENT_TOOLS as AGENT_TOOLS, type AgentLoopOptions } from "./pipeline/agent.js";
 export { detectChapter, detectAndRewrite, loadDetectionHistory, type DetectChapterResult, type DetectAndRewriteResult } from "./pipeline/detection-runner.js";

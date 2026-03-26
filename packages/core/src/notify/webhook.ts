@@ -13,7 +13,8 @@ export type WebhookEvent =
   | "revision-complete"
   | "pipeline-complete"
   | "pipeline-error"
-  | "diagnostic-alert";
+  | "diagnostic-alert"
+  | "settlement-complete";
 
 export interface WebhookPayload {
   readonly event: WebhookEvent;
