@@ -2045,9 +2045,9 @@ body {
 }
 .stage-card {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: 14px auto 1fr auto;
   align-items: center;
-  gap: 4px 10px;
+  gap: 4px 8px;
   padding: 8px 14px;
   font-size: 13px;
   border-radius: var(--radius-sm);
@@ -2063,12 +2063,27 @@ body {
 .stage-card.pending .stage-dot { background: var(--border); }
 .stage-card.pending .stage-label { color: var(--text-muted); }
 .stage-card.active .stage-dot {
-  background: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
-  animation: stage-pulse 1.2s ease-in-out infinite;
+  background: #ef4444;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.2);
+  animation: stage-pulse 1s ease-in-out infinite;
 }
-.stage-card.active { background: var(--accent-soft); font-weight: 500; }
-.stage-card.done .stage-dot { background: var(--success); }
+.stage-card.active { background: rgba(239, 68, 68, 0.06); font-weight: 500; }
+.stage-card.active .stage-label { color: #dc2626; }
+.stage-card.done .stage-dot {
+  background: var(--success);
+  position: relative;
+}
+.stage-card.done .stage-dot::after {
+  content: "✓";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 7px;
+  color: #fff;
+  font-weight: bold;
+  line-height: 1;
+}
 .stage-card.done .stage-label { color: var(--text-secondary); }
 .stage-card.error .stage-dot { background: var(--danger); }
 .stage-card.error .stage-label { color: var(--danger); }
@@ -2081,19 +2096,38 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.stage-log {
+/* Toggle triangle */
+.stage-toggle {
+  font-size: 9px;
+  cursor: pointer;
+  color: var(--text-muted);
+  transition: transform 0.2s;
+  user-select: none;
+  padding: 2px;
+}
+.stage-card.expanded .stage-toggle {
+  transform: rotate(90deg);
+}
+/* Collapsible body */
+.stage-body {
   display: none;
   grid-column: 1 / -1;
-  padding: 4px 0 4px 22px;
+  padding: 4px 0 4px 32px;
   font-size: 11px;
   line-height: 1.6;
   color: var(--text-muted);
+  max-height: 200px;
+  overflow-y: auto;
+}
+.stage-card.expanded .stage-body {
+  display: block;
 }
 .stage-log-line {
   opacity: 0.7;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  padding: 1px 0;
 }
 @keyframes stage-pulse {
   0%, 100% { box-shadow: 0 0 0 3px var(--accent-soft); }
@@ -2164,6 +2198,12 @@ body {
 .pipeline-light[data-running="false"] {
   cursor: default;
 }
+.pipeline-goto {
+  color: var(--accent);
+  font-size: 12px;
+  padding: 4px;
+}
+.pipeline-goto svg { display: block; }
 @keyframes pipeline-blink {
   0%, 100% { opacity: 1; box-shadow: 0 0 6px #ef4444; }
   50% { opacity: 0.3; box-shadow: 0 0 2px #ef4444; }

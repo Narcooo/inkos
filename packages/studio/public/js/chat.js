@@ -112,7 +112,10 @@ export async function sendChatMessage() {
     const result = await fetchSSE("/api/chat-stream", payload, (token) => {
       accumulated += token;
       contentEl.innerHTML = renderMarkdown(accumulated) + '<span class="stream-cursor"></span>';
-      $("chat-messages").scrollTop = $("chat-messages").scrollHeight;
+      // Only auto-scroll if user is already near the bottom
+      const msgContainer = $("chat-messages");
+      const isNearBottom = msgContainer.scrollHeight - msgContainer.scrollTop - msgContainer.clientHeight < 80;
+      if (isNearBottom) msgContainer.scrollTop = msgContainer.scrollHeight;
     });
 
     removeStreamBubble();
@@ -170,7 +173,7 @@ export function handleQuickAction(action) {
   if (action === "write-next") {
     const style = document.documentElement.getAttribute("data-style") || "ink";
     if (style === "ink" && bookId) {
-      openWritePipeline(bookId);
+      openWritePipeline(bookId, { autoStart: true });
     } else {
       if (bookId) $("write-book").value = bookId;
       setView("write");

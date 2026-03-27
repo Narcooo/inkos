@@ -56,36 +56,46 @@ function addStageCard(id, label) {
   card.className = "stage-card pending";
   card.id = `stage-${id}`;
   card.innerHTML = `
+    <span class="stage-toggle" title="展开/收起">&#9654;</span>
     <span class="stage-dot"></span>
     <span class="stage-label">${escapeHtml(label)}</span>
     <span class="stage-detail"></span>
-    <div class="stage-log"></div>`;
+    <div class="stage-body"></div>`;
+  // Click toggle to expand/collapse
+  card.querySelector(".stage-toggle").addEventListener("click", (e) => {
+    e.stopPropagation();
+    card.classList.toggle("expanded");
+  });
   s.appendChild(card);
 }
 
 function activateStage(stageId, detail) {
+  // Mark previously active stages as done and collapse them
   stagesEl()?.querySelectorAll(".stage-card.active").forEach((c) => {
     c.className = "stage-card done";
+    c.classList.remove("expanded");
   });
   const card = $(`stage-${stageId}`);
   if (!card) return;
-  card.className = "stage-card active";
+  card.className = "stage-card active expanded";
   const detailEl = card.querySelector(".stage-detail");
   if (detailEl && detail) detailEl.textContent = detail;
+  // Scroll stage into view
+  card.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 function appendStageLog(stageId, text) {
   const card = $(`stage-${stageId}`) || stagesEl()?.querySelector(".stage-card.active");
   if (!card) return;
-  const log = card.querySelector(".stage-log");
-  if (!log) return;
+  const body = card.querySelector(".stage-body");
+  if (!body) return;
   const line = document.createElement("div");
   line.className = "stage-log-line";
-  line.textContent = text.length > 150 ? text.slice(0, 150) + "..." : text;
-  log.appendChild(line);
-  // Keep only last 8 lines
-  while (log.children.length > 8) log.removeChild(log.firstChild);
-  log.style.display = "";
+  line.textContent = text.length > 200 ? text.slice(0, 200) + "..." : text;
+  body.appendChild(line);
+  // Auto-expand when active, keep last 20 lines
+  while (body.children.length > 20) body.removeChild(body.firstChild);
+  if (card.classList.contains("active")) card.classList.add("expanded");
 }
 
 function appendLive(text) {
@@ -108,11 +118,13 @@ let pipelineRunning = false;
 
 function setPipelineRunning(running) {
   pipelineRunning = running;
-  const btn = $("pipeline-jump");
-  if (btn) {
-    btn.setAttribute("data-running", running ? "true" : "false");
-    btn.title = running ? "正在写作 — 点击查看实况" : "写作状态：空闲";
+  const light = $("pipeline-light");
+  if (light) {
+    light.setAttribute("data-running", running ? "true" : "false");
+    light.title = running ? "正在写作" : "写作状态：空闲";
   }
+  const gotoBtn = $("pipeline-goto");
+  if (gotoBtn) gotoBtn.style.display = running ? "" : "none";
 }
 
 export function isPipelineRunning() {
@@ -164,12 +176,16 @@ export function initPipeline() {
     renderDashboard();
   });
 
-  $("pipeline-jump")?.addEventListener("click", () => {
+  // Topbar status light (just visual indicator)
+  $("pipeline-light")?.addEventListener("click", () => {
     if (pipelineRunning) {
       setView("pipeline");
-    } else {
-      showToast("当前没有运行中的任务", "info");
     }
+  });
+
+  // Topbar goto button (jump to pipeline view)
+  $("pipeline-goto")?.addEventListener("click", () => {
+    setView("pipeline");
   });
 
   $("pipeline-start")?.addEventListener("click", () => {
@@ -181,7 +197,7 @@ export function initPipeline() {
   });
 }
 
-export function openWritePipeline(bookId) {
+export function openWritePipeline(bookId, { autoStart = false } = {}) {
   setView("pipeline");
   if (titleEl()) titleEl().textContent = "写作实况";
   clearPipeline();
@@ -199,6 +215,10 @@ export function openWritePipeline(bookId) {
 
   const f = formEl();
   if (f) f.style.display = "";
+
+  if (autoStart && bookId) {
+    runWritePipeline(bookId, { count: 1, context: "" });
+  }
 }
 
 export async function openCreatePipeline(formData, loadBooks) {
@@ -231,6 +251,7 @@ export async function openCreatePipeline(formData, loadBooks) {
 
   if (statusEl()) statusEl().textContent = "运行中...";
   setPipelineRunning(true);
+  activateStage("config", "正在启动...");
 
   try {
     const res = await streamSSE("/api/book", formData, {
@@ -285,6 +306,9 @@ async function runWritePipeline(bookId, { count = 1, context = "" } = {}) {
   const body = { bookId, count };
   if (context) body.context = context;
 
+  // Activate first stage immediately so user sees movement
+  activateStage("input", "正在启动...");
+
   try {
     const res = await streamSSE("/api/write-next", body, {
       onProgress: handleProgress,
@@ -295,8 +319,10 @@ async function runWritePipeline(bookId, { count = 1, context = "" } = {}) {
     finishAllStages();
 
     if (res.ok === false) {
+      const errMsg = res.data?.error || res.error || "写作失败";
       if (statusEl()) statusEl().textContent = "写作失败";
-      showToast(res.data?.error || res.error || "写作失败", "error");
+      appendLive("\n\n--- 错误 ---\n" + errMsg);
+      showToast(errMsg, "error");
       return;
     }
 
@@ -305,8 +331,10 @@ async function runWritePipeline(bookId, { count = 1, context = "" } = {}) {
 
     if (state.activeBookId) await buildSidebarTree(state.activeBookId);
   } catch (err) {
+    const errMsg = String(err.message || err);
     if (statusEl()) statusEl().textContent = "错误";
-    showToast(String(err.message || err), "error");
+    appendLive("\n\n--- 请求错误 ---\n" + errMsg);
+    showToast(errMsg, "error");
   } finally {
     setPipelineRunning(false);
   }
