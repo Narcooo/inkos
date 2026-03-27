@@ -3,7 +3,7 @@ import { state } from "./state.js";
 import { $ } from "./utils.js";
 
 // Views that don't have their own nav tab (sub-views)
-const SUB_VIEWS = new Set(["content", "create"]);
+const SUB_VIEWS = new Set(["content", "create", "pipeline"]);
 const TOOL_VIEW_MAP = new Map([
   ["import", "import"],
   ["upload", "import"],

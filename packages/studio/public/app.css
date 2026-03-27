@@ -1908,6 +1908,226 @@ body {
 /* ============================================================
    TOAST — Bottom-right, slide-in from right
    ============================================================ */
+/* ── Progress Panel ── */
+.progress-panel {
+  margin-top: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--bg-surface);
+}
+.progress-header {
+  padding: 12px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+.progress-log {
+  padding: 12px 16px;
+  font-size: 13px;
+  line-height: 1.8;
+  max-height: 200px;
+  overflow-y: auto;
+  color: var(--text-secondary);
+}
+.progress-log .progress-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.progress-log .progress-line::before {
+  content: "›";
+  color: var(--accent);
+  font-weight: bold;
+  flex-shrink: 0;
+}
+.progress-log .progress-line.done {
+  color: var(--success);
+}
+.progress-log .progress-line.done::before {
+  content: "✓";
+  color: var(--success);
+}
+.progress-log .progress-line.error {
+  color: var(--danger);
+}
+.progress-log .progress-line.error::before {
+  content: "✗";
+  color: var(--danger);
+}
+.progress-stage {
+  padding: 10px 16px;
+  font-size: 13px;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.progress-stage::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: progress-pulse 1.2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+@keyframes progress-pulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+.progress-live {
+  padding: 16px;
+  font-size: 14px;
+  line-height: 2;
+  max-height: 400px;
+  overflow-y: auto;
+  font-family: var(--font-serif);
+  color: var(--text-primary);
+  white-space: pre-wrap;
+}
+.progress-live:empty {
+  display: none;
+}
+
+[data-style="ink"] .progress-panel {
+  border-color: rgba(97, 68, 35, 0.1);
+  background: rgba(255, 250, 242, 0.88);
+  border-radius: 16px;
+}
+[data-style="ink"] .progress-header {
+  background: rgba(245, 235, 218, 0.6);
+  border-color: rgba(97, 68, 35, 0.08);
+}
+[data-style="ink"] .progress-stage {
+  border-color: rgba(97, 68, 35, 0.08);
+}
+
+/* ── Pipeline View ── */
+.pipeline-view {
+  display: none;
+  flex-direction: column;
+  gap: 16px;
+  padding: 24px;
+  overflow-y: auto;
+}
+.pipeline-view.active-view {
+  display: flex;
+}
+.pipeline-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.pipeline-title {
+  flex: 1;
+  font-size: 18px;
+  margin: 0;
+}
+.pipeline-status {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.pipeline-form {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  background: var(--bg-surface);
+}
+.pipeline-stages {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.stage-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  font-size: 13px;
+  border-radius: var(--radius-sm);
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.stage-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  transition: background 0.3s, box-shadow 0.3s;
+}
+.stage-card.pending .stage-dot { background: var(--border); }
+.stage-card.pending .stage-label { color: var(--text-muted); }
+.stage-card.active .stage-dot {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  animation: stage-pulse 1.2s ease-in-out infinite;
+}
+.stage-card.active { background: var(--accent-soft); font-weight: 500; }
+.stage-card.done .stage-dot { background: var(--success); }
+.stage-card.done .stage-label { color: var(--text-secondary); }
+.stage-card.error .stage-dot { background: var(--danger); }
+.stage-card.error .stage-label { color: var(--danger); }
+.stage-detail {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-muted);
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@keyframes stage-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px var(--accent-soft); }
+  50% { box-shadow: 0 0 0 6px transparent; }
+}
+.pipeline-live {
+  display: none;
+  padding: 24px 28px;
+  font-family: var(--font-serif);
+  font-size: 15px;
+  line-height: 2;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  max-height: 50vh;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+}
+
+/* Pipeline - Ink mode */
+[data-style="ink"] .pipeline-view.active-view {
+  border-radius: 24px;
+  background: rgba(255, 250, 242, 0.68);
+  backdrop-filter: blur(12px);
+  box-shadow: var(--shadow-md);
+  border: 1px solid rgba(97, 68, 35, 0.08);
+  padding: 28px;
+}
+[data-style="ink"] .pipeline-form {
+  background: rgba(255, 252, 246, 0.8);
+  border-color: rgba(97, 68, 35, 0.1);
+  border-radius: 16px;
+}
+[data-style="ink"] .pipeline-live {
+  background: linear-gradient(180deg, rgba(255, 253, 248, 0.98), rgba(251, 246, 236, 0.98));
+  border: 1px solid rgba(97, 68, 35, 0.1);
+  border-radius: 20px;
+  box-shadow: 0 12px 28px rgba(60, 38, 16, 0.08);
+  padding: 32px 36px;
+}
+[data-style="ink"] .stage-card.active {
+  background: rgba(97, 68, 35, 0.06);
+}
+[data-style="ink"] .stage-card.active .stage-dot {
+  background: rgba(139, 90, 43, 0.8);
+  box-shadow: 0 0 0 3px rgba(139, 90, 43, 0.15);
+}
+
 .toast-container {
   position: fixed;
   bottom: 24px;

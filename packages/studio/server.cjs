@@ -42,12 +42,13 @@ const userDataDir = path.join(os.homedir(), ".inkos", "data");
 const projectRoot = process.env.INKOS_PROJECT_ROOT
   ?? (repoRoot ? path.join(repoRoot, "project") : userDataDir);
 
-// CLI path (only available in full repo install)
+// CLI path — in pkg mode, look next to the exe; otherwise use __dirname
+const exeDir = process.pkg ? path.dirname(process.execPath) : __dirname;
 const cliPath = resolveCliPath({
   env: process.env,
   repoRoot,
   projectRoot,
-  currentDir: __dirname,
+  currentDir: exeDir,
 });
 const corePath = resolveCorePath({
   env: process.env,
@@ -143,6 +144,11 @@ function resolveNodeBin() {
   if (process.pkg) {
     if (process.env.INKOS_NODE_PATH) {
       return process.env.INKOS_NODE_PATH;
+    }
+    // Look for node.exe bundled next to the exe
+    const bundledNode = path.join(path.dirname(process.execPath), "node.exe");
+    if (existsSync(bundledNode)) {
+      return bundledNode;
     }
     try {
       if (process.platform === "win32") {
@@ -1775,8 +1781,68 @@ async function handleApi(req, res, url) {
     if (body.words) args.push("--words", String(body.words));
     if (body.context) args.push("--context", String(body.context));
 
-    const result = await runInkOS(args);
-    return sendJson(res, 200, buildCommandResponse(result));
+    const wantSSE = (req.headers.accept ?? "").includes("text/event-stream");
+    if (!wantSSE) {
+      const result = await runInkOS(args);
+      return sendJson(res, 200, buildCommandResponse(result));
+    }
+
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    });
+
+    const sendEvent = (event, data) => {
+      try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch {}
+    };
+
+    const onStderr = (text) => {
+      const stages = extractProgressStages(text);
+      if (stages.length) {
+        for (const stage of stages) sendEvent("progress", { stage });
+      } else {
+        const trimmed = text.trim();
+        if (trimmed) sendEvent("log", { text: trimmed });
+      }
+    };
+
+    // Stream stdout content tokens in real time
+    if (!cliPath) {
+      sendEvent("done", { ok: false, error: "CLI not found" });
+      return res.end();
+    }
+
+    const nodeBin = resolveNodeBin();
+    const child = spawn(nodeBin, [cliPath, ...args], {
+      cwd: projectRoot,
+      env: { ...process.env, ...proxyEnv },
+    });
+
+    let stdout = "";
+    let stderr = "";
+
+    child.stdout.on("data", (chunk) => {
+      const text = chunk.toString();
+      stdout += text;
+      // Forward raw content tokens to the client for live preview
+      sendEvent("content", { text });
+    });
+    child.stderr.on("data", (chunk) => {
+      const text = chunk.toString();
+      stderr += text;
+      onStderr(text);
+    });
+    child.on("close", (code) => {
+      const result = { code: code ?? 0, stdout: stdout.trim(), stderr: stderr.trim() };
+      sendEvent("done", buildCommandResponse(result));
+      res.end();
+    });
+    child.on("error", (error) => {
+      sendEvent("done", { ok: false, error: String(error) });
+      res.end();
+    });
+    return;
   }
 
   if (url.pathname === "/api/export" && req.method === "POST") {

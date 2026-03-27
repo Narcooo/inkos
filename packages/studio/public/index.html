@@ -453,6 +453,11 @@
                       </label>
                       <button class="btn accent span-2" type="submit">开始写作</button>
                     </form>
+                    <div class="progress-panel" id="write-progress" style="display:none">
+                      <div class="progress-header font-serif">写作实况</div>
+                      <div class="progress-stage" id="write-progress-stage"></div>
+                      <div class="progress-live" id="write-progress-live"></div>
+                    </div>
                     <div class="form-page-header" style="margin-top:32px">
                       <h2>导出书籍</h2>
                     </div>
@@ -624,7 +629,45 @@
                 </label>
                 <button class="btn accent span-2" type="submit">创建书籍</button>
               </form>
+              <div class="progress-panel" id="create-progress" style="display:none">
+                <div class="progress-header font-serif">创建进度</div>
+                <div class="progress-log" id="create-progress-log"></div>
+              </div>
             </div>
+          </section>
+
+          <!-- ====== PIPELINE VIEW (live streaming) ====== -->
+          <section class="pipeline-view" id="pipeline-view">
+            <div class="pipeline-header">
+              <button class="btn ghost" id="pipeline-back" type="button">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+                返回
+              </button>
+              <h2 class="pipeline-title font-serif" id="pipeline-title">写作实况</h2>
+              <span class="pipeline-status font-code" id="pipeline-status"></span>
+            </div>
+            <!-- Quick write form (shown before pipeline starts) -->
+            <div class="pipeline-form" id="pipeline-form">
+              <div class="form-grid form-grid--compact">
+                <label class="form-field">
+                  <span>书籍</span>
+                  <select id="pipeline-book"></select>
+                </label>
+                <label class="form-field">
+                  <span>连写数量</span>
+                  <input id="pipeline-count" type="number" min="1" value="1" />
+                </label>
+                <label class="form-field span-2">
+                  <span>创作指导（可选）</span>
+                  <textarea id="pipeline-context" rows="2" placeholder="本章重点、人物冲突、伏笔..."></textarea>
+                </label>
+                <button class="btn accent span-2" id="pipeline-start" type="button">开始写作</button>
+              </div>
+            </div>
+            <!-- Stage timeline -->
+            <div class="pipeline-stages" id="pipeline-stages"></div>
+            <!-- Live content output (writer prose) -->
+            <div class="pipeline-live" id="pipeline-live"></div>
           </section>
 
         </main>

@@ -1,72 +1,38 @@
 // InkOS Studio — Create / Write / Export Forms
 import { state } from "./state.js";
-import { $, requestJson, runAction, showToast, setStatus } from "./utils.js";
+import { $, requestJson, runAction, showToast, setStatus, streamSSE } from "./utils.js";
 import { setView } from "./views.js";
 import { buildSidebarTree } from "./sidebar.js";
 import { renderDashboard } from "./dashboard.js";
 
-/**
- * Stream book creation via SSE. Shows real-time progress from Architect.
- */
-function createBookSSE(body) {
-  return new Promise((resolve, reject) => {
-    fetch("/api/book", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-      body: JSON.stringify(body),
-    }).then((res) => {
-      if (!res.ok) {
-        return res.json().catch(() => ({})).then((err) => {
-          reject(new Error(err.error || `请求失败: ${res.status}`));
-        });
-      }
+// ── Progress panel helpers ──
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let result = null;
-      let currentEvent = "";
-
-      function pump() {
-        reader.read().then(({ done, value }) => {
-          if (done) {
-            resolve(result || { ok: false, error: "连接中断，未收到结果" });
-            return;
-          }
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split(/\n/);
-          buffer = lines.pop();
-
-          for (const rawLine of lines) {
-            const line = rawLine.replace(/\r$/, "");
-            if (!line) {
-              currentEvent = "";
-              continue;
-            }
-            if (line.startsWith("event: ")) {
-              currentEvent = line.slice(7).trim();
-            } else if (line.startsWith("data: ")) {
-              try {
-                const data = JSON.parse(line.slice(6));
-                if (currentEvent === "progress" && data.stage) {
-                  setStatus(data.stage);
-                } else if (currentEvent === "done") {
-                  result = data;
-                }
-              } catch {}
-              currentEvent = "";
-            }
-          }
-
-          pump();
-        }).catch(reject);
-      }
-
-      pump();
-    }).catch(reject);
-  });
+function showProgressPanel(panelId) {
+  const panel = $(panelId);
+  if (panel) panel.style.display = "";
 }
+
+function hideProgressPanel(panelId) {
+  const panel = $(panelId);
+  if (panel) panel.style.display = "none";
+}
+
+function appendProgressLine(logId, text, cls = "") {
+  const log = $(logId);
+  if (!log) return;
+  const line = document.createElement("div");
+  line.className = `progress-line ${cls}`.trim();
+  line.textContent = text;
+  log.appendChild(line);
+  log.scrollTop = log.scrollHeight;
+}
+
+function clearProgressPanel(logId) {
+  const log = $(logId);
+  if (log) log.innerHTML = "";
+}
+
+// ── Create Book ──
 
 export async function createBook(e, loadBooks) {
   e.preventDefault();
@@ -74,8 +40,13 @@ export async function createBook(e, loadBooks) {
   const fd = new FormData(form);
   const btn = form.querySelector('button[type="submit"]');
 
+  const progressPanel = "create-progress";
+  const progressLog = "create-progress-log";
+
   await runAction("正在创建书籍...", async () => {
     if (btn) btn.disabled = true;
+    clearProgressPanel(progressLog);
+    showProgressPanel(progressPanel);
     try {
       const body = {
         title: fd.get("title"),
@@ -88,40 +59,99 @@ export async function createBook(e, loadBooks) {
         writeFirstChapter: !!form.querySelector('[name="writeFirstChapter"]')?.checked,
       };
 
-      const res = await createBookSSE(body);
+      const res = await streamSSE("/api/book", body, {
+        onProgress(stage) {
+          setStatus(stage);
+          appendProgressLine(progressLog, stage);
+        },
+      });
+
       if (res.ok === false) {
+        appendProgressLine(progressLog, res.error || "创建失败", "error");
         throw new Error(res.error || "创建书籍失败");
       }
+
       const bookId = res.data?.bookId || body.title;
+      appendProgressLine(progressLog, `书籍已创建: ${bookId}`, "done");
       showToast(`书籍已创建: ${bookId}`);
       if (loadBooks) await loadBooks();
+
+      // Brief pause so user can see the success line
+      await new Promise((r) => setTimeout(r, 800));
+      hideProgressPanel(progressPanel);
       setView("dashboard");
       await renderDashboard();
+    } catch (err) {
+      // Keep progress panel visible on error so user can see what happened
+      throw err;
     } finally {
       if (btn) btn.disabled = false;
     }
   });
 }
 
+// ── Write Next Chapter ──
+
 export async function writeNext(e) {
   e.preventDefault();
   const form = $("write-form");
   const fd = new FormData(form);
+  const btn = form.querySelector('button[type="submit"]');
+
+  const progressPanel = "write-progress";
+  const stageEl = "write-progress-stage";
+  const liveEl = "write-progress-live";
 
   await runAction("写作中...", async () => {
-    const body = { bookId: fd.get("bookId"), count: Number(fd.get("count")) || 1 };
-    const words = fd.get("words");
-    if (words) body.words = Number(words);
-    const context = fd.get("context");
-    if (context) body.context = context;
+    if (btn) btn.disabled = true;
+    const stageNode = $(stageEl);
+    const liveNode = $(liveEl);
+    if (stageNode) stageNode.textContent = "准备中...";
+    if (liveNode) liveNode.textContent = "";
+    showProgressPanel(progressPanel);
 
-    await requestJson("/api/write-next", { method: "POST", body: JSON.stringify(body) });
-    showToast("写作完成");
+    try {
+      const body = { bookId: fd.get("bookId"), count: Number(fd.get("count")) || 1 };
+      const words = fd.get("words");
+      if (words) body.words = Number(words);
+      const context = fd.get("context");
+      if (context) body.context = context;
 
-    if (state.activeBookId) await buildSidebarTree(state.activeBookId);
-    setView("chat");
+      const res = await streamSSE("/api/write-next", body, {
+        onProgress(stage) {
+          setStatus(stage);
+          if (stageNode) stageNode.textContent = stage;
+        },
+        onContent(text) {
+          // Live-stream the chapter content as it's being written
+          if (liveNode) {
+            liveNode.textContent += text;
+            liveNode.scrollTop = liveNode.scrollHeight;
+          }
+        },
+      });
+
+      if (res.ok === false) {
+        if (stageNode) stageNode.textContent = "写作失败";
+        throw new Error(res.data?.error || res.error || "写作失败");
+      }
+
+      if (stageNode) stageNode.textContent = "写作完成";
+      showToast("写作完成");
+
+      if (state.activeBookId) await buildSidebarTree(state.activeBookId);
+
+      // Keep the live panel visible for a moment so user can read
+      await new Promise((r) => setTimeout(r, 1500));
+      hideProgressPanel(progressPanel);
+      setView("chat");
+    } finally {
+      if (btn) btn.disabled = false;
+    }
   });
 }
+
+// ── Export Book ──
 
 export async function exportBook(e) {
   e.preventDefault();

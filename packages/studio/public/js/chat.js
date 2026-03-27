@@ -3,6 +3,7 @@ import { state } from "./state.js";
 import { $, escapeHtml, requestJson, fetchSSE, autoResizeInput, showToast, runAction } from "./utils.js";
 import { renderMarkdown } from "./markdown.js";
 import { setView } from "./views.js";
+import { openWritePipeline } from "./pipeline.js";
 import { showContent } from "./content.js";
 
 export function renderChatMessages() {
@@ -167,8 +168,13 @@ async function applyChatResult(save) {
 export function handleQuickAction(action) {
   const bookId = state.activeBookId;
   if (action === "write-next") {
-    if (bookId) $("write-book").value = bookId;
-    setView("write");
+    const style = document.documentElement.getAttribute("data-style") || "ink";
+    if (style === "ink" && bookId) {
+      openWritePipeline(bookId);
+    } else {
+      if (bookId) $("write-book").value = bookId;
+      setView("write");
+    }
     return;
   }
   if (action === "world-state" && bookId) {

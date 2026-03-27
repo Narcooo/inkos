@@ -41,6 +41,7 @@ const VIEW_META = {
   tools: { title: "工具工作台", subtitle: "WORKSHOP" },
   create: { title: "新建书籍", subtitle: "CREATE" },
   content: { title: "内容查看", subtitle: "CONTENT" },
+  pipeline: { title: "写作实况", subtitle: "PIPELINE" },
 };
 
 function setSidebarMeta(viewName) {

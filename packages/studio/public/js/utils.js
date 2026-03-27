@@ -110,3 +110,64 @@ export async function fetchSSE(url, body, onToken) {
 
   return result;
 }
+
+/**
+ * Generic SSE stream reader for long-running API calls.
+ * Resolves with the `done` event payload.
+ * @param {string} url
+ * @param {object} body
+ * @param {{ onProgress?: (stage: string) => void, onContent?: (text: string) => void, onLog?: (text: string) => void }} callbacks
+ */
+export function streamSSE(url, body, { onProgress, onContent, onLog } = {}) {
+  return new Promise((resolve, reject) => {
+    fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+      body: JSON.stringify(body),
+    }).then((res) => {
+      if (!res.ok) {
+        return res.json().catch(() => ({})).then((err) => {
+          reject(new Error(err.error || `请求失败: ${res.status}`));
+        });
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let result = null;
+      let currentEvent = "";
+
+      function pump() {
+        reader.read().then(({ done, value }) => {
+          if (done) {
+            resolve(result || { ok: false, error: "连接中断，未收到结果" });
+            return;
+          }
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split(/\n/);
+          buffer = lines.pop();
+
+          for (const rawLine of lines) {
+            const line = rawLine.replace(/\r$/, "");
+            if (!line) { currentEvent = ""; continue; }
+            if (line.startsWith("event: ")) {
+              currentEvent = line.slice(7).trim();
+            } else if (line.startsWith("data: ")) {
+              try {
+                const data = JSON.parse(line.slice(6));
+                if (currentEvent === "progress" && data.stage && onProgress) onProgress(data.stage);
+                else if (currentEvent === "content" && data.text && onContent) onContent(data.text);
+                else if (currentEvent === "log" && data.text && onLog) onLog(data.text);
+                else if (currentEvent === "done") result = data;
+              } catch {}
+              currentEvent = "";
+            }
+          }
+          pump();
+        }).catch(reject);
+      }
+      pump();
+    }).catch(reject);
+  });
+}

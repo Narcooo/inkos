@@ -47,6 +47,17 @@ Section "Install"
   ; Core files
   File "dist\${PRODUCT_EXE}"
 
+  ; Bundled Node.js runtime (for spawning CLI subprocesses)
+  File "dist\node.exe"
+
+  ; CLI distribution (includes core in node_modules)
+  SetOutPath "$INSTDIR\cli"
+  File "dist\cli\package.json"
+  SetOutPath "$INSTDIR\cli\dist"
+  File /r "dist\cli\dist\*.*"
+  SetOutPath "$INSTDIR\cli\node_modules"
+  File /r "dist\cli\node_modules\*.*"
+
   ; Static web assets
   SetOutPath "$INSTDIR\public"
   File /r "dist\public\*.*"
@@ -87,6 +98,8 @@ Section "Uninstall"
 
   ; Remove installed files (NOT user data in ~/.inkos/)
   RMDir /r "$INSTDIR\public"
+  RMDir /r "$INSTDIR\cli"
+  Delete   "$INSTDIR\node.exe"
   Delete   "$INSTDIR\${PRODUCT_EXE}"
   Delete   "$INSTDIR\uninstall.exe"
   RMDir    "$INSTDIR"

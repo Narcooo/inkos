@@ -13,6 +13,7 @@ import { openEditor, closeEditor, focusEditorForManualEdit, openEditorFile, init
 import { initPrediction } from "./prediction.js";
 import { initPresets, renderPresetList } from "./presets.js";
 import { initLLMLogs, renderLLMLogs } from "./llm-logs.js";
+import { initPipeline, openWritePipeline, openCreatePipeline } from "./pipeline.js";
 import { initFanqie } from "./fanqie.js";
 import { initKnowledge, renderKnowledgeList } from "./knowledge.js";
 import { renderAnalytics } from "./analytics.js";
@@ -186,8 +187,27 @@ function bindEvents() {
   $("toggle-edit").addEventListener("click", toggleEdit);
   $("save-content").addEventListener("click", saveContent);
 
-  // Create form
-  $("create-form").addEventListener("submit", (e) => createBook(e, loadBooks));
+  // Create form — ink mode uses pipeline view for live streaming
+  $("create-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const style = document.documentElement.getAttribute("data-style") || "ink";
+    if (style === "ink") {
+      const form = $("create-form");
+      const fd = new FormData(form);
+      openCreatePipeline({
+        title: fd.get("title"),
+        genre: fd.get("genre"),
+        platform: fd.get("platform"),
+        targetChapters: Number(fd.get("targetChapters")) || 200,
+        chapterWords: Number(fd.get("chapterWords")) || 3000,
+        brief: fd.get("brief") || "",
+        useProjectBrief: !!form.querySelector('[name="useProjectBrief"]')?.checked,
+        writeFirstChapter: !!form.querySelector('[name="writeFirstChapter"]')?.checked,
+      }, loadBooks);
+    } else {
+      createBook(e, loadBooks);
+    }
+  });
   $("create-back").addEventListener("click", () => setView("dashboard"));
 
   // Write / export forms
@@ -251,6 +271,7 @@ async function boot() {
   initPrediction();
   initPresets();
   initLLMLogs();
+  initPipeline();
   initFanqie();
   initKnowledge();
   initUpload();

@@ -43,6 +43,8 @@ function resolveCliPath({
   const candidates = [
     env.INKOS_CLI_PATH ? pathModule.resolve(env.INKOS_CLI_PATH) : null,
     repoRoot ? pathModule.join(repoRoot, "packages", "cli", "dist", "index.js") : null,
+    // Packaged exe: look for cli/dist/index.js next to the exe
+    pathModule.join(currentDir, "cli", "dist", "index.js"),
     resolvePackageDistPath("@actalk/inkos", "dist/index.js", {
       projectRoot,
       currentDir,
