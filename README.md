@@ -356,11 +356,19 @@ inkos agent "先扫描市场趋势，然后根据结果创建一本新书"
 
 ## InkOS Studio（预览版）
 
-InkOS Studio 是面向写作者的本地 Web 工作台，默认落点仍然是正在处理的书稿与章节。书架视图保留用于跨书切换、进度巡检和多书管理。用户入口保持不变：
+InkOS Studio 是面向写作者的本地 Web 工作台。Stage A 现在默认先进入 Factory Home，再通过前端启动流程把项目送到写作台；完成设置后，写作台仍然是持续创作时的主要落点。用户入口保持不变：
 
 ```bash
 inkos studio
 ```
+
+### Stage A 入口流
+
+- Factory Home 是默认入口：首页先展示 AI Novel Factory，而不是直接落到书稿工作台。
+- 支持一句话开始：从一个 premise 进入 launcher，补齐题材和语言后继续。
+- 支持上传资料开始：从大纲、brief、参考包等文件进入，前端先解析并确认导入摘要。
+- bootstrap / import 路径由前端控制：launcher 负责触发项目初始化、首本书创建和导入摘要确认，不要求用户在可见首启流程里手动切回 CLI。
+- 完成设置后，Studio 会把用户送入 writing desk；最近项目入口仍保留在 Home 中，方便回到已有书稿。
 
 ### 如何构建与运行
 
@@ -375,20 +383,21 @@ inkos studio --port 4567
 
 如果你手动把私有 `@actalk/inkos-studio` 包接到 `node_modules` 里，需要确保同时存在 `dist/api/index.js` 和 `dist/web/index.html`，再执行 `inkos studio`。这不是当前已发布 CLI 的默认安装路径。
 
-### v1 已支持
+### v1 / Stage A 已支持
 
-- 写作优先工作台：打开后以当前书稿与章节处理为核心，适合持续写作、审阅和改稿。
-- 书架/书库视图：作为次级管理界面，用来切换书籍、查看多书进度和重新进入工作区。
+- Factory Home 默认入口：先进入 AI Novel Factory，再决定新建还是继续已有项目。
+- Launcher 首启流：支持一句话 start 与 upload start，两条路径都会先走前端 intake / setup / bootstrap。
+- 写作优先工作台：完成设置后进入当前书稿与章节处理界面，适合持续写作、审阅和改稿。
+- 最近项目与书库视图：作为次级管理界面，用来切换书籍、查看多书进度和重新进入工作区。
 - 仅本地使用：launcher 和 API 面向 `localhost`，不是远程多人部署方案。
-- 章节工作台：支持章节阅读、审阅、显式保存修改，以及 approve / reject 审核动作。
-- 真相文件查看：可快速只读浏览 story memory。
-- 运行控制台与诊断信息：支持 `draft`、`audit`、`revise`、`write next`，并显示流式日志和结果；健康页用于查看次级诊断状态，不是主工作面。
+- 章节工作台、真相文件查看、运行控制台与诊断页继续可用；支持 `draft`、`audit`、`revise`、`write next`，但 Stage A 的重点仍是入口、导入和落桌流程打通。
 
 ### 当前限制
 
 - v1 的 truth files 仍然只读；章节可在 Studio 里编辑，但 truth files 仍建议通过 CLI 流程更新。
 - 当前定位是单机本地工作流，暂不提供鉴权、协作或部署能力。
 - 启动器需要同时找到可运行的 Studio 服务端和已构建的前端资源。在 monorepo 里，这意味着 `packages/studio/src/api/index.ts` 配合 `packages/studio/dist/web/index.html`，或完整构建后的 `packages/studio/dist` 目录。
+- Stage A 当前完成的是入口、bootstrap 与导入摘要确认；更深的生成编排和后续自动化工作流仍以现有运行控制台能力为准。
 
 ## 路线图
 

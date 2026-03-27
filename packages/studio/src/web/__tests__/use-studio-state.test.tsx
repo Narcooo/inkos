@@ -3,9 +3,11 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
+  BootstrapStatus,
   BookDetail,
   BookSummary,
   ChapterDetail,
+  NormalizedIdeaIntake,
   StudioRun,
   ReviewActionPayload,
   ChapterSummary,
@@ -78,9 +80,45 @@ function createHealthStatus(): HealthStatus {
     envFound: true,
     projectEnvFound: true,
     globalConfigFound: false,
+    configReady: true,
     bookCount: 2,
     provider: "openai",
     model: "gpt-4.1",
+  };
+}
+
+function createBootstrapStatus(health: HealthStatus): BootstrapStatus {
+  return {
+    health,
+    project: {
+      initialized: health.projectConfigFound,
+      name: health.projectConfigFound ? "Project" : null,
+      bookCount: health.bookCount,
+      firstBookId: health.bookCount > 0 ? "book-1" : null,
+    },
+    readiness: health.configReady
+      ? {
+          ready: true,
+          code: "READY",
+          title: "Studio is ready",
+          message: "Your project is ready for the next setup step.",
+          action: "Continue",
+        }
+      : health.projectConfigFound
+        ? {
+            ready: false,
+            code: "CONFIG_NOT_READY",
+            title: "Finish model setup",
+            message: "Add your model connection details to start generation.",
+            action: "Open setup",
+          }
+        : {
+            ready: false,
+            code: "PROJECT_NOT_INITIALIZED",
+            title: "Create your local studio project",
+            message: "Start by creating a project for this workspace.",
+            action: "Create project",
+          },
   };
 }
 
@@ -126,6 +164,48 @@ function createClient(data: {
       return truthFile;
     },
     getHealth: async () => data.health ?? createHealthStatus(),
+    getBootstrapStatus: async () => createBootstrapStatus(data.health ?? createHealthStatus()),
+    createBootstrapProject: async () => {
+      throw new Error("not used in this test");
+    },
+    createBootstrapBook: async () => {
+      throw new Error("not used in this test");
+    },
+    setupStory: async (bookId) => ({
+      book: data.bookDetails[bookId] ?? data.bookDetails["book-1"],
+    }),
+    generateOutline: async () => ({
+      bookId: "book-1",
+      chapterNumber: 1,
+      intentPath: "runtime/chapter-1.intent.md",
+      goal: "Open the story.",
+      conflicts: [],
+    }),
+    generateFirstChapter: async () => ({
+      book: data.bookDetails["book-1"],
+      chapter: data.chapterDetails["book-1"]?.[1],
+    }),
+    normalizeIdea: async ({ idea }) => ({
+      type: "idea",
+      titleSuggestion: idea.trim(),
+      sourceText: idea.trim(),
+      prompt: idea.trim(),
+    }),
+    summarizeUpload: async ({ files }) => ({
+      type: "upload",
+      titleSuggestion: "Imported materials intake",
+      sourceText: files.map((file) => file.content).join("\n\n"),
+      prompt: `${files.length} files imported`,
+      summary: {
+        fileCount: files.length,
+        totalBytes: files.reduce((total, file) => total + file.size, 0),
+        totalCharacters: files.reduce((total, file) => total + file.content.length, 0),
+        fileNames: files.map((file) => file.name),
+        formats: [],
+        kinds: [],
+      },
+      files: files.map((file) => ({ name: file.name, size: file.size, type: file.type ?? "", format: file.type ?? "", kind: "Other", contentLength: file.content.length, excerpt: file.content })),
+    }),
     saveChapter: async (bookId, chapterNumber, content) => {
       const chapter = data.chapterDetails[bookId]?.[chapterNumber];
       if (!chapter) {
@@ -201,7 +281,8 @@ describe("useStudioState", () => {
     const { result } = renderHook(() => useStudioState({ client }));
 
     await waitFor(() => {
-      expect(result.current.activeView).toBe("workspace");
+      expect(result.current.activeView).toBe("dashboard");
+      expect(result.current.selectedBook?.id).toBe("book-1");
     });
 
     expect(result.current.selectedBook?.id).toBe("book-1");
@@ -259,7 +340,9 @@ describe("useStudioState", () => {
     const { result } = renderHook(() => useStudioState({ client }));
 
     await waitFor(() => {
-      expect(result.current.activeView).toBe("workspace");
+      expect(result.current.activeView).toBe("dashboard");
+      expect(result.current.selectedBook?.id).toBe("book-1");
+      expect(result.current.selectedChapter?.number).toBe(3);
     });
 
     expect(result.current.selectedBook?.id).toBe("book-1");
@@ -310,7 +393,9 @@ describe("useStudioState", () => {
     const { result } = renderHook(() => useStudioState({ client }));
 
     await waitFor(() => {
-      expect(result.current.activeView).toBe("workspace");
+      expect(result.current.activeView).toBe("dashboard");
+      expect(result.current.selectedBook?.id).toBe("book-1");
+      expect(result.current.selectedChapter?.number).toBe(2);
     });
 
     expect(result.current.selectedBook?.id).toBe("book-1");
@@ -338,7 +423,8 @@ describe("useStudioState", () => {
     const { result } = renderHook(() => useStudioState({ client }));
 
     await waitFor(() => {
-      expect(result.current.activeView).toBe("workspace");
+      expect(result.current.activeView).toBe("dashboard");
+      expect(result.current.selectedBook?.id).toBe("book-1");
     });
 
     expect(result.current.selectedBook?.id).toBe("book-1");
@@ -366,7 +452,8 @@ describe("useStudioState", () => {
     const { result } = renderHook(() => useStudioState({ client }));
 
     await waitFor(() => {
-      expect(result.current.activeView).toBe("workspace");
+      expect(result.current.activeView).toBe("dashboard");
+      expect(result.current.selectedBook?.id).toBe("book-1");
     });
 
     await act(async () => {
@@ -411,7 +498,9 @@ describe("useStudioState", () => {
     const { result } = renderHook(() => useStudioState({ client }));
 
     await waitFor(() => {
-      expect(result.current.activeView).toBe("workspace");
+      expect(result.current.activeView).toBe("dashboard");
+      expect(result.current.selectedBook?.id).toBe("book-1");
+      expect(result.current.selectedChapter?.number).toBe(2);
     });
 
     expect(window.localStorage.getItem(LAST_ACTIVE_CHAPTER_STORAGE_KEY)).toBeNull();
@@ -455,7 +544,9 @@ describe("useStudioState", () => {
     const { result } = renderHook(() => useStudioState({ client }));
 
     await waitFor(() => {
-      expect(result.current.activeView).toBe("workspace");
+      expect(result.current.activeView).toBe("dashboard");
+      expect(result.current.selectedBook?.id).toBe("book-1");
+      expect(result.current.selectedChapter?.number).toBe(1);
     });
 
     act(() => {
@@ -504,11 +595,152 @@ describe("useStudioState", () => {
     });
 
     await waitFor(() => {
-      expect(result.current.activeView).toBe("workspace");
+      expect(result.current.activeView).toBe("dashboard");
     });
 
     expect(result.current.selectedBook?.id).toBe("book-1");
     expect(result.current.selectedChapter?.number).toBe(1);
+  });
+
+  it("hands off directly into the desk after real factory bootstrap steps succeed", async () => {
+    const book = createBookSummary({ id: "rain-city", title: "Rain city", chapters: 1, chapterCount: 1, lastChapterNumber: 1 });
+    const chapter = createChapterSummary({ number: 1, title: "Rain listens", status: "ready-for-review" });
+    const client = createClient({
+      books: [],
+      bookDetails: { "rain-city": createBookDetail(book, { language: "zh" }) },
+      chapters: { "rain-city": [chapter] },
+      chapterDetails: { "rain-city": { 1: createChapterDetail(chapter) } },
+      health: createHealthStatus(),
+    });
+
+    client.createBootstrapBook = vi.fn(async () => ({
+      book: createBookDetail(createBookSummary({ id: "rain-city", title: "Rain city", genre: "fantasy", platform: "other", chapters: 0, chapterCount: 0, lastChapterNumber: 0 }), { language: "zh" }),
+      intake: { type: "idea", titleSuggestion: "Rain city", sourceText: "idea", prompt: "idea" } satisfies NormalizedIdeaIntake,
+    }));
+    client.setupStory = vi.fn(async () => ({
+      book: createBookDetail(book, { language: "zh" }),
+    }));
+    client.generateOutline = vi.fn(async () => ({ bookId: "rain-city", chapterNumber: 1, intentPath: "runtime/chapter-1.intent.md", goal: "Open the city.", conflicts: [] }));
+    client.generateFirstChapter = vi.fn(async () => ({
+      book: createBookDetail(book, { language: "zh" }),
+      chapter: createChapterDetail(chapter),
+    }));
+    client.listBooks = vi.fn(async () => [book]);
+
+    const { result } = renderHook(() => useStudioState({ client }));
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    act(() => {
+      result.current.startCreationLauncher("idea");
+    });
+
+    await waitFor(() => {
+      expect(result.current.activeView).toBe("launcher");
+      expect(result.current.creationDraft).not.toBeNull();
+    });
+
+    act(() => {
+      result.current.updateCreationDraft({
+        step: "setup",
+        mode: "idea",
+        genre: "fantasy",
+        language: "zh",
+        idea: "idea",
+        intakeTitle: "Rain city",
+        normalizedIntake: { type: "idea", titleSuggestion: "Rain city", sourceText: "idea", prompt: "idea" },
+        parsedConfirmed: true,
+        files: [],
+        errors: { genre: null, language: null, idea: null, files: null, summary: null },
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.creationDraft?.step).toBe("setup");
+    });
+
+    await act(async () => {
+      await result.current.startCreationBootstrap();
+    });
+
+    expect(result.current.activeView).toBe("workspace");
+    expect(result.current.selectedBook?.id).toBe("rain-city");
+    expect(result.current.selectedChapter?.number).toBe(1);
+  });
+
+  it("keeps the created book and a retryable failed progress state when desk handoff fails", async () => {
+    const book = createBookSummary({ id: "rain-city", title: "Rain city", chapters: 1, chapterCount: 1, lastChapterNumber: 1 });
+    const chapter = createChapterSummary({ number: 1, title: "Rain listens", status: "ready-for-review" });
+    const client = createClient({
+      books: [],
+      bookDetails: { "rain-city": createBookDetail(book, { language: "zh" }) },
+      chapters: { "rain-city": [chapter] },
+      chapterDetails: { "rain-city": { 1: createChapterDetail(chapter) } },
+      health: createHealthStatus(),
+    });
+
+    client.createBootstrapBook = vi.fn(async () => ({
+      book: createBookDetail(createBookSummary({ id: "rain-city", title: "Rain city", genre: "fantasy", platform: "other", chapters: 0, chapterCount: 0, lastChapterNumber: 0 }), { language: "zh" }),
+      intake: { type: "idea", titleSuggestion: "Rain city", sourceText: "idea", prompt: "idea" } satisfies NormalizedIdeaIntake,
+    }));
+    client.setupStory = vi.fn(async () => ({ book: createBookDetail(book, { language: "zh" }) }));
+    client.generateOutline = vi.fn(async () => ({ bookId: "rain-city", chapterNumber: 1, intentPath: "runtime/chapter-1.intent.md", goal: "Open the city.", conflicts: [] }));
+    client.generateFirstChapter = vi.fn(async () => ({
+      book: createBookDetail(book, { language: "zh" }),
+      chapter: createChapterDetail(chapter),
+    }));
+    client.getBook = vi.fn<StudioApiClient["getBook"]>()
+      .mockRejectedValueOnce(new Error("desk handoff failed"))
+      .mockResolvedValue(createBookDetail(book, { language: "zh" }));
+
+    const { result } = renderHook(() => useStudioState({ client }));
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    act(() => {
+      result.current.startCreationLauncher("idea");
+    });
+
+    await waitFor(() => {
+      expect(result.current.creationDraft).not.toBeNull();
+    });
+
+    act(() => {
+      result.current.updateCreationDraft({
+        step: "setup",
+        mode: "idea",
+        genre: "fantasy",
+        language: "zh",
+        idea: "idea",
+        intakeTitle: "Rain city",
+        normalizedIntake: { type: "idea", titleSuggestion: "Rain city", sourceText: "idea", prompt: "idea" },
+        parsedConfirmed: true,
+        files: [],
+        errors: { genre: null, language: null, idea: null, files: null, summary: null },
+      });
+    });
+
+    await act(async () => {
+      await result.current.startCreationBootstrap();
+    });
+
+    expect(result.current.activeView).toBe("launcher");
+    expect(result.current.creationBootstrap?.status).toBe("failed");
+    expect(result.current.creationBootstrap?.bookId).toBe("rain-city");
+    expect(result.current.creationBootstrap?.stages.at(-1)?.state).toBe("failed");
+    expect(result.current.books.some((entry) => entry.id === "rain-city")).toBe(true);
+    expect(result.current.loading).toBe(false);
+
+    await act(async () => {
+      await result.current.completeCreationLauncher();
+    });
+
+    expect(result.current.activeView).toBe("workspace");
+    expect(result.current.selectedBook?.id).toBe("rain-city");
   });
 
   it("retries auto-open after a failed first open when refresh runs again", async () => {
@@ -543,7 +775,7 @@ describe("useStudioState", () => {
     });
 
     await waitFor(() => {
-      expect(result.current.activeView).toBe("workspace");
+      expect(result.current.activeView).toBe("dashboard");
     });
 
     expect(result.current.selectedBook?.id).toBe("book-1");
@@ -573,7 +805,13 @@ describe("useStudioState", () => {
     const { result } = renderHook(() => useStudioState({ client }));
 
     await waitFor(() => {
-      expect(result.current.activeView).toBe("workspace");
+      expect(result.current.activeView).toBe("dashboard");
+      expect(result.current.selectedBook?.id).toBe("book-1");
+      expect(result.current.selectedChapter?.number).toBe(2);
+    });
+
+    await act(async () => {
+      await result.current.openBook("book-1");
     });
 
     expect(result.current.selectedChapter?.number).toBe(2);
@@ -592,6 +830,106 @@ describe("useStudioState", () => {
     expect(result.current.selectedChapter?.title).toBe("Signals revised");
     expect(result.current.chapter?.title).toBe("Signals revised");
     expect(result.current.chapter?.content).toContain("Fresh pages");
+  });
+
+  it("reconciles hydrated home selection against the real books list on refresh", async () => {
+    const staleBook = createBookSummary({ id: "book-1", title: "Northbound", chapters: 1, chapterCount: 1, lastChapterNumber: 1 });
+    const freshBook = createBookSummary({ id: "book-2", title: "Southbound", chapters: 2, chapterCount: 2, lastChapterNumber: 2 });
+    const freshChapter = createChapterSummary({ number: 2, title: "Wake", status: "draft" });
+    const listBooks = vi.fn<StudioApiClient["listBooks"]>()
+      .mockResolvedValueOnce([staleBook])
+      .mockResolvedValueOnce([freshBook]);
+
+    const client = createClient({
+      books: [freshBook],
+      bookDetails: {
+        "book-1": createBookDetail(staleBook),
+        "book-2": createBookDetail(freshBook),
+      },
+      chapters: {
+        "book-1": [createChapterSummary({ number: 1, title: "Arrival", status: "draft" })],
+        "book-2": [freshChapter],
+      },
+      chapterDetails: {
+        "book-1": {
+          1: createChapterDetail(createChapterSummary({ number: 1, title: "Arrival", status: "draft" })),
+        },
+        "book-2": {
+          2: createChapterDetail(freshChapter),
+        },
+      },
+    });
+    client.listBooks = listBooks;
+
+    window.localStorage.setItem(LAST_ACTIVE_BOOK_STORAGE_KEY, "book-1");
+    window.localStorage.setItem(LAST_ACTIVE_CHAPTER_STORAGE_KEY, JSON.stringify({ bookId: "book-1", chapterNumber: 1 }));
+
+    const { result } = renderHook(() => useStudioState({ client }));
+
+    await waitFor(() => {
+      expect(result.current.activeView).toBe("dashboard");
+      expect(result.current.selectedBook?.id).toBe("book-1");
+    });
+
+    await act(async () => {
+      await result.current.refresh();
+    });
+
+    expect(result.current.books).toEqual([freshBook]);
+    expect(result.current.selectedBook?.id).toBe("book-2");
+    expect(result.current.selectedChapter?.number).toBe(2);
+    expect(result.current.chapter?.number).toBe(2);
+  });
+
+  it("re-opens a home selection with a live fetch instead of trusting the hydrated snapshot", async () => {
+    const book = createBookSummary({ id: "book-1", title: "Northbound", chapters: 2, chapterCount: 2, lastChapterNumber: 2 });
+    const storedChapter = createChapterSummary({ number: 1, title: "Arrival", status: "draft" });
+    const latestChapter = createChapterSummary({ number: 2, title: "Signals revised", status: "draft" });
+    const getBook = vi.fn<StudioApiClient["getBook"]>(async () => createBookDetail(book));
+    const listChapters = vi.fn<StudioApiClient["listChapters"]>(async () => [storedChapter, latestChapter]);
+    const getChapter = vi.fn<StudioApiClient["getChapter"]>(async (_bookId, chapterNumber) =>
+      chapterNumber === 1 ? createChapterDetail(storedChapter) : createChapterDetail(latestChapter),
+    );
+
+    const client = createClient({
+      books: [book],
+      bookDetails: { "book-1": createBookDetail(book) },
+      chapters: { "book-1": [storedChapter, latestChapter] },
+      chapterDetails: {
+        "book-1": {
+          1: createChapterDetail(storedChapter),
+          2: createChapterDetail(latestChapter),
+        },
+      },
+    });
+    client.getBook = getBook;
+    client.listChapters = listChapters;
+    client.getChapter = getChapter;
+
+    window.localStorage.setItem(LAST_ACTIVE_BOOK_STORAGE_KEY, "book-1");
+    window.localStorage.setItem(LAST_ACTIVE_CHAPTER_STORAGE_KEY, JSON.stringify({ bookId: "book-1", chapterNumber: 1 }));
+
+    const { result } = renderHook(() => useStudioState({ client }));
+
+    await waitFor(() => {
+      expect(result.current.activeView).toBe("dashboard");
+      expect(result.current.selectedBook?.id).toBe("book-1");
+      expect(result.current.selectedChapter?.number).toBe(1);
+    });
+
+    getBook.mockClear();
+    listChapters.mockClear();
+    getChapter.mockClear();
+
+    await act(async () => {
+      await result.current.openBook("book-1");
+    });
+
+    expect(result.current.activeView).toBe("workspace");
+    expect(getBook).toHaveBeenCalledWith("book-1");
+    expect(listChapters).toHaveBeenCalledWith("book-1");
+    expect(getChapter).toHaveBeenCalledWith("book-1", 1);
+    expect(result.current.selectedChapter?.number).toBe(1);
   });
 
   it("refreshes truth-file selection and detail when the reference shelf is active", async () => {
@@ -627,7 +965,13 @@ describe("useStudioState", () => {
     const { result } = renderHook(() => useStudioState({ client }));
 
     await waitFor(() => {
-      expect(result.current.activeView).toBe("workspace");
+      expect(result.current.activeView).toBe("dashboard");
+      expect(result.current.selectedBook?.id).toBe("book-1");
+      expect(result.current.selectedChapter?.number).toBe(1);
+    });
+
+    await act(async () => {
+      await result.current.openBook("book-1");
     });
 
     await act(async () => {
@@ -783,7 +1127,9 @@ describe("useStudioState", () => {
     const { result } = renderHook(() => useStudioState({ client }));
 
     await waitFor(() => {
-      expect(result.current.activeView).toBe("workspace");
+      expect(result.current.activeView).toBe("dashboard");
+      expect(result.current.selectedBook?.id).toBe("book-1");
+      expect(result.current.selectedChapter?.number).toBe(1);
     });
 
     expect(result.current.selectedBook?.id).toBe("book-1");
@@ -796,6 +1142,49 @@ describe("useStudioState", () => {
     expect(result.current.selectedBook?.id).toBe("book-2");
     expect(result.current.selectedChapter?.number).toBe(5);
     expect(result.current.chapter?.number).toBe(5);
+  });
+
+  it("preserves the hydrated startup chapter when continuing that same project from home", async () => {
+    const book = createBookSummary({ id: "book-1", title: "Northbound", chapters: 4, chapterCount: 4, lastChapterNumber: 4 });
+
+    window.localStorage.setItem(LAST_ACTIVE_BOOK_STORAGE_KEY, "book-1");
+    window.localStorage.setItem(LAST_ACTIVE_CHAPTER_STORAGE_KEY, JSON.stringify({ bookId: "book-1", chapterNumber: 1 }));
+
+    const client = createClient({
+      books: [book],
+      bookDetails: {
+        "book-1": createBookDetail(book),
+      },
+      chapters: {
+        "book-1": [
+          createChapterSummary({ number: 1, title: "Arrival", status: "draft" }),
+          createChapterSummary({ number: 4, title: "Wake", status: "approved" }),
+        ],
+      },
+      chapterDetails: {
+        "book-1": {
+          1: createChapterDetail(createChapterSummary({ number: 1, title: "Arrival", status: "draft" })),
+          4: createChapterDetail(createChapterSummary({ number: 4, title: "Wake", status: "approved" })),
+        },
+      },
+    });
+
+    const { result } = renderHook(() => useStudioState({ client }));
+
+    await waitFor(() => {
+      expect(result.current.activeView).toBe("dashboard");
+      expect(result.current.selectedBook?.id).toBe("book-1");
+      expect(result.current.selectedChapter?.number).toBe(1);
+    });
+
+    await act(async () => {
+      await result.current.openBook("book-1");
+    });
+
+    expect(result.current.activeView).toBe("workspace");
+    expect(result.current.selectedBook?.id).toBe("book-1");
+    expect(result.current.selectedChapter?.number).toBe(1);
+    expect(result.current.chapter?.number).toBe(1);
   });
 
   it("does not apply stale startup chapter state after switching books without editing and reloading", async () => {
@@ -835,7 +1224,9 @@ describe("useStudioState", () => {
     const firstMount = renderHook(() => useStudioState({ client }));
 
     await waitFor(() => {
-      expect(firstMount.result.current.activeView).toBe("workspace");
+      expect(firstMount.result.current.activeView).toBe("dashboard");
+      expect(firstMount.result.current.selectedBook?.id).toBe("book-1");
+      expect(firstMount.result.current.selectedChapter?.number).toBe(1);
     });
 
     expect(firstMount.result.current.selectedBook?.id).toBe("book-1");
@@ -853,7 +1244,9 @@ describe("useStudioState", () => {
     const secondMount = renderHook(() => useStudioState({ client }));
 
     await waitFor(() => {
-      expect(secondMount.result.current.activeView).toBe("workspace");
+      expect(secondMount.result.current.activeView).toBe("dashboard");
+      expect(secondMount.result.current.selectedBook?.id).toBe("book-2");
+      expect(secondMount.result.current.selectedChapter?.number).toBe(5);
     });
 
     expect(secondMount.result.current.selectedBook?.id).toBe("book-2");
@@ -1557,7 +1950,14 @@ describe("useStudioState", () => {
     const { result } = renderHook(() => useStudioState({ client }));
 
     await waitFor(() => {
-      expect(result.current.activeView).toBe("workspace");
+      expect(result.current.activeView).toBe("dashboard");
+      expect(result.current.selectedBook?.id).toBe("book-1");
+      expect(result.current.selectedChapter?.number).toBe(1);
+      expect(result.current.chapter?.content).toBe("# Arrival");
+      expect(listBooks).toHaveBeenCalledTimes(1);
+      expect(getBook).toHaveBeenCalledTimes(1);
+      expect(listChapters).toHaveBeenCalledTimes(1);
+      expect(getChapter).toHaveBeenCalledTimes(1);
     });
 
     act(() => {
@@ -2236,5 +2636,120 @@ describe("useStudioState", () => {
     expect(result.current.selectedBook?.id).toBe("book-2");
     expect(result.current.error).toBeNull();
     expect(result.current.loading).toBe(false);
+  });
+
+  it("keeps a newly bootstrapped book in Home after returning from the desk", async () => {
+    const bootstrappedBook = createBookDetail(createBookSummary({
+      id: "rain-city",
+      title: "Rain city",
+      status: "outlining",
+      chapters: 0,
+      chapterCount: 0,
+      lastChapterNumber: 0,
+    }), { language: "zh", chapterWordCount: 2500 });
+
+    let resolveCreateBook: (() => void) | undefined;
+    const createBootstrapBook = vi.fn<StudioApiClient["createBootstrapBook"]>(async () => {
+      await new Promise<void>((resolve) => {
+        resolveCreateBook = resolve;
+      });
+
+      return {
+        book: bootstrappedBook,
+        intake: {
+          type: "idea",
+          titleSuggestion: "Rain city",
+          sourceText: "雨夜里，失忆剑客听见一座城在说话。",
+          prompt: "雨夜里，失忆剑客听见一座城在说话。",
+        },
+      };
+    });
+
+    const bootstrapHealth: HealthStatus = {
+      ...createHealthStatus(),
+      projectConfigFound: false,
+      bookCount: 0,
+    };
+
+    const client = createClient({
+      books: [],
+      bookDetails: { "rain-city": bootstrappedBook },
+      chapters: { "rain-city": [] },
+      chapterDetails: { "rain-city": {} },
+      health: bootstrapHealth,
+    });
+    client.normalizeIdea = vi.fn(async (): Promise<NormalizedIdeaIntake> => ({
+      type: "idea",
+      titleSuggestion: "Rain city",
+      sourceText: "雨夜里，失忆剑客听见一座城在说话。",
+      prompt: "雨夜里，失忆剑客听见一座城在说话。",
+    }));
+    client.getBootstrapStatus = vi.fn(async () => ({
+      health: bootstrapHealth,
+      project: { initialized: false, name: null, bookCount: 0, firstBookId: null },
+      readiness: {
+        ready: false,
+        code: "PROJECT_NOT_INITIALIZED" as const,
+        title: "Create your local studio project",
+        message: "Start by creating a project for this workspace.",
+        action: "Create project",
+      },
+    }));
+    client.createBootstrapProject = vi.fn(async () => ({
+      projectRoot: "/project",
+      project: { initialized: true as const, name: "Rain city", language: "zh" as const },
+    }));
+    client.createBootstrapBook = createBootstrapBook;
+
+    const { result } = renderHook(() => useStudioState({ client }));
+
+    await waitFor(() => {
+      expect(result.current.activeView).toBe("dashboard");
+    });
+
+    act(() => {
+      result.current.startCreationLauncher("idea");
+    });
+
+    act(() => {
+      result.current.updateCreationDraft({
+        genre: "fantasy",
+        language: "zh",
+        idea: "雨夜里，失忆剑客听见一座城在说话。",
+      });
+    });
+
+    await act(async () => {
+      await result.current.normalizeIdeaDraft();
+    });
+
+    let bootstrapPromise: Promise<void> | undefined;
+    act(() => {
+      result.current.updateCreationDraft({ step: "progress" });
+      bootstrapPromise = result.current.startCreationBootstrap();
+    });
+
+    await waitFor(() => {
+      expect(result.current.creationProject?.title).toBe("Rain city");
+      expect(result.current.creationBootstrap?.status).toBe("running");
+    });
+
+    resolveCreateBook?.();
+    await act(async () => {
+      await bootstrapPromise;
+    });
+
+    expect(result.current.books.map((book) => book.id)).toContain("rain-city");
+
+    await act(async () => {
+      await result.current.completeCreationLauncher();
+    });
+
+    act(() => {
+      result.current.showDashboard();
+    });
+
+    expect(result.current.activeView).toBe("dashboard");
+    expect(result.current.books.some((book) => book.title === "Rain city")).toBe(true);
   });
 });

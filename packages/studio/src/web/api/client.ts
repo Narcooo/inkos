@@ -1,9 +1,22 @@
 import type {
+  BootstrapBookResult,
+  BootstrapProjectResult,
+  BootstrapStatus,
   BookDetail,
   BookSummary,
   ChapterDetail,
   ChapterSummary,
+  CreateBootstrapBookPayload,
+  CreateBootstrapProjectPayload,
+  FactoryGenerateFirstChapterResult,
+  FactoryBookPayload,
+  FactoryGenerateOutlinePayload,
+  FactoryGenerateOutlineRequest,
+  FactoryGenerateOutlineResult,
+  FactorySetupStoryResult,
   HealthStatus,
+  NormalizedIdeaIntake,
+  NormalizedUploadIntake,
   RunAction,
   RunActionPayload,
   StudioRun,
@@ -11,6 +24,7 @@ import type {
   SaveChapterPayload,
   TruthFileDetail,
   TruthFileSummary,
+  UploadedFilePayload,
 } from "../../shared/contracts";
 
 interface ApiErrorPayload {
@@ -33,6 +47,14 @@ export interface StudioApiClient {
   listTruthFiles(bookId: string): Promise<ReadonlyArray<TruthFileSummary>>;
   getTruthFile(bookId: string, name: string): Promise<TruthFileDetail>;
   getHealth(): Promise<HealthStatus>;
+  getBootstrapStatus(): Promise<BootstrapStatus>;
+  createBootstrapProject(payload: CreateBootstrapProjectPayload): Promise<BootstrapProjectResult>;
+  createBootstrapBook(payload: CreateBootstrapBookPayload): Promise<BootstrapBookResult>;
+  setupStory(bookId: string): Promise<FactorySetupStoryResult>;
+  generateOutline(bookId: string, payload?: FactoryGenerateOutlinePayload): Promise<FactoryGenerateOutlineResult>;
+  generateFirstChapter(bookId: string): Promise<FactoryGenerateFirstChapterResult>;
+  normalizeIdea(payload: { readonly idea: string }): Promise<NormalizedIdeaIntake>;
+  summarizeUpload(payload: { readonly files: ReadonlyArray<UploadedFilePayload> }): Promise<NormalizedUploadIntake>;
 }
 
 async function requestJson<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -107,5 +129,48 @@ export function createStudioApiClient(baseUrl = "/api"): StudioApiClient {
     getTruthFile: (bookId, name) =>
       requestJson<TruthFileDetail>(`${baseUrl}/books/${encodeURIComponent(bookId)}/truth-files/${encodeURIComponent(name)}`),
     getHealth: () => requestJson<HealthStatus>(`${baseUrl}/health`),
+    getBootstrapStatus: () => requestJson<BootstrapStatus>(`${baseUrl}/bootstrap/status`),
+    createBootstrapProject: (payload) =>
+      requestJson<BootstrapProjectResult>(`${baseUrl}/bootstrap/project`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      }),
+    createBootstrapBook: (payload) =>
+      requestJson<BootstrapBookResult>(`${baseUrl}/bootstrap/book`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      }),
+    setupStory: (bookId) =>
+      requestJson<FactorySetupStoryResult>(`${baseUrl}/factory/setup-story`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ bookId } satisfies FactoryBookPayload),
+      }),
+    generateOutline: (bookId, payload = {}) =>
+      requestJson<FactoryGenerateOutlineResult>(`${baseUrl}/factory/generate-outline`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ...payload, bookId } satisfies FactoryGenerateOutlineRequest),
+      }),
+    generateFirstChapter: (bookId) =>
+      requestJson<FactoryGenerateFirstChapterResult>(`${baseUrl}/factory/generate-first-chapter`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ bookId } satisfies FactoryBookPayload),
+      }),
+    normalizeIdea: (payload) =>
+      requestJson<NormalizedIdeaIntake>(`${baseUrl}/imports/idea`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      }),
+    summarizeUpload: (payload) =>
+      requestJson<NormalizedUploadIntake>(`${baseUrl}/imports/files`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      }),
   };
 }

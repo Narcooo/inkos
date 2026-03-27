@@ -5,9 +5,138 @@ export interface HealthStatus {
   readonly envFound: boolean;
   readonly projectEnvFound: boolean;
   readonly globalConfigFound: boolean;
+  readonly configReady: boolean;
   readonly bookCount: number;
   readonly provider: string | null;
   readonly model: string | null;
+}
+
+export type BootstrapReadinessCode = "READY" | "PROJECT_NOT_INITIALIZED" | "CONFIG_NOT_READY";
+
+export interface BootstrapReadiness {
+  readonly ready: boolean;
+  readonly code: BootstrapReadinessCode;
+  readonly title: string;
+  readonly message: string;
+  readonly action: string;
+}
+
+export interface BootstrapProjectStatus {
+  readonly initialized: boolean;
+  readonly name: string | null;
+  readonly bookCount: number;
+  readonly firstBookId: string | null;
+}
+
+export interface BootstrapStatus {
+  readonly health: HealthStatus;
+  readonly project: BootstrapProjectStatus;
+  readonly readiness: BootstrapReadiness;
+}
+
+export interface CreateBootstrapProjectPayload {
+  readonly name: string;
+  readonly language: "zh" | "en";
+}
+
+export interface BootstrapProjectResult {
+  readonly projectRoot: string;
+  readonly project: {
+    readonly initialized: true;
+    readonly name: string;
+    readonly language: "zh" | "en";
+  };
+}
+
+export interface NormalizedIdeaIntake {
+  readonly type: "idea";
+  readonly titleSuggestion: string;
+  readonly sourceText: string;
+  readonly prompt: string;
+}
+
+export interface ParsedCountSummary {
+  readonly label: string;
+  readonly count: number;
+}
+
+export interface UploadedFileIntakeSummary {
+  readonly fileCount: number;
+  readonly totalBytes: number;
+  readonly totalCharacters: number;
+  readonly fileNames: ReadonlyArray<string>;
+  readonly formats: ReadonlyArray<ParsedCountSummary>;
+  readonly kinds: ReadonlyArray<ParsedCountSummary>;
+}
+
+export interface UploadedFilePayload {
+  readonly name: string;
+  readonly size: number;
+  readonly type?: string;
+  readonly content: string;
+}
+
+export interface UploadedFileMetadata {
+  readonly name: string;
+  readonly size: number;
+  readonly type: string;
+  readonly format: string;
+  readonly kind: string;
+  readonly contentLength: number;
+  readonly excerpt: string;
+}
+
+export interface NormalizedUploadIntake {
+  readonly type: "upload";
+  readonly titleSuggestion: string;
+  readonly sourceText: string;
+  readonly prompt: string;
+  readonly summary: UploadedFileIntakeSummary;
+  readonly files: ReadonlyArray<UploadedFileMetadata>;
+}
+
+export type NormalizedIntake = NormalizedIdeaIntake | NormalizedUploadIntake;
+
+export interface CreateBootstrapBookPayload {
+  readonly title: string;
+  readonly genre: string;
+  readonly platform: string;
+  readonly language: "zh" | "en";
+  readonly targetChapters?: number;
+  readonly chapterWordCount?: number;
+  readonly intake: NormalizedIntake;
+}
+
+export interface BootstrapBookResult {
+  readonly book: BookDetail;
+  readonly intake: NormalizedIntake;
+}
+
+export interface FactorySetupStoryResult {
+  readonly book: BookDetail;
+}
+
+export interface FactoryBookPayload {
+  readonly bookId: string;
+}
+
+export interface FactoryGenerateOutlinePayload {
+  readonly context?: string;
+}
+
+export interface FactoryGenerateOutlineRequest extends FactoryBookPayload, FactoryGenerateOutlinePayload {}
+
+export interface FactoryGenerateOutlineResult {
+  readonly bookId: string;
+  readonly chapterNumber: number;
+  readonly intentPath: string;
+  readonly goal: string;
+  readonly conflicts: ReadonlyArray<string>;
+}
+
+export interface FactoryGenerateFirstChapterResult {
+  readonly book: BookDetail;
+  readonly chapter: ChapterDetail;
 }
 
 export interface BookSummary {

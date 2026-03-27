@@ -102,6 +102,7 @@ export { splitChapters, type SplitChapter } from "./utils/chapter-splitter.js";
 export { countChapterLength, resolveLengthCountingMode, formatLengthCount, buildLengthSpec, isOutsideSoftRange, isOutsideHardRange, chooseNormalizeMode, type LengthLanguage } from "./utils/length-metrics.js";
 export { createLogger, createStderrSink, createJsonLineSink, nullSink, type Logger, type LogSink, type LogLevel, type LogEntry } from "./utils/logger.js";
 export { loadProjectConfig, GLOBAL_CONFIG_DIR, GLOBAL_ENV_PATH } from "./utils/config-loader.js";
+export { initializeProject, type InitializeProjectOptions, type InitializeProjectResult } from "./project/init.js";
 export { computeAnalytics, type AnalyticsData, type TokenStats } from "./utils/analytics.js";
 export {
   collectStaleHookDebt,

@@ -16,6 +16,7 @@ export class ProjectService {
     const projectConfigFound = await this.pathExists(join(this.projectRoot, "inkos.json"));
     const projectEnvFound = await this.pathExists(join(this.projectRoot, ".env"));
     const globalConfigFound = await this.pathExists(GLOBAL_ENV_PATH);
+    let configReady = false;
 
     let llmProvider: string | null = null;
     let llmModel: string | null = null;
@@ -28,6 +29,13 @@ export class ProjectService {
       } catch {
         // Leave null when config cannot be parsed yet.
       }
+
+      try {
+        await loadProjectConfig(this.projectRoot);
+        configReady = true;
+      } catch {
+        configReady = false;
+      }
     }
 
     return {
@@ -37,6 +45,7 @@ export class ProjectService {
       envFound: projectEnvFound || globalConfigFound,
       projectEnvFound,
       globalConfigFound,
+      configReady,
       bookCount: books.length,
       provider: llmProvider,
       model: llmModel,
@@ -46,6 +55,21 @@ export class ProjectService {
   async listBooks(): Promise<ReadonlyArray<BookSummary>> {
     const bookIds = await this.state.listBooks();
     return Promise.all(bookIds.map(async (bookId) => this.buildBookSummary(bookId)));
+  }
+
+  async loadProjectSummary(): Promise<{ name: string | null }> {
+    try {
+      const config = await this.state.loadProjectConfig();
+      return {
+        name: typeof config.name === "string" && config.name.trim() ? config.name.trim() : null,
+      };
+    } catch {
+      return { name: null };
+    }
+  }
+
+  async isProjectInitialized(): Promise<boolean> {
+    return this.pathExists(join(this.projectRoot, "inkos.json"));
   }
 
   async getBook(bookId: string): Promise<BookDetail | null> {

@@ -37,6 +37,7 @@ const health: HealthStatus = {
   envFound: true,
   projectEnvFound: true,
   globalConfigFound: true,
+  configReady: true,
 };
 
 afterEach(() => {

@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { useEffect } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "../App";
 import { StudioShell } from "../components/layout/StudioShell";
 import { BookWorkspace } from "../components/workspace/BookWorkspace";
 import { RunConsole } from "../components/runs/RunConsole";
-import type { BookDetail, ChapterDetail, ChapterSummary, HealthStatus, StudioRun, TruthFileDetail, TruthFileSummary } from "../../shared/contracts";
+import type { BootstrapStatus, BookDetail, ChapterDetail, ChapterSummary, HealthStatus, StudioRun, TruthFileDetail, TruthFileSummary } from "../../shared/contracts";
 import type { StudioApiClient } from "../api/client";
 import { useRunStream } from "../hooks/useRunStream";
 import { useStudioState } from "../hooks/useStudioState";
@@ -59,6 +60,60 @@ const truthFileDetail: TruthFileDetail = {
   ...truthFileSummary,
   content: "# Current state\n\nImportant facts",
 };
+
+function createReadyBootstrapStatus(health: HealthStatus, bookId = "book-1"): BootstrapStatus {
+  return {
+    health,
+    project: {
+      initialized: true,
+      name: "Project",
+      bookCount: health.bookCount,
+      firstBookId: bookId,
+    },
+    readiness: {
+      ready: true,
+      code: "READY",
+      title: "Studio is ready",
+      message: "Your project is ready for the next setup step.",
+      action: "Continue",
+    },
+  };
+}
+
+async function normalizeIdeaPayload({ idea }: { readonly idea: string }) {
+  return {
+    type: "idea" as const,
+    titleSuggestion: idea.trim(),
+    sourceText: idea.trim(),
+    prompt: idea.trim(),
+  };
+}
+
+async function summarizeUploadPayload({ files }: { readonly files: ReadonlyArray<{ readonly name: string; readonly size: number; readonly type?: string; readonly content: string }> }) {
+  return {
+    type: "upload" as const,
+    titleSuggestion: "Imported materials intake",
+    sourceText: files.map((file) => file.content).join("\n\n"),
+    prompt: `${files.length} files imported`,
+    summary: {
+      fileCount: files.length,
+      totalBytes: files.reduce((total, file) => total + file.size, 0),
+      totalCharacters: files.reduce((total, file) => total + file.content.length, 0),
+      fileNames: files.map((file) => file.name),
+      formats: [],
+      kinds: [],
+    },
+    files: files.map((file) => ({
+      name: file.name,
+      size: file.size,
+      type: file.type ?? "",
+      format: file.type ?? "",
+      kind: "Other",
+      contentLength: file.content.length,
+      excerpt: file.content,
+    })),
+  };
+}
 const unavailableTruthFileSummary: TruthFileSummary = {
   name: "canon.md",
   label: "Canon Ledger",
@@ -496,6 +551,9 @@ describe("App", () => {
   it("derives top-bar metadata from live dirty workspace state", () => {
     vi.mocked(useStudioState).mockReturnValue({
       activeView: "workspace",
+      creationLauncherMode: null,
+      creationDraft: null,
+      creationProject: null,
       activeTab: "review",
       books: [],
       selectedBook: book,
@@ -506,6 +564,8 @@ describe("App", () => {
       selectedTruthFile: truthFileSummary,
       truthFile: truthFileDetail,
       health: null,
+      bootstrapStatus: null,
+      creationBootstrap: null,
       chapterDirty: true,
       chapterDraftWordCount: 1200,
       chapterSaving: false,
@@ -515,6 +575,13 @@ describe("App", () => {
       refresh: vi.fn(async () => undefined),
       showDashboard: vi.fn(),
       showHealth: vi.fn(async () => undefined),
+      startCreationLauncher: vi.fn(),
+      exitCreationLauncher: vi.fn(),
+      updateCreationDraft: vi.fn(),
+      normalizeIdeaDraft: vi.fn(async () => undefined),
+      summarizeUploadDraft: vi.fn(async () => undefined),
+      startCreationBootstrap: vi.fn(async () => undefined),
+      completeCreationLauncher: vi.fn(),
       openBook: vi.fn(async () => undefined),
       selectChapter: vi.fn(async () => undefined),
       setChapterDirty: vi.fn(),
@@ -541,6 +608,9 @@ describe("App", () => {
   it("labels Chinese top-bar draft counts as characters", () => {
     vi.mocked(useStudioState).mockReturnValue({
       activeView: "workspace",
+      creationLauncherMode: null,
+      creationDraft: null,
+      creationProject: null,
       activeTab: "review",
       books: [],
       selectedBook: { ...book, language: "zh" },
@@ -551,6 +621,8 @@ describe("App", () => {
       selectedTruthFile: truthFileSummary,
       truthFile: truthFileDetail,
       health: null,
+      bootstrapStatus: null,
+      creationBootstrap: null,
       chapterDirty: true,
       chapterDraftWordCount: 1200,
       chapterSaving: false,
@@ -560,6 +632,13 @@ describe("App", () => {
       refresh: vi.fn(async () => undefined),
       showDashboard: vi.fn(),
       showHealth: vi.fn(async () => undefined),
+      startCreationLauncher: vi.fn(),
+      exitCreationLauncher: vi.fn(),
+      updateCreationDraft: vi.fn(),
+      normalizeIdeaDraft: vi.fn(async () => undefined),
+      summarizeUploadDraft: vi.fn(async () => undefined),
+      startCreationBootstrap: vi.fn(async () => undefined),
+      completeCreationLauncher: vi.fn(),
       openBook: vi.fn(async () => undefined),
       selectChapter: vi.fn(async () => undefined),
       setChapterDirty: vi.fn(),
@@ -582,6 +661,9 @@ describe("App", () => {
   it("disables shell refresh while save or review work is in flight", () => {
     vi.mocked(useStudioState).mockReturnValue({
       activeView: "workspace",
+      creationLauncherMode: null,
+      creationDraft: null,
+      creationProject: null,
       activeTab: "review",
       books: [],
       selectedBook: book,
@@ -592,6 +674,8 @@ describe("App", () => {
       selectedTruthFile: truthFileSummary,
       truthFile: truthFileDetail,
       health: null,
+      bootstrapStatus: null,
+      creationBootstrap: null,
       chapterDirty: false,
       chapterDraftWordCount: 1200,
       chapterSaving: true,
@@ -601,6 +685,13 @@ describe("App", () => {
       refresh: vi.fn(async () => undefined),
       showDashboard: vi.fn(),
       showHealth: vi.fn(async () => undefined),
+      startCreationLauncher: vi.fn(),
+      exitCreationLauncher: vi.fn(),
+      updateCreationDraft: vi.fn(),
+      normalizeIdeaDraft: vi.fn(async () => undefined),
+      summarizeUploadDraft: vi.fn(async () => undefined),
+      startCreationBootstrap: vi.fn(async () => undefined),
+      completeCreationLauncher: vi.fn(),
       openBook: vi.fn(async () => undefined),
       selectChapter: vi.fn(async () => undefined),
       setChapterDirty: vi.fn(),
@@ -635,10 +726,30 @@ describe("App", () => {
         envFound: true,
         projectEnvFound: true,
         globalConfigFound: false,
+        configReady: true,
         bookCount: 1,
         provider: "openai",
         model: "gpt-4.1",
       }),
+      getBootstrapStatus: async () => createReadyBootstrapStatus({
+        status: "ok",
+        projectRoot: "/project",
+        projectConfigFound: true,
+        envFound: true,
+        projectEnvFound: true,
+        globalConfigFound: false,
+        configReady: true,
+        bookCount: 1,
+        provider: "openai",
+        model: "gpt-4.1",
+      }, liveBook.id),
+      createBootstrapProject: async () => { throw new Error("not used"); },
+      createBootstrapBook: async () => { throw new Error("not used"); },
+      setupStory: async () => { throw new Error("not used"); },
+      generateOutline: async () => { throw new Error("not used"); },
+      generateFirstChapter: async () => { throw new Error("not used"); },
+      normalizeIdea: normalizeIdeaPayload,
+      summarizeUpload: summarizeUploadPayload,
       saveChapter: async () => detail,
       approveReview: async () => detail,
       rejectReview: async () => detail,
@@ -666,6 +777,12 @@ describe("App", () => {
       const liveState = state as typeof state & { chapterDraftWordCount?: number | null };
       const wordCount = liveState.chapterDraftWordCount ?? state.chapter?.wordCount ?? state.selectedChapter?.wordCount ?? null;
       const saveState = state.chapterSaving ? "Saving draft..." : state.chapterDirty ? "Unsaved changes" : "All changes saved";
+
+      useEffect(() => {
+        if (state.activeView === "dashboard" && state.selectedBook) {
+          void state.openBook(state.selectedBook.id);
+        }
+      }, [state.activeView, state.openBook, state.selectedBook]);
 
       return state.activeView === "workspace" && state.selectedBook ? (
         <StudioShell
@@ -733,6 +850,7 @@ describe("RunConsole", () => {
       envFound: true,
       projectEnvFound: true,
       globalConfigFound: false,
+      configReady: true,
       bookCount: 1,
       provider: "openai",
       model: "gpt-4.1",
@@ -782,6 +900,14 @@ describe("RunConsole", () => {
       listTruthFiles: vi.fn(async () => []),
       getTruthFile: vi.fn(async () => truthFileDetail),
       getHealth: vi.fn(async () => health),
+      getBootstrapStatus: vi.fn(async () => createReadyBootstrapStatus(health)),
+      createBootstrapProject: vi.fn(async () => { throw new Error("not used"); }),
+      createBootstrapBook: vi.fn(async () => { throw new Error("not used"); }),
+      setupStory: vi.fn(async () => { throw new Error("not used"); }),
+      generateOutline: vi.fn(async () => { throw new Error("not used"); }),
+      generateFirstChapter: vi.fn(async () => { throw new Error("not used"); }),
+      normalizeIdea: vi.fn(normalizeIdeaPayload),
+      summarizeUpload: vi.fn(summarizeUploadPayload),
       saveChapter: vi.fn(async () => chapterDetail),
       approveReview: vi.fn(async () => chapterDetail),
       rejectReview: vi.fn(async () => chapterDetail),
@@ -821,6 +947,7 @@ describe("RunConsole", () => {
       envFound: true,
       projectEnvFound: true,
       globalConfigFound: false,
+      configReady: true,
       bookCount: 1,
       provider: "openai",
       model: "gpt-4.1",
@@ -834,6 +961,14 @@ describe("RunConsole", () => {
       listTruthFiles: vi.fn(async () => []),
       getTruthFile: vi.fn(async () => truthFileDetail),
       getHealth: vi.fn(async () => health),
+      getBootstrapStatus: vi.fn(async () => createReadyBootstrapStatus(health)),
+      createBootstrapProject: vi.fn(async () => { throw new Error("not used"); }),
+      createBootstrapBook: vi.fn(async () => { throw new Error("not used"); }),
+      setupStory: vi.fn(async () => { throw new Error("not used"); }),
+      generateOutline: vi.fn(async () => { throw new Error("not used"); }),
+      generateFirstChapter: vi.fn(async () => { throw new Error("not used"); }),
+      normalizeIdea: vi.fn(normalizeIdeaPayload),
+      summarizeUpload: vi.fn(summarizeUploadPayload),
       saveChapter: vi.fn(async () => chapterDetail),
       approveReview: vi.fn(async () => chapterDetail),
       rejectReview: vi.fn(async () => chapterDetail),
@@ -928,6 +1063,7 @@ describe("RunConsole", () => {
       envFound: true,
       projectEnvFound: true,
       globalConfigFound: false,
+      configReady: true,
       bookCount: 1,
       provider: "openai",
       model: "gpt-4.1",
@@ -941,6 +1077,14 @@ describe("RunConsole", () => {
       listTruthFiles: vi.fn(async () => []),
       getTruthFile: vi.fn(async () => truthFileDetail),
       getHealth: vi.fn(async () => health),
+      getBootstrapStatus: vi.fn(async () => createReadyBootstrapStatus(health)),
+      createBootstrapProject: vi.fn(async () => { throw new Error("not used"); }),
+      createBootstrapBook: vi.fn(async () => { throw new Error("not used"); }),
+      setupStory: vi.fn(async () => { throw new Error("not used"); }),
+      generateOutline: vi.fn(async () => { throw new Error("not used"); }),
+      generateFirstChapter: vi.fn(async () => { throw new Error("not used"); }),
+      normalizeIdea: vi.fn(normalizeIdeaPayload),
+      summarizeUpload: vi.fn(summarizeUploadPayload),
       saveChapter: vi.fn(async () => chapterDetail),
       approveReview: vi.fn(async () => chapterDetail),
       rejectReview: vi.fn(async () => chapterDetail),
@@ -1047,6 +1191,7 @@ describe("RunConsole", () => {
       envFound: true,
       projectEnvFound: true,
       globalConfigFound: false,
+      configReady: true,
       bookCount: 1,
       provider: "openai",
       model: "gpt-4.1",
@@ -1063,6 +1208,14 @@ describe("RunConsole", () => {
       listTruthFiles: vi.fn(async () => []),
       getTruthFile: vi.fn(async () => truthFileDetail),
       getHealth: vi.fn(async () => health),
+      getBootstrapStatus: vi.fn(async () => createReadyBootstrapStatus(health)),
+      createBootstrapProject: vi.fn(async () => { throw new Error("not used"); }),
+      createBootstrapBook: vi.fn(async () => { throw new Error("not used"); }),
+      setupStory: vi.fn(async () => { throw new Error("not used"); }),
+      generateOutline: vi.fn(async () => { throw new Error("not used"); }),
+      generateFirstChapter: vi.fn(async () => { throw new Error("not used"); }),
+      normalizeIdea: vi.fn(normalizeIdeaPayload),
+      summarizeUpload: vi.fn(summarizeUploadPayload),
       saveChapter: vi.fn(async () => chapterDetail),
       approveReview: vi.fn(async () => chapterDetail),
       rejectReview: vi.fn(async () => chapterDetail),

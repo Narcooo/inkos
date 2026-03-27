@@ -1,5 +1,6 @@
-import { BooksDashboard } from "./components/books/BooksDashboard";
+import { FactoryHome } from "./components/home/FactoryHome";
 import { HealthView } from "./components/health/HealthView";
+import { CreationLauncher } from "./components/launcher/CreationLauncher";
 import { StudioShell } from "./components/layout/StudioShell";
 import { BookWorkspace } from "./components/workspace/BookWorkspace";
 import { useStudioState } from "./hooks/useStudioState";
@@ -10,12 +11,18 @@ export function App() {
   const shellSubtitle =
     state.activeView === "workspace"
       ? "Open to the live manuscript, with review and reference close at hand."
-      : "Writing-desk access to the live InkOS workspace.";
+      : state.activeView === "launcher"
+        ? "Shape the intake, confirm setup, and hand the project toward the desk."
+      : state.activeView === "dashboard"
+        ? "Start from the factory home, then step into the writing desk when a project needs focused work."
+        : "Writing-desk access to the live InkOS workspace.";
   const viewLabel =
     state.activeView === "workspace" && state.selectedBook
       ? `${state.selectedBook.title} manuscript`
+      : state.activeView === "launcher"
+        ? "Launcher"
       : state.activeView === "dashboard"
-        ? "Shelf"
+        ? "Home"
         : "System";
   const wordCount = state.chapterDraftWordCount ?? state.chapter?.wordCount ?? state.selectedChapter?.wordCount ?? null;
   const lengthLanguage = state.selectedBook?.language === "en" ? "en" : "zh";
@@ -37,7 +44,7 @@ export function App() {
           },
         ]
       : [];
-  const refreshBlocked = state.chapterSaving || state.reviewSubmitting;
+  const refreshBlocked = state.chapterSaving || state.reviewSubmitting || Boolean(state.creationProject);
 
   return (
     <StudioShell
@@ -55,7 +62,28 @@ export function App() {
       }
     >
       {state.activeView === "dashboard" ? (
-        <BooksDashboard books={state.books} onOpenBook={(bookId) => void state.openBook(bookId)} />
+        <FactoryHome
+          books={state.books}
+          selectedBook={state.selectedBook}
+          bootstrapStatus={state.bootstrapStatus}
+          onOpenBook={(bookId) => void state.openBook(bookId)}
+          onStartCreation={state.startCreationLauncher}
+        />
+      ) : null}
+      {state.activeView === "launcher" && state.creationLauncherMode ? (
+        <CreationLauncher
+          draft={state.creationDraft!}
+          health={state.health}
+          bootstrapStatus={state.bootstrapStatus}
+          creationBootstrap={state.creationBootstrap}
+          creationProject={state.creationProject}
+          onBackHome={state.exitCreationLauncher}
+          onDraftChange={state.updateCreationDraft}
+          onNormalizeIdea={() => state.normalizeIdeaDraft()}
+          onSummarizeUpload={() => state.summarizeUploadDraft()}
+          onStartBootstrap={() => state.startCreationBootstrap()}
+          onComplete={state.completeCreationLauncher}
+        />
       ) : null}
       {state.activeView === "workspace" && state.selectedBook ? (
         <BookWorkspace

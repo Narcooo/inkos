@@ -362,11 +362,19 @@ inkos agent "Create a progression fantasy about a mage who can only use one spel
 
 ## InkOS Studio (Preview)
 
-InkOS Studio is a local web workbench built for the active writing flow first. The shelf stays available as a secondary surface for switching books, checking progress, and managing multiple manuscripts. The CLI entrypoint stays the same:
+InkOS Studio is a local web workbench for writers. In Stage A, Studio now opens on Factory Home first, then uses a frontend-driven launcher flow to move a new project into the writing desk; after setup, the writing desk remains the main destination for active work. The CLI entrypoint stays the same:
 
 ```bash
 inkos studio
 ```
+
+### Stage A entry flow
+
+- Factory Home is the default entry: Studio opens on AI Novel Factory before dropping into any manuscript desk.
+- One-line start is supported: begin from a single premise, then fill in genre and language in the launcher.
+- Upload start is supported: begin from outlines, briefs, or reference packs, with the frontend parsing and confirming the import summary first.
+- The bootstrap/import path is frontend-controlled: the launcher drives local project initialization, first-book creation, and import-summary confirmation, so the visible first-run flow does not require CLI interaction.
+- After setup finishes, Studio sends the user into the writing desk; recent projects still stay nearby on Home for quick return.
 
 ### Build and run
 
@@ -381,20 +389,21 @@ inkos studio --port 4567
 
 Manual package layout: if you wire the private `@actalk/inkos-studio` package into `node_modules` yourself, make sure both `dist/api/index.js` and `dist/web/index.html` exist before running `inkos studio`. This is not part of the current published CLI flow.
 
-### What v1 supports
+### What v1 / Stage A supports
 
-- Writer-first workspace: the main Studio flow stays centered on the live manuscript, chapter review, and revision work.
+- Factory Home default entry: start in AI Novel Factory, then choose between new-project intake or resuming an existing manuscript.
+- Launcher first-run flow: both one-line start and upload start go through frontend intake, setup, and bootstrap before opening the desk.
+- Writer-first workspace: after setup, the main Studio flow stays centered on the live manuscript, chapter review, and revision work.
 - Shelf/library view: a secondary management surface for switching books, checking multi-book progress, and reopening a workspace.
 - Local-only launcher and API; Studio is meant for `localhost`, not remote multi-user hosting.
-- Chapter workspace with read/review flow, explicit chapter saves, and review approve/reject actions.
-- Truth files viewer for fast inspection of story memory.
-- Run console and diagnostics: `draft`, `audit`, `revise`, and `write next` actions with streaming logs/results, while the health page remains a secondary diagnostics surface rather than the main work area.
+- Chapter workspace, truth-file viewer, run console, and diagnostics remain available; `draft`, `audit`, `revise`, and `write next` are still supported, but Stage A primarily polishes the entry, intake, and handoff flow.
 
 ### Current limitations
 
 - Truth files are read-only in v1; edit chapters in Studio, but update truth files through CLI flows.
 - Studio focuses on single-user local workflows and does not add auth, collaboration, or deployment tooling yet.
 - The launcher needs a runnable Studio server plus built web assets. In the monorepo that means `packages/studio/src/api/index.ts` together with `packages/studio/dist/web/index.html`, or a fully built `packages/studio/dist` tree.
+- Stage A currently covers entry, bootstrap, and import-summary confirmation; deeper generation orchestration should still be understood in terms of the existing run-console capabilities.
 
 ## Roadmap
 

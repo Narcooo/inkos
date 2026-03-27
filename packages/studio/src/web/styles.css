@@ -230,6 +230,122 @@ button {
   margin-top: 1rem;
 }
 
+.factory-home {
+  display: grid;
+  gap: 1.25rem;
+  background:
+    radial-gradient(circle at top right, rgba(154, 91, 44, 0.12), transparent 26%),
+    linear-gradient(180deg, rgba(255, 251, 243, 0.96), rgba(244, 233, 215, 0.92));
+}
+
+.factory-home__hero,
+.factory-home__recent-header {
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+}
+
+.factory-home__hint,
+.factory-home__recent-copy,
+.factory-home__action-card p,
+.factory-home__action-note,
+.factory-home__recent-meta {
+  color: var(--ink-muted);
+}
+
+.factory-home__hint {
+  max-width: 24rem;
+  margin: 0;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 250, 240, 0.72);
+  font-size: 0.95rem;
+}
+
+.factory-home__actions,
+.factory-home__recent-list {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.factory-home__action-card,
+.factory-home__recent {
+  padding: 1.2rem;
+  border-radius: 24px;
+  border: 1px solid var(--line);
+  background: rgba(255, 250, 240, 0.78);
+}
+
+.factory-home__action-card--muted {
+  background: rgba(247, 240, 228, 0.92);
+}
+
+.factory-home__action-card h3,
+.factory-home__recent h3 {
+  margin: 0.2rem 0 0.45rem;
+}
+
+.factory-home__action-kicker,
+.factory-home__secondary-label,
+.factory-home__recent-action {
+  font-family: "Avenir Next", "Helvetica Neue", sans-serif;
+}
+
+.factory-home__action-kicker,
+.factory-home__secondary-label {
+  margin: 0;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-size: 0.74rem;
+  color: var(--ink-muted);
+}
+
+.factory-home__action-button,
+.factory-home__recent-card {
+  width: 100%;
+  margin-top: 0.75rem;
+  border-radius: 18px;
+}
+
+.factory-home__action-button {
+  padding: 0.95rem 1rem;
+  border: 1px solid rgba(154, 91, 44, 0.24);
+  background: linear-gradient(135deg, rgba(154, 91, 44, 0.14), rgba(154, 91, 44, 0.06));
+  color: var(--ink);
+}
+
+.factory-home__recent {
+  display: grid;
+  gap: 1rem;
+}
+
+.factory-home__recent-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  background: var(--paper-strong);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.factory-home__recent-title {
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.factory-home__recent-action {
+  margin-top: 0.2rem;
+  font-size: 0.82rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
 .books-dashboard__grid {
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
 }
