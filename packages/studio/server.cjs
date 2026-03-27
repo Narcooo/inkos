@@ -1734,8 +1734,12 @@ async function handleApi(req, res, url) {
         res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
       };
       extractStage = (text) => {
-        for (const stage of extractProgressStages(text)) {
-          sendEvent("progress", { stage });
+        const stages = extractProgressStages(text);
+        if (stages.length) {
+          for (const stage of stages) sendEvent("progress", { stage });
+        } else {
+          const trimmed = text.trim();
+          if (trimmed) sendEvent("log", { text: trimmed });
         }
       };
     }

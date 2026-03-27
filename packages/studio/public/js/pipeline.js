@@ -2,7 +2,7 @@
 import { state } from "./state.js";
 import { $, escapeHtml, showToast, streamSSE, setStatus } from "./utils.js";
 import { setView } from "./views.js";
-import { buildSidebarTree, renderSidebarForView } from "./sidebar.js";
+import { buildSidebarTree } from "./sidebar.js";
 import { renderDashboard } from "./dashboard.js";
 
 // ── Stage keyword mapping ──
@@ -10,18 +10,19 @@ import { renderDashboard } from "./dashboard.js";
 const STAGE_MAP = [
   { id: "config",     keywords: ["保存书籍配置", "saving book config", "persisting project"] },
   { id: "architect",  keywords: ["基础设定", "foundation", "architect", "生成基础"] },
-  { id: "control",    keywords: ["控制文档", "control doc"] },
-  { id: "snapshot",   keywords: ["快照", "snapshot"] },
-  { id: "planner",    keywords: ["规划", "planner", "plan"] },
-  { id: "composer",   keywords: ["组装", "composer", "compose", "context"] },
-  { id: "writer",     keywords: ["撰写", "写作", "writer", "执笔", "创作正文"] },
-  { id: "settler",    keywords: ["结算", "settler", "观察", "observer", "回写", "真相文件"] },
-  { id: "normalizer", keywords: ["归一化", "normaliz", "字数"] },
+  { id: "control",    keywords: ["控制文档", "control doc", "初始化控制"] },
+  { id: "snapshot",   keywords: ["快照", "snapshot", "初始快照"] },
+  { id: "planner",    keywords: ["规划", "planner", "plan", "章节意图"] },
+  { id: "composer",   keywords: ["组装", "composer", "compose", "运行时上下文"] },
+  { id: "input",      keywords: ["准备章节输入", "prepare"] },
+  { id: "writer",     keywords: ["撰写", "写作", "writer", "执笔", "创作正文", "章节草稿"] },
+  { id: "settler",    keywords: ["结算", "settler", "观察", "observer", "回写", "真相文件", "提取"] },
+  { id: "normalizer", keywords: ["归一化", "normaliz", "字数归一化"] },
   { id: "auditor",    keywords: ["审计", "audit"] },
   { id: "reviser",    keywords: ["修订", "修复", "revis", "spot-fix", "自动修复"] },
-  { id: "validator",  keywords: ["校验", "validat"] },
-  { id: "memory",     keywords: ["记忆", "memory", "索引"] },
-  { id: "persist",    keywords: ["落盘", "persist", "章节索引"] },
+  { id: "validator",  keywords: ["校验", "validat", "状态校验"] },
+  { id: "memory",     keywords: ["记忆", "memory", "索引", "同步记忆"] },
+  { id: "persist",    keywords: ["落盘", "persist", "章节索引", "更新章节"] },
 ];
 
 function matchStage(text) {
@@ -54,24 +55,37 @@ function addStageCard(id, label) {
   const card = document.createElement("div");
   card.className = "stage-card pending";
   card.id = `stage-${id}`;
-  card.innerHTML = `<span class="stage-dot"></span><span class="stage-label">${escapeHtml(label)}</span><span class="stage-detail"></span>`;
+  card.innerHTML = `
+    <span class="stage-dot"></span>
+    <span class="stage-label">${escapeHtml(label)}</span>
+    <span class="stage-detail"></span>
+    <div class="stage-log"></div>`;
   s.appendChild(card);
 }
 
-function updateStage(id, status, detail) {
-  const card = $(`stage-${id}`);
+function activateStage(stageId, detail) {
+  stagesEl()?.querySelectorAll(".stage-card.active").forEach((c) => {
+    c.className = "stage-card done";
+  });
+  const card = $(`stage-${stageId}`);
   if (!card) return;
-  card.className = `stage-card ${status}`;
+  card.className = "stage-card active";
   const detailEl = card.querySelector(".stage-detail");
   if (detailEl && detail) detailEl.textContent = detail;
 }
 
-function activateStage(stageId, detail) {
-  // Set all "active" cards back to "done"
-  stagesEl()?.querySelectorAll(".stage-card.active").forEach((c) => {
-    c.className = "stage-card done";
-  });
-  updateStage(stageId, "active", detail || "");
+function appendStageLog(stageId, text) {
+  const card = $(`stage-${stageId}`) || stagesEl()?.querySelector(".stage-card.active");
+  if (!card) return;
+  const log = card.querySelector(".stage-log");
+  if (!log) return;
+  const line = document.createElement("div");
+  line.className = "stage-log-line";
+  line.textContent = text.length > 150 ? text.slice(0, 150) + "..." : text;
+  log.appendChild(line);
+  // Keep only last 8 lines
+  while (log.children.length > 8) log.removeChild(log.firstChild);
+  log.style.display = "";
 }
 
 function appendLive(text) {
@@ -82,7 +96,13 @@ function appendLive(text) {
   l.scrollTop = l.scrollHeight;
 }
 
-// ── Global pipeline state (survives view switches, not page reloads) ──
+function finishAllStages() {
+  stagesEl()?.querySelectorAll(".stage-card.active").forEach((c) => {
+    c.className = "stage-card done";
+  });
+}
+
+// ── Global pipeline state ──
 
 let pipelineRunning = false;
 
@@ -99,16 +119,51 @@ export function isPipelineRunning() {
   return pipelineRunning;
 }
 
+// ── Shared progress handler ──
+
+function handleProgress(stage) {
+  setStatus(stage);
+  if (statusEl()) statusEl().textContent = stage;
+
+  // Warning/detail lines go into the current stage's log
+  if (stage.startsWith("⚠") || stage.startsWith("  ")) {
+    const activeCard = stagesEl()?.querySelector(".stage-card.active");
+    if (activeCard) {
+      appendStageLog(activeCard.id?.replace("stage-", ""), stage);
+    }
+    return;
+  }
+
+  // Streaming telemetry updates the current stage detail
+  if (stage.startsWith("流式生成中")) {
+    const activeCard = stagesEl()?.querySelector(".stage-card.active");
+    if (activeCard) {
+      const detailEl = activeCard.querySelector(".stage-detail");
+      if (detailEl) detailEl.textContent = stage;
+    }
+    return;
+  }
+
+  const id = matchStage(stage);
+  if (id) activateStage(id, stage);
+}
+
+function handleLog(text) {
+  if (statusEl()) statusEl().textContent = text;
+  const activeCard = stagesEl()?.querySelector(".stage-card.active");
+  if (activeCard) {
+    appendStageLog(activeCard.id?.replace("stage-", ""), text);
+  }
+}
+
 // ── Pipeline runners ──
 
 export function initPipeline() {
-  // Back button
   $("pipeline-back")?.addEventListener("click", () => {
     setView("dashboard");
     renderDashboard();
   });
 
-  // Topbar status light — click to jump to pipeline when running
   $("pipeline-jump")?.addEventListener("click", () => {
     if (pipelineRunning) {
       setView("pipeline");
@@ -117,7 +172,6 @@ export function initPipeline() {
     }
   });
 
-  // Start write button
   $("pipeline-start")?.addEventListener("click", () => {
     const bookId = $("pipeline-book")?.value;
     if (!bookId) { showToast("请先选择书籍", "error"); return; }
@@ -132,7 +186,6 @@ export function openWritePipeline(bookId) {
   if (titleEl()) titleEl().textContent = "写作实况";
   clearPipeline();
 
-  // Populate book selector
   const select = $("pipeline-book");
   if (select) {
     select.innerHTML = state.books
@@ -144,7 +197,6 @@ export function openWritePipeline(bookId) {
       .join("");
   }
 
-  // Show form
   const f = formEl();
   if (f) f.style.display = "";
 }
@@ -152,24 +204,28 @@ export function openWritePipeline(bookId) {
 export async function openCreatePipeline(formData, loadBooks) {
   setView("pipeline");
   const title = formData.title || "新书";
-  if (titleEl()) titleEl().textContent = `创建: ${title}`;
+  if (titleEl()) titleEl().textContent = `创建新书: ${title}`;
   clearPipeline();
 
-  // Hide write form
   const f = formEl();
   if (f) f.style.display = "none";
 
-  // Add stage cards
   addStageCard("config", "保存书籍配置");
   addStageCard("architect", "Architect 生成基础设定");
   addStageCard("control", "初始化控制文档");
   addStageCard("snapshot", "创建初始快照");
 
   if (formData.writeFirstChapter) {
+    addStageCard("input", "准备章节输入");
     addStageCard("planner", "Planner 规划章节意图");
+    addStageCard("composer", "Composer 组装上下文");
     addStageCard("writer", "Writer 执笔创作");
     addStageCard("settler", "Settler 状态结算");
+    addStageCard("normalizer", "Normalizer 字数归一化");
     addStageCard("auditor", "Auditor 审计");
+    addStageCard("reviser", "Reviser 修订");
+    addStageCard("validator", "Validator 校验真相文件");
+    addStageCard("memory", "同步记忆索引");
     addStageCard("persist", "落盘章节");
   }
 
@@ -178,21 +234,12 @@ export async function openCreatePipeline(formData, loadBooks) {
 
   try {
     const res = await streamSSE("/api/book", formData, {
-      onProgress(stage) {
-        setStatus(stage);
-        if (statusEl()) statusEl().textContent = stage;
-        const id = matchStage(stage);
-        if (id) activateStage(id, stage);
-      },
-      onContent(text) {
-        appendLive(text);
-      },
+      onProgress: handleProgress,
+      onContent: appendLive,
+      onLog: handleLog,
     });
 
-    // Mark all remaining active as done
-    stagesEl()?.querySelectorAll(".stage-card.active").forEach((c) => {
-      c.className = "stage-card done";
-    });
+    finishAllStages();
 
     if (res.ok === false) {
       if (statusEl()) statusEl().textContent = "创建失败";
@@ -201,7 +248,7 @@ export async function openCreatePipeline(formData, loadBooks) {
     }
 
     const bookId = res.data?.bookId || title;
-    if (statusEl()) statusEl().textContent = "创建完成";
+    if (statusEl()) statusEl().textContent = `✓ 创建完成: ${bookId}`;
     showToast(`书籍已创建: ${bookId}`);
     if (loadBooks) await loadBooks();
   } catch (err) {
@@ -213,13 +260,14 @@ export async function openCreatePipeline(formData, loadBooks) {
 }
 
 async function runWritePipeline(bookId, { count = 1, context = "" } = {}) {
-  // Hide form, show stages
   const f = formEl();
   if (f) f.style.display = "none";
 
-  if (titleEl()) titleEl().textContent = `写作: ${state.books.find((b) => (b.id || b) === bookId)?.title || bookId}`;
+  const bookTitle = state.books.find((b) => (b.id || b) === bookId)?.title || bookId;
+  if (titleEl()) titleEl().textContent = `写作: ${bookTitle}`;
   clearPipeline();
 
+  addStageCard("input", "准备章节输入");
   addStageCard("planner", "Planner 规划章节意图");
   addStageCard("composer", "Composer 组装上下文");
   addStageCard("writer", "Writer 执笔创作");
@@ -239,24 +287,12 @@ async function runWritePipeline(bookId, { count = 1, context = "" } = {}) {
 
   try {
     const res = await streamSSE("/api/write-next", body, {
-      onProgress(stage) {
-        setStatus(stage);
-        if (statusEl()) statusEl().textContent = stage;
-        const id = matchStage(stage);
-        if (id) activateStage(id, stage);
-      },
-      onContent(text) {
-        appendLive(text);
-      },
-      onLog(text) {
-        // Show raw log lines as stage detail
-        if (statusEl()) statusEl().textContent = text;
-      },
+      onProgress: handleProgress,
+      onContent: appendLive,
+      onLog: handleLog,
     });
 
-    stagesEl()?.querySelectorAll(".stage-card.active").forEach((c) => {
-      c.className = "stage-card done";
-    });
+    finishAllStages();
 
     if (res.ok === false) {
       if (statusEl()) statusEl().textContent = "写作失败";
@@ -264,7 +300,7 @@ async function runWritePipeline(bookId, { count = 1, context = "" } = {}) {
       return;
     }
 
-    if (statusEl()) statusEl().textContent = "写作完成";
+    if (statusEl()) statusEl().textContent = "✓ 写作完成";
     showToast("写作完成");
 
     if (state.activeBookId) await buildSidebarTree(state.activeBookId);

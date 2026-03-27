@@ -2044,9 +2044,10 @@ body {
   gap: 2px;
 }
 .stage-card {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
   align-items: center;
-  gap: 10px;
+  gap: 4px 10px;
   padding: 8px 14px;
   font-size: 13px;
   border-radius: var(--radius-sm);
@@ -2079,6 +2080,20 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.stage-log {
+  display: none;
+  grid-column: 1 / -1;
+  padding: 4px 0 4px 22px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+.stage-log-line {
+  opacity: 0.7;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 @keyframes stage-pulse {
   0%, 100% { box-shadow: 0 0 0 3px var(--accent-soft); }
