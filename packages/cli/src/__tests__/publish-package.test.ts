@@ -26,6 +26,16 @@ function runNpm(args: string[], cwd: string) {
   });
 }
 
+function getTarExtractArgs(archivePath: string) {
+  const baseArgs = ["-xOf", archivePath, "package/package.json"];
+  try {
+    const help = execFileSync("tar", ["--help"], { encoding: "utf-8" });
+    return help.includes("--force-local") ? ["--force-local", ...baseArgs] : baseArgs;
+  } catch {
+    return baseArgs;
+  }
+}
+
 async function extractPackedPackageJson(packDir: string) {
   runNpm(["pack", "--pack-destination", packDir], cliDir);
 
@@ -34,7 +44,7 @@ async function extractPackedPackageJson(packDir: string) {
     throw new Error(`Expected exactly one tarball in ${packDir}, found ${tgzFiles.length}`);
   }
 
-  return execFileSync("tar", ["--force-local", "-xOf", join(packDir, tgzFiles[0]), "package/package.json"], {
+  return execFileSync("tar", getTarExtractArgs(join(packDir, tgzFiles[0])), {
     cwd: workspaceRoot,
     encoding: "utf-8",
   });

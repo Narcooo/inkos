@@ -7,6 +7,7 @@ const path = require("node:path");
 const { randomUUID } = require("node:crypto");
 const { pathToFileURL } = require("node:url");
 const { resolveCliPath, resolveCorePath } = require("./server-runtime.cjs");
+const { extractProgressStages } = require("./server-progress.cjs");
 const {
   buildImportRegex,
   createUploadResponse,
@@ -163,7 +164,7 @@ function resolveNodeBin() {
   return process.execPath;
 }
 
-async function runInkOS(args) {
+async function runInkOS(args, { onStderr } = {}) {
   if (!cliPath) {
     return {
       code: 1,
@@ -186,7 +187,9 @@ async function runInkOS(args) {
       stdout += chunk.toString();
     });
     child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
+      const text = chunk.toString();
+      stderr += text;
+      if (onStderr) onStderr(text);
     });
     child.on("close", (code) => {
       resolve({ code: code ?? 0, stdout: stdout.trim(), stderr: stderr.trim() });
@@ -1044,7 +1047,7 @@ async function handleApi(req, res, url) {
     const bookId = url.searchParams.get("bookId");
     if (!bookId) return sendJson(res, 400, { ok: false, error: "bookId is required" });
 
-    const indexPath = resolveBookPath(bookId, "index.json");
+    const indexPath = resolveBookPath(bookId, "chapters", "index.json");
     if (!indexPath) return sendJson(res, 400, { ok: false, error: "Invalid bookId" });
 
     try {
@@ -1699,25 +1702,47 @@ async function handleApi(req, res, url) {
       args.push("--brief", briefFile);
     }
 
-    const createResult = await runInkOS(args);
+    const wantSSE = (req.headers.accept ?? "").includes("text/event-stream");
+
+    // SSE path: stream progress from CLI stderr to the client
+    let sendEvent, extractStage;
+    if (wantSSE) {
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      });
+      sendEvent = (event, data) => {
+        res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      };
+      extractStage = (text) => {
+        for (const stage of extractProgressStages(text)) {
+          sendEvent("progress", { stage });
+        }
+      };
+    }
+
+    const createResult = await runInkOS(args, wantSSE ? { onStderr: extractStage } : {});
     const createResponse = buildCommandResponse(createResult);
     if (!createResponse.ok) {
+      if (wantSSE) { sendEvent("done", createResponse); return res.end(); }
       return sendJson(res, 200, createResponse);
     }
 
     const writeFirstChapter = Boolean(body.writeFirstChapter);
     if (!writeFirstChapter) {
+      if (wantSSE) { sendEvent("done", createResponse); return res.end(); }
       return sendJson(res, 200, createResponse);
     }
 
     const bookId = createResponse.data?.bookId;
     if (!bookId) {
-      return sendJson(res, 200, {
-        ok: false,
-        error: "Book created but no bookId was returned.",
-        create: createResponse,
-      });
+      const errResp = { ok: false, error: "Book created but no bookId was returned.", create: createResponse };
+      if (wantSSE) { sendEvent("done", errResp); return res.end(); }
+      return sendJson(res, 200, errResp);
     }
+
+    if (wantSSE) sendEvent("progress", { stage: "书籍创建完成，开始写第 1 章..." });
 
     const writeArgs = ["write", "next", bookId, "--count", "1", "--json"];
     const firstChapterWords = String(body.firstChapterWords ?? "").trim();
@@ -1729,17 +1754,16 @@ async function handleApi(req, res, url) {
       writeArgs.push("--context", firstChapterContext);
     }
 
-    const writeResult = await runInkOS(writeArgs);
+    const writeResult = await runInkOS(writeArgs, wantSSE ? { onStderr: extractStage } : {});
     const writeResponse = buildCommandResponse(writeResult);
-    return sendJson(res, 200, {
+    const finalResp = {
       ok: writeResponse.ok,
-      data: {
-        ...createResponse.data,
-        firstChapter: writeResponse.data,
-      },
+      data: { ...createResponse.data, firstChapter: writeResponse.data },
       create: createResponse,
       write: writeResponse,
-    });
+    };
+    if (wantSSE) { sendEvent("done", finalResp); return res.end(); }
+    return sendJson(res, 200, finalResp);
   }
 
   if (url.pathname === "/api/write-next" && req.method === "POST") {
@@ -1932,7 +1956,12 @@ const server = http.createServer(async (req, res) => {
     try {
       await handleApi(req, res, url);
     } catch (error) {
-      sendJson(res, 500, { ok: false, error: String(error) });
+      if (!res.headersSent) {
+        sendJson(res, 500, { ok: false, error: String(error) });
+      } else {
+        // SSE or streaming response already started — best effort close
+        try { res.end(); } catch {}
+      }
     }
     return;
   }

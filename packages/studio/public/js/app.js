@@ -84,11 +84,7 @@ function onBookChange() {
   state.activeBookId = bookId;
   state.chatContext.bookId = bookId;
   setEditorTabEnabled(!!bookId);
-  if (bookId) {
-    renderSidebarForView(state.currentView);
-  } else {
-    renderSidebarForView(state.currentView);
-  }
+  renderSidebarForView(state.currentView);
 }
 
 // ── Topbar Nav Tab Switching ──

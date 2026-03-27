@@ -24,10 +24,13 @@ export function openEditor(bookId) {
   const book = state.books.find(b => (b.id || b) === bookId);
   $("editor-book-title").textContent = book?.title || bookId;
 
-  // Load trees
-  loadChapterTree(bookId);
-  loadWorldTree(bookId);
-  loadOutlineTree(bookId);
+  // Load legacy editor-left trees only in modern mode (ink hides .editor-left)
+  const style = document.documentElement.getAttribute("data-style") || "ink";
+  if (style !== "ink") {
+    loadChapterTree(bookId);
+    loadWorldTree(bookId);
+    loadOutlineTree(bookId);
+  }
 
   // Reset editor
   $("editor-textarea").value = "";

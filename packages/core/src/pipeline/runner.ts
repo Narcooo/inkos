@@ -1655,8 +1655,14 @@ ${matrix}`,
       chapterTitle: output.title,
     });
 
+    // Preserve the caller's finalContent — ChapterAnalyzer may regenerate
+    // content in its CHAPTER_CONTENT tag, but we must keep the version that
+    // has already been through normalization and revision.
+    const countingMode = resolveLengthCountingMode(book.language);
     return {
       ...analyzed,
+      content: finalContent,
+      wordCount: countChapterLength(finalContent, countingMode),
       postWriteErrors: [],
       postWriteWarnings: [],
       hookHealthIssues: output.hookHealthIssues,

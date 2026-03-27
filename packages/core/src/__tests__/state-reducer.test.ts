@@ -245,9 +245,8 @@ describe("applyRuntimeStateDelta", () => {
     ]);
   });
 
-  it("rejects duplicate restated hook families when a new hook upsert overlaps an active hook", () => {
-    expect(() =>
-      applyRuntimeStateDelta({
+  it("silently skips duplicate restated hook families when a new hook upsert overlaps an active hook", () => {
+    const result = applyRuntimeStateDelta({
         snapshot: {
           manifest: {
             schemaVersion: 2,
@@ -297,7 +296,12 @@ describe("applyRuntimeStateDelta", () => {
           },
           notes: [],
         }),
-      }),
-    ).toThrow(/duplicate active hook/i);
+      });
+
+    // Duplicate-family hooks are now silently skipped instead of throwing,
+    // so the restated hook should NOT appear in the result.
+    const hooks = result.hooks.hooks;
+    expect(hooks.find((h) => h.hookId === "anonymous-source-restated")).toBeUndefined();
+    expect(hooks.find((h) => h.hookId === "anonymous-source-scope")).toBeDefined();
   });
 });

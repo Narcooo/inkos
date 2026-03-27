@@ -88,7 +88,11 @@ function applyHookOps(hooksState: HooksState, delta: RuntimeStateDelta): HooksSt
       });
 
       if (!admission.admit && admission.reason === "duplicate_family") {
-        throw new Error(`duplicate active hook family: ${hook.hookId} overlaps ${admission.matchedHookId}`);
+        // Skip duplicate-family hooks instead of crashing — the LLM often
+        // generates multiple semantically similar hooks in early chapters.
+        // eslint-disable-next-line no-console
+        console.warn(`[state-reducer] Skipping duplicate hook family: ${hook.hookId} overlaps ${admission.matchedHookId}`);
+        continue;
       }
     }
 
