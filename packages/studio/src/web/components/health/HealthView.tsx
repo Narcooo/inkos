@@ -14,7 +14,8 @@ export function HealthView({ health }: HealthViewProps) {
       <div className="panel__header">
         <div>
           <p className="panel__kicker">Health</p>
-          <h2>Project readiness</h2>
+          <h2>Diagnostics snapshot</h2>
+          <p className="panel__copy">Reference-only diagnostics for this local Studio session.</p>
         </div>
         <span className="status-pill status-pill--ok">{health.status}</span>
       </div>

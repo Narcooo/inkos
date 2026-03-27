@@ -362,7 +362,7 @@ inkos agent "Create a progression fantasy about a mage who can only use one spel
 
 ## InkOS Studio (Preview)
 
-InkOS Studio is the local web workbench for reviewing and editing books. The CLI entrypoint stays the same:
+InkOS Studio is a local web workbench built for the active writing flow first. The shelf stays available as a secondary surface for switching books, checking progress, and managing multiple manuscripts. The CLI entrypoint stays the same:
 
 ```bash
 inkos studio
@@ -383,10 +383,12 @@ Manual package layout: if you wire the private `@actalk/inkos-studio` package in
 
 ### What v1 supports
 
+- Writer-first workspace: the main Studio flow stays centered on the live manuscript, chapter review, and revision work.
+- Shelf/library view: a secondary management surface for switching books, checking multi-book progress, and reopening a workspace.
 - Local-only launcher and API; Studio is meant for `localhost`, not remote multi-user hosting.
 - Chapter workspace with read/review flow, explicit chapter saves, and review approve/reject actions.
 - Truth files viewer for fast inspection of story memory.
-- Run console with `draft`, `audit`, `revise`, and `write next` actions plus streaming logs/results.
+- Run console and diagnostics: `draft`, `audit`, `revise`, and `write next` actions with streaming logs/results, while the health page remains a secondary diagnostics surface rather than the main work area.
 
 ### Current limitations
 

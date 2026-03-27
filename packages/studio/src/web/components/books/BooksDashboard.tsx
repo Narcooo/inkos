@@ -11,9 +11,12 @@ export function BooksDashboard({ books, onOpenBook }: BooksDashboardProps) {
       <div className="panel__header">
         <div>
           <p className="panel__kicker">Books</p>
-          <h2>Studio shelf</h2>
+          <h2>Library shelf</h2>
         </div>
-        <p className="panel__copy">Choose a project to review chapters, truth files, and workflow status.</p>
+        <p className="panel__copy">
+          Use the shelf to switch books, review progress, and reopen a workspace when you need broader project
+          management.
+        </p>
       </div>
       <div className="books-dashboard__grid">
         {books.map((book) => (

@@ -114,4 +114,14 @@ describe("useRunStream", () => {
     expect(result.current.run?.result).toEqual({ summary: "Revision complete." });
     expect(source?.closed).toBe(true);
   });
+
+  it("does not create a stream when there is no active run", () => {
+    vi.stubGlobal("EventSource", MockEventSource);
+
+    const { result } = renderHook(() => useRunStream(null));
+
+    expect(MockEventSource.instances).toHaveLength(0);
+    expect(result.current.run).toBeNull();
+    expect(result.current.streamError).toBeNull();
+  });
 });

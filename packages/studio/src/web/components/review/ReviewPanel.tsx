@@ -1,15 +1,30 @@
 import { useEffect, useState } from "react";
 import type { ChapterDetail, ChapterSummary } from "../../../shared/contracts";
+import { formatLengthMetric, type LengthLanguage } from "../../utils/length-metrics";
 
 interface ReviewPanelProps {
   readonly selectedChapter: ChapterSummary | null;
   readonly chapter: ChapterDetail | null;
   readonly submitting: boolean;
+  readonly language?: LengthLanguage;
+  readonly compact?: boolean;
+  readonly showWriteNextPath?: boolean;
+  readonly onOpenRuns?: () => void;
   readonly onApprove: () => Promise<void>;
   readonly onReject: (reason?: string) => Promise<void>;
 }
 
-export function ReviewPanel({ selectedChapter, chapter, submitting, onApprove, onReject }: ReviewPanelProps) {
+export function ReviewPanel({
+  selectedChapter,
+  chapter,
+  submitting,
+  language = "zh",
+  compact = false,
+  showWriteNextPath = false,
+  onOpenRuns,
+  onApprove,
+  onReject,
+}: ReviewPanelProps) {
   const [reason, setReason] = useState(chapter?.reviewNote ?? "");
 
   useEffect(() => {
@@ -20,15 +35,16 @@ export function ReviewPanel({ selectedChapter, chapter, submitting, onApprove, o
     <section className="panel review-panel">
       <div className="panel__header">
         <div>
-          <p className="panel__kicker">Review</p>
-          <h3>{selectedChapter ? `Chapter ${selectedChapter.number}` : "No chapter selected"}</h3>
+          <p className="panel__kicker">Support section</p>
+          <h3>Review</h3>
+          <p className="panel__copy">{selectedChapter ? `Chapter ${selectedChapter.number} audit and approval.` : "No chapter selected for review."}</p>
         </div>
         {selectedChapter ? <span className={`status-pill status-pill--${selectedChapter.status}`}>{selectedChapter.status}</span> : null}
       </div>
       {chapter ? (
         <>
           <div className="review-panel__meta">
-            <span>{chapter.wordCount} words</span>
+            <span>{formatLengthMetric(chapter.wordCount, language)}</span>
             <span>{chapter.auditIssueCount} audit issues</span>
           </div>
           <div className="review-panel__issues">
@@ -51,7 +67,7 @@ export function ReviewPanel({ selectedChapter, chapter, submitting, onApprove, o
                 aria-label="Review note"
                 value={reason}
                 onChange={(event) => setReason(event.target.value)}
-                rows={4}
+                rows={compact ? 3 : 4}
               />
             </label>
             <div>
@@ -63,10 +79,17 @@ export function ReviewPanel({ selectedChapter, chapter, submitting, onApprove, o
               </button>
             </div>
           </div>
-          <pre className="review-panel__content">{chapter.content}</pre>
+          {compact ? null : <pre className="review-panel__content">{chapter.content}</pre>}
         </>
       ) : (
-        <div className="empty-state">Open a chapter to inspect its review copy.</div>
+        <div className="empty-state">
+          <p>{showWriteNextPath ? "No chapter yet. Open Runs to use Write next, then come back here for review." : "Open a chapter to inspect its review copy."}</p>
+          {showWriteNextPath && onOpenRuns ? (
+            <button type="button" onClick={onOpenRuns}>
+              Open runs
+            </button>
+          ) : null}
+        </div>
       )}
     </section>
   );
