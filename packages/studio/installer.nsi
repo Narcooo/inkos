@@ -47,6 +47,9 @@ Section "Install"
   ; Core files
   File "dist\${PRODUCT_EXE}"
 
+  ; Core CJS bundle (for in-process chat/LLM features)
+  File "dist\core-bundle.cjs"
+
   ; Bundled Node.js runtime (for spawning CLI subprocesses)
   File "dist\node.exe"
 
@@ -99,6 +102,7 @@ Section "Uninstall"
   ; Remove installed files (NOT user data in ~/.inkos/)
   RMDir /r "$INSTDIR\public"
   RMDir /r "$INSTDIR\cli"
+  Delete   "$INSTDIR\core-bundle.cjs"
   Delete   "$INSTDIR\node.exe"
   Delete   "$INSTDIR\${PRODUCT_EXE}"
   Delete   "$INSTDIR\uninstall.exe"

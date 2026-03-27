@@ -70,7 +70,31 @@ try {
   console.error("  npm install failed:", String(err.stderr || err).slice(0, 300));
 }
 
-// 5. Node.js runtime (copy system node.exe — pkg's cached binary doesn't support CLI flags)
+// 5. Bundle core as CJS for pkg (pkg Node 18 can't dynamic-import ESM)
+const coreBundleDest = path.join(distDir, "core-bundle.cjs");
+console.log("  Bundling core as CJS for pkg...");
+try {
+  // Write a shim that polyfills import.meta.url before the bundle
+  const shimPath = path.join(distDir, "_core-shim.cjs");
+  fs.writeFileSync(shimPath, [
+    `const {pathToFileURL}=require("node:url");`,
+    `const {createRequire:_cr}=require("node:module");`,
+    `const _url=pathToFileURL(__filename).href;`,
+    // Patch globalThis so the bundled code's import.meta references resolve
+    `if(!globalThis.__import_meta_url)globalThis.__import_meta_url=_url;`,
+  ].join("\n"));
+  execSync(
+    `npx esbuild ${path.join(repoRoot, "packages", "core", "dist", "index.js")} --bundle --platform=node --format=cjs --outfile=${coreBundleDest} --external:node:* --inject:${shimPath} --define:import.meta.url=globalThis.__import_meta_url`,
+    { cwd: repoRoot, stdio: "pipe" },
+  );
+  // Clean up shim
+  fs.unlinkSync(shimPath);
+  console.log("  core-bundle.cjs OK");
+} catch (err) {
+  console.error("  esbuild failed:", String(err.stderr || err).slice(0, 300));
+}
+
+// 6. Node.js runtime (copy system node.exe — pkg's cached binary doesn't support CLI flags)
 const nodeExeDest = path.join(distDir, "node.exe");
 if (!fs.existsSync(nodeExeDest)) {
   const systemNode = process.execPath;

@@ -420,11 +420,23 @@ async function deleteKnowledge(id) {
 
 async function getCoreModule() {
   if (!coreModulePromise) {
-    if (!corePath) {
-      throw new Error("InkOS core not found. Install @actalk/inkos-core or run from the repo root with packages/core built.");
+    if (process.pkg) {
+      // pkg Node 18 can't dynamic-import ESM — use CJS bundle
+      const bundlePath = path.join(path.dirname(process.execPath), "core-bundle.cjs");
+      if (existsSync(bundlePath)) {
+        coreModulePromise = Promise.resolve(require(bundlePath));
+      } else if (corePath) {
+        // Fallback: try dynamic import (works on newer pkg/Node versions)
+        coreModulePromise = import(pathToFileURL(corePath).href);
+      } else {
+        throw new Error("InkOS core not found. Install @actalk/inkos-core or run from the repo root with packages/core built.");
+      }
+    } else {
+      if (!corePath) {
+        throw new Error("InkOS core not found. Install @actalk/inkos-core or run from the repo root with packages/core built.");
+      }
+      coreModulePromise = import(pathToFileURL(corePath).href);
     }
-    const coreEntry = pathToFileURL(corePath).href;
-    coreModulePromise = import(coreEntry);
   }
   return coreModulePromise;
 }
