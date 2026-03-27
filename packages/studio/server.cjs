@@ -141,36 +141,41 @@ async function readBody(req) {
 }
 
 function resolveNodeBin() {
-  if (process.pkg) {
-    if (process.env.INKOS_NODE_PATH) {
-      return process.env.INKOS_NODE_PATH;
-    }
-    // Look for node.exe bundled next to the exe
-    const bundledNode = path.join(path.dirname(process.execPath), "node.exe");
-    if (existsSync(bundledNode)) {
-      return bundledNode;
-    }
-    try {
-      if (process.platform === "win32") {
-        const output = execFileSync("where", ["node"], { encoding: "utf-8" });
-        const match = output
-          .split(/\r?\n/)
-          .map((line) => line.trim())
-          .find((line) => line.toLowerCase().endsWith("node.exe"));
-        if (match) return match;
-      } else {
-        const output = execFileSync("which", ["node"], { encoding: "utf-8" }).trim();
-        if (output) return output;
-      }
-    } catch {
-      // fall through
-    }
-    return "node";
+  if (process.env.INKOS_NODE_PATH) {
+    return process.env.INKOS_NODE_PATH;
   }
-  return process.execPath;
+
+  // In non-pkg mode, always use the current Node.js
+  if (!process.pkg) {
+    return process.execPath;
+  }
+
+  // In pkg mode: prefer system node (handles UTF-8 args correctly),
+  // fall back to bundled node.exe
+  try {
+    if (process.platform === "win32") {
+      const output = execFileSync("where", ["node"], { encoding: "utf-8" });
+      const match = output
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .find((line) => line.toLowerCase().endsWith("node.exe"));
+      if (match) return match;
+    } else {
+      const output = execFileSync("which", ["node"], { encoding: "utf-8" }).trim();
+      if (output) return output;
+    }
+  } catch {
+    // fall through
+  }
+
+  const bundledNode = path.join(path.dirname(process.execPath), "node.exe");
+  if (existsSync(bundledNode)) {
+    return bundledNode;
+  }
+  return "node";
 }
 
-async function runInkOS(args, { onStderr } = {}) {
+async function runInkOS(args, { onStderr, onStdout } = {}) {
   if (!cliPath) {
     return {
       code: 1,
@@ -190,7 +195,9 @@ async function runInkOS(args, { onStderr } = {}) {
     let stderr = "";
 
     child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString();
+      const text = chunk.toString();
+      stdout += text;
+      if (onStdout) onStdout(text);
     });
     child.stderr.on("data", (chunk) => {
       const text = chunk.toString();
@@ -1813,51 +1820,22 @@ async function handleApi(req, res, url) {
       try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch {}
     };
 
-    const onStderr = (text) => {
-      const stages = extractProgressStages(text);
-      if (stages.length) {
-        for (const stage of stages) sendEvent("progress", { stage });
-      } else {
-        const trimmed = text.trim();
-        if (trimmed) sendEvent("log", { text: trimmed });
-      }
-    };
-
-    // Stream stdout content tokens in real time
-    if (!cliPath) {
-      sendEvent("done", { ok: false, error: "CLI not found" });
-      return res.end();
-    }
-
-    const nodeBin = resolveNodeBin();
-    const child = spawn(nodeBin, [cliPath, ...args], {
-      cwd: projectRoot,
-      env: { ...process.env, ...proxyEnv },
+    const result = await runInkOS(args, {
+      onStderr(text) {
+        const stages = extractProgressStages(text);
+        if (stages.length) {
+          for (const stage of stages) sendEvent("progress", { stage });
+        } else {
+          const trimmed = text.trim();
+          if (trimmed) sendEvent("log", { text: trimmed });
+        }
+      },
+      onStdout(text) {
+        sendEvent("content", { text });
+      },
     });
-
-    let stdout = "";
-    let stderr = "";
-
-    child.stdout.on("data", (chunk) => {
-      const text = chunk.toString();
-      stdout += text;
-      // Forward raw content tokens to the client for live preview
-      sendEvent("content", { text });
-    });
-    child.stderr.on("data", (chunk) => {
-      const text = chunk.toString();
-      stderr += text;
-      onStderr(text);
-    });
-    child.on("close", (code) => {
-      const result = { code: code ?? 0, stdout: stdout.trim(), stderr: stderr.trim() };
-      sendEvent("done", buildCommandResponse(result));
-      res.end();
-    });
-    child.on("error", (error) => {
-      sendEvent("done", { ok: false, error: String(error) });
-      res.end();
-    });
+    sendEvent("done", buildCommandResponse(result));
+    res.end();
     return;
   }
 
