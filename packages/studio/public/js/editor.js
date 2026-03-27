@@ -34,6 +34,7 @@ export function openEditor(bookId) {
   $("editor-preview").style.display = "none";
   $("editor-textarea").style.display = "";
   $("editor-char-count").textContent = "0 字";
+  $("editor-right").classList.remove("open");
   isPreview = false;
   currentFile = null;
 }
@@ -42,6 +43,35 @@ export function closeEditor() {
   if (autoSaveTimer) clearTimeout(autoSaveTimer);
   setView("dashboard");
   renderDashboard();
+}
+
+export function focusEditorForManualEdit() {
+  const bookId = state.activeBookId || state.books[0]?.id || state.books[0];
+  if (!bookId) {
+    showToast("请先选择书籍", "warn");
+    return;
+  }
+
+  state.activeBookId = bookId;
+  state.chatContext.bookId = bookId;
+  const select = $("book-select");
+  if (select) select.value = bookId;
+
+  if (state.currentView !== "editor") {
+    openEditor(bookId);
+  }
+
+  isPreview = false;
+  $("editor-preview").style.display = "none";
+  $("editor-textarea").style.display = "";
+  $("editor-textarea").focus();
+}
+
+export async function openEditorFile(type, bookId, file) {
+  if (state.currentView !== "editor" || state.activeBookId !== bookId) {
+    openEditor(bookId);
+  }
+  await loadFileInEditor(type, bookId, file);
 }
 
 // ── Left Tabs ──
@@ -67,6 +97,15 @@ export function initEditorTabs() {
       tab.classList.add("active");
       const panel = $("panel-" + tab.dataset.panel);
       if (panel) panel.classList.add("active");
+    });
+  });
+
+  document.querySelectorAll(".ai-drawer-tool").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const panelName = btn.dataset.openPanel;
+      const panelTab = document.querySelector(`.ai-panel-tab[data-panel="${panelName}"]`);
+      if (panelTab) panelTab.click();
+      $("editor-right").classList.add("open");
     });
   });
 

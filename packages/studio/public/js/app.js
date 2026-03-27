@@ -2,14 +2,14 @@
 import { state } from "./state.js";
 import { $, escapeHtml, requestJson, autoResizeInput } from "./utils.js";
 import { setView, switchToolTab, setEditorTabEnabled, toggleSidebar } from "./views.js";
-import { getTheme, toggleTheme, updateThemeIcon } from "./theme.js";
-import { buildSidebarTree } from "./sidebar.js";
+import { getTheme, getStyle, toggleTheme, toggleStyle, updateThemeIcon, updateStyleLabel } from "./theme.js";
+import { buildSidebarTree, renderSidebarForView } from "./sidebar.js";
 import { renderChatMessages, sendChatMessage, handleQuickAction } from "./chat.js";
 import { showContent, toggleEdit, saveContent, backToChat } from "./content.js";
 import { openSettings, closeSettings, saveSettings, runDoctor } from "./settings.js";
 import { createBook, writeNext, exportBook } from "./forms.js";
 import { renderDashboard } from "./dashboard.js";
-import { openEditor, closeEditor, initEditorTabs } from "./editor.js";
+import { openEditor, closeEditor, focusEditorForManualEdit, openEditorFile, initEditorTabs } from "./editor.js";
 import { initPrediction } from "./prediction.js";
 import { initPresets, renderPresetList } from "./presets.js";
 import { initLLMLogs, renderLLMLogs } from "./llm-logs.js";
@@ -42,6 +42,7 @@ async function loadBooks() {
     }
   } catch { state.books = []; }
   populateBookSelect();
+  await renderSidebarForView(state.currentView);
 
   // Enable editor tab if a book is selected
   setEditorTabEnabled(!!state.activeBookId);
@@ -84,9 +85,9 @@ function onBookChange() {
   state.chatContext.bookId = bookId;
   setEditorTabEnabled(!!bookId);
   if (bookId) {
-    buildSidebarTree(bookId);
+    renderSidebarForView(state.currentView);
   } else {
-    $("sidebar-tree").innerHTML = '<div class="sidebar-empty">选择书籍后显示导航</div>';
+    renderSidebarForView(state.currentView);
   }
 }
 
@@ -94,8 +95,13 @@ function onBookChange() {
 
 function handleNavTab(viewName) {
   if (viewName === "editor") {
-    if (!state.activeBookId) return; // disabled state
-    openEditor(state.activeBookId);
+    const fallbackBookId = state.activeBookId || state.books[0]?.id || state.books[0];
+    if (!fallbackBookId) return;
+    state.activeBookId = fallbackBookId;
+    state.chatContext.bookId = fallbackBookId;
+    const select = $("book-select");
+    if (select) select.value = fallbackBookId;
+    openEditor(fallbackBookId);
     return;
   }
   if (viewName === "tools") {
@@ -117,11 +123,19 @@ function bindEvents() {
   $("sidebar-toggle").addEventListener("click", toggleSidebar);
   $("book-select").addEventListener("change", onBookChange);
   $("settings-btn").addEventListener("click", openSettings);
+  $("style-toggle").addEventListener("click", toggleStyle);
 
   // Topbar nav tabs
   document.querySelectorAll(".nav-tab").forEach(tab => {
     tab.addEventListener("click", () => {
       if (tab.classList.contains("disabled")) return;
+      handleNavTab(tab.dataset.view);
+    });
+  });
+
+  // Sidebar nav buttons
+  document.querySelectorAll(".sidebar-nav-btn").forEach(tab => {
+    tab.addEventListener("click", () => {
       handleNavTab(tab.dataset.view);
     });
   });
@@ -152,6 +166,8 @@ function bindEvents() {
   // Sidebar footer (create button)
   const navCreate = $("nav-create");
   if (navCreate) navCreate.addEventListener("click", () => setView("create"));
+  const editArticle = $("sidebar-edit-article");
+  if (editArticle) editArticle.addEventListener("click", () => focusEditorForManualEdit());
 
   // Chat
   $("send-chat").addEventListener("click", sendChatMessage);
@@ -181,12 +197,58 @@ function bindEvents() {
   // Write / export forms
   $("write-form").addEventListener("submit", writeNext);
   $("export-form").addEventListener("submit", exportBook);
+
+  document.addEventListener("inkos:viewchange", async (e) => {
+    const viewName = e.detail?.name ?? state.currentView;
+    await renderSidebarForView(viewName);
+  });
+
+  document.addEventListener("inkos:stylechange", async () => {
+    await renderSidebarForView(state.currentView);
+  });
+
+  document.addEventListener("inkos:toolchange", async () => {
+    await renderSidebarForView("tools");
+  });
+
+  document.addEventListener("inkos:open-book", (e) => {
+    const bookId = e.detail?.bookId;
+    if (!bookId) return;
+    state.activeBookId = bookId;
+    state.chatContext.bookId = bookId;
+    const select = $("book-select");
+    if (select) select.value = bookId;
+    openEditor(bookId);
+  });
+
+  document.addEventListener("inkos:open-editor-file", (e) => {
+    const { type, bookId, file } = e.detail ?? {};
+    if (!type || !bookId || !file) return;
+    openEditorFile(type, bookId, file);
+  });
+
+  document.addEventListener("inkos:open-tool", async (e) => {
+    const toolName = e.detail?.toolName;
+    if (!toolName) return;
+    setView("tools");
+    switchToolTab(toolName);
+    if (toolName === "analytics") renderAnalytics();
+    if (toolName === "knowledge") renderKnowledgeList();
+    if (toolName === "logs") renderLLMLogs();
+  });
+
+  document.addEventListener("inkos:chat-action", (e) => {
+    const action = e.detail?.action;
+    if (!action) return;
+    handleQuickAction(action);
+  });
 }
 
 // ── Boot ──
 
 async function boot() {
   updateThemeIcon(getTheme());
+  updateStyleLabel(getStyle());
   $("theme-toggle").addEventListener("click", toggleTheme);
   bindEvents();
   initEditorTabs();
@@ -201,6 +263,7 @@ async function boot() {
   setView("dashboard");
   await refreshAll();
   renderDashboard();
+  await renderSidebarForView("dashboard");
 }
 
 document.addEventListener("DOMContentLoaded", boot);

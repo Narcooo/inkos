@@ -8,9 +8,12 @@
     <!-- Prevent flash of wrong theme -->
     <script>
       (function(){
-        var t = localStorage.getItem('inkos-theme');
-        if (!t) t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-        document.documentElement.setAttribute('data-theme', t);
+        var theme = localStorage.getItem('inkos-theme');
+        var style = localStorage.getItem('inkos-style');
+        if (!theme) theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        if (!style) style = 'ink';
+        document.documentElement.setAttribute('data-theme', theme);
+        document.documentElement.setAttribute('data-style', style);
       })();
     </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -56,6 +59,9 @@
 
         <div class="topbar-right">
           <span class="topbar-status font-code" id="app-status"></span>
+          <button class="style-toggle" id="style-toggle" type="button" title="切换界面风格">
+            <span class="style-toggle-label" id="style-toggle-label">墨韵</span>
+          </button>
           <button class="theme-toggle" id="theme-toggle" type="button" title="Toggle theme">
             <svg id="theme-icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
             <svg id="theme-icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="display:none"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
@@ -70,10 +76,32 @@
       <div class="app-body">
         <!-- SIDEBAR (visible in Editor view, holds book select + chapter tree) -->
         <aside class="sidebar hidden" id="sidebar">
+          <div class="sidebar-hero">
+            <div class="sidebar-hero-mark ink-text font-serif">InkOS</div>
+            <div class="sidebar-hero-subtitle">墨韵工作台</div>
+          </div>
           <div class="sidebar-book-select-wrapper">
             <select class="topbar-book-select" id="book-select">
               <option value="">-- 选择书籍 --</option>
             </select>
+          </div>
+          <nav class="sidebar-primary-nav" id="sidebar-primary-nav" aria-label="Sidebar navigation">
+            <button class="sidebar-nav-btn active" id="sidebar-nav-dashboard" data-view="dashboard" type="button">
+              <span class="sidebar-nav-label">书架</span>
+            </button>
+            <button class="sidebar-nav-btn" id="sidebar-nav-editor" data-view="editor" type="button">
+              <span class="sidebar-nav-label">编辑</span>
+            </button>
+            <button class="sidebar-nav-btn" id="sidebar-nav-chat" data-view="chat" type="button">
+              <span class="sidebar-nav-label">AI 对话</span>
+            </button>
+            <button class="sidebar-nav-btn" id="sidebar-nav-tools" data-view="tools" type="button">
+              <span class="sidebar-nav-label">工具</span>
+            </button>
+          </nav>
+          <div class="sidebar-context-head">
+            <span class="sidebar-context-title font-serif" id="sidebar-context-title">书架总览</span>
+            <span class="sidebar-context-subtitle" id="sidebar-context-subtitle">BOOKSHELF</span>
           </div>
           <div class="sidebar-tree" id="sidebar-tree">
             <div class="sidebar-empty">选择书籍后显示导航</div>
@@ -82,6 +110,10 @@
             <button class="sidebar-action" id="nav-create" type="button">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
               创建新书
+            </button>
+            <button class="sidebar-action sidebar-action--primary" id="sidebar-edit-article" type="button">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+              文章编辑
             </button>
             <button class="sidebar-action" id="nav-upload" type="button" style="display:none">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
@@ -229,6 +261,12 @@
                 </div>
                 <!-- AI Chat Panel -->
                 <div class="ai-panel active" id="panel-ai-chat">
+                  <div class="ai-drawer-tools">
+                    <button class="ai-drawer-tool" data-open-panel="ai-summary" type="button">摘要</button>
+                    <button class="ai-drawer-tool" data-open-panel="ai-continue" type="button">续写</button>
+                    <button class="ai-drawer-tool" data-open-panel="ai-revise" type="button">修订</button>
+                    <button class="ai-drawer-tool" data-open-panel="ai-predict" type="button">抽卡</button>
+                  </div>
                   <div class="ai-panel-messages" id="ai-panel-messages"></div>
                   <div class="ai-panel-input">
                     <textarea id="ai-panel-input" rows="2" placeholder="向 AI 提问..."></textarea>

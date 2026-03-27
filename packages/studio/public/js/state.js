@@ -22,4 +22,5 @@ export const state = {
   chapterIndex: null,
   chapterFiles: [],
   sidebarCollapsed: false,
+  activeTool: "import",
 };

@@ -14,6 +14,11 @@ const TOOL_VIEW_MAP = new Map([
   ["logs", "logs"],
 ]);
 
+function getCurrentStyle() {
+  const root = globalThis.document?.documentElement;
+  return root?.getAttribute?.("data-style") || "ink";
+}
+
 export function setView(name) {
   state.currentView = name;
   const main = $("main-area");
@@ -35,10 +40,12 @@ export function setView(name) {
 
   // Show/hide sidebar based on view
   updateSidebarVisibility(name);
+
+  globalThis.document?.dispatchEvent?.(new CustomEvent("inkos:viewchange", { detail: { name } }));
 }
 
 function updateNavTabs(viewName) {
-  const tabs = document.querySelectorAll(".nav-tab");
+  const tabs = document.querySelectorAll(".nav-tab, .sidebar-nav-btn");
   tabs.forEach(tab => tab.classList.remove("active"));
 
   if (SUB_VIEWS.has(viewName)) {
@@ -47,15 +54,17 @@ function updateNavTabs(viewName) {
   }
 
   const navView = TOOL_VIEW_MAP.has(viewName) ? "tools" : viewName;
-  const activeTab = document.querySelector(`.nav-tab[data-view="${navView}"]`);
-  if (activeTab) activeTab.classList.add("active");
+  const activeTabs = document.querySelectorAll(`.nav-tab[data-view="${navView}"], .sidebar-nav-btn[data-view="${navView}"]`);
+  activeTabs.forEach((tab) => tab.classList.add("active"));
 }
 
 function updateSidebarVisibility(viewName) {
   const sidebar = $("sidebar");
   if (!sidebar) return;
 
-  if (viewName === "editor" && !state.sidebarCollapsed) {
+  const style = getCurrentStyle();
+  const shouldShow = style === "ink" ? !state.sidebarCollapsed : (viewName === "editor" && !state.sidebarCollapsed);
+  if (shouldShow) {
     sidebar.classList.remove("hidden");
   } else {
     sidebar.classList.add("hidden");
@@ -70,6 +79,7 @@ function activateToolsView(toolName) {
 
 // Tools sub-tab switching
 export function switchToolTab(toolName) {
+  state.activeTool = toolName;
   // Update sub-tab buttons
   document.querySelectorAll(".sub-tab").forEach(t => t.classList.remove("active"));
   const activeSubTab = document.querySelector(`.sub-tab[data-tool="${toolName}"]`);
@@ -85,12 +95,15 @@ export function switchToolTab(toolName) {
     panel.style.display = "";
     panel.classList.add("active-view");
   }
+
+  globalThis.document?.dispatchEvent?.(new CustomEvent("inkos:toolchange", { detail: { toolName } }));
 }
 
 export function toggleSidebar() {
   const sidebar = $("sidebar");
   if (!sidebar) return;
-  if (state.currentView !== "editor") return;
+  const style = getCurrentStyle();
+  if (style !== "ink" && state.currentView !== "editor") return;
 
   state.sidebarCollapsed = !state.sidebarCollapsed;
   if (state.sidebarCollapsed) {

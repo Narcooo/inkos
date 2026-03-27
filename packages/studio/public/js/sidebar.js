@@ -34,6 +34,157 @@ export const TRUTH_FILES = [
   { file: "character_matrix.md", label: "角色矩阵", icon: ICON.users },
 ];
 
+const VIEW_META = {
+  dashboard: { title: "书架总览", subtitle: "BOOKSHELF" },
+  editor: { title: "书稿目录", subtitle: "MANUSCRIPT" },
+  chat: { title: "AI 对话", subtitle: "ASSISTANT" },
+  tools: { title: "工具工作台", subtitle: "WORKSHOP" },
+  create: { title: "新建书籍", subtitle: "CREATE" },
+  content: { title: "内容查看", subtitle: "CONTENT" },
+};
+
+function setSidebarMeta(viewName) {
+  const meta = VIEW_META[viewName] ?? VIEW_META.dashboard;
+  const title = $("sidebar-context-title");
+  const subtitle = $("sidebar-context-subtitle");
+  if (title) title.textContent = meta.title;
+  if (subtitle) subtitle.textContent = meta.subtitle;
+}
+
+function bindSidebarBookLaunch(tree) {
+  tree.querySelectorAll("[data-book-open]").forEach((node) => {
+    node.addEventListener("click", () => {
+      const bookId = node.dataset.bookOpen;
+      if (!bookId) return;
+      document.dispatchEvent(new CustomEvent("inkos:open-book", { detail: { bookId } }));
+    });
+  });
+}
+
+function bindSidebarActions(tree) {
+  tree.querySelectorAll("[data-tool-open]").forEach((node) => {
+    node.addEventListener("click", () => {
+      const toolName = node.dataset.toolOpen;
+      if (!toolName) return;
+      document.dispatchEvent(new CustomEvent("inkos:open-tool", { detail: { toolName } }));
+    });
+  });
+
+  tree.querySelectorAll("[data-chat-action]").forEach((node) => {
+    node.addEventListener("click", () => {
+      const action = node.dataset.chatAction;
+      if (!action) return;
+      document.dispatchEvent(new CustomEvent("inkos:chat-action", { detail: { action } }));
+    });
+  });
+}
+
+function renderBookshelfRail() {
+  const tree = $("sidebar-tree");
+  if (!tree) return;
+
+  if (!state.books.length) {
+    tree.innerHTML = '<div class="sidebar-empty">暂无书籍，先创建一本开始吧。</div>';
+    return;
+  }
+
+  tree.innerHTML = `
+    <details class="tree-group" open>
+      <summary>书架 <span class="section-tag">BOOKS</span></summary>
+      <div class="tree-items">
+        ${state.books.map((book) => {
+          const id = book.id || book;
+          const title = book.title || id;
+          const activeClass = id === state.activeBookId ? " active" : "";
+          return `
+            <button class="tree-node${activeClass}" data-book-open="${escapeHtml(id)}">
+              <span class="tree-node-icon">${ICON.bible}</span>
+              <span class="tree-node-label">${escapeHtml(title)}</span>
+            </button>`;
+        }).join("")}
+      </div>
+    </details>`;
+
+  bindSidebarBookLaunch(tree);
+}
+
+function renderChatRail() {
+  const tree = $("sidebar-tree");
+  if (!tree) return;
+
+  tree.innerHTML = `
+    <details class="tree-group" open>
+      <summary>快捷动作 <span class="section-tag">ACTIONS</span></summary>
+      <div class="tree-items">
+        <button class="tree-node" data-chat-action="write-next">
+          <span class="tree-node-icon">${ICON.chapter}</span>
+          <span class="tree-node-label">写下一章</span>
+        </button>
+        <button class="tree-node" data-chat-action="audit">
+          <span class="tree-node-icon">${ICON.rules}</span>
+          <span class="tree-node-label">审计最新章节</span>
+        </button>
+        <button class="tree-node" data-chat-action="world-state">
+          <span class="tree-node-icon">${ICON.globe}</span>
+          <span class="tree-node-label">查看世界状态</span>
+        </button>
+        <button class="tree-node" data-chat-action="export">
+          <span class="tree-node-icon">${ICON.outline}</span>
+          <span class="tree-node-label">导出全书</span>
+        </button>
+      </div>
+    </details>`;
+
+  bindSidebarActions(tree);
+}
+
+function renderToolsRail() {
+  const tree = $("sidebar-tree");
+  if (!tree) return;
+
+  const items = [
+    { tool: "import", label: "导入章节", icon: ICON.chapter },
+    { tool: "export", label: "导出与写作", icon: ICON.outline },
+    { tool: "analytics", label: "书籍分析", icon: ICON.ledger },
+    { tool: "knowledge", label: "知识库", icon: ICON.bible },
+    { tool: "logs", label: "调用日志", icon: ICON.summary },
+  ];
+
+  tree.innerHTML = `
+    <details class="tree-group" open>
+      <summary>工具分区 <span class="section-tag">TOOLS</span></summary>
+      <div class="tree-items">
+        ${items.map((item) => {
+          const activeClass = state.activeTool === item.tool ? " active" : "";
+          return `
+            <button class="tree-node${activeClass}" data-tool-open="${item.tool}">
+              <span class="tree-node-icon">${item.icon}</span>
+              <span class="tree-node-label">${item.label}</span>
+            </button>`;
+        }).join("")}
+      </div>
+    </details>`;
+
+  bindSidebarActions(tree);
+}
+
+export async function renderSidebarForView(viewName = state.currentView) {
+  setSidebarMeta(viewName);
+  if (viewName === "editor" && state.activeBookId) {
+    await buildSidebarTree(state.activeBookId);
+    return;
+  }
+  if (viewName === "chat") {
+    renderChatRail();
+    return;
+  }
+  if (viewName === "tools") {
+    renderToolsRail();
+    return;
+  }
+  renderBookshelfRail();
+}
+
 export async function buildSidebarTree(bookId) {
   if (!bookId) return;
   const tree = $("sidebar-tree");
@@ -122,6 +273,16 @@ export async function buildSidebarTree(bookId) {
     node.addEventListener("click", () => {
       tree.querySelectorAll(".tree-node").forEach(n => n.classList.remove("active"));
       node.classList.add("active");
+      if (state.currentView === "editor" && document.documentElement.getAttribute("data-style") === "ink") {
+        document.dispatchEvent(new CustomEvent("inkos:open-editor-file", {
+          detail: {
+            type: node.dataset.type,
+            bookId: node.dataset.book,
+            file: node.dataset.file,
+          },
+        }));
+        return;
+      }
       showContent(node.dataset.type, node.dataset.book, node.dataset.file);
     });
   });
