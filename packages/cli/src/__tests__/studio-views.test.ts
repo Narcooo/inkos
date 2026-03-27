@@ -23,8 +23,10 @@ const state = {
 };
 
 let navTabs: Array<{ dataset: { view: string }; classList: ReturnType<typeof createClassList> }> = [];
+let sidebarTabs: Array<{ dataset: { view: string }; classList: ReturnType<typeof createClassList> }> = [];
 let subTabs: Array<{ dataset: { tool: string }; classList: ReturnType<typeof createClassList> }> = [];
 let toolPanels: Array<ReturnType<typeof createElement>> = [];
+let currentStyle = "modern";
 
 vi.mock("../../../studio/public/js/utils.js", () => ({
   $: (id: string) => elements.get(id),
@@ -41,6 +43,7 @@ describe("studio view routing", () => {
     elements.clear();
     state.currentView = "dashboard";
     state.sidebarCollapsed = false;
+    currentStyle = "modern";
 
     const dashboardView = createElement();
     const chatView = createElement();
@@ -67,6 +70,10 @@ describe("studio view routing", () => {
       dataset: { view },
       classList: createClassList(),
     }));
+    sidebarTabs = ["dashboard", "chat", "editor", "tools"].map((view) => ({
+      dataset: { view },
+      classList: createClassList(),
+    }));
     subTabs = ["export", "analytics"].map((tool) => ({
       dataset: { tool },
       classList: createClassList(),
@@ -76,6 +83,13 @@ describe("studio view routing", () => {
     vi.stubGlobal("document", {
       querySelectorAll: (selector: string) => {
         if (selector === ".nav-tab") return navTabs;
+        if (selector === ".nav-tab, .sidebar-nav-btn") return [...navTabs, ...sidebarTabs];
+        if (selector.includes(".nav-tab[data-view=") || selector.includes(".sidebar-nav-btn[data-view=")) {
+          const match = selector.match(/data-view="(.+?)"/);
+          return match
+            ? [...navTabs, ...sidebarTabs].filter((tab) => tab.dataset.view === match[1])
+            : [];
+        }
         if (selector === ".sub-tab") return subTabs;
         if (selector === ".tool-panel") return toolPanels;
         return [];
@@ -83,9 +97,15 @@ describe("studio view routing", () => {
       querySelector: (selector: string) => {
         const navMatch = selector.match(/\.nav-tab\[data-view="(.+)"\]/);
         if (navMatch) return navTabs.find((tab) => tab.dataset.view === navMatch[1]) ?? null;
+        const sideMatch = selector.match(/\.sidebar-nav-btn\[data-view="(.+)"\]/);
+        if (sideMatch) return sidebarTabs.find((tab) => tab.dataset.view === sideMatch[1]) ?? null;
         const subMatch = selector.match(/\.sub-tab\[data-tool="(.+)"\]/);
         if (subMatch) return subTabs.find((tab) => tab.dataset.tool === subMatch[1]) ?? null;
         return null;
+      },
+      dispatchEvent: () => true,
+      documentElement: {
+        getAttribute: (name: string) => (name === "data-style" ? currentStyle : null),
       },
     });
   });
@@ -104,7 +124,7 @@ describe("studio view routing", () => {
     expect(elements.get("sidebar")!.classList.contains("hidden")).toBe(true);
   });
 
-  it("does not open the sidebar from non-editor views", async () => {
+  it("does not open the sidebar from non-editor views in modern mode", async () => {
     const viewsModulePath = "../../../studio/public/js/views.js";
     const { toggleSidebar } = await import(viewsModulePath);
 
@@ -128,5 +148,18 @@ describe("studio view routing", () => {
     toggleSidebar();
     expect(elements.get("sidebar")!.classList.contains("hidden")).toBe(false);
     expect(state.sidebarCollapsed).toBe(false);
+  });
+
+  it("supports a global sidebar in ink mode", async () => {
+    currentStyle = "ink";
+    const viewsModulePath = "../../../studio/public/js/views.js";
+    const { setView, toggleSidebar } = await import(viewsModulePath);
+
+    setView("dashboard");
+    expect(elements.get("sidebar")!.classList.contains("hidden")).toBe(false);
+
+    toggleSidebar();
+    expect(elements.get("sidebar")!.classList.contains("hidden")).toBe(true);
+    expect(state.sidebarCollapsed).toBe(true);
   });
 });

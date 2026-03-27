@@ -85,6 +85,44 @@ describe("studio frontend regressions", () => {
     expect(renderDashboardMock).toHaveBeenCalledTimes(1);
   });
 
+  it("does not report success when book creation returns ok=false", async () => {
+    formValues = {
+      title: "失败新书",
+      genre: "xuanhuan",
+      platform: "tomato",
+      targetChapters: "200",
+      chapterWords: "3000",
+      brief: "",
+    };
+
+    elements.set("create-form", {
+      querySelector: (selector: string) => {
+        if (selector.includes("useProjectBrief")) return { checked: true };
+        if (selector.includes("writeFirstChapter")) return { checked: false };
+        return null;
+      },
+    });
+
+    requestJsonMock.mockResolvedValueOnce({
+      ok: false,
+      error: "LLM returned empty response",
+    });
+
+    const loadBooksMock = vi.fn(async () => undefined);
+    const preventDefault = vi.fn();
+    const formsModulePath = "../../../studio/public/js/forms.js";
+    const { createBook } = await import(formsModulePath);
+
+    await expect(createBook({ preventDefault } as unknown as Event, loadBooksMock)).rejects.toThrow(
+      "LLM returned empty response",
+    );
+
+    expect(loadBooksMock).not.toHaveBeenCalled();
+    expect(setViewMock).not.toHaveBeenCalledWith("dashboard");
+    expect(renderDashboardMock).not.toHaveBeenCalled();
+    expect(showToastMock).not.toHaveBeenCalledWith(expect.stringContaining("书籍已创建"));
+  });
+
   it("treats a successful doctor response with code=0 as connected", async () => {
     const statusEl = { textContent: "", className: "" };
     elements.set("doctor-status", statusEl);

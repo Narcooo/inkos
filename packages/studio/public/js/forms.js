@@ -23,6 +23,9 @@ export async function createBook(e, loadBooks) {
     };
 
     const res = await requestJson("/api/book", { method: "POST", body: JSON.stringify(body) });
+    if (res.ok === false) {
+      throw new Error(res.error || "创建书籍失败");
+    }
     const bookId = res.data?.bookId || body.title;
     showToast(`书籍已创建: ${bookId}`);
     if (loadBooks) await loadBooks();
