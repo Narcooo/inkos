@@ -1904,6 +1904,28 @@ async function handleApi(req, res, url) {
     }
   }
 
+  // --- settings: read LLM config ---
+  if (url.pathname === "/api/settings" && req.method === "GET") {
+    const configPath = path.join(projectRoot, "inkos.json");
+    try {
+      const config = JSON.parse(await readFile(configPath, "utf-8"));
+      const envPath = path.join(projectRoot, ".env");
+      let hasApiKey = false;
+      try {
+        const env = await readFile(envPath, "utf-8");
+        hasApiKey = env.includes("INKOS_LLM_API_KEY=");
+      } catch {}
+      return sendJson(res, 200, {
+        ok: true,
+        llm: config.llm ?? {},
+        hasApiKey,
+        language: config.language,
+      });
+    } catch {
+      return sendJson(res, 200, { ok: true, llm: {}, hasApiKey: false });
+    }
+  }
+
   // --- settings: save LLM config ---
   if (url.pathname === "/api/settings" && req.method === "PUT") {
     const body = await readBody(req);

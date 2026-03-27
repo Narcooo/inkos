@@ -82,6 +82,20 @@ function appendLive(text) {
   l.scrollTop = l.scrollHeight;
 }
 
+// ── Global pipeline state (survives view switches, not page reloads) ──
+
+let pipelineRunning = false;
+
+function setPipelineRunning(running) {
+  pipelineRunning = running;
+  const btn = $("pipeline-jump");
+  if (btn) btn.style.display = running ? "" : "none";
+}
+
+export function isPipelineRunning() {
+  return pipelineRunning;
+}
+
 // ── Pipeline runners ──
 
 export function initPipeline() {
@@ -89,6 +103,11 @@ export function initPipeline() {
   $("pipeline-back")?.addEventListener("click", () => {
     setView("dashboard");
     renderDashboard();
+  });
+
+  // Topbar jump button
+  $("pipeline-jump")?.addEventListener("click", () => {
+    if (pipelineRunning) setView("pipeline");
   });
 
   // Start write button
@@ -148,6 +167,7 @@ export async function openCreatePipeline(formData, loadBooks) {
   }
 
   if (statusEl()) statusEl().textContent = "运行中...";
+  setPipelineRunning(true);
 
   try {
     const res = await streamSSE("/api/book", formData, {
@@ -180,6 +200,8 @@ export async function openCreatePipeline(formData, loadBooks) {
   } catch (err) {
     if (statusEl()) statusEl().textContent = "错误";
     showToast(String(err.message || err), "error");
+  } finally {
+    setPipelineRunning(false);
   }
 }
 
@@ -203,6 +225,7 @@ async function runWritePipeline(bookId, { count = 1, context = "" } = {}) {
   addStageCard("persist", "落盘章节");
 
   if (statusEl()) statusEl().textContent = "运行中...";
+  setPipelineRunning(true);
 
   const body = { bookId, count };
   if (context) body.context = context;
@@ -241,5 +264,7 @@ async function runWritePipeline(bookId, { count = 1, context = "" } = {}) {
   } catch (err) {
     if (statusEl()) statusEl().textContent = "错误";
     showToast(String(err.message || err), "error");
+  } finally {
+    setPipelineRunning(false);
   }
 }

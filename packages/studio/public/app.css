@@ -2128,6 +2128,21 @@ body {
   box-shadow: 0 0 0 3px rgba(139, 90, 43, 0.15);
 }
 
+/* ── Pipeline Jump Button ── */
+.pipeline-jump-btn {
+  position: relative;
+  color: var(--accent);
+  animation: pipeline-jump-pulse 2s ease-in-out infinite;
+}
+.pipeline-jump-btn svg { display: block; }
+@keyframes pipeline-jump-pulse {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}
+[data-style="ink"] .pipeline-jump-btn {
+  color: rgba(139, 90, 43, 0.8);
+}
+
 .toast-container {
   position: fixed;
   bottom: 24px;

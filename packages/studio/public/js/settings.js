@@ -14,23 +14,32 @@ export function closeSettings() {
   $("settings-modal").style.display = "none";
 }
 
-function loadSettingsData() {
-  if (!state.meta) return;
-  const llm = state.meta.llm ?? {};
-  $("s-provider").value = llm.provider || "openai";
-  $("s-baseurl").value = llm.baseUrl || "";
-  $("s-model").value = llm.model || "";
-  $("s-apiformat").value = llm.apiFormat || "chat";
-  $("s-temperature").value = llm.temperature ?? "";
-  $("s-maxtokens").value = llm.maxTokens ?? "";
-  $("s-apikey").value = "";
-  $("s-thinking-budget").value = llm.thinkingBudget ?? "";
-  $("s-reasoning-effort").value = llm.reasoningEffort ?? "";
-  $("s-stream").value = String(llm.stream ?? true);
-  $("s-disable-storage").value = String(llm.disableResponseStorage ?? false);
+async function loadSettingsData() {
+  // Load from dedicated settings endpoint (more reliable than state.meta)
+  try {
+    const res = await requestJson("/api/settings");
+    if (res.ok) {
+      const llm = res.llm ?? {};
+      $("s-provider").value = llm.provider || "openai";
+      $("s-baseurl").value = llm.baseUrl || "";
+      $("s-model").value = llm.model || "";
+      $("s-apiformat").value = llm.apiFormat || "chat";
+      $("s-temperature").value = llm.temperature ?? "";
+      $("s-maxtokens").value = llm.maxTokens ?? "";
+      $("s-apikey").value = "";
+      $("s-apikey").placeholder = res.hasApiKey ? "已配置（留空保持不变）" : "输入 API Key";
+      $("s-thinking-budget").value = llm.thinkingBudget ?? "";
+      $("s-reasoning-effort").value = llm.reasoningEffort ?? "";
+      $("s-stream").value = String(llm.stream ?? true);
+      $("s-disable-storage").value = String(llm.disableResponseStorage ?? false);
+    }
+  } catch {}
 
-  $("info-project-root").textContent = state.meta.projectRoot ?? "-";
-  $("info-cli-path").textContent = state.meta.cliPath ?? "-";
+  // Meta info (project paths)
+  if (state.meta) {
+    $("info-project-root").textContent = state.meta.projectRoot ?? "-";
+    $("info-cli-path").textContent = state.meta.cliPath ?? "-";
+  }
 }
 
 async function loadAgentRouting() {
