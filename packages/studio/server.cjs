@@ -54,7 +54,7 @@ const corePath = resolveCorePath({
   env: process.env,
   repoRoot,
   projectRoot,
-  currentDir: __dirname,
+  currentDir: exeDir,
 });
 
 // Static files: embedded snapshot next to exe, or dev path

@@ -67,6 +67,8 @@ function resolveCorePath({
   const candidates = [
     env.INKOS_CORE_PATH ? pathModule.resolve(env.INKOS_CORE_PATH) : null,
     repoRoot ? pathModule.join(repoRoot, "packages", "core", "dist", "index.js") : null,
+    // Packaged exe: core is bundled inside cli/node_modules
+    pathModule.join(currentDir, "cli", "node_modules", "@actalk", "inkos-core", "dist", "index.js"),
     resolvePackageDistPath("@actalk/inkos-core", "dist/index.js", {
       projectRoot,
       currentDir,

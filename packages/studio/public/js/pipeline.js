@@ -89,7 +89,10 @@ let pipelineRunning = false;
 function setPipelineRunning(running) {
   pipelineRunning = running;
   const btn = $("pipeline-jump");
-  if (btn) btn.style.display = running ? "" : "none";
+  if (btn) {
+    btn.setAttribute("data-running", running ? "true" : "false");
+    btn.title = running ? "正在写作 — 点击查看实况" : "写作状态：空闲";
+  }
 }
 
 export function isPipelineRunning() {
@@ -105,9 +108,13 @@ export function initPipeline() {
     renderDashboard();
   });
 
-  // Topbar jump button
+  // Topbar status light — click to jump to pipeline when running
   $("pipeline-jump")?.addEventListener("click", () => {
-    if (pipelineRunning) setView("pipeline");
+    if (pipelineRunning) {
+      setView("pipeline");
+    } else {
+      showToast("当前没有运行中的任务", "info");
+    }
   });
 
   // Start write button

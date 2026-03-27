@@ -2128,19 +2128,30 @@ body {
   box-shadow: 0 0 0 3px rgba(139, 90, 43, 0.15);
 }
 
-/* ── Pipeline Jump Button ── */
-.pipeline-jump-btn {
-  position: relative;
-  color: var(--accent);
-  animation: pipeline-jump-pulse 2s ease-in-out infinite;
+/* ── Pipeline Status Light ── */
+.pipeline-light {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  background: #22c55e;
+  box-shadow: 0 0 4px #22c55e;
+  transition: background 0.3s, box-shadow 0.3s;
 }
-.pipeline-jump-btn svg { display: block; }
-@keyframes pipeline-jump-pulse {
-  0%, 100% { opacity: 0.7; }
-  50% { opacity: 1; }
+.pipeline-light[data-running="true"] {
+  background: #ef4444;
+  box-shadow: 0 0 6px #ef4444;
+  animation: pipeline-blink 0.8s ease-in-out infinite;
+  cursor: pointer;
 }
-[data-style="ink"] .pipeline-jump-btn {
-  color: rgba(139, 90, 43, 0.8);
+.pipeline-light[data-running="false"] {
+  cursor: default;
+}
+@keyframes pipeline-blink {
+  0%, 100% { opacity: 1; box-shadow: 0 0 6px #ef4444; }
+  50% { opacity: 0.3; box-shadow: 0 0 2px #ef4444; }
 }
 
 .toast-container {
