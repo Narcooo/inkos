@@ -85,6 +85,8 @@ function onBookChange() {
   state.activeBookId = bookId;
   state.chatContext.bookId = bookId;
   setEditorTabEnabled(!!bookId);
+  const navOutline = $("nav-outline");
+  if (navOutline) navOutline.style.display = bookId ? "" : "none";
   renderSidebarForView(state.currentView);
 }
 
@@ -165,6 +167,12 @@ function bindEvents() {
   if (navCreate) navCreate.addEventListener("click", () => setView("create"));
   const editArticle = $("sidebar-edit-article");
   if (editArticle) editArticle.addEventListener("click", () => focusEditorForManualEdit());
+  const navOutline = $("nav-outline");
+  if (navOutline) navOutline.addEventListener("click", () => {
+    const bookId = state.activeBookId;
+    if (!bookId) { showToast("请先选择书籍", "warn"); return; }
+    openEditorFile("story-file", bookId, "volume_outline.md");
+  });
 
   // Chat
   $("send-chat").addEventListener("click", sendChatMessage);
