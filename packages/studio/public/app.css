@@ -540,6 +540,7 @@ body {
 
 [data-style="ink"] .dashboard-view.active-view {
   padding: 30px 28px;
+  overflow-y: auto;
 }
 
 [data-style="ink"] .dashboard-header {
@@ -1442,6 +1443,23 @@ body {
   opacity: 0.35;
   cursor: not-allowed;
   transform: none;
+}
+.btn-stop {
+  background: none;
+  border: none;
+  color: var(--danger);
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.btn-stop:hover {
+  background: rgba(239, 68, 68, 0.1);
 }
 
 /* ============================================================

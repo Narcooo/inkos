@@ -6,6 +6,17 @@ import { setView } from "./views.js";
 import { openWritePipeline } from "./pipeline.js";
 import { showContent } from "./content.js";
 
+let chatAbortController = null;
+
+export function stopChatGeneration() {
+  if (chatAbortController) {
+    chatAbortController.abort();
+    chatAbortController = null;
+  }
+  $("stop-chat").style.display = "none";
+  $("send-chat").style.display = "";
+}
+
 export function renderChatMessages() {
   const container = $("chat-messages");
   if (!state.chatHistory.length) {
@@ -101,13 +112,18 @@ export async function sendChatMessage() {
   const ctx = state.chatContext;
   const targetType = ctx.targetType || "brief";
   const bookId = ctx.bookId || state.activeBookId;
+  let accumulated = "";
 
   try {
     const payload = await buildChatPayload(text);
 
+    // Show stop button, hide send button
+    chatAbortController = new AbortController();
+    $("send-chat").style.display = "none";
+    $("stop-chat").style.display = "";
+
     // Stream mode
     const contentEl = appendStreamBubble();
-    let accumulated = "";
 
     const result = await fetchSSE("/api/chat-stream", payload, (token) => {
       accumulated += token;
@@ -118,6 +134,9 @@ export async function sendChatMessage() {
       if (isNearBottom) msgContainer.scrollTop = msgContainer.scrollHeight;
     });
 
+    chatAbortController = null;
+    $("stop-chat").style.display = "none";
+    $("send-chat").style.display = "";
     removeStreamBubble();
 
     const fullText = result.fullText || accumulated;
@@ -132,8 +151,16 @@ export async function sendChatMessage() {
     state.chatHistory.push({ role: "assistant", content: reply, meta: metaStr, hasUpdate: !!updatedText });
     renderChatMessages();
   } catch (err) {
+    chatAbortController = null;
+    $("stop-chat").style.display = "none";
+    $("send-chat").style.display = "";
     removeStreamBubble();
-    state.chatHistory.push({ role: "assistant", content: `Error: ${err.message}`, meta: "" });
+    if (err.name !== "AbortError") {
+      state.chatHistory.push({ role: "assistant", content: `Error: ${err.message}`, meta: "" });
+    } else {
+      // User clicked stop — save what we have so far
+      state.chatHistory.push({ role: "assistant", content: accumulated || "(已停止)", meta: "stopped" });
+    }
     renderChatMessages();
   }
 }

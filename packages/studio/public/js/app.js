@@ -4,7 +4,7 @@ import { $, escapeHtml, requestJson, autoResizeInput } from "./utils.js";
 import { setView, switchToolTab, setEditorTabEnabled, toggleSidebar } from "./views.js";
 import { getTheme, getStyle, toggleTheme, toggleStyle, updateThemeIcon, updateStyleLabel } from "./theme.js";
 import { buildSidebarTree, renderSidebarForView } from "./sidebar.js";
-import { renderChatMessages, sendChatMessage, handleQuickAction } from "./chat.js";
+import { renderChatMessages, sendChatMessage, handleQuickAction, stopChatGeneration } from "./chat.js";
 import { showContent, toggleEdit, saveContent, backToChat } from "./content.js";
 import { openSettings, closeSettings, saveSettings, runDoctor } from "./settings.js";
 import { createBook, writeNext, exportBook } from "./forms.js";
@@ -176,6 +176,7 @@ function bindEvents() {
 
   // Chat
   $("send-chat").addEventListener("click", sendChatMessage);
+  $("stop-chat").addEventListener("click", stopChatGeneration);
   $("chat-input").addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();

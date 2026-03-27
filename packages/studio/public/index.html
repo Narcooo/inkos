@@ -369,8 +369,11 @@
             <div class="chat-composer" id="chat-composer">
               <div class="chat-input-bar">
                 <textarea id="chat-input" rows="1" placeholder="输入你的想法..."></textarea>
-                <button class="btn-send" id="send-chat" type="button" title="Send">
+                <button class="btn-send" id="send-chat" type="button" title="发送">
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                </button>
+                <button class="btn-stop" id="stop-chat" type="button" title="停止生成" style="display:none">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><rect x="9" y="9" width="6" height="6" rx="0.5" fill="currentColor"/></svg>
                 </button>
               </div>
               <div class="chat-chips" id="chat-chips">
