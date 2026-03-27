@@ -1,0 +1,40 @@
+{
+  "name": "@actalk/inkos-studio",
+  "version": "0.6.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/api/index.js",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build:web": "vite build",
+    "build:api": "node -e \"const fs=require('node:fs'); fs.rmSync('dist/api',{recursive:true,force:true}); fs.rmSync('dist/shared',{recursive:true,force:true});\" && tsc -p tsconfig.api.json",
+    "build": "pnpm build:web && pnpm build:api",
+    "dev:web": "vite",
+    "dev:api": "tsx src/api/index.ts",
+    "dev": "concurrently \"pnpm dev:web\" \"pnpm dev:api\"",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.api.json --noEmit"
+  },
+  "dependencies": {
+    "@actalk/inkos-core": "workspace:*",
+    "@hono/node-server": "^1.14.4",
+    "hono": "^4.7.5",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@testing-library/react": "^16.3.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.10",
+    "@types/react-dom": "^19.0.4",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
+    "jsdom": "^26.1.0",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.0",
+    "vite": "^6.2.0",
+    "vitest": "^3.0.0"
+  }
+}

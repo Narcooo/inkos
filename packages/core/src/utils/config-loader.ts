@@ -16,7 +16,7 @@ export async function loadProjectConfig(
 ): Promise<ProjectConfig> {
   // Load global ~/.inkos/.env first, then project .env overrides
   const { config: loadEnv } = await import("dotenv");
-  loadEnv({ path: GLOBAL_ENV_PATH });
+  loadEnv({ path: GLOBAL_ENV_PATH, override: true });
   loadEnv({ path: join(root, ".env"), override: true });
 
   const configPath = join(root, "inkos.json");
