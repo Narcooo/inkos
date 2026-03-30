@@ -90,7 +90,7 @@ export const initCommand = new Command("init")
           [
             "# LLM Configuration",
             "# Tip: Run 'inkos config set-global' to set once for all projects.",
-            "# Provider: openai (OpenAI / compatible proxy), anthropic (Anthropic native)",
+            "# Provider: openai (OpenAI / compatible proxy), anthropic (Anthropic native), minimax (MiniMax)",
             "INKOS_LLM_PROVIDER=openai",
             "INKOS_LLM_BASE_URL=",
             "INKOS_LLM_API_KEY=",
@@ -110,6 +110,11 @@ export const initCommand = new Command("init")
             "# INKOS_LLM_PROVIDER=anthropic",
             "# INKOS_LLM_BASE_URL=",
             "# INKOS_LLM_MODEL=",
+            "",
+            "# MiniMax example:",
+            "# INKOS_LLM_PROVIDER=minimax",
+            "# INKOS_LLM_BASE_URL=https://api.minimax.io/v1",
+            "# INKOS_LLM_MODEL=MiniMax-M2.7",
           ].join("\n"),
           "utf-8",
         );

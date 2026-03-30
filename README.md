@@ -48,18 +48,21 @@ clawhub install inkos          # 从 ClawHub 安装 InkOS Skill
 
 ```bash
 inkos config set-global \
-  --provider <openai|anthropic|custom> \
+  --provider <openai|anthropic|minimax|custom> \
   --base-url <API 地址> \
   --api-key <你的 API Key> \
   --model <模型名>
 
-# provider: openai / anthropic / custom（兼容 OpenAI 格式的中转站选 custom）
+# provider: openai / anthropic / minimax / custom（兼容 OpenAI 格式的中转站选 custom）
 # base-url: 你的 API 提供商地址
 # api-key: 你的 API Key
 # model: 你的模型名称
 ```
 
 配置保存在 `~/.inkos/.env`，所有项目共享。之后新建项目不用再配。
+
+> **MiniMax 快速配置：** `inkos config set-global --provider minimax --base-url https://api.minimax.io/v1 --api-key <key> --model MiniMax-M2.7`
+> 支持模型：`MiniMax-M2.7`（最新，204K 上下文）、`MiniMax-M2.7-highspeed`（204K 上下文）。温度自动限制在 (0, 1] 范围。
 
 **方式二：项目级 `.env`**
 
@@ -70,8 +73,8 @@ inkos init my-novel     # 初始化项目
 
 ```bash
 # 必填
-INKOS_LLM_PROVIDER=                               # openai / anthropic / custom（兼容 OpenAI 接口的都选 custom）
-INKOS_LLM_BASE_URL=                               # API 地址（支持中转站、智谱、Gemini 等）
+INKOS_LLM_PROVIDER=                               # openai / anthropic / minimax / custom（兼容 OpenAI 接口的都选 custom）
+INKOS_LLM_BASE_URL=                               # API 地址（支持中转站、MiniMax、智谱、Gemini 等）
 INKOS_LLM_API_KEY=                                 # API Key
 INKOS_LLM_MODEL=                                   # 模型名
 

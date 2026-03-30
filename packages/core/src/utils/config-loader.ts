@@ -10,7 +10,7 @@ export function isApiKeyOptionalForEndpoint(params: {
   readonly provider?: string | undefined;
   readonly baseUrl?: string | undefined;
 }): boolean {
-  if (params.provider === "anthropic") {
+  if (params.provider === "anthropic" || params.provider === "minimax") {
     return false;
   }
   if (!params.baseUrl) {

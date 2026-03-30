@@ -49,18 +49,21 @@ npm でインストール済み、またはリポジトリをクローン済み�
 ```bash
 inkos config set-global \
   --lang en \
-  --provider <openai|anthropic|custom> \
+  --provider <openai|anthropic|minimax|custom> \
   --base-url <APIエンドポイント> \
   --api-key <APIキー> \
   --model <モデル名>
 
-# provider: openai / anthropic / custom（OpenAI互換プロキシにはcustomを使用）
+# provider: openai / anthropic / minimax / custom（OpenAI互換プロキシにはcustomを使用）
 # base-url: APIプロバイダーURL
 # api-key: APIキー
 # model: モデル名
 ```
 
 `--lang en` で英語をすべてのプロジェクトのデフォルト執筆言語に設定。`~/.inkos/.env` に保存されます。新規プロジェクトは追加設定なしですぐに使えます。
+
+> **MiniMax クイック設定：** `inkos config set-global --provider minimax --base-url https://api.minimax.io/v1 --api-key <key> --model MiniMax-M2.7`
+> 対応モデル：`MiniMax-M2.7`（最新、204Kコンテキスト）、`MiniMax-M2.7-highspeed`（204Kコンテキスト）。温度は自動的に (0, 1] に制限されます。
 
 **方法2：プロジェクトごとの `.env`**
 
@@ -71,8 +74,8 @@ inkos init my-novel     # プロジェクトを初期化
 
 ```bash
 # 必須
-INKOS_LLM_PROVIDER=                               # openai / anthropic / custom（OpenAI互換APIにはcustomを使用）
-INKOS_LLM_BASE_URL=                               # APIエンドポイント
+INKOS_LLM_PROVIDER=                               # openai / anthropic / minimax / custom（OpenAI互換APIにはcustomを使用）
+INKOS_LLM_BASE_URL=                               # APIエンドポイント（MiniMax、プロキシ等対応）
 INKOS_LLM_API_KEY=                                 # APIキー
 INKOS_LLM_MODEL=                                   # モデル名
 
