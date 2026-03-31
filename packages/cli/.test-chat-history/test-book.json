@@ -1,0 +1,21 @@
+{
+  "bookId": "test-book",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Test",
+      "timestamp": "2026-03-31T01:58:02.714Z",
+      "tokenUsage": {
+        "promptTokens": 10,
+        "completionTokens": 20,
+        "totalTokens": 30
+      }
+    }
+  ],
+  "metadata": {
+    "createdAt": "2026-03-31T01:58:02.714Z",
+    "updatedAt": "2026-03-31T01:58:02.714Z",
+    "totalMessages": 1,
+    "totalTokens": 30
+  }
+}

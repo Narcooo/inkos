@@ -214,6 +214,9 @@ export class ChatApp {
     const s = p.spinner();
     s.start("Processing your request...");
 
+    // Track if any content was streamed
+    let hasStreamedContent = false;
+
     // Process with callbacks
     const result = await this.session.processInput(input, {
       onToolStart: (toolName) => {
@@ -223,7 +226,11 @@ export class ChatApp {
         s.message(`${toolName} completed`);
       },
       onStreamChunk: (chunk) => {
-        // Show streaming text (could be enhanced)
+        // Show streaming text
+        if (!hasStreamedContent) {
+          hasStreamedContent = true;
+          s.stop("Receiving response...");
+        }
         p.log.message(chunk, { symbol: "" });
       },
       onStatusChange: (status) => {
@@ -231,12 +238,11 @@ export class ChatApp {
       },
     });
 
-    s.stop(result.success ? "Done" : "Failed");
+    s.stop(result.success ? "✓ Done" : "✗ Failed");
 
-    // Display result
-    if (result.success) {
-      p.log.success(result.message);
-    } else {
+    // Only show error messages or short status updates
+    // Full responses are already shown via streaming
+    if (!result.success) {
       p.log.error(result.message);
     }
 
