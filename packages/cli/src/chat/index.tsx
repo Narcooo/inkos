@@ -134,7 +134,9 @@ const ChatInterface: React.FC<{
 
     // Handle special commands
     if (submittedInput === "/exit" || submittedInput === "/quit") {
-      exit();
+      setStatus("再见！正在退出...");
+      // Delay to show the message before exiting
+      setTimeout(() => exit(), 500);
       return;
     }
 
