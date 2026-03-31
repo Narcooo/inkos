@@ -22,7 +22,7 @@ describe("Slash Commands", () => {
     expect(result.valid).toBe(true);
     if (result.valid) {
       expect(result.command).toBe("write");
-      expect(result.options.guidance).toBe("'增加动作戏'");
+      expect(result.options.guidance).toBe("增加动作戏"); // Quotes are stripped
     }
   });
 

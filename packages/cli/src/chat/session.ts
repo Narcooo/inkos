@@ -8,7 +8,7 @@ import {
   runAgentLoop,
 } from "@actalk/inkos-core";
 import { ChatHistoryManager } from "./history.js";
-import { parseSlashCommand } from "./commands.js";
+import { parseSlashCommand, validateCommandArgs } from "./commands.js";
 import { parseError } from "./errors.js";
 import {
   type ChatHistory,
@@ -83,6 +83,12 @@ export class ChatSession {
         return { success: false, message: parsed.error };
       }
 
+      // Validate command arguments
+      const argsValidation = validateCommandArgs(parsed.command, parsed.args);
+      if (!argsValidation.valid) {
+        return { success: false, message: argsValidation.error };
+      }
+
       // Handle clear/switch/help locally
       if (parsed.command === "clear") {
         await this.historyManager.clear(this.currentBook);
@@ -98,6 +104,22 @@ export class ChatSession {
 
       if (parsed.command === "switch" && parsed.args[0]) {
         const newBookId = parsed.args[0];
+
+        // Validate book ID to prevent path traversal
+        const isSafeBookId =
+          typeof newBookId === "string" &&
+          newBookId.length > 0 &&
+          !newBookId.includes("..") &&
+          !newBookId.includes("/") &&
+          !newBookId.includes("\\");
+
+        if (!isSafeBookId) {
+          return {
+            success: false,
+            message: `无效的书籍 ID: ${newBookId}`,
+          };
+        }
+
         this.currentBook = newBookId;
         this.history = await this.historyManager.load(newBookId);
         callbacks?.onStatusChange?.(`已切换: ${newBookId}`);
@@ -111,7 +133,42 @@ export class ChatSession {
 
       if (parsed.command === "help") {
         callbacks?.onStatusChange?.("显示帮助");
-        return { success: true, message: "显示帮助" };
+
+        // Generate help text
+        const helpText = `## 📚 InkOS Chat 命令帮助
+
+### 交互式命令
+输入 \`/\` 然后按 **Tab** 键查看可用命令：
+
+- \`/write\` - 写下一章（自动续写最新章之后的一章）
+- \`/audit [章节号]\` - 审计指定章节（不指定则审计最新章节）
+- \`/revise [章节号] --mode [polish|rewrite|rework]\` - 修订章节
+- \`/status\` - 显示书籍当前状态
+- \`/clear\` - 清空对话历史
+- \`/switch <书籍ID>\` - 切换到其他书籍
+- \`/help\` - 显示此帮助信息
+- \`/exit\` 或 \`/quit\` - 退出聊天界面
+
+### Tab 自动补全
+1. 输入 \`/\` 开始命令
+2. 按 **Tab** 键查看匹配的命令
+3. 使用 **↑↓ 箭头** 导航建议
+4. 再次按 **Tab** 自动补全选中的命令
+
+### 自然语言
+你也可以直接用自然语言与 InkOS 对话：
+
+\`> 写下一章，增加一些动作戏\`
+\`> 审计最新章节\`
+\`> 这本书目前有多少字了？\`
+
+### 快捷键
+- **Tab** - 自动补全命令
+- **↑/↓** - 导航命令建议
+- **Esc** - 退出聊天
+- **Enter** - 提交消息`;
+
+        return { success: true, message: helpText };
       }
     }
 
@@ -143,6 +200,9 @@ export class ChatSession {
 
     this.history = this.historyManager.addMessage(this.history, userMessage);
 
+    // Save user message immediately in case agent fails
+    await this.historyManager.save(this.history);
+
     try {
       // Setup callbacks for streaming progress
       const options = {
@@ -171,7 +231,7 @@ export class ChatSession {
 
       this.history = this.historyManager.addMessage(this.history, assistantMessage);
 
-      // Save history
+      // Save history with assistant response
       await this.historyManager.save(this.history);
 
       callbacks?.onStatusChange?.("完成");

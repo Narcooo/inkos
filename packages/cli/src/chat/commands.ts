@@ -80,7 +80,36 @@ export function parseSlashCommand(input: string):
     } {
   // Remove leading slash
   const trimmed = input.slice(1).trim();
-  const parts = trimmed.split(/\s+/);
+
+  // Tokenize with quote support
+  const parts: string[] = [];
+  let current = "";
+  let inQuotes = false;
+  let quoteChar = "";
+
+  for (let i = 0; i < trimmed.length; i++) {
+    const char = trimmed[i];
+
+    if ((char === '"' || char === "'") && !inQuotes) {
+      inQuotes = true;
+      quoteChar = char;
+    } else if (char === quoteChar && inQuotes) {
+      inQuotes = false;
+      quoteChar = "";
+    } else if (char === " " && !inQuotes) {
+      if (current.length > 0) {
+        parts.push(current);
+        current = "";
+      }
+    } else {
+      current += char;
+    }
+  }
+
+  if (current.length > 0) {
+    parts.push(current);
+  }
+
   const commandName = parts[0]?.toLowerCase() as SlashCommand;
 
   // Validate command exists

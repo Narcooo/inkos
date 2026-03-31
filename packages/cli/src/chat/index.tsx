@@ -57,7 +57,7 @@ const ChatInterface: React.FC<{
     const initSession = async () => {
       try {
         const projectConfig = await loadConfig();
-        const pipelineConfig = buildPipelineConfig(projectConfig, process.cwd());
+        const pipelineConfig = buildPipelineConfig(projectConfig, process.cwd(), { quiet: true });
         const historyManager = new ChatHistoryManager({
           maxMessages: config.maxMessages ?? 50,
         });

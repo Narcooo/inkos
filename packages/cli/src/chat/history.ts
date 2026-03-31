@@ -13,6 +13,26 @@ import {
 } from "./types.js";
 
 /**
+ * Validates that a book ID is safe for filesystem use.
+ * Prevents path traversal attacks.
+ */
+function isValidBookId(bookId: string): boolean {
+  // Must be a non-empty string
+  if (typeof bookId !== "string" || bookId.length === 0) {
+    return false;
+  }
+
+  // Must not contain path separators or parent directory references
+  if (bookId.includes("/") || bookId.includes("\\") || bookId.includes("..")) {
+    return false;
+  }
+
+  // Must only contain safe characters: letters, numbers, underscores, hyphens, Chinese characters
+  const safePattern = /^[\w\u4e00-\u9fa5-]+$/;
+  return safePattern.test(bookId);
+}
+
+/**
  * Manages chat history persistence for individual books.
  */
 export class ChatHistoryManager {
@@ -27,8 +47,12 @@ export class ChatHistoryManager {
 
   /**
    * Get the file path for a book's chat history.
+   * @throws Error if bookId is invalid (path traversal attempt)
    */
   private getHistoryFilePath(bookId: string): string {
+    if (!isValidBookId(bookId)) {
+      throw new Error(`Invalid book ID: ${bookId} contains unsafe characters`);
+    }
     return join(this.config.historyDir, `${bookId}${this.config.fileExtension}`);
   }
 
