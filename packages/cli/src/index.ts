@@ -28,6 +28,7 @@ import { importCommand } from "./commands/import.js";
 import { fanficCommand } from "./commands/fanfic.js";
 import { studioCommand } from "./commands/studio.js";
 import { consolidateCommand } from "./commands/consolidate.js";
+import { chatCommand } from "./commands/chat.js";
 
 const require = createRequire(import.meta.url);
 const { version } = require("../package.json") as { version: string };
@@ -66,5 +67,6 @@ program.addCommand(importCommand);
 program.addCommand(fanficCommand);
 program.addCommand(studioCommand);
 program.addCommand(consolidateCommand);
+program.addCommand(chatCommand);
 
 program.parse();
