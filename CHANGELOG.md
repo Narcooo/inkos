@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.0.2
+
+### Bug Fixes
+
+- **#127** — 修复 Studio Web 创建书籍时的误报失败：后台仍在异步创建时，前端延长等待窗口，不再过早提示 `Book not found`
+- 段落碎片检测忽略纯对话行，减少误报
+
+---
+
 ## v1.0.0
 
 InkOS Studio + 稳定性加固。从 CLI 工具升级为 CLI + Web 工作台。

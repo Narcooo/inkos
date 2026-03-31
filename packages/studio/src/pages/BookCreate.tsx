@@ -58,19 +58,23 @@ interface WaitForBookReadyOptions {
   readonly waitImpl?: (ms: number) => Promise<void>;
 }
 
+const DEFAULT_BOOK_READY_MAX_ATTEMPTS = 120;
+const DEFAULT_BOOK_READY_DELAY_MS = 250;
+
 export async function waitForBookReady(
   bookId: string,
   options: WaitForBookReadyOptions = {},
 ): Promise<void> {
   const fetchBook = options.fetchBook ?? ((id: string) => fetchJson(`/books/${id}`));
   const fetchStatus = options.fetchStatus ?? ((id: string) => fetchJson<{ status: string; error?: string }>(`/books/${id}/create-status`));
-  const maxAttempts = options.maxAttempts ?? 20;
-  const delayMs = options.delayMs ?? 150;
+  const maxAttempts = options.maxAttempts ?? DEFAULT_BOOK_READY_MAX_ATTEMPTS;
+  const delayMs = options.delayMs ?? DEFAULT_BOOK_READY_DELAY_MS;
   const waitImpl = options.waitImpl ?? ((ms: number) => new Promise<void>((resolve) => {
     setTimeout(resolve, ms);
   }));
 
   let lastError: unknown;
+  let lastKnownStatus: string | undefined;
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     try {
@@ -80,6 +84,7 @@ export async function waitForBookReady(
       lastError = error;
       try {
         const status = await fetchStatus(bookId);
+        lastKnownStatus = status.status;
         if (status.status === "error") {
           throw new Error(status.error ?? `Book "${bookId}" failed to create`);
         }
@@ -89,10 +94,17 @@ export async function waitForBookReady(
         }
       }
       if (attempt === maxAttempts - 1) {
+        if (lastKnownStatus === "creating") {
+          break;
+        }
         throw error;
       }
       await waitImpl(delayMs);
     }
+  }
+
+  if (lastKnownStatus === "creating") {
+    throw new Error(`Book "${bookId}" is still being created. Wait a moment and refresh.`);
   }
 
   throw lastError instanceof Error ? lastError : new Error(`Book "${bookId}" was not ready`);

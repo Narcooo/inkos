@@ -1,6 +1,6 @@
 {
   "name": "@actalk/inkos-studio",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "InkOS Studio — Web workbench for novel writing",
   "type": "module",
   "main": "dist/api/index.js",

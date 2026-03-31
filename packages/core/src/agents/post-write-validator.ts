@@ -503,17 +503,24 @@ export function detectParagraphShapeWarnings(
   return violations;
 }
 
+function isDialogueParagraph(paragraph: string): boolean {
+  const trimmed = paragraph.trim();
+  return /^[""「『'《]/.test(trimmed) || /^[""]/.test(trimmed) || /^——/.test(trimmed);
+}
+
 function analyzeParagraphShape(content: string, language: "zh" | "en"): ParagraphShape {
   const paragraphs = extractParagraphs(content);
+  // Exclude dialogue lines from short paragraph counting — dialogue is naturally short
+  const narrativeParagraphs = paragraphs.filter((p) => !isDialogueParagraph(p));
   const shortThreshold = language === "en" ? 120 : 35;
-  const shortParagraphs = paragraphs.filter((paragraph) => paragraph.length < shortThreshold);
+  const shortParagraphs = narrativeParagraphs.filter((paragraph) => paragraph.length < shortThreshold);
   const averageLength = paragraphs.length > 0
     ? paragraphs.reduce((sum, paragraph) => sum + paragraph.length, 0) / paragraphs.length
     : 0;
 
   let maxConsecutiveShort = 0;
   let currentConsecutive = 0;
-  for (const paragraph of paragraphs) {
+  for (const paragraph of narrativeParagraphs) {
     if (paragraph.length < shortThreshold) {
       currentConsecutive++;
       maxConsecutiveShort = Math.max(maxConsecutiveShort, currentConsecutive);
@@ -526,7 +533,7 @@ function analyzeParagraphShape(content: string, language: "zh" | "en"): Paragrap
     paragraphs,
     shortThreshold,
     shortParagraphs,
-    shortRatio: paragraphs.length > 0 ? shortParagraphs.length / paragraphs.length : 0,
+    shortRatio: narrativeParagraphs.length > 0 ? shortParagraphs.length / narrativeParagraphs.length : 0,
     averageLength,
     maxConsecutiveShort,
   };
