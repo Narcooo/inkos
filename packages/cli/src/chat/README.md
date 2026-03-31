@@ -1,6 +1,6 @@
 # InkOS Chat Interface
 
-Interactive chat interface using modern `@clack/prompts` library.
+Interactive chat interface using **Ink** (React-like terminal UI framework) with full keyboard support including Tab autocomplete.
 
 ## Usage
 
@@ -16,16 +16,31 @@ inkos chat
 
 ### Interactive Commands
 
-- `/help` - Show available commands
-- `/status` - Display current book status
-- `/clear` - Clear chat history
-- `/exit` or `/quit` - Exit the chat
-
-### Agent Integration
+Type `/` and press **Tab** to see available commands with autocomplete:
 
 - `/write` - Write next chapter
 - `/audit [chapter]` - Audit chapter (latest if not specified)
 - `/revise [chapter] --mode [polish|rewrite|rework]` - Revise chapter
+- `/status` - Show book status
+- `/clear` - Clear chat history
+- `/exit` - Exit chat
+
+### Tab Autocomplete ✨
+
+**How it works:**
+1. Type `/` to start a command
+2. Press **Tab** to see matching commands
+3. Use **↑↓ arrows** to navigate suggestions
+4. Press **Tab** again to autocomplete selected command
+
+**Example:**
+```
+> /w<Tab>
+━━ Commands ━━
+▶ /write - 写下一章（自动续写最新章之后的一章）
+  /write --guidance - 带创作指导
+  Tab: autocomplete | ↑↓: navigate
+```
 
 ### Natural Language
 
@@ -39,9 +54,11 @@ You can also type naturally, and InkOS agent will understand your intent:
 
 ## Architecture
 
+Built with **Ink** (React for terminals):
+
 ```
 packages/cli/src/chat/
-├── index.ts          # ChatApp main class
+├── index.tsx         # Main React components (Ink)
 ├── types.ts          # Type definitions
 ├── history.ts        # ChatHistoryManager (persistence)
 ├── session.ts        # ChatSession (agent integration)
@@ -49,29 +66,63 @@ packages/cli/src/chat/
 └── errors.ts         # Error handling utilities
 ```
 
+**Key Components:**
+- `ChatInterface` - Main app container
+- `MessageDisplay` - Render chat messages
+- `TextInput` - Input with autocomplete support
+
+## Technical Stack
+
+**Framework**: Ink (React-like terminal UI)
+- React hooks: useState, useEffect, useInput
+- Component-based architecture
+- Rich terminal rendering
+
+**Dependencies**:
+- `ink` - Core framework
+- `react` - Component model
+- `ink-text-input` - Input component
+- `ink-spinner` - Loading indicator
+
 ## Key Features
 
-### 1. Clean Architecture
+### 1. Modern UI Framework
 
-- **UI Layer**: ChatApp using @clack/prompts
-- **Business Logic**: ChatSession with runAgentLoop integration
-- **Data Layer**: ChatHistoryManager for persistence
+**Why Ink?**
+- Full keyboard interactivity (Tab, arrows, etc.)
+- React-like component system
+- Modern ESM-native codebase
+- Active maintenance & community
 
-### 2. ESM Compatible
+### 2. Tab Autocomplete
 
-No more CommonJS/blessed compatibility issues.
+Real-time command discovery:
+- Instant filtering as you type
+- Arrow key navigation
+- Visual highlighting of selected command
+- Command descriptions shown inline
 
-### 3. Streaming Support
+### 3. Rich Components
 
-Real-time feedback during agent execution with spinner and progress messages.
+- **Spinner** for processing status
+- **Colored output** (cyan, green, blue, etc.)
+- **Bold/dim text** for emphasis
+- **Dynamic updates** without flickering
 
-### 4. Auto History Management
+### 4. Streaming Support
+
+Real-time feedback during agent execution:
+- Tool execution status
+- Progress indicators
+- Streaming message chunks
+
+### 5. Auto History Management
 
 - Automatic message pruning (configurable limit)
 - Token usage tracking
 - Per-book isolation (`.inkos/chat_history/<book-id>.json`)
 
-### 5. Error Recovery
+### 6. Error Recovery
 
 User-friendly error messages with recovery suggestions.
 
@@ -96,28 +147,54 @@ inkos chat --max-messages 100 <book-id>
 inkos chat --lang en <book-id>
 ```
 
-## Differences from Old blessed TUI
+## Keyboard Shortcuts
 
-| Feature | Old (blessed) | New (@clack/prompts) |
-|---------|---------------|----------------------|
-| ESM Compatibility | ❌ Issues | ✅ Native |
-| Rendering Stability | ❌ Black screens, artifacts | ✅ Stable |
-| Input Focus | ❌ Requires manual refocus | ✅ Automatic |
-| Code Complexity | High (blessed widgets) | Low (declarative) |
-| Dependencies | blessed + blessed-contrib | @clack/prompts only |
-| Maintenance | Difficult | Easy |
+| Key | Action |
+|-----|--------|
+| **Tab** | Autocomplete command |
+| **↑** | Previous suggestion |
+| **↓** | Next suggestion |
+| **Esc** | Exit chat |
+| **Enter** | Submit message |
+
+## Differences from Old Implementations
+
+| Feature | blessed | @clack/prompts | Ink |
+|---------|---------|----------------|-----|
+| Tab Autocomplete | ✅ | ❌ | ✅ |
+| ESM Compatibility | ❌ Issues | ✅ | ✅ |
+| Rendering Stability | ❌ Problems | ✅ Stable | ✅ Stable |
+| Input Focus | ❌ Manual | ✅ Auto | ✅ Auto |
+| Component Model | Low-level | Imperative | React-like |
+| Modern Architecture | ❌ | ✅ | ✅ |
+| Maintenance | Difficult | Easy | Easy |
 
 ## Future Enhancements
 
-- [ ] Tab autocomplete for commands (requires custom readline implementation)
+Now possible with Ink:
 - [ ] Multi-line input support
-- [ ] Rich text formatting in messages
-- [ ] Auto-suggestions for slash commands
+- [ ] Rich text formatting
+- [ ] Custom keybindings (Ctrl+C, Ctrl+L, etc.)
+- [ ] Progress bars for long operations
+- [ ] Interactive prompts (confirm, select)
+- [ ] Split-screen layouts
 - [ ] Export chat history to Markdown
-- [ ] Book switching within chat (using `/switch` command)
+- [ ] Book switching within chat
+
+## Development
+
+**Building**:
+```bash
+pnpm build
+```
+
+**Running in development**:
+```bash
+node packages/cli/dist/index.js chat <book-id>
+```
 
 ## Known Limitations
 
-**Tab Autocomplete**: Not currently supported. Standard terminal prompt libraries (@clack/prompts, inquirer) don't support real-time tab completion like shells or IDEs. Implementing this would require custom readline handling or returning to blessed (which we removed for stability reasons).
+**Message Length**: Very long messages (>20 lines) are truncated in display but fully stored in history.
 
-**Workaround**: Type `/help` to see all commands, or reference the command list in this README.
+**Terminal Size**: Ink adapts to terminal size but very small terminals (<80 cols) may have layout issues.
