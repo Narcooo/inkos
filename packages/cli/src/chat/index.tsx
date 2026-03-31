@@ -250,11 +250,6 @@ const MessageDisplay: React.FC<{ message: ChatMessage }> = ({ message }) => {
   const timestamp = new Date(message.timestamp).toLocaleTimeString();
   const isUser = message.role === "user";
 
-  // Truncate very long messages
-  const lines = message.content.split("\n");
-  const displayContent = lines.slice(0, 20).join("\n");
-  const hasMore = lines.length > 20;
-
   return (
     <Box flexDirection="column" marginBottom={1}>
       <Box>
@@ -264,10 +259,7 @@ const MessageDisplay: React.FC<{ message: ChatMessage }> = ({ message }) => {
         <Text dimColor> [{timestamp}]</Text>
       </Box>
       <Box marginLeft={2}>
-        <Text>{displayContent}</Text>
-        {hasMore && (
-          <Text dimColor> ... ({lines.length - 20} more lines)</Text>
-        )}
+        <Text>{message.content}</Text>
       </Box>
       {message.toolCalls && message.toolCalls.length > 0 && (
         <Box marginLeft={2}>
