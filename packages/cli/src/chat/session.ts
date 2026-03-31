@@ -121,8 +121,9 @@ export class ChatSession {
         }
 
         try {
+          const loadedHistory = await this.historyManager.load(newBookId);
           this.currentBook = newBookId;
-          this.history = await this.historyManager.load(newBookId);
+          this.history = loadedHistory;
           callbacks?.onStatusChange?.(`已切换: ${newBookId}`);
 
           return {
@@ -213,16 +214,16 @@ export class ChatSession {
     this.history = this.historyManager.addMessage(this.history, userMessage);
 
     // Save user message immediately in case agent fails
-    await this.historyManager.save(this.history);
+    this.history = await this.historyManager.save(this.history);
 
     try {
-      // Build conversation context from recent history
-      const recentMessages = this.history.messages.slice(-10); // Last 10 messages
+      // Build conversation context from recent history (excluding current message)
+      const previousMessages = this.history.messages.slice(0, -1).slice(-10); // Exclude last (current) message
       let conversationContext = "";
 
-      if (recentMessages.length > 1) {
+      if (previousMessages.length > 0) {
         conversationContext = "\n\n## 对话历史\n\n" +
-          recentMessages
+          previousMessages
             .map(msg => `${msg.role === "user" ? "用户" : "助手"}: ${msg.content}`)
             .join("\n\n") +
           "\n\n---\n\n";
@@ -259,7 +260,7 @@ export class ChatSession {
       this.history = this.historyManager.addMessage(this.history, assistantMessage);
 
       // Save history with assistant response
-      await this.historyManager.save(this.history);
+      this.history = await this.historyManager.save(this.history);
 
       callbacks?.onStatusChange?.("完成");
 

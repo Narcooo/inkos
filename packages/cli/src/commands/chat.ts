@@ -24,7 +24,8 @@ export const chatCommand = new Command("chat")
         maxMessages,
       });
     } catch (e) {
-      process.stderr.write(`[ERROR] Failed to start chat: ${e}\n`);
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      process.stderr.write(`[ERROR] Failed to start chat: ${errorMessage}\n`);
       process.exit(1);
     }
   });

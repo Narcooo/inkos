@@ -144,11 +144,7 @@ const ChatInterface: React.FC<{
       return;
     }
 
-    if (submittedInput === "/help") {
-      // Help is shown in the history display
-      setStatus("Showing help");
-      return;
-    }
+    // /help is handled by session.processInput() to display help text
 
     setIsProcessing(true);
     setStatus("Processing...");
@@ -205,17 +201,34 @@ const ChatInterface: React.FC<{
       {showCommandSuggestions && (
         <Box flexDirection="column" marginBottom={1}>
           <Text dimColor>━━ Commands ━━</Text>
-          {matchingCommands.slice(0, 5).map((cmd, idx) => (
-            <Box key={cmd}>
-              <Text
-                color={idx === selectedSuggestionIndex ? "cyan" : "white"}
-                bold={idx === selectedSuggestionIndex}
-              >
-                {idx === selectedSuggestionIndex ? "▶ " : "  "}
-                /{cmd} - {SLASH_COMMANDS[cmd].description}
-              </Text>
-            </Box>
-          ))}
+          {(() => {
+            const VISIBLE_COMMAND_COUNT = 5;
+            const totalCommands = matchingCommands.length;
+            if (totalCommands === 0) {
+              return null;
+            }
+            const maxStartIndex = Math.max(0, totalCommands - VISIBLE_COMMAND_COUNT);
+            const startIndex = Math.max(
+              0,
+              Math.min(selectedSuggestionIndex, maxStartIndex)
+            );
+            const visibleCommands = matchingCommands.slice(
+              startIndex,
+              startIndex + VISIBLE_COMMAND_COUNT
+            );
+            return visibleCommands.map((cmd, idx) => {
+              const globalIndex = startIndex + idx;
+              const isSelected = globalIndex === selectedSuggestionIndex;
+              return (
+                <Box key={cmd}>
+                  <Text color={isSelected ? "cyan" : "white"} bold={isSelected}>
+                    {isSelected ? "▶ " : "  "}
+                    /{cmd} - {SLASH_COMMANDS[cmd].description}
+                  </Text>
+                </Box>
+              );
+            });
+          })()}
           <Text dimColor>Tab: autocomplete | ↑↓: navigate</Text>
         </Box>
       )}

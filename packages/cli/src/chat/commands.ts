@@ -112,6 +112,14 @@ export function parseSlashCommand(input: string):
 
   const commandName = parts[0]?.toLowerCase() as SlashCommand;
 
+  // Check for empty command
+  if (!commandName) {
+    return {
+      valid: false,
+      error: "请输入命令。输入 /help 查看可用命令。",
+    };
+  }
+
   // Validate command exists
   if (!SLASH_COMMANDS[commandName]) {
     return {

@@ -109,8 +109,9 @@ export class ChatHistoryManager {
   /**
    * Save chat history for a book.
    * Automatically prunes old messages if over limit.
+   * @returns The pruned and updated history
    */
-  async save(history: ChatHistory): Promise<void> {
+  async save(history: ChatHistory): Promise<ChatHistory> {
     await this.ensureHistoryDir();
 
     // Prune if over limit
@@ -131,6 +132,7 @@ export class ChatHistoryManager {
     const data = JSON.stringify(updatedHistory, null, 2);
 
     await writeFile(filePath, data, "utf-8");
+    return updatedHistory;
   }
 
   /**
