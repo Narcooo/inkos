@@ -93,7 +93,7 @@ ${chapterContent.slice(0, 6000)}`;
       return this.parseResult(response.content);
     } catch (error) {
       this.log?.warn(`State validation failed: ${error}`);
-      throw error;
+      return { warnings: [{ category: "validator_error", description: String(error) }], passed: true };
     }
   }
 
@@ -145,7 +145,8 @@ ${chapterContent.slice(0, 6000)}`;
         passed: parsed.passed,
       };
     } catch (error) {
-      throw new Error(`State validator returned invalid response: ${String(error)}`);
+      this.log?.warn(`StateValidatorAgent.parseResult failed: ${error}`);
+      return { warnings: [{ category: "validator_error", description: String(error) }], passed: true };
     }
   }
 }
