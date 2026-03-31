@@ -114,6 +114,9 @@ const ChatInterface: React.FC<{
   const handleSubmit = async (submittedInput: string) => {
     if (!session || isProcessing || !submittedInput.trim()) return;
 
+    // Clear input immediately after submission for better UX
+    setInput("");
+
     // Handle special commands
     if (submittedInput === "/exit" || submittedInput === "/quit") {
       exit();
@@ -153,7 +156,6 @@ const ChatInterface: React.FC<{
       setStatus(`Error: ${error}`);
     } finally {
       setIsProcessing(false);
-      setInput("");
     }
   };
 
