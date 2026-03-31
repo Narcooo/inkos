@@ -197,6 +197,4 @@ node packages/cli/dist/index.js chat <book-id>
 
 ## Known Limitations
 
-**Message Length**: Very long messages (>20 lines) are truncated in display but fully stored in history.
-
 **Terminal Size**: Ink adapts to terminal size but very small terminals (<80 cols) may have layout issues.
