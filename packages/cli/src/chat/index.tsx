@@ -205,18 +205,31 @@ const ChatInterface: React.FC<{
         </Box>
       )}
 
-      {/* Input */}
-      <Box>
-        <Text bold color="green">
-          {">"}
-        </Text>
-        <Box marginLeft={1}>
-          <TextInput
-            value={input}
-            onChange={setInput}
-            onSubmit={handleSubmit}
-            placeholder="Type / for commands (Tab to autocomplete)..."
-          />
+      {/* Input with separator lines */}
+      <Box flexDirection="column" marginTop={1}>
+        {/* Upper separator */}
+        <Box>
+          <Text dimColor>{"─".repeat(80)}</Text>
+        </Box>
+
+        {/* Input field */}
+        <Box paddingX={1}>
+          <Text bold color="green">
+            {">"}
+          </Text>
+          <Box marginLeft={1}>
+            <TextInput
+              value={input}
+              onChange={setInput}
+              onSubmit={handleSubmit}
+              placeholder="Type / for commands (Tab to autocomplete)..."
+            />
+          </Box>
+        </Box>
+
+        {/* Lower separator */}
+        <Box>
+          <Text dimColor>{"─".repeat(80)}</Text>
         </Box>
       </Box>
 
