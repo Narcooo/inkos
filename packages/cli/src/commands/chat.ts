@@ -21,8 +21,14 @@ export const chatCommand = new Command("chat")
         throw new Error("--max-messages must be a positive integer");
       }
 
+      // Validate language
+      const lang = opts.lang as string;
+      if (lang !== "zh" && lang !== "en") {
+        throw new Error("--lang must be either 'zh' or 'en'");
+      }
+
       await startChat(bookId, {
-        language: opts.lang as "zh" | "en",
+        language: lang as "zh" | "en",
         maxMessages,
       });
     } catch (e) {

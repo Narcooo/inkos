@@ -88,34 +88,36 @@ const ChatInterface: React.FC<{
 
   // Handle keyboard input
   useInput((_inputKey, key) => {
-    // Tab: autocomplete
+    // Escape: always allow exit
+    if (key.escape) {
+      exit();
+      return;
+    }
+
+    // Tab: autocomplete (only when suggestions are shown)
     if (key.tab && matchingCommands.length > 0) {
       const selected = matchingCommands[selectedSuggestionIndex];
       if (selected) {
         setInput(`/${selected} `);
         setShowCommandSuggestions(false);
       }
+      return;
     }
 
-    // Up/Down: navigate suggestions
+    // Up/Down: navigate suggestions (only when suggestions are shown)
     if (key.upArrow && showCommandSuggestions) {
       setSelectedSuggestionIndex(i =>
         i > 0 ? i - 1 : matchingCommands.length - 1
       );
+      return;
     }
 
     if (key.downArrow && showCommandSuggestions) {
       setSelectedSuggestionIndex(i =>
         i < matchingCommands.length - 1 ? i + 1 : 0
       );
+      return;
     }
-
-    // Escape: exit
-    if (key.escape) {
-      exit();
-    }
-  }, {
-    isActive: showCommandSuggestions || matchingCommands.length > 0,
   });
 
   // Show/hide suggestions based on input
