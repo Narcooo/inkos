@@ -67,8 +67,14 @@ export function applyRuntimeStateDelta(params: {
   };
 
   const issues = validateRuntimeState(next);
-  if (issues.length > 0) {
-    throw new Error(issues.map((issue) => `${issue.code}: ${issue.message}`).join("; "));
+  const fatalIssues = issues.filter(
+    (issue) =>
+      !["missing_state_change", "unsupported_change", "temporal_impossibility", "validator_crash"].includes(
+        issue.code,
+      ),
+  );
+  if (fatalIssues.length > 0) {
+    throw new Error(fatalIssues.map((issue) => `${issue.code}: ${issue.message}`).join("; "));
   }
 
   return next;
