@@ -109,8 +109,15 @@ inkos chat --lang en <book-id>
 
 ## Future Enhancements
 
+- [ ] Tab autocomplete for commands (requires custom readline implementation)
 - [ ] Multi-line input support
 - [ ] Rich text formatting in messages
 - [ ] Auto-suggestions for slash commands
 - [ ] Export chat history to Markdown
 - [ ] Book switching within chat (using `/switch` command)
+
+## Known Limitations
+
+**Tab Autocomplete**: Not currently supported. Standard terminal prompt libraries (@clack/prompts, inquirer) don't support real-time tab completion like shells or IDEs. Implementing this would require custom readline handling or returning to blessed (which we removed for stability reasons).
+
+**Workaround**: Type `/help` to see all commands, or reference the command list in this README.
