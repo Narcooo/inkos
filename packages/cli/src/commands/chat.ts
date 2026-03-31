@@ -9,7 +9,6 @@ import { resolveBookId } from "../utils.js";
 export const chatCommand = new Command("chat")
   .description("Interactive chat with InkOS agent")
   .argument("[book-id]", "Book ID (auto-detect if omitted)")
-  .option("--lang <language>", "Language (zh/en)", "zh")
   .option("--max-messages <n>", "Max messages in history", parseInt, 100)
   .action(async (bookIdArg: string | undefined, opts) => {
     try {
@@ -21,14 +20,7 @@ export const chatCommand = new Command("chat")
         throw new Error("--max-messages must be a positive integer");
       }
 
-      // Validate language
-      const lang = opts.lang as string;
-      if (lang !== "zh" && lang !== "en") {
-        throw new Error("--lang must be either 'zh' or 'en'");
-      }
-
       await startChat(bookId, {
-        language: lang as "zh" | "en",
         maxMessages,
       });
     } catch (e) {

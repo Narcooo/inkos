@@ -120,15 +120,27 @@ export class ChatSession {
           };
         }
 
-        this.currentBook = newBookId;
-        this.history = await this.historyManager.load(newBookId);
-        callbacks?.onStatusChange?.(`已切换: ${newBookId}`);
+        try {
+          this.currentBook = newBookId;
+          this.history = await this.historyManager.load(newBookId);
+          callbacks?.onStatusChange?.(`已切换: ${newBookId}`);
 
-        return {
-          success: true,
-          message: `已切换到书籍: ${newBookId}`,
-          switchToBook: newBookId,
-        };
+          return {
+            success: true,
+            message: `已切换到书籍: ${newBookId}`,
+            switchToBook: newBookId,
+          };
+        } catch (error) {
+          const message =
+            (error as Error)?.message && typeof (error as Error).message === "string"
+              ? (error as Error).message
+              : "无效的书籍 ID，无法加载对应的对话历史";
+          callbacks?.onStatusChange?.(`切换失败: ${newBookId}`);
+          return {
+            success: false,
+            message: `无法切换到书籍 "${newBookId}": ${message}`,
+          };
+        }
       }
 
       if (parsed.command === "help") {
@@ -204,6 +216,21 @@ export class ChatSession {
     await this.historyManager.save(this.history);
 
     try {
+      // Build conversation context from recent history
+      const recentMessages = this.history.messages.slice(-10); // Last 10 messages
+      let conversationContext = "";
+
+      if (recentMessages.length > 1) {
+        conversationContext = "\n\n## 对话历史\n\n" +
+          recentMessages
+            .map(msg => `${msg.role === "user" ? "用户" : "助手"}: ${msg.content}`)
+            .join("\n\n") +
+          "\n\n---\n\n";
+      }
+
+      // Combine context with instruction
+      const fullInstruction = conversationContext + agentInstruction;
+
       // Setup callbacks for streaming progress
       const options = {
         onToolCall: (name: string, args: Record<string, unknown>) => {
@@ -219,8 +246,8 @@ export class ChatSession {
         maxTurns: 10,
       };
 
-      // Run agent loop with instruction
-      const response = await runAgentLoop(this.config, agentInstruction, options);
+      // Run agent loop with instruction (including conversation context)
+      const response = await runAgentLoop(this.config, fullInstruction, options);
 
       // Add assistant message to history
       const assistantMessage: ChatMessage = {

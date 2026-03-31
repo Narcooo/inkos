@@ -19,7 +19,6 @@ import type { PipelineConfig } from "@actalk/inkos-core";
 import { loadConfig, buildPipelineConfig } from "../utils.js";
 
 export interface ChatAppConfig {
-  language?: "zh" | "en";
   maxMessages?: number;
 }
 
