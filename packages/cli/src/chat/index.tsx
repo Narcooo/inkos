@@ -223,11 +223,11 @@ const ChatInterface: React.FC<{
       <Box flexDirection="column" marginTop={1}>
         {/* Upper separator */}
         <Box width="100%">
-          <Text dimColor>{"─".repeat(terminalWidth)}</Text>
+          <Text dimColor>{"─".repeat(Math.max(terminalWidth - 2, 10))}</Text>
         </Box>
 
         {/* Input field */}
-        <Box width="100%" paddingX={1}>
+        <Box width="100%">
           <Text bold color="green">
             {">"}
           </Text>
@@ -243,7 +243,7 @@ const ChatInterface: React.FC<{
 
         {/* Lower separator */}
         <Box width="100%">
-          <Text dimColor>{"─".repeat(terminalWidth)}</Text>
+          <Text dimColor>{"─".repeat(Math.max(terminalWidth - 2, 10))}</Text>
         </Box>
       </Box>
 
