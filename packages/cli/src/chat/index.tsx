@@ -208,16 +208,16 @@ const ChatInterface: React.FC<{
       {/* Input with separator lines */}
       <Box flexDirection="column" marginTop={1}>
         {/* Upper separator */}
-        <Box>
-          <Text dimColor>{"─".repeat(80)}</Text>
+        <Box width="100%">
+          <Text dimColor>{"─".repeat(process.stdout.columns || 80)}</Text>
         </Box>
 
         {/* Input field */}
-        <Box paddingX={1}>
+        <Box width="100%" paddingX={1}>
           <Text bold color="green">
             {">"}
           </Text>
-          <Box marginLeft={1}>
+          <Box flexGrow={1} marginLeft={1}>
             <TextInput
               value={input}
               onChange={setInput}
@@ -228,8 +228,8 @@ const ChatInterface: React.FC<{
         </Box>
 
         {/* Lower separator */}
-        <Box>
-          <Text dimColor>{"─".repeat(80)}</Text>
+        <Box width="100%">
+          <Text dimColor>{"─".repeat(process.stdout.columns || 80)}</Text>
         </Box>
       </Box>
 
