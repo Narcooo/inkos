@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, useCallback } from "react";
-import { render, Box, Text, useApp, useInput } from "ink";
+import { render, Box, Text, useApp, useInput, useStdout } from "ink";
 import TextInput from "ink-text-input";
 import Spinner from "ink-spinner";
 import { ChatSession } from "./session.js";
@@ -29,6 +29,7 @@ const ChatInterface: React.FC<{
   config: ChatAppConfig;
 }> = ({ bookId, config }) => {
   const { exit } = useApp();
+  const { stdout } = useStdout();
 
   // State
   const [session, setSession] = useState<ChatSession | null>(null);
@@ -37,6 +38,19 @@ const ChatInterface: React.FC<{
   const [isProcessing, setIsProcessing] = useState(false);
   const [showCommandSuggestions, setShowCommandSuggestions] = useState(false);
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(0);
+  const [terminalWidth, setTerminalWidth] = useState(stdout.columns || 80);
+
+  // Track terminal width changes
+  useEffect(() => {
+    const handleResize = () => {
+      setTerminalWidth(stdout.columns || 80);
+    };
+
+    stdout.on("resize", handleResize);
+    return () => {
+      stdout.off("resize", handleResize);
+    };
+  }, [stdout]);
 
   // Initialize session
   useEffect(() => {
@@ -73,7 +87,7 @@ const ChatInterface: React.FC<{
   const matchingCommands = getMatchingCommands(input);
 
   // Handle keyboard input
-  useInput((inputKey, key) => {
+  useInput((_inputKey, key) => {
     // Tab: autocomplete
     if (key.tab && matchingCommands.length > 0) {
       const selected = matchingCommands[selectedSuggestionIndex];
@@ -209,7 +223,7 @@ const ChatInterface: React.FC<{
       <Box flexDirection="column" marginTop={1}>
         {/* Upper separator */}
         <Box width="100%">
-          <Text dimColor>{"─".repeat(process.stdout.columns || 80)}</Text>
+          <Text dimColor>{"─".repeat(terminalWidth)}</Text>
         </Box>
 
         {/* Input field */}
@@ -229,7 +243,7 @@ const ChatInterface: React.FC<{
 
         {/* Lower separator */}
         <Box width="100%">
-          <Text dimColor>{"─".repeat(process.stdout.columns || 80)}</Text>
+          <Text dimColor>{"─".repeat(terminalWidth)}</Text>
         </Box>
       </Box>
 
