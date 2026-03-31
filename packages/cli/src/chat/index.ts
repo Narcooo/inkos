@@ -83,10 +83,13 @@ export class ChatApp {
     // Show recent history
     this.displayRecentMessages();
 
+    // Show quick command reminder
+    p.log.info("💡 Commands: /write /audit /revise /status /clear /help /exit");
+
     // Get user input
     const input = await p.text({
-      message: "Your message (or /help)",
-      placeholder: "/help for commands, or type naturally",
+      message: "Your message",
+      placeholder: "Type naturally or use commands like /write, /audit...",
       validate: (value) => {
         if (!value || !value.trim()) return "Please enter a message";
         if (value.length > 5000) return "Message too long (max 5000 chars)";
@@ -98,6 +101,12 @@ export class ChatApp {
     }
 
     const userInput = input as string;
+
+    // Show command suggestions when user just typed /
+    if (userInput === "/") {
+      this.showCommandSuggestions();
+      return true;
+    }
 
     // Handle special commands that don't need agent
     if (userInput === "/help") {
@@ -168,6 +177,17 @@ export class ChatApp {
 
     p.log.info("━━━━━━━━━━━━━━━━━━━━━━━━");
     p.log.info("You can also type naturally to interact with InkOS.");
+  }
+
+  private showCommandSuggestions(): void {
+    p.log.info("━━ Quick Commands ━━");
+    p.log.message("/write     - Write next chapter", { symbol: "◆" });
+    p.log.message("/audit     - Audit latest chapter", { symbol: "◆" });
+    p.log.message("/revise    - Revise chapter", { symbol: "◆" });
+    p.log.message("/status    - Show book status", { symbol: "◆" });
+    p.log.message("/help      - Full command list", { symbol: "◆" });
+    p.log.message("/exit      - Exit chat", { symbol: "◆" });
+    p.log.info("━━━━━━━━━━━━━━━━━━━━━");
   }
 
   private showStatus(bookId: string): void {
