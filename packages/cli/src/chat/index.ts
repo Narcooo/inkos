@@ -1,9 +1,10 @@
 /**
- * Main Chat Application using @clack/prompts.
+ * Main Chat Application using @clack/prompts for display and @inquirer/prompts for input.
  */
 
 import * as p from "@clack/prompts";
 import { isCancel } from "@clack/core";
+import * as inquirer from "@inquirer/prompts";
 import { ChatSession } from "./session.js";
 import { ChatHistoryManager } from "./history.js";
 import {
@@ -83,30 +84,24 @@ export class ChatApp {
     // Show recent history
     this.displayRecentMessages();
 
-    // Show quick command reminder
-    p.log.info("💡 Commands: /write /audit /revise /status /clear /help /exit");
+    // Show command hint
+    p.log.info("💡 Tip: Type / and press Tab to see commands");
 
-    // Get user input
-    const input = await p.text({
+    // Get user input - use simple input for now
+    // Tab autocomplete is complex and requires custom implementation
+    const inputResult = await p.text({
       message: "Your message",
-      placeholder: "Type naturally or use commands like /write, /audit...",
       validate: (value) => {
         if (!value || !value.trim()) return "Please enter a message";
         if (value.length > 5000) return "Message too long (max 5000 chars)";
       },
     });
 
-    if (isCancel(input)) {
-      throw input;
+    if (isCancel(inputResult)) {
+      throw inputResult;
     }
 
-    const userInput = input as string;
-
-    // Show command suggestions when user just typed /
-    if (userInput === "/") {
-      this.showCommandSuggestions();
-      return true;
-    }
+    const userInput = inputResult as string;
 
     // Handle special commands that don't need agent
     if (userInput === "/help") {
