@@ -45,16 +45,19 @@
   "dependencies": {
     "@actalk/inkos-core": "workspace:*",
     "@actalk/inkos-studio": "workspace:*",
-    "@clack/core": "^1.1.0",
-    "@clack/prompts": "^1.1.0",
-    "@inquirer/prompts": "^8.3.2",
+    "@inkjs/ui": "^2.0.0",
     "commander": "^13.0.0",
     "dotenv": "^16.4.0",
     "epub-gen-memory": "^1.0.10",
-    "marked": "^15.0.0"
+    "ink": "^6.8.0",
+    "ink-spinner": "^5.0.0",
+    "ink-text-input": "^6.0.0",
+    "marked": "^15.0.0",
+    "react": "^19.2.4"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@types/react": "^19.2.14",
     "typescript": "^5.8.0",
     "vitest": "^3.0.0"
   }

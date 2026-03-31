@@ -3,8 +3,8 @@
  */
 
 import { Command } from "commander";
+import { startChat } from "../chat/index.js";
 import { resolveBookId } from "../utils.js";
-import { ChatApp } from "../chat/index.js";
 
 export const chatCommand = new Command("chat")
   .description("Interactive chat with InkOS agent")
@@ -15,12 +15,10 @@ export const chatCommand = new Command("chat")
     try {
       const bookId = await resolveBookId(bookIdArg, process.cwd());
 
-      const app = new ChatApp({
+      await startChat(bookId, {
         language: opts.lang as "zh" | "en",
         maxMessages: parseInt(opts.maxMessages, 10),
       });
-
-      await app.start(bookId);
     } catch (e) {
       process.stderr.write(`[ERROR] Failed to start chat: ${e}\n`);
       process.exit(1);
