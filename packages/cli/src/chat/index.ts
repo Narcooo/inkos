@@ -144,15 +144,10 @@ export class ChatApp {
         p.log.success(`${roleLabel} [${timestamp}]`);
       }
 
-      // Show content (truncate if too long)
+      // Show content (no truncation - display full message)
       const lines = msg.content.split("\n");
-      const maxLines = 3;
-      for (const line of lines.slice(0, maxLines)) {
+      for (const line of lines) {
         p.log.message(line, { symbol: "  " });
-      }
-
-      if (lines.length > maxLines) {
-        p.log.warn(`  ... (${lines.length - maxLines} more lines)`);
       }
     }
 
