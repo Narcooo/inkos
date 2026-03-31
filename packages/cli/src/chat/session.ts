@@ -181,6 +181,22 @@ export class ChatSession {
 - **Esc** - 退出聊天
 - **Enter** - 提交消息`;
 
+        // Add user and assistant messages to history
+        const userMessage: ChatMessage = {
+          role: "user",
+          content: input,
+          timestamp: new Date().toISOString(),
+        };
+        const assistantMessage: ChatMessage = {
+          role: "assistant",
+          content: helpText,
+          timestamp: new Date().toISOString(),
+        };
+
+        this.history = this.historyManager.addMessage(this.history, userMessage);
+        this.history = this.historyManager.addMessage(this.history, assistantMessage);
+        this.history = await this.historyManager.save(this.history);
+
         return { success: true, message: helpText };
       }
     }
