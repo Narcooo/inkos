@@ -167,10 +167,6 @@ export function validateCommandArgs(
       }
       break;
     }
-    case "revise": {
-      // Note: mode is handled via options, not args
-      break;
-    }
   }
 
   return { valid: true };
