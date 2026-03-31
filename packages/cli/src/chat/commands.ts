@@ -61,6 +61,20 @@ export const SLASH_COMMANDS: Record<SlashCommand, SlashCommandDefinition> = {
     requiredArgs: 0,
     optionalArgs: 0,
   },
+  exit: {
+    name: "exit",
+    description: "退出聊天界面",
+    usage: ["/exit"],
+    requiredArgs: 0,
+    optionalArgs: 0,
+  },
+  quit: {
+    name: "quit",
+    description: "退出聊天界面（同 /exit）",
+    usage: ["/quit"],
+    requiredArgs: 0,
+    optionalArgs: 0,
+  },
 };
 
 /**
@@ -270,6 +284,8 @@ export function getCommandDisplayName(command: SlashCommand): string {
     clear: "清空对话",
     switch: "切换书籍",
     help: "显示帮助",
+    exit: "退出聊天",
+    quit: "退出聊天",
   };
 
   return names[command];

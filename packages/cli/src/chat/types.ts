@@ -108,7 +108,9 @@ export type SlashCommand =
   | "status"
   | "clear"
   | "switch"
-  | "help";
+  | "help"
+  | "exit"
+  | "quit";
 
 /**
  * Slash command definition.
