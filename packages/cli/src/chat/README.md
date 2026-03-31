@@ -23,7 +23,9 @@ Type `/` and press **Tab** to see available commands with autocomplete:
 - `/revise [chapter] --mode [polish|rewrite|rework]` - Revise chapter
 - `/status` - Show book status
 - `/clear` - Clear chat history
-- `/exit` - Exit chat
+- `/help` - Show help information
+- `/switch <book-id>` - Switch to another book
+- `/exit` or `/quit` - Exit chat (special command; not shown in Tab autocomplete)
 
 ### Tab Autocomplete ✨
 

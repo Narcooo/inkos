@@ -45,7 +45,6 @@
   "dependencies": {
     "@actalk/inkos-core": "workspace:*",
     "@actalk/inkos-studio": "workspace:*",
-    "@inkjs/ui": "^2.0.0",
     "commander": "^13.0.0",
     "dotenv": "^16.4.0",
     "epub-gen-memory": "^1.0.10",
