@@ -73,18 +73,29 @@ const MetadataTag: React.FC<{
   </Box>
 );
 
+async function createChatSession(bookId: string, config: ChatAppConfig): Promise<ChatSession> {
+  const projectConfig = await loadConfig({ requireApiKey: false });
+  const pipelineConfig = buildPipelineConfig(projectConfig, process.cwd(), { quiet: true });
+  const historyManager = new ChatHistoryManager({
+    maxMessages: config.maxMessages ?? 50,
+  });
+
+  const session = new ChatSession(pipelineConfig, bookId, historyManager);
+  await session.initialize();
+  return session;
+}
+
 // Main Chat Component
 const ChatInterface: React.FC<{
-  bookId: string;
-  config: ChatAppConfig;
-}> = ({ bookId, config }) => {
+  initialSession: ChatSession;
+}> = ({ initialSession }) => {
   const { exit } = useApp();
   const { stdout } = useStdout();
 
   // State
-  const [session, setSession] = useState<ChatSession | null>(null);
+  const [session] = useState(initialSession);
   const [input, setInput] = useState("");
-  const [status, setStatus] = useState("Initializing...");
+  const [status, setStatus] = useState("Ready");
   const [isProcessing, setIsProcessing] = useState(false);
   const [showCommandSuggestions, setShowCommandSuggestions] = useState(false);
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(0);
@@ -98,6 +109,7 @@ const ChatInterface: React.FC<{
     durationMs: number;
   } | null>(null);
   const [activeExecutionMetadata, setActiveExecutionMetadata] = useState<ExecutionMetadata | null>(null);
+  const [forceExitArmed, setForceExitArmed] = useState(false);
 
   // Track terminal width changes
   useEffect(() => {
@@ -110,29 +122,6 @@ const ChatInterface: React.FC<{
       stdout.off("resize", handleResize);
     };
   }, [stdout]);
-
-  // Initialize session
-  useEffect(() => {
-    const initSession = async () => {
-      try {
-        const projectConfig = await loadConfig();
-        const pipelineConfig = buildPipelineConfig(projectConfig, process.cwd(), { quiet: true });
-        const historyManager = new ChatHistoryManager({
-          maxMessages: config.maxMessages ?? 50,
-        });
-
-        const newSession = new ChatSession(pipelineConfig, bookId, historyManager);
-        await newSession.initialize();
-
-        setSession(newSession);
-        setStatus("Ready");
-      } catch (error) {
-        setStatus(`Error: ${error}`);
-      }
-    };
-
-    initSession();
-  }, [bookId]);
 
   // Get matching commands for autocomplete
   const getMatchingCommands = useCallback((inputText: string) => {
@@ -152,8 +141,18 @@ const ChatInterface: React.FC<{
 
   // Handle keyboard input
   useInput((_inputKey, key) => {
-    // Escape: always allow exit
     if (key.escape) {
+      if (isProcessing) {
+        if (forceExitArmed) {
+          process.stderr.write("[WARN] Force quitting chat while a request is still running.\n");
+          process.exit(130);
+        }
+
+        setForceExitArmed(true);
+        setStatus("命令仍在执行，再按一次 Esc 强制退出");
+        return;
+      }
+
       exit();
       return;
     }
@@ -205,6 +204,26 @@ const ChatInterface: React.FC<{
     };
   }, [executionStartedAt, isProcessing]);
 
+  useEffect(() => {
+    if (!forceExitArmed) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      setForceExitArmed(false);
+    }, 3000);
+
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [forceExitArmed]);
+
+  useEffect(() => {
+    if (!isProcessing) {
+      setForceExitArmed(false);
+    }
+  }, [isProcessing]);
+
   const beginExecution = (inputText: string) => {
     const startedAt = performance.now();
     setExecutionStartedAt(startedAt);
@@ -234,7 +253,7 @@ const ChatInterface: React.FC<{
 
   // Handle message submission
   const handleSubmit = async (submittedInput: string) => {
-    if (!session || isProcessing || !submittedInput.trim()) return;
+    if (isProcessing || !submittedInput.trim()) return;
     const normalizedInput = submittedInput.trim();
 
     // Clear input immediately after submission for better UX
@@ -295,7 +314,7 @@ const ChatInterface: React.FC<{
         return;
       }
 
-      setStatus(result.success ? "✓ Done" : "✗ Failed");
+      setStatus(result.success ? "✓ Done" : `✗ ${result.message.split("\n")[0]}`);
     } catch (error) {
       setStatus(`Error: ${error}`);
     } finally {
@@ -304,8 +323,8 @@ const ChatInterface: React.FC<{
   };
 
   // Render recent messages
-  const activeBook = session?.getCurrentBook() ?? bookId;
-  const history = session?.getHistory();
+  const activeBook = session.getCurrentBook();
+  const history = session.getHistory();
   const recentMessages = history?.messages.slice(-10) ?? [];
   const statusColor = status.startsWith("Error") || status.startsWith("✗")
     ? "red"
@@ -478,5 +497,6 @@ const MessageDisplay: React.FC<{ message: ChatMessage }> = ({ message }) => {
 
 // Main export function
 export async function startChat(bookId: string, config: ChatAppConfig): Promise<void> {
-  render(<ChatInterface bookId={bookId} config={config} />);
+  const session = await createChatSession(bookId, config);
+  render(<ChatInterface initialSession={session} />);
 }

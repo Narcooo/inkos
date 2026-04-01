@@ -42,6 +42,12 @@ export interface ChatHistoryMetadata {
 
   /** Total token usage across all messages */
   totalTokens?: number;
+
+  /** Monotonic revision number for conflict detection */
+  revision?: number;
+
+  /** When history was last explicitly cleared */
+  clearedAt?: string;
 }
 
 /**

@@ -163,4 +163,20 @@ describe("ChatSession", () => {
     });
     expect(metadataChanges.at(-1)).toBeNull();
   });
+
+  test("allows chat session creation without requiring an API key during initialization", async () => {
+    const historyManager = new ChatHistoryManager({
+      historyDir: ".test-chat-session",
+      maxMessages: 10,
+    });
+    const { ChatSession } = await import("../chat/session.js");
+
+    const session = new ChatSession({
+      client: {} as PipelineConfig["client"],
+      model: "base-model",
+      projectRoot: "/project",
+    } as PipelineConfig, "demo-book", historyManager);
+
+    await expect(session.initialize()).resolves.toBeUndefined();
+  });
 });

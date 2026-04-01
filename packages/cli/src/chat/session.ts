@@ -172,6 +172,36 @@ export class ChatSession {
     this.history = await this.historyManager.save(this.history);
   }
 
+  private isHistoryPersistenceConflict(error: unknown): boolean {
+    if (!(error instanceof Error)) {
+      return false;
+    }
+
+    return error.message.includes("changed in another session")
+      || error.message.includes("cleared in another session")
+      || error.message.includes("Timed out waiting for chat history lock");
+  }
+
+  private async handleHistoryPersistenceConflict(
+    error: unknown,
+    callbacks?: ClackCallbacks
+  ): Promise<CommandResult | null> {
+    if (!this.isHistoryPersistenceConflict(error)) {
+      return null;
+    }
+
+    this.history = await this.historyManager.load(this.currentBook);
+    const message = error instanceof Error ? error.message : String(error);
+
+    callbacks?.onStatusChange?.("错误");
+    callbacks?.onExecutionMetadataChange?.(null);
+
+    return {
+      success: false,
+      message,
+    };
+  }
+
   /**
    * Persist a local user/assistant exchange that never reaches the agent loop.
    */
@@ -316,7 +346,7 @@ export class ChatSession {
 ### 快捷键
 - **Tab** - 自动补全命令
 - **↑/↓** - 导航命令建议
-- **Esc** - 退出聊天
+- **Esc** - 退出聊天（执行中连按两次强制退出）
 - **Enter** - 提交消息`;
 
         // Add user and assistant messages to history
@@ -368,7 +398,15 @@ export class ChatSession {
     this.history = this.historyManager.addMessage(this.history, userMessage);
 
     // Save user message immediately in case agent fails
-    this.history = await this.historyManager.save(this.history);
+    try {
+      this.history = await this.historyManager.save(this.history);
+    } catch (error) {
+      const conflictResult = await this.handleHistoryPersistenceConflict(error, callbacks);
+      if (conflictResult) {
+        return conflictResult;
+      }
+      throw error;
+    }
 
     try {
       callbacks?.onExecutionMetadataChange?.(this.getOrchestratorMetadata());
@@ -428,6 +466,11 @@ export class ChatSession {
         message: response,
       };
     } catch (error) {
+      const conflictResult = await this.handleHistoryPersistenceConflict(error, callbacks);
+      if (conflictResult) {
+        return conflictResult;
+      }
+
       const parsed = parseError(error);
       const message = `${parsed.message}${parsed.suggestion ? `\n建议: ${parsed.suggestion}` : ""}`;
 

@@ -3,8 +3,10 @@
  * Stores conversation history per-book in .inkos/chat_history/<bookId>.json
  */
 
-import { readFile, writeFile, mkdir, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { readFile, writeFile, mkdir, rm, rename, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import {
   type ChatHistory,
   type ChatMessage,
@@ -28,7 +30,7 @@ function isValidBookId(bookId: string): boolean {
   }
 
   // Must only contain safe characters: letters, numbers, underscores, hyphens, Chinese characters
-  const safePattern = /^[\w\u4e00-\u9fa5-]+$/;
+  const safePattern = /^[\w\u4e00-\u9fff-]+$/;
   return safePattern.test(bookId);
 }
 
@@ -37,6 +39,10 @@ function isValidBookId(bookId: string): boolean {
  */
 export class ChatHistoryManager {
   private readonly config: ChatHistoryConfig;
+  private readonly saveQueues = new Map<string, Promise<void>>();
+  private static readonly LOCK_TIMEOUT_MS = 5000;
+  private static readonly LOCK_STALE_MS = 2000;
+  private static readonly LOCK_RETRY_MS = 20;
 
   constructor(config?: Partial<ChatHistoryConfig>) {
     this.config = {
@@ -75,28 +81,39 @@ export class ChatHistoryManager {
         createdAt: now,
         updatedAt: now,
         totalMessages: 0,
+        revision: 0,
       },
     };
   }
 
-  /**
-   * Load chat history for a book.
-   * Returns empty history if file doesn't exist.
-   */
-  async load(bookId: string): Promise<ChatHistory> {
-    const filePath = this.getHistoryFilePath(bookId);
+  private getHistoryRevision(history: ChatHistory): number {
+    return history.metadata.revision ?? 0;
+  }
 
-    let data: string;
+  private getLockDirPath(bookId: string): string {
+    return `${this.getHistoryFilePath(bookId)}.lock`;
+  }
+
+  private getLockOwnerPath(bookId: string): string {
+    return join(this.getLockDirPath(bookId), "owner.json");
+  }
+
+  private isProcessAlive(pid: number): boolean {
     try {
-      data = await readFile(filePath, "utf-8");
+      process.kill(pid, 0);
+      return true;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return this.createEmptyHistory(bookId);
+      if ((error as NodeJS.ErrnoException).code === "ESRCH") {
+        return false;
       }
-
+      if ((error as NodeJS.ErrnoException).code === "EPERM") {
+        return true;
+      }
       throw error;
     }
+  }
 
+  private parseHistory(bookId: string, data: string): ChatHistory {
     let history: ChatHistory;
     try {
       history = JSON.parse(data) as ChatHistory;
@@ -112,33 +129,234 @@ export class ChatHistoryManager {
     return history;
   }
 
+  private async loadExistingHistoryIfPresent(bookId: string): Promise<ChatHistory | null> {
+    const filePath = this.getHistoryFilePath(bookId);
+
+    try {
+      const data = await readFile(filePath, "utf-8");
+      return this.parseHistory(bookId, data);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return null;
+      }
+
+      throw error;
+    }
+  }
+
+  private getMessageKey(message: ChatMessage): string {
+    return JSON.stringify({
+      role: message.role,
+      content: message.content,
+      timestamp: message.timestamp,
+      toolCalls: message.toolCalls ?? [],
+      tokenUsage: message.tokenUsage ?? null,
+    });
+  }
+
+  private mergeHistories(existingHistory: ChatHistory, incomingHistory: ChatHistory): ChatHistory {
+    const existingKeys = existingHistory.messages.map((message) => this.getMessageKey(message));
+    const existingKeySet = new Set(existingKeys);
+    const incomingKeys = incomingHistory.messages.map((message) => this.getMessageKey(message));
+
+    let latestSharedIncomingIndex = -1;
+    for (let index = incomingKeys.length - 1; index >= 0; index--) {
+      if (existingKeySet.has(incomingKeys[index]!)) {
+        latestSharedIncomingIndex = index;
+        break;
+      }
+    }
+
+    let appendedMessages: ChatMessage[];
+    if (latestSharedIncomingIndex >= 0) {
+      appendedMessages = incomingHistory.messages
+        .slice(latestSharedIncomingIndex + 1)
+        .filter((message) => !existingKeySet.has(this.getMessageKey(message)));
+    } else if (existingHistory.messages.length === 0) {
+      if (this.getHistoryRevision(incomingHistory) < this.getHistoryRevision(existingHistory)) {
+        throw new Error(
+          `Chat history for "${incomingHistory.bookId}" was cleared in another session. Please retry.`
+        );
+      }
+
+      appendedMessages = [...incomingHistory.messages];
+    } else {
+      const existingRevision = this.getHistoryRevision(existingHistory);
+      const incomingRevision = this.getHistoryRevision(incomingHistory);
+
+      if (existingHistory.metadata.clearedAt && incomingRevision < existingRevision) {
+        throw new Error(
+          `Chat history for "${incomingHistory.bookId}" was cleared in another session. Please retry.`
+        );
+      }
+
+      if (incomingRevision === 0 && existingRevision === 1) {
+        appendedMessages = incomingHistory.messages.filter(
+          (message) => !existingKeySet.has(this.getMessageKey(message))
+        );
+      } else {
+      throw new Error(
+        `Chat history for "${incomingHistory.bookId}" changed in another session. Please retry.`
+      );
+      }
+    }
+
+    return {
+      ...incomingHistory,
+      messages: [...existingHistory.messages, ...appendedMessages],
+      metadata: {
+        ...incomingHistory.metadata,
+        createdAt: existingHistory.metadata.createdAt,
+      },
+    };
+  }
+
+  private async acquireFileLock(bookId: string): Promise<() => Promise<void>> {
+    const lockDirPath = this.getLockDirPath(bookId);
+    const startedAt = Date.now();
+    await this.ensureHistoryDir();
+
+    while (true) {
+      try {
+        await mkdir(lockDirPath);
+        await writeFile(
+          this.getLockOwnerPath(bookId),
+          JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }),
+          "utf-8"
+        );
+        return async () => {
+          await rm(lockDirPath, { recursive: true, force: true });
+        };
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+          throw error;
+        }
+
+        try {
+          let hasLiveOwner = false;
+          const ownerData = await readFile(this.getLockOwnerPath(bookId), "utf-8").catch((lockError) => {
+            if ((lockError as NodeJS.ErrnoException).code === "ENOENT") {
+              return null;
+            }
+
+            throw lockError;
+          });
+          if (ownerData) {
+            let owner: { pid?: number };
+            try {
+              owner = JSON.parse(ownerData) as { pid?: number };
+            } catch {
+              await rm(lockDirPath, { recursive: true, force: true });
+              continue;
+            }
+
+            if (typeof owner.pid === "number") {
+              if (this.isProcessAlive(owner.pid)) {
+                hasLiveOwner = true;
+              } else {
+                await rm(lockDirPath, { recursive: true, force: true });
+                continue;
+              }
+            }
+          }
+
+          if (!hasLiveOwner) {
+            const lockStats = await stat(lockDirPath);
+            if (Date.now() - lockStats.mtimeMs > ChatHistoryManager.LOCK_STALE_MS) {
+              await rm(lockDirPath, { recursive: true, force: true });
+              continue;
+            }
+          }
+        } catch (lockError) {
+          if ((lockError as NodeJS.ErrnoException).code === "ENOENT") {
+            continue;
+          }
+
+          throw lockError;
+        }
+
+        if (Date.now() - startedAt > ChatHistoryManager.LOCK_TIMEOUT_MS) {
+          throw new Error(`Timed out waiting for chat history lock for "${bookId}"`);
+        }
+
+        await sleep(ChatHistoryManager.LOCK_RETRY_MS);
+      }
+    }
+  }
+
+  private async withBookLock<T>(bookId: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.saveQueues.get(bookId) ?? Promise.resolve();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const queued = previous.finally(() => gate);
+    this.saveQueues.set(bookId, queued);
+
+    await previous;
+    try {
+      const releaseFileLock = await this.acquireFileLock(bookId);
+      try {
+        return await operation();
+      } finally {
+        await releaseFileLock();
+      }
+    } finally {
+      release();
+      if (this.saveQueues.get(bookId) === queued) {
+        this.saveQueues.delete(bookId);
+      }
+    }
+  }
+
+  /**
+   * Load chat history for a book.
+   * Returns empty history if file doesn't exist.
+   */
+  async load(bookId: string): Promise<ChatHistory> {
+    const existingHistory = await this.loadExistingHistoryIfPresent(bookId);
+    return existingHistory ?? this.createEmptyHistory(bookId);
+  }
+
   /**
    * Save chat history for a book.
    * Automatically prunes old messages if over limit.
    * @returns The pruned and updated history
    */
   async save(history: ChatHistory): Promise<ChatHistory> {
-    await this.ensureHistoryDir();
+    return this.withBookLock(history.bookId, async () => {
+      await this.ensureHistoryDir();
+      const existingHistory = await this.loadExistingHistoryIfPresent(history.bookId);
+      const mergedHistory = existingHistory
+        ? this.mergeHistories(existingHistory, history)
+        : history;
+      const prunedHistory = this.pruneOldMessages(mergedHistory);
 
-    // Prune if over limit
-    const prunedHistory = this.pruneOldMessages(history);
+      const updatedHistory: ChatHistory = {
+        ...prunedHistory,
+        metadata: {
+          ...prunedHistory.metadata,
+          clearedAt: undefined,
+          updatedAt: new Date().toISOString(),
+          totalMessages: prunedHistory.messages.length,
+          totalTokens: this.calculateTotalTokens(prunedHistory.messages),
+          revision: (existingHistory ? this.getHistoryRevision(existingHistory) : 0) + 1,
+        },
+      };
 
-    // Update metadata
-    const updatedHistory: ChatHistory = {
-      ...prunedHistory,
-      metadata: {
-        ...prunedHistory.metadata,
-        updatedAt: new Date().toISOString(),
-        totalMessages: prunedHistory.messages.length,
-        totalTokens: this.calculateTotalTokens(prunedHistory.messages),
-      },
-    };
+      const filePath = this.getHistoryFilePath(updatedHistory.bookId);
+      const tempFilePath = `${filePath}.${randomUUID()}.tmp`;
+      const data = JSON.stringify(updatedHistory, null, 2);
 
-    const filePath = this.getHistoryFilePath(updatedHistory.bookId);
-    const data = JSON.stringify(updatedHistory, null, 2);
+      try {
+        await writeFile(tempFilePath, data, "utf-8");
+        await rename(tempFilePath, filePath);
+      } finally {
+        await rm(tempFilePath, { force: true }).catch(() => undefined);
+      }
 
-    await writeFile(filePath, data, "utf-8");
-    return updatedHistory;
+      return updatedHistory;
+    });
   }
 
   /**
@@ -146,16 +364,34 @@ export class ChatHistoryManager {
    * Removes the history file.
    */
   async clear(bookId: string): Promise<void> {
-    const filePath = this.getHistoryFilePath(bookId);
+    await this.withBookLock(bookId, async () => {
+      await this.ensureHistoryDir();
+      const existingHistory = await this.loadExistingHistoryIfPresent(bookId);
+      const clearedHistory = this.createEmptyHistory(bookId);
+      const nextRevision = (existingHistory ? this.getHistoryRevision(existingHistory) : 0) + 1;
+      const filePath = this.getHistoryFilePath(bookId);
+      const tempFilePath = `${filePath}.${randomUUID()}.tmp`;
 
-    try {
-      await rm(filePath);
-    } catch (error) {
-      // Ignore if file doesn't exist
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        throw error;
+      const data = JSON.stringify(
+        {
+          ...clearedHistory,
+          metadata: {
+            ...clearedHistory.metadata,
+            clearedAt: clearedHistory.metadata.updatedAt,
+            revision: nextRevision,
+          },
+        },
+        null,
+        2
+      );
+
+      try {
+        await writeFile(tempFilePath, data, "utf-8");
+        await rename(tempFilePath, filePath);
+      } finally {
+        await rm(tempFilePath, { force: true }).catch(() => undefined);
       }
-    }
+    });
   }
 
   /**

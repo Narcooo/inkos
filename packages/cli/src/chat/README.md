@@ -156,7 +156,7 @@ inkos chat --lang en <book-id>
 | **Tab** | Autocomplete command |
 | **↑** | Previous suggestion |
 | **↓** | Next suggestion |
-| **Esc** | Exit chat |
+| **Esc** | Exit chat (press twice to force quit while busy) |
 | **Enter** | Submit message |
 
 ## Differences from Old Implementations
