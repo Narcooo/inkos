@@ -4,7 +4,7 @@
 
 import { Command } from "commander";
 import { startChat } from "../chat/index.js";
-import { resolveBookId } from "../utils.js";
+import { resolveBookId, logError } from "../utils.js";
 
 export const chatCommand = new Command("chat")
   .description("Interactive chat with InkOS agent")
@@ -25,7 +25,7 @@ export const chatCommand = new Command("chat")
       });
     } catch (e) {
       const errorMessage = e instanceof Error ? e.message : String(e);
-      process.stderr.write(`[ERROR] Failed to start chat: ${errorMessage}\n`);
+      logError(`Failed to start chat: ${errorMessage}`);
       process.exit(1);
     }
   });

@@ -110,6 +110,7 @@ const ChatInterface: React.FC<{
   } | null>(null);
   const [activeExecutionMetadata, setActiveExecutionMetadata] = useState<ExecutionMetadata | null>(null);
   const [forceExitArmed, setForceExitArmed] = useState(false);
+  const [streamingContent, setStreamingContent] = useState<string | null>(null);
 
   // Track terminal width changes
   useEffect(() => {
@@ -249,6 +250,7 @@ const ChatInterface: React.FC<{
     setActiveExecutionTarget(null);
     setActiveExecutionMetadata(null);
     setIsProcessing(false);
+    setStreamingContent(null); // Clear streaming content when execution finishes
   };
 
   // Handle message submission
@@ -275,6 +277,9 @@ const ChatInterface: React.FC<{
         },
         onExecutionMetadataChange: (metadata) => {
           setActiveExecutionMetadata(metadata);
+        },
+        onStreamChunk: (chunk) => {
+          setStreamingContent((prev) => (prev ?? "") + chunk);
         },
       });
 
@@ -328,6 +333,15 @@ const ChatInterface: React.FC<{
         {recentMessages.map((msg, idx) => (
           <MessageDisplay key={JSON.stringify(msg)} message={msg} />
         ))}
+        {/* Streaming assistant message */}
+        {streamingContent && (
+          <Box flexDirection="column">
+            <Text dimColor color="yellow">
+              [Streaming...] InkOS:
+            </Text>
+            <Text>{streamingContent}</Text>
+          </Box>
+        )}
       </Box>
 
       {/* Command suggestions */}
