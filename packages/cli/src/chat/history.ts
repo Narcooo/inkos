@@ -29,7 +29,7 @@ function isValidBookId(bookId: string): boolean {
     return false;
   }
 
-  // Must only contain safe characters: letters, numbers, underscores, hyphens, Chinese characters
+  // Must only contain safe characters: letters, numbers, underscores, hyphens, and CJK Unified Ideographs in U+4E00–U+9FFF
   const safePattern = /^[\w\u4e00-\u9fff-]+$/;
   return safePattern.test(bookId);
 }
