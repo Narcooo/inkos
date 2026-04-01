@@ -30,7 +30,7 @@ function formatDuration(ms: number): string {
 }
 
 function getElapsedMs(startedAt: number): number {
-  return Math.max(0, performance.now() - startedAt);
+  return Math.max(0, Date.now() - startedAt);
 }
 
 function summarizeExecutionTarget(input: string): string {

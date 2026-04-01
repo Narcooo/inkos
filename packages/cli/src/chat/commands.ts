@@ -168,7 +168,8 @@ export function parseSlashCommand(input: string):
     } else if (char === quoteChar && inQuotes) {
       inQuotes = false;
       quoteChar = "";
-    } else if (char === " " && !inQuotes) {
+    } else if (/\s/.test(char) && !inQuotes) {
+      // Treat any whitespace as separator when not in quotes
       if (current.length > 0) {
         parts.push(current);
         current = "";

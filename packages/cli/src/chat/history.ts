@@ -40,23 +40,28 @@ function isValidBookId(bookId: string): boolean {
  *
  * On Unix/Linux/macOS: Uses rename() which atomically replaces existing files.
  * On Windows: Uses a backup-and-rename strategy to minimize data loss risk:
- *   1. Rename target to backup (if exists)
- *   2. Rename temp to target
- *   3. Remove backup
+ *   1. Clean up any existing backup file
+ *   2. Rename target to backup (if exists)
+ *   3. Rename temp to target
+ *   4. Remove backup
  *
  * This ensures that if the process crashes between steps, either:
- * - The original file still exists (step 1 failure)
- * - The new file is in place with a backup (step 2 success, step 3 pending)
+ * - The original file still exists (step 1/2 failure)
+ * - The new file is in place with a backup (step 3 success, step 4 pending)
  * - Recovery is possible from the backup
  */
 async function atomicReplaceFile(tempPath: string, targetPath: string): Promise<void> {
   if (platform() === "win32") {
     // Windows: rename() cannot atomically replace existing files
-    // Use backup-and-rename strategy for safety
-    const backupPath = `${targetPath}.bak`;
+    // Use backup-and-rename strategy with unique backup name
+    const backupPath = `${targetPath}.${randomUUID()}.bak`;
 
     try {
-      // Step 1: Create backup of existing file (if any)
+      // Step 1: Clean up any existing backup files (best effort)
+      // This handles the case where a previous run crashed
+      await rm(backupPath, { force: true }).catch(() => undefined);
+
+      // Step 2: Create backup of existing file (if any)
       try {
         await rename(targetPath, backupPath);
       } catch (error) {
@@ -66,13 +71,13 @@ async function atomicReplaceFile(tempPath: string, targetPath: string): Promise<
         }
       }
 
-      // Step 2: Move temp file to target location
+      // Step 3: Move temp file to target location
       await rename(tempPath, targetPath);
 
-      // Step 3: Clean up backup (best effort)
+      // Step 4: Clean up backup (best effort)
       await rm(backupPath, { force: true }).catch(() => undefined);
     } catch (error) {
-      // Attempt rollback: restore backup if step 2 failed
+      // Attempt rollback: restore backup if step 3 failed
       try {
         await rename(backupPath, targetPath);
       } catch {
