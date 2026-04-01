@@ -126,6 +126,11 @@ export class ChatHistoryManager {
       throw new Error(`Invalid chat history format for "${bookId}"`);
     }
 
+    if (history.bookId !== bookId) {
+      throw new Error(
+        `Chat history bookId mismatch for "${bookId}": found "${history.bookId}"`
+      );
+    }
     return history;
   }
 
