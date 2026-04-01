@@ -440,9 +440,10 @@ export class ChatSession {
             callbacks?.onExecutionMetadataChange?.(this.getOrchestratorMetadata());
             callbacks?.onToolComplete?.(name, result);
           },
-          onMessage: (_content: string) => {
-            // runAgentLoop 的 onMessage 回调在 core 中表示“每个 agent turn 的完整回复”，
-            // 不能当作流式 chunk 追加，否则会导致输出重复/累加。
+          onMessage: (content: string) => {
+            // runAgentLoop 的 onMessage 回调在 core 中表示”每个 agent turn 的完整回复”。
+            // 使用替换模式（而非累加）驱动 TUI 的 Streaming UI，避免重复/累加。
+            callbacks?.onStreamChunk?.(content);
           },
         maxTurns: 10,
       };
