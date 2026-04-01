@@ -3,7 +3,7 @@
  */
 
 import { describe, test, expect } from "vitest";
-import { parseSlashCommand, SLASH_COMMANDS } from "../chat/commands.js";
+import { parseSlashCommand, SLASH_COMMANDS, getAutocompleteInput } from "../chat/commands.js";
 
 describe("Slash Commands", () => {
   test("should parse /write command", () => {
@@ -73,6 +73,26 @@ describe("Slash Commands", () => {
     if (!result.valid) {
       expect(result.error).toContain("至少需要");
     }
+  });
+
+  test("should parse /exit even with trailing whitespace", () => {
+    const result = parseSlashCommand("/exit ");
+
+    expect(result.valid).toBe(true);
+    if (result.valid) {
+      expect(result.command).toBe("exit");
+      expect(result.args).toEqual([]);
+    }
+  });
+
+  test("should not append trailing space for zero-argument autocomplete commands", () => {
+    expect(getAutocompleteInput("exit")).toBe("/exit");
+    expect(getAutocompleteInput("clear")).toBe("/clear");
+  });
+
+  test("should append trailing space for autocomplete commands expecting more input", () => {
+    expect(getAutocompleteInput("write")).toBe("/write ");
+    expect(getAutocompleteInput("switch")).toBe("/switch ");
   });
 
   test("should have all expected commands", () => {

@@ -4,7 +4,7 @@
 
 import { describe, test, expect, beforeEach } from "vitest";
 import { ChatHistoryManager } from "../chat/history.js";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 describe("ChatHistoryManager", () => {
@@ -104,5 +104,14 @@ describe("ChatHistoryManager", () => {
 
     const loaded = await manager.load("test-book");
     expect(loaded.metadata.totalTokens).toBe(30);
+  });
+
+  test("should reject malformed history files instead of silently resetting them", async () => {
+    await mkdir(testDir, { recursive: true });
+    await writeFile(join(testDir, "test-book.json"), "{not-valid-json", "utf-8");
+
+    await expect(manager.load("test-book")).rejects.toThrow(
+      'Failed to parse chat history for "test-book"'
+    );
   });
 });

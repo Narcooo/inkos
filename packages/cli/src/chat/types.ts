@@ -152,6 +152,26 @@ export interface ChatSessionState {
   error?: string;
 }
 
+export interface ExecutionMetadata {
+  /** High-level execution role shown in the TUI */
+  scope: "orchestrator" | "agent" | "local";
+
+  /** Human-readable worker label */
+  label: string;
+
+  /** Pipeline/tool agent identifier when available */
+  agentName?: string;
+
+  /** Tool currently being executed */
+  toolName?: string;
+
+  /** Active model name when the worker is LLM-backed */
+  model?: string;
+
+  /** Active provider when known */
+  provider?: string;
+}
+
 /**
  * Clack-specific callbacks for UI updates.
  */
@@ -167,4 +187,7 @@ export interface ClackCallbacks {
 
   /** Called when execution status changes */
   onStatusChange?: (status: string) => void;
+
+  /** Called when the active orchestrator/agent metadata changes */
+  onExecutionMetadataChange?: (metadata: ExecutionMetadata | null) => void;
 }

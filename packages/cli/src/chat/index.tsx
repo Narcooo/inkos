@@ -13,14 +13,68 @@ import {
   type ChatHistory,
   type ChatMessage,
   type ClackCallbacks,
+  type ExecutionMetadata,
 } from "./types.js";
-import { SLASH_COMMANDS } from "./commands.js";
+import { SLASH_COMMANDS, getAutocompleteInput } from "./commands.js";
 import type { PipelineConfig } from "@actalk/inkos-core";
 import { loadConfig, buildPipelineConfig } from "../utils.js";
 
 export interface ChatAppConfig {
   maxMessages?: number;
 }
+
+function formatDuration(ms: number): string {
+  const totalTenths = Math.floor(Math.max(0, ms) / 100);
+  const minutes = Math.floor(totalTenths / 600);
+  const seconds = Math.floor((totalTenths % 600) / 10);
+  const tenths = totalTenths % 10;
+
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${tenths}`;
+}
+
+function getElapsedMs(startedAt: number): number {
+  return Math.max(0, performance.now() - startedAt);
+}
+
+function summarizeExecutionTarget(input: string): string {
+  if (input.startsWith("/")) {
+    const command = input.split(/\s+/, 1)[0];
+    return command ?? input;
+  }
+
+  return "natural language request";
+}
+
+function formatExecutionMetadata(metadata: ExecutionMetadata | null): {
+  worker: string;
+  toolName?: string;
+  model?: string;
+  provider?: string;
+} | null {
+  if (!metadata) {
+    return null;
+  }
+
+  return {
+    worker: metadata.label,
+    toolName: metadata.toolName,
+    model: metadata.model,
+    provider: metadata.provider,
+  };
+}
+
+const MetadataTag: React.FC<{
+  label: string;
+  value: string;
+  color: "cyan" | "green" | "magenta" | "blue";
+}> = ({ label, value, color }) => (
+  <Box marginRight={1}>
+    <Text dimColor>[</Text>
+    <Text dimColor>{label}: </Text>
+    <Text color={color}>{value}</Text>
+    <Text dimColor>]</Text>
+  </Box>
+);
 
 // Main Chat Component
 const ChatInterface: React.FC<{
@@ -38,6 +92,15 @@ const ChatInterface: React.FC<{
   const [showCommandSuggestions, setShowCommandSuggestions] = useState(false);
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(0);
   const [terminalWidth, setTerminalWidth] = useState(stdout.columns || 80);
+  const [inputResetKey, setInputResetKey] = useState(0);
+  const [executionStartedAt, setExecutionStartedAt] = useState<number | null>(null);
+  const [executionElapsedMs, setExecutionElapsedMs] = useState(0);
+  const [activeExecutionTarget, setActiveExecutionTarget] = useState<string | null>(null);
+  const [lastExecutionSummary, setLastExecutionSummary] = useState<{
+    target: string;
+    durationMs: number;
+  } | null>(null);
+  const [activeExecutionMetadata, setActiveExecutionMetadata] = useState<ExecutionMetadata | null>(null);
 
   // Track terminal width changes
   useEffect(() => {
@@ -85,6 +148,11 @@ const ChatInterface: React.FC<{
 
   const matchingCommands = getMatchingCommands(input);
 
+  const setInputAndResetCursor = (nextInput: string) => {
+    setInput(nextInput);
+    setInputResetKey((current) => current + 1);
+  };
+
   // Handle keyboard input
   useInput((_inputKey, key) => {
     // Escape: always allow exit
@@ -97,7 +165,7 @@ const ChatInterface: React.FC<{
     if (key.tab && matchingCommands.length > 0) {
       const selected = matchingCommands[selectedSuggestionIndex];
       if (selected) {
-        setInput(`/${selected} `);
+        setInputAndResetCursor(getAutocompleteInput(selected));
         setShowCommandSuggestions(false);
       }
       return;
@@ -125,34 +193,91 @@ const ChatInterface: React.FC<{
     setSelectedSuggestionIndex(0);
   }, [input, matchingCommands.length]);
 
+  useEffect(() => {
+    if (!isProcessing || executionStartedAt === null) {
+      return;
+    }
+
+    setExecutionElapsedMs(getElapsedMs(executionStartedAt));
+    const timer = setInterval(() => {
+      setExecutionElapsedMs(getElapsedMs(executionStartedAt));
+    }, 100);
+
+    return () => {
+      clearInterval(timer);
+    };
+  }, [executionStartedAt, isProcessing]);
+
+  const beginExecution = (inputText: string) => {
+    const startedAt = performance.now();
+    setExecutionStartedAt(startedAt);
+    setExecutionElapsedMs(0);
+    setActiveExecutionTarget(summarizeExecutionTarget(inputText));
+    setActiveExecutionMetadata(null);
+    setIsProcessing(true);
+    return startedAt;
+  };
+
+  const finishExecution = (startedAt: number | null, inputText: string) => {
+    if (startedAt === null) {
+      return;
+    }
+
+    const durationMs = getElapsedMs(startedAt);
+    setExecutionElapsedMs(durationMs);
+    setLastExecutionSummary({
+      target: summarizeExecutionTarget(inputText),
+      durationMs,
+    });
+    setExecutionStartedAt(null);
+    setActiveExecutionTarget(null);
+    setActiveExecutionMetadata(null);
+    setIsProcessing(false);
+  };
+
   // Handle message submission
   const handleSubmit = async (submittedInput: string) => {
     if (!session || isProcessing || !submittedInput.trim()) return;
+    const normalizedInput = submittedInput.trim();
 
     // Clear input immediately after submission for better UX
-    setInput("");
+    setInputAndResetCursor("");
 
     // Handle special commands
-    if (submittedInput === "/exit" || submittedInput === "/quit") {
+    if (normalizedInput === "/exit" || normalizedInput === "/quit") {
       setStatus("再见！正在退出...");
       // Delay to show the message before exiting
       setTimeout(() => exit(), 500);
       return;
     }
 
-    if (submittedInput === "/clear") {
-      await session.clearHistory();
-      setStatus("History cleared");
+    if (normalizedInput === "/clear") {
+      const startedAt = beginExecution(normalizedInput);
+      setStatus("Clearing history...");
+      setActiveExecutionMetadata({
+        scope: "local",
+        label: "history-manager",
+        agentName: "history-manager",
+      });
+
+      try {
+        await session.clearHistory();
+        setStatus("History cleared");
+      } catch (error) {
+        setStatus(`Error: ${error}`);
+      } finally {
+        finishExecution(startedAt, normalizedInput);
+      }
       return;
     }
 
     // /help is handled by session.processInput() to display help text
 
-    setIsProcessing(true);
+    const startedAt = beginExecution(normalizedInput);
     setStatus("Processing...");
 
     try {
-      const result = await session.processInput(submittedInput, {
+      const result = await session.processInput(normalizedInput, {
         onToolStart: (toolName) => {
           setStatus(`Executing: ${toolName}`);
         },
@@ -162,34 +287,37 @@ const ChatInterface: React.FC<{
         onStatusChange: (newStatus) => {
           setStatus(newStatus);
         },
+        onExecutionMetadataChange: (metadata) => {
+          setActiveExecutionMetadata(metadata);
+        },
       });
 
       setStatus(result.success ? "✓ Done" : "✗ Failed");
     } catch (error) {
       setStatus(`Error: ${error}`);
     } finally {
-      setIsProcessing(false);
+      finishExecution(startedAt, normalizedInput);
     }
   };
 
   // Render recent messages
+  const activeBook = session?.getCurrentBook() ?? bookId;
   const history = session?.getHistory();
   const recentMessages = history?.messages.slice(-10) ?? [];
+  const statusColor = status.startsWith("Error") || status.startsWith("✗")
+    ? "red"
+    : status.startsWith("✓")
+      ? "green"
+      : "gray";
+  const executionDisplay = formatExecutionMetadata(activeExecutionMetadata);
 
   return (
     <Box flexDirection="column" padding={1}>
-      {/* Status bar */}
+      {/* Header */}
       <Box marginBottom={1}>
         <Text bold color="cyan">
-          InkOS Chat - {bookId}
+          InkOS Chat - {activeBook}
         </Text>
-        <Text> | </Text>
-        <Text color="gray">{status}</Text>
-        {isProcessing && (
-          <Box marginLeft={1}>
-            <Spinner type="dots" />
-          </Box>
-        )}
       </Box>
 
       {/* Message history */}
@@ -237,6 +365,50 @@ const ChatInterface: React.FC<{
 
       {/* Input with separator lines */}
       <Box flexDirection="column" marginTop={1}>
+        {/* Progress / timing panel */}
+        <Box marginBottom={1}>
+          {isProcessing ? (
+            <Box flexDirection="column">
+              <Box>
+                <Text color={statusColor}>{status}</Text>
+                <Text dimColor> · </Text>
+                <Text dimColor>{activeExecutionTarget ?? "request"}</Text>
+                <Text dimColor> · </Text>
+                <Text color="yellow">elapsed {formatDuration(executionElapsedMs)}</Text>
+                <Box marginLeft={1}>
+                  <Spinner type="dots" />
+                </Box>
+              </Box>
+              {executionDisplay && (
+                <Box flexWrap="wrap">
+                  <MetadataTag label="worker" value={executionDisplay.worker} color="cyan" />
+                  {executionDisplay.toolName && (
+                    <MetadataTag label="tool" value={executionDisplay.toolName} color="green" />
+                  )}
+                  {executionDisplay.model && (
+                    <MetadataTag label="model" value={executionDisplay.model} color="magenta" />
+                  )}
+                  {executionDisplay.provider && (
+                    <MetadataTag label="provider" value={executionDisplay.provider} color="blue" />
+                  )}
+                </Box>
+              )}
+            </Box>
+          ) : (
+            <>
+              <Text color={statusColor}>{status}</Text>
+              {lastExecutionSummary && (
+                <>
+                  <Text dimColor> · last </Text>
+                  <Text dimColor>{lastExecutionSummary.target}</Text>
+                  <Text dimColor>: </Text>
+                  <Text color="yellow">{formatDuration(lastExecutionSummary.durationMs)}</Text>
+                </>
+              )}
+            </>
+          )}
+        </Box>
+
         {/* Upper separator */}
         <Box width="100%">
           <Text dimColor>{"─".repeat(Math.max(terminalWidth - 2, 10))}</Text>
@@ -249,6 +421,7 @@ const ChatInterface: React.FC<{
           </Text>
           <Box flexGrow={1} marginLeft={1}>
             <TextInput
+              key={inputResetKey}
               value={input}
               onChange={setInput}
               onSubmit={handleSubmit}

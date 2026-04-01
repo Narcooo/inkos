@@ -86,24 +86,30 @@ export class ChatHistoryManager {
   async load(bookId: string): Promise<ChatHistory> {
     const filePath = this.getHistoryFilePath(bookId);
 
+    let data: string;
     try {
-      const data = await readFile(filePath, "utf-8");
-      const history = JSON.parse(data) as ChatHistory;
-
-      // Validate structure
-      if (!history.bookId || !history.messages || !history.metadata) {
-        return this.createEmptyHistory(bookId);
-      }
-
-      return history;
+      data = await readFile(filePath, "utf-8");
     } catch (error) {
-      // File doesn't exist or is invalid - return empty history
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         return this.createEmptyHistory(bookId);
       }
-      // Invalid JSON or other error - return empty history
-      return this.createEmptyHistory(bookId);
+
+      throw error;
     }
+
+    let history: ChatHistory;
+    try {
+      history = JSON.parse(data) as ChatHistory;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to parse chat history for "${bookId}": ${message}`);
+    }
+
+    if (!history.bookId || !Array.isArray(history.messages) || !history.metadata) {
+      throw new Error(`Invalid chat history format for "${bookId}"`);
+    }
+
+    return history;
   }
 
   /**

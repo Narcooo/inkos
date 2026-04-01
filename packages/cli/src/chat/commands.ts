@@ -78,6 +78,16 @@ export const SLASH_COMMANDS: Record<SlashCommand, SlashCommandDefinition> = {
 };
 
 /**
+ * Build the input text inserted by Tab autocomplete.
+ * Commands that need no further input should not get a trailing space.
+ */
+export function getAutocompleteInput(command: SlashCommand): string {
+  const definition = SLASH_COMMANDS[command];
+  const needsMoreInput = definition.requiredArgs > 0 || definition.optionalArgs > 0;
+  return `/${command}${needsMoreInput ? " " : ""}`;
+}
+
+/**
  * Parse slash command input.
  * Returns command name, arguments, and options.
  */

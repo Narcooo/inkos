@@ -6,16 +6,40 @@
 import {
   type PipelineConfig,
   runAgentLoop,
+  type AgentLLMOverride,
 } from "@actalk/inkos-core";
 import { ChatHistoryManager } from "./history.js";
 import { parseSlashCommand, validateCommandArgs } from "./commands.js";
 import { parseError } from "./errors.js";
+import { resolveBookId } from "../utils.js";
 import {
   type ChatHistory,
   type ChatMessage,
   type CommandResult,
   type ClackCallbacks,
+  type ExecutionMetadata,
 } from "./types.js";
+
+const TOOL_AGENT_METADATA: Record<string, { agentName: string; label: string; usesModel: boolean }> = {
+  plan_chapter: { agentName: "planner", label: "planner", usesModel: true },
+  compose_chapter: { agentName: "composer", label: "composer", usesModel: true },
+  write_draft: { agentName: "writer", label: "writer", usesModel: true },
+  audit_chapter: { agentName: "auditor", label: "auditor", usesModel: true },
+  revise_chapter: { agentName: "reviser", label: "reviser", usesModel: true },
+  scan_market: { agentName: "radar", label: "radar", usesModel: true },
+  create_book: { agentName: "architect", label: "architect", usesModel: true },
+  import_style: { agentName: "style-analyzer", label: "style-analyzer", usesModel: true },
+  import_canon: { agentName: "fanfic-canon-importer", label: "fanfic-canon-importer", usesModel: true },
+  import_chapters: { agentName: "chapter-analyzer", label: "chapter-analyzer", usesModel: true },
+  write_full_pipeline: { agentName: "writer", label: "writer-pipeline", usesModel: true },
+  get_book_status: { agentName: "state-manager", label: "state-manager", usesModel: false },
+  read_truth_files: { agentName: "state-manager", label: "state-manager", usesModel: false },
+  list_books: { agentName: "state-manager", label: "state-manager", usesModel: false },
+  update_author_intent: { agentName: "control-docs", label: "control-docs", usesModel: false },
+  update_current_focus: { agentName: "control-docs", label: "control-docs", usesModel: false },
+  web_fetch: { agentName: "web-fetch", label: "web-fetch", usesModel: false },
+  write_truth_file: { agentName: "truth-file-writer", label: "truth-file-writer", usesModel: false },
+};
 
 /**
  * Manages a chat session with an InkOS book.
@@ -67,6 +91,104 @@ export class ChatSession {
     return this.history;
   }
 
+  private getDefaultProvider(): string | undefined {
+    return this.config.defaultLLMConfig?.provider;
+  }
+
+  private resolveAgentModelInfo(agentName: string): { model?: string; provider?: string } {
+    const override = this.config.modelOverrides?.[agentName];
+    if (!override) {
+      return {
+        model: this.config.model,
+        provider: this.getDefaultProvider(),
+      };
+    }
+
+    if (typeof override === "string") {
+      return {
+        model: override,
+        provider: this.getDefaultProvider(),
+      };
+    }
+
+    const typedOverride = override as AgentLLMOverride;
+    return {
+      model: typedOverride.model,
+      provider: typedOverride.provider ?? this.getDefaultProvider(),
+    };
+  }
+
+  private getOrchestratorMetadata(): ExecutionMetadata {
+    return {
+      scope: "orchestrator",
+      label: "inkos-agent",
+      agentName: "inkos-agent",
+      model: this.config.model,
+      provider: this.getDefaultProvider(),
+    };
+  }
+
+  private getExecutionMetadataForTool(toolName: string): ExecutionMetadata {
+    const toolMeta = TOOL_AGENT_METADATA[toolName];
+    if (!toolMeta) {
+      return {
+        scope: "local",
+        label: toolName,
+        toolName,
+      };
+    }
+
+    if (!toolMeta.usesModel) {
+      return {
+        scope: "local",
+        label: toolMeta.label,
+        agentName: toolMeta.agentName,
+        toolName,
+      };
+    }
+
+    const modelInfo = this.resolveAgentModelInfo(toolMeta.agentName);
+    return {
+      scope: "agent",
+      label: toolMeta.label,
+      agentName: toolMeta.agentName,
+      toolName,
+      model: modelInfo.model,
+      provider: modelInfo.provider,
+    };
+  }
+
+  /**
+   * Persist an assistant message in the current history.
+   */
+  private async appendAssistantMessage(content: string): Promise<void> {
+    const assistantMessage: ChatMessage = {
+      role: "assistant",
+      content,
+      timestamp: new Date().toISOString(),
+    };
+
+    this.history = this.historyManager.addMessage(this.history, assistantMessage);
+    this.history = await this.historyManager.save(this.history);
+  }
+
+  /**
+   * Persist a local user/assistant exchange that never reaches the agent loop.
+   */
+  private async recordLocalExchange(
+    input: string,
+    response: string
+  ): Promise<void> {
+    const userMessage: ChatMessage = {
+      role: "user",
+      content: input,
+      timestamp: new Date().toISOString(),
+    };
+
+    this.history = this.historyManager.addMessage(this.history, userMessage);
+    await this.appendAssistantMessage(response);
+  }
+
   /**
    * Process user input (slash command or natural language).
    * All input is processed through runAgentLoop for consistency.
@@ -80,12 +202,14 @@ export class ChatSession {
       const parsed = parseSlashCommand(input);
 
       if (!parsed.valid) {
+        await this.recordLocalExchange(input, parsed.error);
         return { success: false, message: parsed.error };
       }
 
       // Validate command arguments
       const argsValidation = validateCommandArgs(parsed.command, parsed.args);
       if (!argsValidation.valid) {
+        await this.recordLocalExchange(input, argsValidation.error);
         return { success: false, message: argsValidation.error };
       }
 
@@ -114,32 +238,37 @@ export class ChatSession {
           !newBookId.includes("\\");
 
         if (!isSafeBookId) {
+          const message = `无效的书籍 ID: ${newBookId}`;
+          await this.recordLocalExchange(input, message);
           return {
             success: false,
-            message: `无效的书籍 ID: ${newBookId}`,
+            message,
           };
         }
 
         try {
-          const loadedHistory = await this.historyManager.load(newBookId);
-          this.currentBook = newBookId;
+          const validatedBookId = await resolveBookId(newBookId, this.config.projectRoot);
+          const loadedHistory = await this.historyManager.load(validatedBookId);
+          this.currentBook = validatedBookId;
           this.history = loadedHistory;
-          callbacks?.onStatusChange?.(`已切换: ${newBookId}`);
+          callbacks?.onStatusChange?.(`已切换: ${validatedBookId}`);
 
           return {
             success: true,
-            message: `已切换到书籍: ${newBookId}`,
-            switchToBook: newBookId,
+            message: `已切换到书籍: ${validatedBookId}`,
+            switchToBook: validatedBookId,
           };
         } catch (error) {
           const message =
             (error as Error)?.message && typeof (error as Error).message === "string"
               ? (error as Error).message
               : "无效的书籍 ID，无法加载对应的对话历史";
+          const fullMessage = `无法切换到书籍 "${newBookId}": ${message}`;
+          await this.recordLocalExchange(input, fullMessage);
           callbacks?.onStatusChange?.(`切换失败: ${newBookId}`);
           return {
             success: false,
-            message: `无法切换到书籍 "${newBookId}": ${message}`,
+            message: fullMessage,
           };
         }
       }
@@ -233,6 +362,8 @@ export class ChatSession {
     this.history = await this.historyManager.save(this.history);
 
     try {
+      callbacks?.onExecutionMetadataChange?.(this.getOrchestratorMetadata());
+
       // Build conversation context from recent history (excluding current message)
       const previousMessages = this.history.messages.slice(0, -1).slice(-10); // Exclude last (current) message
       let conversationContext = "";
@@ -249,16 +380,18 @@ export class ChatSession {
       const fullInstruction = conversationContext + agentInstruction;
 
       // Setup callbacks for streaming progress
-      const options = {
-        onToolCall: (name: string, args: Record<string, unknown>) => {
-          callbacks?.onToolStart?.(name, args);
-          callbacks?.onStatusChange?.(`执行工具: ${name}`);
-        },
-        onToolResult: (name: string, result: string) => {
-          callbacks?.onToolComplete?.(name, result);
-        },
-        onMessage: (content: string) => {
-          callbacks?.onStreamChunk?.(content);
+        const options = {
+          onToolCall: (name: string, args: Record<string, unknown>) => {
+            callbacks?.onExecutionMetadataChange?.(this.getExecutionMetadataForTool(name));
+            callbacks?.onToolStart?.(name, args);
+            callbacks?.onStatusChange?.(`执行工具: ${name}`);
+          },
+          onToolResult: (name: string, result: string) => {
+            callbacks?.onExecutionMetadataChange?.(this.getOrchestratorMetadata());
+            callbacks?.onToolComplete?.(name, result);
+          },
+          onMessage: (content: string) => {
+            callbacks?.onStreamChunk?.(content);
         },
         maxTurns: 10,
       };
@@ -279,6 +412,7 @@ export class ChatSession {
       this.history = await this.historyManager.save(this.history);
 
       callbacks?.onStatusChange?.("完成");
+      callbacks?.onExecutionMetadataChange?.(null);
 
       return {
         success: true,
@@ -286,12 +420,16 @@ export class ChatSession {
       };
     } catch (error) {
       const parsed = parseError(error);
+      const message = `${parsed.message}${parsed.suggestion ? `\n建议: ${parsed.suggestion}` : ""}`;
+
+      await this.appendAssistantMessage(message);
 
       callbacks?.onStatusChange?.("错误");
+      callbacks?.onExecutionMetadataChange?.(null);
 
       return {
         success: false,
-        message: `${parsed.message}${parsed.suggestion ? `\n建议: ${parsed.suggestion}` : ""}`,
+        message,
       };
     }
   }
