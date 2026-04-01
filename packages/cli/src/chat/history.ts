@@ -200,9 +200,9 @@ export class ChatHistoryManager {
           (message) => !existingKeySet.has(this.getMessageKey(message))
         );
       } else {
-      throw new Error(
-        `Chat history for "${incomingHistory.bookId}" changed in another session. Please retry.`
-      );
+        throw new Error(
+          `Chat history for "${incomingHistory.bookId}" changed in another session. Please retry.`
+        );
       }
     }
 
