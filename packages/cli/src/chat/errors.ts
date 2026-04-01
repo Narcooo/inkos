@@ -47,6 +47,7 @@ export const ERROR_MESSAGES = {
 export type ErrorType = keyof typeof ERROR_MESSAGES;
 
 export interface ParsedError {
+  type: ErrorType;
   message: string;
   suggestion?: string;
   details?: string;
@@ -65,7 +66,7 @@ export function parseError(error: unknown): ParsedError {
       errorMessage.includes("api key") ||
       errorMessage.includes("inkos_llm_api_key")
     ) {
-      return ERROR_MESSAGES.API_KEY_MISSING;
+      return { type: "API_KEY_MISSING", ...ERROR_MESSAGES.API_KEY_MISSING };
     }
 
     // Book not found
@@ -73,7 +74,7 @@ export function parseError(error: unknown): ParsedError {
       errorMessage.includes("book") &&
       (errorMessage.includes("not found") || errorMessage.includes("不存在"))
     ) {
-      return ERROR_MESSAGES.BOOK_NOT_FOUND;
+      return { type: "BOOK_NOT_FOUND", ...ERROR_MESSAGES.BOOK_NOT_FOUND };
     }
 
     // Network errors
@@ -82,7 +83,7 @@ export function parseError(error: unknown): ParsedError {
       errorMessage.includes("econnrefused") ||
       errorMessage.includes("enotfound")
     ) {
-      return ERROR_MESSAGES.NETWORK_ERROR;
+      return { type: "NETWORK_ERROR", ...ERROR_MESSAGES.NETWORK_ERROR };
     }
 
     // Rate limit
@@ -91,7 +92,7 @@ export function parseError(error: unknown): ParsedError {
       errorMessage.includes("429") ||
       errorMessage.includes("too many requests")
     ) {
-      return ERROR_MESSAGES.RATE_LIMIT;
+      return { type: "RATE_LIMIT", ...ERROR_MESSAGES.RATE_LIMIT };
     }
 
     // Chapter not found
@@ -99,7 +100,7 @@ export function parseError(error: unknown): ParsedError {
       errorMessage.includes("chapter") &&
       (errorMessage.includes("not found") || errorMessage.includes("不存在"))
     ) {
-      return ERROR_MESSAGES.CHAPTER_NOT_FOUND;
+      return { type: "CHAPTER_NOT_FOUND", ...ERROR_MESSAGES.CHAPTER_NOT_FOUND };
     }
 
     // State errors
@@ -108,17 +109,18 @@ export function parseError(error: unknown): ParsedError {
       errorMessage.includes("manifest") ||
       errorMessage.includes("corrupted")
     ) {
-      return ERROR_MESSAGES.STATE_ERROR;
+      return { type: "STATE_ERROR", ...ERROR_MESSAGES.STATE_ERROR };
     }
 
     // Return error with details
     return {
+      type: "UNKNOWN",
       ...ERROR_MESSAGES.UNKNOWN,
       details: error.message,
     };
   }
 
-  return ERROR_MESSAGES.UNKNOWN;
+  return { type: "UNKNOWN", ...ERROR_MESSAGES.UNKNOWN };
 }
 
 /**
@@ -145,12 +147,7 @@ export function formatErrorForDisplay(error: unknown): string {
 export function isRecoverableError(error: unknown): boolean {
   const parsed = parseError(error);
   const unrecoverableErrors: ErrorType[] = ["API_KEY_MISSING", "STATE_ERROR"];
-
-  const errorType = (Object.keys(ERROR_MESSAGES) as ErrorType[]).find(
-    (key) => ERROR_MESSAGES[key] === parsed
-  );
-
-  return !unrecoverableErrors.includes(errorType || "UNKNOWN");
+  return !unrecoverableErrors.includes(parsed.type);
 }
 
 /**
@@ -159,15 +156,15 @@ export function isRecoverableError(error: unknown): boolean {
 export function getRecoveryAction(error: unknown): string | null {
   const parsed = parseError(error);
 
-  if (parsed === ERROR_MESSAGES.API_KEY_MISSING) {
+  if (parsed.type === "API_KEY_MISSING") {
     return "inkos config set-global";
   }
 
-  if (parsed === ERROR_MESSAGES.STATE_ERROR) {
+  if (parsed.type === "STATE_ERROR") {
     return "inkos doctor";
   }
 
-  if (parsed === ERROR_MESSAGES.BOOK_NOT_FOUND) {
+  if (parsed.type === "BOOK_NOT_FOUND") {
     return "inkos book list";
   }
 
