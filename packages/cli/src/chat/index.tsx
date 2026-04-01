@@ -161,7 +161,7 @@ const ChatInterface: React.FC<{
     }
 
     // Tab: autocomplete (only when suggestions are shown)
-    if (key.tab && matchingCommands.length > 0) {
+    if (key.tab && showCommandSuggestions && matchingCommands.length > 0) {
       const selected = matchingCommands[selectedSuggestionIndex];
       if (selected) {
         setInputAndResetCursor(getAutocompleteInput(selected));
