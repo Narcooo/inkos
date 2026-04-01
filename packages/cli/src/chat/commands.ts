@@ -182,6 +182,13 @@ export function parseSlashCommand(input: string):
     parts.push(current);
   }
 
+  // If we finished parsing while still inside quotes, the user has an unmatched quote
+  if (inQuotes) {
+    return {
+      valid: false,
+      error: "命令中的引号未闭合。请检查后重试。",
+    };
+  }
   const commandName = parts[0]?.toLowerCase() as SlashCommand;
 
   // Check for empty command
