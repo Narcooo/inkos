@@ -36,22 +36,50 @@ function isValidBookId(bookId: string): boolean {
 }
 
 /**
- * Cross-platform atomic file replacement.
- * On Windows, rename() cannot reliably replace existing files, so we need a fallback.
+ * Cross-platform file replacement with best-effort atomicity.
+ *
+ * On Unix/Linux/macOS: Uses rename() which atomically replaces existing files.
+ * On Windows: Uses a backup-and-rename strategy to minimize data loss risk:
+ *   1. Rename target to backup (if exists)
+ *   2. Rename temp to target
+ *   3. Remove backup
+ *
+ * This ensures that if the process crashes between steps, either:
+ * - The original file still exists (step 1 failure)
+ * - The new file is in place with a backup (step 2 success, step 3 pending)
+ * - Recovery is possible from the backup
  */
 async function atomicReplaceFile(tempPath: string, targetPath: string): Promise<void> {
   if (platform() === "win32") {
     // Windows: rename() cannot atomically replace existing files
-    // Fallback: remove target first, then rename
+    // Use backup-and-rename strategy for safety
+    const backupPath = `${targetPath}.bak`;
+
     try {
-      await rm(targetPath, { force: true });
-    } catch (error) {
-      // Ignore ENOENT (file doesn't exist)
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        throw error;
+      // Step 1: Create backup of existing file (if any)
+      try {
+        await rename(targetPath, backupPath);
+      } catch (error) {
+        // If target doesn't exist (ENOENT), that's fine - no backup needed
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+          throw error;
+        }
       }
+
+      // Step 2: Move temp file to target location
+      await rename(tempPath, targetPath);
+
+      // Step 3: Clean up backup (best effort)
+      await rm(backupPath, { force: true }).catch(() => undefined);
+    } catch (error) {
+      // Attempt rollback: restore backup if step 2 failed
+      try {
+        await rename(backupPath, targetPath);
+      } catch {
+        // Ignore rollback errors - we tried our best
+      }
+      throw error;
     }
-    await rename(tempPath, targetPath);
   } else {
     // Unix/Linux/macOS: rename() atomically replaces existing files
     await rename(tempPath, targetPath);
