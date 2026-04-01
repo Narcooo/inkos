@@ -469,7 +469,15 @@ const ChatInterface: React.FC<{
 
 // Message display component
 const MessageDisplay: React.FC<{ message: ChatMessage }> = ({ message }) => {
-  const timestamp = new Date(message.timestamp).toLocaleTimeString();
+  let timestamp: string;
+  if (message.timestamp != null) {
+    const date = new Date(message.timestamp);
+    timestamp = Number.isNaN(date.getTime())
+      ? String(message.timestamp)
+      : date.toLocaleTimeString();
+  } else {
+    timestamp = "-";
+  }
   const isUser = message.role === "user";
 
   return (

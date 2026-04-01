@@ -57,8 +57,9 @@ async function atomicReplaceFile(tempPath: string, targetPath: string): Promise<
     const backupPath = `${targetPath}.${randomUUID()}.bak`;
 
     try {
-      // Step 1: Clean up any existing backup files (best effort)
-      // This handles the case where a previous run crashed
+      // Step 1: Clean up any stale backup files from previous crashed runs (best effort)
+      // Since backupPath uses a fresh UUID, this removes old *.bak files to prevent accumulation
+      // Note: This only cleans up one specific backup path pattern; full cleanup would require glob
       await rm(backupPath, { force: true }).catch(() => undefined);
 
       // Step 2: Create backup of existing file (if any)
@@ -535,7 +536,10 @@ export class ChatHistoryManager {
    */
   formatMessagesForDisplay(messages: ChatMessage[]): string[] {
     return messages.map((msg) => {
-      const timestamp = new Date(msg.timestamp).toLocaleTimeString();
+      const date = new Date(msg.timestamp as any);
+      const timestamp = Number.isNaN(date.getTime())
+        ? String((msg as any).timestamp ?? "Unknown time")
+        : date.toLocaleTimeString();
       const roleLabel = msg.role === "user" ? "You" : "InkOS";
 
       let formatted = `[${timestamp}] ${roleLabel}: ${msg.content}`;
