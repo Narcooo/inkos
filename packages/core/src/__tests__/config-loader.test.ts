@@ -77,4 +77,25 @@ describe("loadProjectConfig local provider auth", () => {
     await writeFile(join(root, ".env"), "", "utf-8");
     await expect(loadProjectConfig(root)).rejects.toThrow(/INKOS_LLM_API_KEY not set/i);
   });
+
+  it("rejects placeholder API keys copied from env examples", async () => {
+    root = await mkdtemp(join(tmpdir(), "inkos-config-loader-placeholder-"));
+    for (const key of ENV_KEYS) {
+      previousEnv.set(key, process.env[key]);
+      process.env[key] = "";
+    }
+
+    await writeFile(join(root, "inkos.json"), JSON.stringify({
+      name: "placeholder-project",
+      version: "0.1.0",
+      llm: {
+        provider: "openai",
+        baseUrl: "https://api.openai.com/v1",
+        model: "gpt-5.4",
+      },
+    }, null, 2), "utf-8");
+    await writeFile(join(root, ".env"), "INKOS_LLM_API_KEY=your-api-key-here\n", "utf-8");
+
+    await expect(loadProjectConfig(root)).rejects.toThrow(/INKOS_LLM_API_KEY not set/i);
+  });
 });

@@ -6,6 +6,31 @@ import { ProjectConfigSchema, type ProjectConfig } from "../models/project.js";
 export const GLOBAL_CONFIG_DIR = join(homedir(), ".inkos");
 export const GLOBAL_ENV_PATH = join(GLOBAL_CONFIG_DIR, ".env");
 
+const API_KEY_PLACEHOLDERS = new Set([
+  "your-api-key-here",
+  "sk-your-key-here",
+]);
+
+function normalizeApiKey(apiKey: string | undefined): string {
+  const value = (apiKey ?? "").trim();
+  if (
+    (value.startsWith("\"") && value.endsWith("\""))
+    || (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    return value.slice(1, -1).trim();
+  }
+  return value;
+}
+
+function isPlaceholderApiKey(apiKey: string | undefined): boolean {
+  return API_KEY_PLACEHOLDERS.has(normalizeApiKey(apiKey).toLowerCase());
+}
+
+export function hasConfiguredApiKey(apiKey: string | undefined): boolean {
+  const value = normalizeApiKey(apiKey);
+  return value.length > 0 && !isPlaceholderApiKey(value);
+}
+
 export function isApiKeyOptionalForEndpoint(params: {
   readonly provider?: string | undefined;
   readonly baseUrl?: string | undefined;
@@ -101,12 +126,13 @@ export async function loadProjectConfig(
   if (env.INKOS_DEFAULT_LANGUAGE) config.language = env.INKOS_DEFAULT_LANGUAGE;
 
   // API key ONLY from env — never stored in inkos.json
-  const apiKey = env.INKOS_LLM_API_KEY;
+  const apiKey = normalizeApiKey(env.INKOS_LLM_API_KEY);
   const provider = typeof llm.provider === "string" ? llm.provider : undefined;
   const baseUrl = typeof llm.baseUrl === "string" ? llm.baseUrl : undefined;
   const apiKeyOptional = isApiKeyOptionalForEndpoint({ provider, baseUrl });
+  const hasApiKey = hasConfiguredApiKey(apiKey);
 
-  if (!apiKey && options?.requireApiKey !== false && !apiKeyOptional) {
+  if (!hasApiKey && options?.requireApiKey !== false && !apiKeyOptional) {
     throw new Error(
       "INKOS_LLM_API_KEY not set. Run 'inkos config set-global' or add it to project .env file.",
     );
@@ -122,7 +148,7 @@ export async function loadProjectConfig(
       ? llm.model
       : "noop-model";
   }
-  llm.apiKey = apiKey ?? "";
+  llm.apiKey = hasApiKey ? apiKey : "";
 
   return ProjectConfigSchema.parse(config);
 }

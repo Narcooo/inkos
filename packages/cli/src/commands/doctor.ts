@@ -1,7 +1,8 @@
 import { Command } from "commander";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { findProjectRoot, log, logError, GLOBAL_ENV_PATH } from "../utils.js";
+import { hasConfiguredApiKey, isApiKeyOptionalForEndpoint } from "@actalk/inkos-core";
+import { findProjectRoot, log, logError, GLOBAL_ENV_PATH, hasConfiguredApiKeyInEnvContent } from "../utils.js";
 import {
   ensureNodeRuntimePinFiles,
   evaluateSqliteMemorySupport,
@@ -64,7 +65,7 @@ export const doctorCommand = new Command("doctor")
       let hasGlobal = false;
       try {
         const globalContent = await readFile(GLOBAL_ENV_PATH, "utf-8");
-        hasGlobal = globalContent.includes("INKOS_LLM_API_KEY=") && !globalContent.includes("your-api-key-here");
+        hasGlobal = hasConfiguredApiKeyInEnvContent(globalContent);
       } catch { /* no global config */ }
       checks.push({
         name: "Global Config",
@@ -79,7 +80,6 @@ export const doctorCommand = new Command("doctor")
       const { config: loadDotenv } = await import("dotenv");
       loadDotenv({ path: GLOBAL_ENV_PATH });
       loadDotenv({ path: join(root, ".env"), override: true });
-      const { isApiKeyOptionalForEndpoint } = await import("@actalk/inkos-core");
       let provider = process.env.INKOS_LLM_PROVIDER;
       let baseUrl = process.env.INKOS_LLM_BASE_URL;
       try {
@@ -91,7 +91,7 @@ export const doctorCommand = new Command("doctor")
       }
       const apiKey = process.env.INKOS_LLM_API_KEY;
       const apiKeyOptional = isApiKeyOptionalForEndpoint({ provider, baseUrl });
-      const hasKey = apiKeyOptional || (!!apiKey && apiKey.length > 10 && apiKey !== "your-api-key-here");
+      const hasKey = apiKeyOptional || hasConfiguredApiKey(apiKey);
       checks.push({
         name: "LLM API Key",
         ok: hasKey,
@@ -149,7 +149,7 @@ export const doctorCommand = new Command("doctor")
 
     // 6. API connectivity test
     try {
-      const { createLLMClient, chatCompletion, LLMConfigSchema, isApiKeyOptionalForEndpoint } = await import("@actalk/inkos-core");
+      const { createLLMClient, chatCompletion, LLMConfigSchema } = await import("@actalk/inkos-core");
       const { loadConfig } = await import("../utils.js");
 
       let llmConfig;
@@ -165,11 +165,11 @@ export const doctorCommand = new Command("doctor")
           provider: env.INKOS_LLM_PROVIDER,
           baseUrl: env.INKOS_LLM_BASE_URL,
         });
-        if ((env.INKOS_LLM_API_KEY || apiKeyOptional) && env.INKOS_LLM_BASE_URL && env.INKOS_LLM_MODEL) {
+        if ((hasConfiguredApiKey(env.INKOS_LLM_API_KEY) || apiKeyOptional) && env.INKOS_LLM_BASE_URL && env.INKOS_LLM_MODEL) {
           llmConfig = LLMConfigSchema.parse({
             provider: env.INKOS_LLM_PROVIDER ?? "custom",
             baseUrl: env.INKOS_LLM_BASE_URL,
-            apiKey: env.INKOS_LLM_API_KEY ?? "",
+            apiKey: hasConfiguredApiKey(env.INKOS_LLM_API_KEY) ? env.INKOS_LLM_API_KEY : "",
             model: env.INKOS_LLM_MODEL,
           });
         }

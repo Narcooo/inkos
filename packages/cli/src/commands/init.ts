@@ -1,12 +1,12 @@
 import { Command } from "commander";
 import { access, readFile, writeFile, mkdir } from "node:fs/promises";
 import { join, basename, resolve } from "node:path";
-import { log, logError, GLOBAL_ENV_PATH } from "../utils.js";
+import { log, logError, GLOBAL_ENV_PATH, hasConfiguredApiKeyInEnvContent } from "../utils.js";
 
 async function hasGlobalConfig(): Promise<boolean> {
   try {
     const content = await readFile(GLOBAL_ENV_PATH, "utf-8");
-    return content.includes("INKOS_LLM_API_KEY=") && !content.includes("your-api-key-here");
+    return hasConfiguredApiKeyInEnvContent(content);
   } catch {
     return false;
   }
@@ -107,8 +107,8 @@ export const initCommand = new Command("init")
             "",
             "# Anthropic example:",
             "# INKOS_LLM_PROVIDER=anthropic",
-            "# INKOS_LLM_PROVIDER=anthropic",
             "# INKOS_LLM_BASE_URL=",
+            "# INKOS_LLM_API_KEY=",
             "# INKOS_LLM_MODEL=",
           ].join("\n"),
           "utf-8",
