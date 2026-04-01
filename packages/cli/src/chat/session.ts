@@ -326,7 +326,7 @@ export class ChatSession {
 
 - \`/write\` - 写下一章（自动续写最新章之后的一章）
 - \`/audit [章节号]\` - 审计指定章节（不指定则审计最新章节）
-- \`/revise [章节号] --mode [polish|rewrite|rework]\` - 修订章节
+- \`/revise [章节号] --mode [polish|rewrite|rework|anti-detect|spot-fix]\` - 修订章节
 - \`/status\` - 显示书籍当前状态
 - \`/clear\` - 清空对话历史
 - \`/switch <书籍ID>\` - 切换到其他书籍

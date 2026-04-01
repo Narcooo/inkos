@@ -34,15 +34,15 @@ export const SLASH_COMMANDS: Record<SlashCommand, SlashCommandDefinition> = {
   revise: {
     name: "revise",
     description: "修订指定章节的文字质量",
-    usage: ["/revise", "/revise 5", "/revise 5 --mode polish"],
+    usage: ["/revise", "/revise 5", "/revise 5 --mode polish", "/revise 5 --mode rewrite"],
     requiredArgs: 0,
-    optionalArgs: 2,
+    optionalArgs: 1,
     maxPositionalArgs: 1,
     options: {
       mode: {
         required: false,
         needsValue: true,
-        enum: ["polish", "rewrite", "expand", "condense", "rework"],
+        enum: ["polish", "rewrite", "rework", "anti-detect", "spot-fix"],
       },
     },
   },

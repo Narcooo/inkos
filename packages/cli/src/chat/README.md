@@ -20,7 +20,7 @@ Type `/` to see available commands instantly, then press **Tab** to autocomplete
 
 - `/write` - Write next chapter
 - `/audit [chapter]` - Audit chapter (latest if not specified)
-- `/revise [chapter] --mode [polish|rewrite|rework]` - Revise chapter
+- `/revise [chapter] --mode [polish|rewrite|rework|anti-detect|spot-fix]` - Revise chapter
 - `/status` - Show book status
 - `/clear` - Clear chat history
 - `/help` - Show help information
