@@ -240,7 +240,7 @@ export class ChatSession {
       }
 
       // Validate command arguments
-      const argsValidation = validateCommandArgs(parsed.command, parsed.args);
+      const argsValidation = validateCommandArgs(parsed.command, parsed.args, parsed.options);
       if (!argsValidation.valid) {
         await this.recordLocalExchange(input, argsValidation.error);
         return { success: false, message: argsValidation.error };

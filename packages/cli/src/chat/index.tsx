@@ -330,8 +330,8 @@ const ChatInterface: React.FC<{
 
       {/* Message history */}
       <Box flexDirection="column" marginBottom={1}>
-        {recentMessages.map((msg, idx) => (
-          <MessageDisplay key={JSON.stringify(msg)} message={msg} />
+        {recentMessages.map((msg) => (
+          <MessageDisplay key={`${msg.timestamp}:${recentMessages.indexOf(msg)}`} message={msg} />
         ))}
         {/* Streaming assistant message */}
         {streamingContent && (

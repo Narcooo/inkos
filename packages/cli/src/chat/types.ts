@@ -122,6 +122,20 @@ export type SlashCommand =
   | "quit";
 
 /**
+ * Slash command option definition.
+ */
+export interface OptionDefinition {
+  /** Whether this option is required */
+  required?: boolean;
+
+  /** Whether this option needs a value (not just a flag) */
+  needsValue?: boolean;
+
+  /** Allowed enum values for this option */
+  enum?: string[];
+}
+
+/**
  * Slash command definition.
  */
 export interface SlashCommandDefinition {
@@ -142,6 +156,9 @@ export interface SlashCommandDefinition {
 
   /** Maximum number of positional arguments accepted */
   maxPositionalArgs?: number;
+
+  /** Allowed options for this command */
+  options?: Record<string, OptionDefinition>;
 }
 
 /**

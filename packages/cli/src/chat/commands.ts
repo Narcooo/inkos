@@ -19,6 +19,9 @@ export const SLASH_COMMANDS: Record<SlashCommand, SlashCommandDefinition> = {
     requiredArgs: 0,
     optionalArgs: 1,
     maxPositionalArgs: 0,
+    options: {
+      guidance: { required: false, needsValue: true },
+    },
   },
   audit: {
     name: "audit",
@@ -35,6 +38,9 @@ export const SLASH_COMMANDS: Record<SlashCommand, SlashCommandDefinition> = {
     requiredArgs: 0,
     optionalArgs: 2,
     maxPositionalArgs: 1,
+    options: {
+      mode: { required: false, needsValue: true, enum: ["polish", "rewrite", "expand", "condense"] },
+    },
   },
   status: {
     name: "status",
@@ -237,12 +243,19 @@ export function parseSlashCommand(input: string):
  */
 export function validateCommandArgs(
   command: SlashCommand,
-  args: string[]
+  args: string[],
+  options: Record<string, string> = {}
 ): { valid: true } | { valid: false; error: string } {
   const definition = SLASH_COMMANDS[command];
   const argValidation = validatePositionalArgs(command, definition, args);
   if (!argValidation.valid) {
     return argValidation;
+  }
+
+  // Validate options
+  const optionValidation = validateOptions(command, definition, options);
+  if (!optionValidation.valid) {
+    return optionValidation;
   }
 
   // Special validation for specific commands
@@ -260,6 +273,58 @@ export function validateCommandArgs(
         }
       }
       break;
+    }
+  }
+
+  return { valid: true };
+}
+
+/**
+ * Validate command options.
+ */
+function validateOptions(
+  command: SlashCommand,
+  definition: SlashCommandDefinition,
+  options: Record<string, string>
+): { valid: true } | { valid: false; error: string } {
+  const allowedOptions = definition.options ?? {};
+
+  // Check for unknown options (typos or unsupported options)
+  for (const key of Object.keys(options)) {
+    if (!allowedOptions[key]) {
+      return {
+        valid: false,
+        error: `命令 ${command} 不支持选项 --${key}。用法: ${definition.usage.join(" | ")}`,
+      };
+    }
+  }
+
+  // Validate each allowed option
+  for (const [key, optionDef] of Object.entries(allowedOptions)) {
+    const value = options[key];
+
+    // Check required options
+    if (optionDef.required && !value) {
+      return {
+        valid: false,
+        error: `命令 ${command} 必须提供选项 --${key}。用法: ${definition.usage.join(" | ")}`,
+      };
+    }
+
+    // Check options that need values (not flags)
+    if (value && optionDef.needsValue && value === "true") {
+      return {
+        valid: false,
+        error: `选项 --${key} 需要一个值（不能省略）。用法: ${definition.usage.join(" | ")}`,
+      };
+    }
+
+    // Check enum values
+    if (value && optionDef.enum && !optionDef.enum.includes(value)) {
+      return {
+        valid: false,
+        error: `选项 --${key} 的值必须是: ${optionDef.enum.join(", ")}。当前值: ${value}`,
+      };
     }
   }
 
