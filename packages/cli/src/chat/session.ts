@@ -440,9 +440,10 @@ export class ChatSession {
             callbacks?.onExecutionMetadataChange?.(this.getOrchestratorMetadata());
             callbacks?.onToolComplete?.(name, result);
           },
-          onMessage: (content: string) => {
-            callbacks?.onStreamChunk?.(content);
-        },
+          onMessage: (_content: string) => {
+            // runAgentLoop 的 onMessage 回调在 core 中表示“每个 agent turn 的完整回复”，
+            // 不能当作流式 chunk 追加，否则会导致输出重复/累加。
+          },
         maxTurns: 10,
       };
 
