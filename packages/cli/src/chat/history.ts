@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import { readFile, writeFile, mkdir, rm, rename, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { platform } from "node:os";
 import {
   type ChatHistory,
   type ChatMessage,
@@ -32,6 +33,29 @@ function isValidBookId(bookId: string): boolean {
   // Must only contain safe characters: letters, numbers, underscores, hyphens, and CJK Unified Ideographs in U+4E00–U+9FFF
   const safePattern = /^[\w\u4e00-\u9fff-]+$/;
   return safePattern.test(bookId);
+}
+
+/**
+ * Cross-platform atomic file replacement.
+ * On Windows, rename() cannot reliably replace existing files, so we need a fallback.
+ */
+async function atomicReplaceFile(tempPath: string, targetPath: string): Promise<void> {
+  if (platform() === "win32") {
+    // Windows: rename() cannot atomically replace existing files
+    // Fallback: remove target first, then rename
+    try {
+      await rm(targetPath, { force: true });
+    } catch (error) {
+      // Ignore ENOENT (file doesn't exist)
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error;
+      }
+    }
+    await rename(tempPath, targetPath);
+  } else {
+    // Unix/Linux/macOS: rename() atomically replaces existing files
+    await rename(tempPath, targetPath);
+  }
 }
 
 /**
@@ -369,7 +393,7 @@ export class ChatHistoryManager {
 
       try {
         await writeFile(tempFilePath, data, "utf-8");
-        await rename(tempFilePath, filePath);
+        await atomicReplaceFile(tempFilePath, filePath);
       } finally {
         await rm(tempFilePath, { force: true }).catch(() => undefined);
       }
@@ -406,7 +430,7 @@ export class ChatHistoryManager {
 
       try {
         await writeFile(tempFilePath, data, "utf-8");
-        await rename(tempFilePath, filePath);
+        await atomicReplaceFile(tempFilePath, filePath);
       } finally {
         await rm(tempFilePath, { force: true }).catch(() => undefined);
       }
