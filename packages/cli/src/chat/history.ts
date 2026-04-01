@@ -298,7 +298,7 @@ export class ChatHistoryManager {
     const queued = previous.finally(() => gate);
     this.saveQueues.set(bookId, queued);
 
-    await previous;
+    await previous.catch(() => undefined);
     try {
       const releaseFileLock = await this.acquireFileLock(bookId);
       try {
