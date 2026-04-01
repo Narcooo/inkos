@@ -95,6 +95,13 @@ describe("CLI integration", () => {
       expect(envContent).toContain("INKOS_LLM_API_KEY");
     });
 
+    it("includes optional env guidance without duplicate anthropic examples", async () => {
+      const envContent = await readFile(join(projectDir, ".env"), "utf-8");
+      expect(envContent).toContain("# INKOS_LLM_API_FORMAT=chat");
+      expect(envContent).toContain("# INKOS_LLM_API_KEY=");
+      expect(envContent.match(/# INKOS_LLM_PROVIDER=anthropic/g) ?? []).toHaveLength(1);
+    });
+
     it("creates .gitignore", async () => {
       const gitignore = await readFile(join(projectDir, ".gitignore"), "utf-8");
       expect(gitignore).toContain(".env");
@@ -481,6 +488,30 @@ describe("CLI integration", () => {
         expect(stdout).not.toContain("No LLM config available");
       } finally {
         await writeFile(configPath, originalConfig, "utf-8");
+        await writeFile(envPath, originalEnv, "utf-8");
+      }
+    });
+
+    it("treats placeholder API keys as missing config", async () => {
+      await stat(join(projectDir, "inkos.json")).catch(() => {
+        run(["init"]);
+      });
+      const envPath = join(projectDir, ".env");
+      const originalEnv = await readFile(envPath, "utf-8");
+
+      try {
+        await writeFile(envPath, [
+          "INKOS_LLM_PROVIDER=openai",
+          "INKOS_LLM_BASE_URL=https://api.openai.com/v1",
+          "INKOS_LLM_MODEL=gpt-5.4",
+          "INKOS_LLM_API_KEY=your-api-key-here",
+          "",
+        ].join("\n"), "utf-8");
+
+        const { stdout } = runStderr(["doctor"]);
+        expect(stdout).toContain("LLM API Key: Missing");
+        expect(stdout).toContain("No LLM config available");
+      } finally {
         await writeFile(envPath, originalEnv, "utf-8");
       }
     });
