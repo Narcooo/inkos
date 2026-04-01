@@ -48,6 +48,27 @@ describe("ChatSession", () => {
     expect(session.getHistory().messages[1]?.content).toContain("至少需要");
   });
 
+  test("handles /exit locally without sending it to the agent loop", async () => {
+    const { ChatSession } = await import("../chat/session.js");
+    const historyManager = new ChatHistoryManager({
+      historyDir: ".test-chat-session",
+      maxMessages: 10,
+    });
+    const session = new ChatSession({} as PipelineConfig, "demo-book", historyManager);
+
+    await session.initialize();
+
+    const result = await session.processInput("/exit");
+
+    expect(result).toMatchObject({
+      success: true,
+      shouldExit: true,
+      message: "退出聊天界面",
+    });
+    expect(runAgentLoopMock).not.toHaveBeenCalled();
+    expect(session.getHistory().messages).toHaveLength(0);
+  });
+
   test("rejects switching to a non-existent book instead of creating a phantom chat session", async () => {
     const { ChatSession } = await import("../chat/session.js");
     const historyManager = new ChatHistoryManager({

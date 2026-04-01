@@ -96,6 +96,9 @@ export interface CommandResult {
 
   /** Whether to clear the conversation */
   clearConversation?: boolean;
+
+  /** Whether the chat UI should exit */
+  shouldExit?: boolean;
 }
 
 /**

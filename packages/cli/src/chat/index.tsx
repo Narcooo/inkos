@@ -10,13 +10,10 @@ import Spinner from "ink-spinner";
 import { ChatSession } from "./session.js";
 import { ChatHistoryManager } from "./history.js";
 import {
-  type ChatHistory,
   type ChatMessage,
-  type ClackCallbacks,
   type ExecutionMetadata,
 } from "./types.js";
 import { SLASH_COMMANDS, getAutocompleteInput } from "./commands.js";
-import type { PipelineConfig } from "@actalk/inkos-core";
 import { loadConfig, buildPipelineConfig } from "../utils.js";
 
 export interface ChatAppConfig {
@@ -291,6 +288,12 @@ const ChatInterface: React.FC<{
           setActiveExecutionMetadata(metadata);
         },
       });
+
+      if (result.shouldExit) {
+        setStatus("再见！正在退出...");
+        setTimeout(() => exit(), 500);
+        return;
+      }
 
       setStatus(result.success ? "✓ Done" : "✗ Failed");
     } catch (error) {

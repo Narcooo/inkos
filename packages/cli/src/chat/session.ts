@@ -213,7 +213,16 @@ export class ChatSession {
         return { success: false, message: argsValidation.error };
       }
 
-      // Handle clear/switch/help locally
+      // Handle clear/switch/help/exit locally
+      if (parsed.command === "exit" || parsed.command === "quit") {
+        callbacks?.onStatusChange?.("正在退出...");
+        return {
+          success: true,
+          message: "退出聊天界面",
+          shouldExit: true,
+        };
+      }
+
       if (parsed.command === "clear") {
         await this.historyManager.clear(this.currentBook);
         this.history = await this.historyManager.load(this.currentBook);

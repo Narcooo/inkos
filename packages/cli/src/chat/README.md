@@ -25,7 +25,7 @@ Type `/` and press **Tab** to see available commands with autocomplete:
 - `/clear` - Clear chat history
 - `/help` - Show help information
 - `/switch <book-id>` - Switch to another book
-- `/exit` or `/quit` - Exit chat (special command; not shown in Tab autocomplete)
+- `/exit` or `/quit` - Exit chat
 
 ### Tab Autocomplete ✨
 
