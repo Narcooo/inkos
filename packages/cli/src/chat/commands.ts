@@ -39,7 +39,11 @@ export const SLASH_COMMANDS: Record<SlashCommand, SlashCommandDefinition> = {
     optionalArgs: 2,
     maxPositionalArgs: 1,
     options: {
-      mode: { required: false, needsValue: true, enum: ["polish", "rewrite", "expand", "condense"] },
+      mode: {
+        required: false,
+        needsValue: true,
+        enum: ["polish", "rewrite", "expand", "condense", "rework"],
+      },
     },
   },
   status: {
