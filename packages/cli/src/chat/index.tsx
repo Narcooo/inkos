@@ -279,7 +279,7 @@ const ChatInterface: React.FC<{
           setActiveExecutionMetadata(metadata);
         },
         onStreamChunk: (chunk) => {
-          setStreamingContent((prev) => (prev ?? "") + chunk);
+          setStreamingContent(chunk);
         },
       });
 
