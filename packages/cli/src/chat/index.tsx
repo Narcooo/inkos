@@ -326,7 +326,7 @@ const ChatInterface: React.FC<{
       {/* Message history */}
       <Box flexDirection="column" marginBottom={1}>
         {recentMessages.map((msg, idx) => (
-          <MessageDisplay key={idx} message={msg} />
+          <MessageDisplay key={JSON.stringify(msg)} message={msg} />
         ))}
       </Box>
 
