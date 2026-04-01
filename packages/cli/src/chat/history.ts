@@ -206,9 +206,18 @@ export class ChatHistoryManager {
       }
     }
 
+    // Merge messages and sort by timestamp to preserve conversational order
+    const mergedMessages = [...existingHistory.messages, ...appendedMessages];
+    mergedMessages.sort((a, b) => {
+      const timeA = new Date(a.timestamp).getTime();
+      const timeB = new Date(b.timestamp).getTime();
+      // If timestamps are equal, maintain relative order by using array index as tie-breaker
+      return timeA !== timeB ? timeA - timeB : 0;
+    });
+
     return {
       ...incomingHistory,
-      messages: [...existingHistory.messages, ...appendedMessages],
+      messages: mergedMessages,
       metadata: {
         ...incomingHistory.metadata,
         createdAt: existingHistory.metadata.createdAt,
