@@ -218,7 +218,19 @@ export class ChatSession {
     };
 
     this.history = this.historyManager.addMessage(this.history, userMessage);
-    await this.appendAssistantMessage(response);
+
+    try {
+      await this.appendAssistantMessage(response);
+    } catch (error) {
+      // Handle history persistence conflicts without crashing.
+      // Reload history to ensure consistency.
+      this.history = await this.historyManager.load(this.currentBook);
+      // Re-throw non-persistence errors to preserve existing behavior.
+      if (!this.isHistoryPersistenceConflict(error)) {
+        throw error;
+      }
+      // For persistence conflicts, we've reloaded - the exchange is not saved.
+    }
   }
 
   /**
@@ -257,15 +269,31 @@ export class ChatSession {
       }
 
       if (parsed.command === "clear") {
-        await this.historyManager.clear(this.currentBook);
-        this.history = await this.historyManager.load(this.currentBook);
-        callbacks?.onStatusChange?.("已清空");
+        try {
+          await this.historyManager.clear(this.currentBook);
+          this.history = await this.historyManager.load(this.currentBook);
+          callbacks?.onStatusChange?.("已清空");
 
-        return {
-          success: true,
-          message: "对话历史已清空",
-          clearConversation: true,
-        };
+          return {
+            success: true,
+            message: "对话历史已清空",
+            clearConversation: true,
+          };
+        } catch (error) {
+          // Handle lock timeout / concurrent modification errors
+          const conflictResult = await this.handleHistoryPersistenceConflict(error, callbacks);
+          if (conflictResult) {
+            return conflictResult;
+          }
+
+          // Non-persistence error
+          const parsedError = parseError(error);
+          const fullMessage = `无法清空对话历史: ${parsedError.message}`;
+          return {
+            success: false,
+            message: fullMessage,
+          };
+        }
       }
 
       if (parsed.command === "switch" && parsed.args[0]) {
@@ -349,7 +377,17 @@ export class ChatSession {
 
         this.history = this.historyManager.addMessage(this.history, userMessage);
         this.history = this.historyManager.addMessage(this.history, assistantMessage);
-        this.history = await this.historyManager.save(this.history);
+
+        try {
+          this.history = await this.historyManager.save(this.history);
+        } catch (error) {
+          const conflictResult = await this.handleHistoryPersistenceConflict(error, callbacks);
+          if (conflictResult) {
+            return conflictResult;
+          }
+          // Non-persistence error: re-throw to let outer handler deal with it
+          throw error;
+        }
 
         return { success: true, message: helpText };
       }
