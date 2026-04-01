@@ -477,7 +477,16 @@ export class ChatSession {
       const parsed = parseError(error);
       const message = `${parsed.message}${parsed.suggestion ? `\n建议: ${parsed.suggestion}` : ""}`;
 
-      await this.appendAssistantMessage(message);
+      try {
+        await this.appendAssistantMessage(message);
+      } catch (appendError) {
+        const appendConflictResult = await this.handleHistoryPersistenceConflict(appendError, callbacks);
+        if (appendConflictResult) {
+          return appendConflictResult;
+        }
+        // If appending the assistant message fails for a non-conflict reason,
+        // fall through and return the error result without persisting it.
+      }
 
       callbacks?.onStatusChange?.("错误");
       callbacks?.onExecutionMetadataChange?.(null);
