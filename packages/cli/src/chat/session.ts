@@ -1,6 +1,6 @@
 /**
  * Chat session manager.
- * Orchestrates conversation flow via runAgentLoop.
+ * Orchestrates chat requests between local control commands and runAgentLoop.
  */
 
 import {
@@ -43,7 +43,9 @@ const TOOL_AGENT_METADATA: Record<string, { agentName: string; label: string; us
 
 /**
  * Manages a chat session with an InkOS book.
- * All user input (including slash commands) is processed through runAgentLoop.
+ * Orchestrates most user input through runAgentLoop while handling local
+ * control slash commands, such as /exit, /quit, /clear, /switch, and /help,
+ * directly in processInput.
  */
 export class ChatSession {
   private readonly config: PipelineConfig;
@@ -221,7 +223,8 @@ export class ChatSession {
 
   /**
    * Process user input (slash command or natural language).
-   * All input is processed through runAgentLoop for consistency.
+   * Most requests flow through runAgentLoop, while local control slash
+   * commands are handled here and returned as CommandResult values.
    */
   async processInput(
     input: string,
@@ -319,7 +322,7 @@ export class ChatSession {
         const helpText = `## 📚 InkOS Chat 命令帮助
 
 ### 交互式命令
-输入 \`/\` 然后按 **Tab** 键查看可用命令：
+输入 \`/\` 后会自动显示可用命令，按 **Tab** 可补全当前选中的命令：
 
 - \`/write\` - 写下一章（自动续写最新章之后的一章）
 - \`/audit [章节号]\` - 审计指定章节（不指定则审计最新章节）
@@ -332,9 +335,9 @@ export class ChatSession {
 
 ### Tab 自动补全
 1. 输入 \`/\` 开始命令
-2. 按 **Tab** 键查看匹配的命令
+2. 命令建议会自动显示
 3. 使用 **↑↓ 箭头** 导航建议
-4. 再次按 **Tab** 自动补全选中的命令
+4. 按 **Tab** 自动补全选中的命令
 
 ### 自然语言
 你也可以直接用自然语言与 InkOS 对话：

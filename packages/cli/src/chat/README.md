@@ -16,7 +16,7 @@ inkos chat
 
 ### Interactive Commands
 
-Type `/` and press **Tab** to see available commands with autocomplete:
+Type `/` to see available commands instantly, then press **Tab** to autocomplete the selected one:
 
 - `/write` - Write next chapter
 - `/audit [chapter]` - Audit chapter (latest if not specified)
@@ -31,9 +31,9 @@ Type `/` and press **Tab** to see available commands with autocomplete:
 
 **How it works:**
 1. Type `/` to start a command
-2. Press **Tab** to see matching commands
+2. Matching commands appear automatically
 3. Use **↑↓ arrows** to navigate suggestions
-4. Press **Tab** again to autocomplete selected command
+4. Press **Tab** to autocomplete the selected command
 
 **Example:**
 ```

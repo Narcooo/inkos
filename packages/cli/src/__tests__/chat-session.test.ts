@@ -69,6 +69,48 @@ describe("ChatSession", () => {
     expect(session.getHistory().messages).toHaveLength(0);
   });
 
+  test("handles /clear via processInput without sending it to the agent loop", async () => {
+    const { ChatSession } = await import("../chat/session.js");
+    const historyManager = new ChatHistoryManager({
+      historyDir: ".test-chat-session",
+      maxMessages: 10,
+    });
+    const session = new ChatSession({} as PipelineConfig, "demo-book", historyManager);
+
+    await session.initialize();
+    await session.processInput("写下一章");
+    expect(session.getHistory().messages.length).toBeGreaterThan(0);
+
+    const result = await session.processInput("/clear");
+
+    expect(result).toMatchObject({
+      success: true,
+      clearConversation: true,
+      message: "对话历史已清空",
+    });
+    expect(runAgentLoopMock).toHaveBeenCalledTimes(1);
+    expect(session.getHistory().messages).toHaveLength(0);
+  });
+
+  test("returns help text that matches automatic slash-command suggestions", async () => {
+    const { ChatSession } = await import("../chat/session.js");
+    const historyManager = new ChatHistoryManager({
+      historyDir: ".test-chat-session",
+      maxMessages: 10,
+    });
+    const session = new ChatSession({} as PipelineConfig, "demo-book", historyManager);
+
+    await session.initialize();
+
+    const result = await session.processInput("/help");
+
+    expect(result.success).toBe(true);
+    expect(result.message).toContain("输入 `/` 后会自动显示可用命令");
+    expect(result.message).toContain("按 **Tab** 可补全当前选中的命令");
+    expect(result.message).not.toContain("按 **Tab** 键查看匹配的命令");
+    expect(runAgentLoopMock).not.toHaveBeenCalled();
+  });
+
   test("rejects switching to a non-existent book instead of creating a phantom chat session", async () => {
     const { ChatSession } = await import("../chat/session.js");
     const historyManager = new ChatHistoryManager({

@@ -259,36 +259,6 @@ const ChatInterface: React.FC<{
     // Clear input immediately after submission for better UX
     setInputAndResetCursor("");
 
-    // Handle special commands
-    if (normalizedInput === "/exit" || normalizedInput === "/quit") {
-      setStatus("再见！正在退出...");
-      // Delay to show the message before exiting
-      setTimeout(() => exit(), 500);
-      return;
-    }
-
-    if (normalizedInput === "/clear") {
-      const startedAt = beginExecution(normalizedInput);
-      setStatus("Clearing history...");
-      setActiveExecutionMetadata({
-        scope: "local",
-        label: "history-manager",
-        agentName: "history-manager",
-      });
-
-      try {
-        await session.clearHistory();
-        setStatus("History cleared");
-      } catch (error) {
-        setStatus(`Error: ${error}`);
-      } finally {
-        finishExecution(startedAt, normalizedInput);
-      }
-      return;
-    }
-
-    // /help is handled by session.processInput() to display help text
-
     const startedAt = beginExecution(normalizedInput);
     setStatus("Processing...");
 
@@ -314,7 +284,13 @@ const ChatInterface: React.FC<{
         return;
       }
 
-      setStatus(result.success ? "✓ Done" : `✗ ${result.message.split("\n")[0]}`);
+      if (result.clearConversation) {
+        setStatus("✓ 对话历史已清空");
+      } else if (result.success) {
+        setStatus("✓ Done");
+      } else {
+        setStatus(`✗ ${result.message.split("\n")[0]}`);
+      }
     } catch (error) {
       setStatus(`Error: ${error}`);
     } finally {
@@ -447,7 +423,7 @@ const ChatInterface: React.FC<{
               value={input}
               onChange={setInput}
               onSubmit={handleSubmit}
-              placeholder="Type / for commands (Tab to autocomplete)..."
+              placeholder="Type / to show commands (Tab to autocomplete)..."
             />
           </Box>
         </Box>
