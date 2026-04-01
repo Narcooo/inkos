@@ -228,7 +228,7 @@ const ChatInterface: React.FC<{
   }, [isProcessing]);
 
   const beginExecution = (inputText: string) => {
-    const startedAt = performance.now();
+    const startedAt = Date.now();
     setExecutionStartedAt(startedAt);
     setExecutionElapsedMs(0);
     setActiveExecutionTarget(summarizeExecutionTarget(inputText));
