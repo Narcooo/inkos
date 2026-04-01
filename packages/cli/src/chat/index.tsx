@@ -146,7 +146,9 @@ const ChatInterface: React.FC<{
       if (isProcessing) {
         if (forceExitArmed) {
           process.stderr.write("[WARN] Force quitting chat while a request is still running.\n");
-          process.exit(130);
+          process.exitCode = 130;
+          exit();
+          return;
         }
 
         setForceExitArmed(true);
