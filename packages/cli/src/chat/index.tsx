@@ -302,11 +302,16 @@ const ChatInterface: React.FC<{
   const activeBook = session.getCurrentBook();
   const history = session.getHistory();
   const recentMessages = history?.messages.slice(-10) ?? [];
-  const statusColor = status.startsWith("Error") || status.startsWith("✗")
-    ? "red"
-    : status.startsWith("✓")
-      ? "green"
-      : "gray";
+  const isErrorStatus =
+    status.startsWith("Error") ||
+    status.startsWith("✗") ||
+    status.startsWith("错误");
+  const isSuccessStatus =
+    status.startsWith("✓") ||
+    status.startsWith("已清空") ||
+    status.startsWith("完成") ||
+    status.startsWith("再见");
+  const statusColor = isErrorStatus ? "red" : isSuccessStatus ? "green" : "gray";
   const executionDisplay = formatExecutionMetadata(activeExecutionMetadata);
 
   return (
