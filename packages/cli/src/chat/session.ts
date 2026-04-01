@@ -271,23 +271,6 @@ export class ChatSession {
       if (parsed.command === "switch" && parsed.args[0]) {
         const newBookId = parsed.args[0];
 
-        // Validate book ID to prevent path traversal
-        const isSafeBookId =
-          typeof newBookId === "string" &&
-          newBookId.length > 0 &&
-          !newBookId.includes("..") &&
-          !newBookId.includes("/") &&
-          !newBookId.includes("\\");
-
-        if (!isSafeBookId) {
-          const message = `无效的书籍 ID: ${newBookId}`;
-          await this.recordLocalExchange(input, message);
-          return {
-            success: false,
-            message,
-          };
-        }
-
         try {
           const validatedBookId = await resolveBookId(newBookId, this.config.projectRoot);
           const loadedHistory = await this.historyManager.load(validatedBookId);
