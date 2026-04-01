@@ -139,6 +139,9 @@ export interface SlashCommandDefinition {
 
   /** Optional arguments */
   optionalArgs: number;
+
+  /** Maximum number of positional arguments accepted */
+  maxPositionalArgs?: number;
 }
 
 /**
@@ -182,9 +185,9 @@ export interface ExecutionMetadata {
 }
 
 /**
- * Clack-specific callbacks for UI updates.
+ * UI callbacks for chat updates.
  */
-export interface ClackCallbacks {
+export interface ChatUICallbacks {
   /** Called when a tool starts executing */
   onToolStart?: (toolName: string, args: Record<string, unknown>) => void;
 
@@ -200,3 +203,8 @@ export interface ClackCallbacks {
   /** Called when the active orchestrator/agent metadata changes */
   onExecutionMetadataChange?: (metadata: ExecutionMetadata | null) => void;
 }
+
+/**
+ * @deprecated Use ChatUICallbacks instead.
+ */
+export type ClackCallbacks = ChatUICallbacks;

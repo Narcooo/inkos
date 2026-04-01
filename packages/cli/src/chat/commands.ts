@@ -18,6 +18,7 @@ export const SLASH_COMMANDS: Record<SlashCommand, SlashCommandDefinition> = {
     usage: ["/write", "/write --guidance '增加动作戏'"],
     requiredArgs: 0,
     optionalArgs: 1,
+    maxPositionalArgs: 0,
   },
   audit: {
     name: "audit",
@@ -25,6 +26,7 @@ export const SLASH_COMMANDS: Record<SlashCommand, SlashCommandDefinition> = {
     usage: ["/audit", "/audit 5"],
     requiredArgs: 0,
     optionalArgs: 1,
+    maxPositionalArgs: 1,
   },
   revise: {
     name: "revise",
@@ -32,6 +34,7 @@ export const SLASH_COMMANDS: Record<SlashCommand, SlashCommandDefinition> = {
     usage: ["/revise", "/revise 5", "/revise 5 --mode polish"],
     requiredArgs: 0,
     optionalArgs: 2,
+    maxPositionalArgs: 1,
   },
   status: {
     name: "status",
@@ -39,6 +42,7 @@ export const SLASH_COMMANDS: Record<SlashCommand, SlashCommandDefinition> = {
     usage: ["/status"],
     requiredArgs: 0,
     optionalArgs: 0,
+    maxPositionalArgs: 0,
   },
   clear: {
     name: "clear",
@@ -46,6 +50,7 @@ export const SLASH_COMMANDS: Record<SlashCommand, SlashCommandDefinition> = {
     usage: ["/clear"],
     requiredArgs: 0,
     optionalArgs: 0,
+    maxPositionalArgs: 0,
   },
   switch: {
     name: "switch",
@@ -53,6 +58,7 @@ export const SLASH_COMMANDS: Record<SlashCommand, SlashCommandDefinition> = {
     usage: ["/switch book-id"],
     requiredArgs: 1,
     optionalArgs: 0,
+    maxPositionalArgs: 1,
   },
   help: {
     name: "help",
@@ -60,6 +66,7 @@ export const SLASH_COMMANDS: Record<SlashCommand, SlashCommandDefinition> = {
     usage: ["/help"],
     requiredArgs: 0,
     optionalArgs: 0,
+    maxPositionalArgs: 0,
   },
   exit: {
     name: "exit",
@@ -67,6 +74,7 @@ export const SLASH_COMMANDS: Record<SlashCommand, SlashCommandDefinition> = {
     usage: ["/exit"],
     requiredArgs: 0,
     optionalArgs: 0,
+    maxPositionalArgs: 0,
   },
   quit: {
     name: "quit",
@@ -74,8 +82,36 @@ export const SLASH_COMMANDS: Record<SlashCommand, SlashCommandDefinition> = {
     usage: ["/quit"],
     requiredArgs: 0,
     optionalArgs: 0,
+    maxPositionalArgs: 0,
   },
 };
+
+function validatePositionalArgs(
+  command: SlashCommand,
+  definition: SlashCommandDefinition,
+  args: string[]
+): { valid: true } | { valid: false; error: string } {
+  if (args.length < definition.requiredArgs) {
+    return {
+      valid: false,
+      error: `命令 ${command} 至少需要 ${definition.requiredArgs} 个参数。用法: ${definition.usage.join(" | ")}`,
+    };
+  }
+
+  const maxPositionalArgs = definition.maxPositionalArgs
+    ?? definition.requiredArgs + definition.optionalArgs;
+
+  if (args.length > maxPositionalArgs) {
+    return {
+      valid: false,
+      error: maxPositionalArgs === 0
+        ? `命令 ${command} 不接受额外参数。用法: ${definition.usage.join(" | ")}`
+        : `命令 ${command} 最多接受 ${maxPositionalArgs} 个参数。用法: ${definition.usage.join(" | ")}`,
+    };
+  }
+
+  return { valid: true };
+}
 
 /**
  * Build the input text inserted by Tab autocomplete.
@@ -180,11 +216,11 @@ export function parseSlashCommand(input: string):
     }
   }
 
-  // Validate argument count
-  if (args.length < definition.requiredArgs) {
+  const argValidation = validatePositionalArgs(commandName, definition, args);
+  if (!argValidation.valid) {
     return {
       valid: false,
-      error: `命令 ${commandName} 至少需要 ${definition.requiredArgs} 个参数。用法: ${definition.usage.join(" | ")}`,
+      error: argValidation.error,
     };
   }
 
@@ -204,12 +240,9 @@ export function validateCommandArgs(
   args: string[]
 ): { valid: true } | { valid: false; error: string } {
   const definition = SLASH_COMMANDS[command];
-
-  if (args.length < definition.requiredArgs) {
-    return {
-      valid: false,
-      error: `命令 ${command} 需要至少 ${definition.requiredArgs} 个参数`,
-    };
+  const argValidation = validatePositionalArgs(command, definition, args);
+  if (!argValidation.valid) {
+    return argValidation;
   }
 
   // Special validation for specific commands

@@ -16,7 +16,7 @@ import {
   type ChatHistory,
   type ChatMessage,
   type CommandResult,
-  type ClackCallbacks,
+  type ChatUICallbacks,
   type ExecutionMetadata,
 } from "./types.js";
 
@@ -184,7 +184,7 @@ export class ChatSession {
 
   private async handleHistoryPersistenceConflict(
     error: unknown,
-    callbacks?: ClackCallbacks
+    callbacks?: ChatUICallbacks
   ): Promise<CommandResult | null> {
     if (!this.isHistoryPersistenceConflict(error)) {
       return null;
@@ -225,7 +225,7 @@ export class ChatSession {
    */
   async processInput(
     input: string,
-    callbacks?: ClackCallbacks
+    callbacks?: ChatUICallbacks
   ): Promise<CommandResult> {
     // Handle special commands that don't need agent loop
     if (input.startsWith("/")) {
@@ -379,7 +379,7 @@ export class ChatSession {
    */
   private async handleViaAgentLoop(
     input: string,
-    callbacks?: ClackCallbacks
+    callbacks?: ChatUICallbacks
   ): Promise<CommandResult> {
     // Convert slash commands to natural language instructions
     let agentInstruction = input;

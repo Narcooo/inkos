@@ -3,7 +3,12 @@
  */
 
 import { describe, test, expect } from "vitest";
-import { parseSlashCommand, SLASH_COMMANDS, getAutocompleteInput } from "../chat/commands.js";
+import {
+  getAutocompleteInput,
+  parseSlashCommand,
+  SLASH_COMMANDS,
+  validateCommandArgs,
+} from "../chat/commands.js";
 
 describe("Slash Commands", () => {
   test("should parse /write command", () => {
@@ -72,6 +77,42 @@ describe("Slash Commands", () => {
     expect(result.valid).toBe(false);
     if (!result.valid) {
       expect(result.error).toContain("至少需要");
+    }
+  });
+
+  test("should reject extra positional args for zero-arg commands", () => {
+    const result = parseSlashCommand("/status foo");
+
+    expect(result.valid).toBe(false);
+    if (!result.valid) {
+      expect(result.error).toContain("不接受额外参数");
+    }
+  });
+
+  test("should reject extra positional args for single-arg commands", () => {
+    const result = parseSlashCommand("/switch my-book extra");
+
+    expect(result.valid).toBe(false);
+    if (!result.valid) {
+      expect(result.error).toContain("最多接受 1 个参数");
+    }
+  });
+
+  test("should reject positional args for option-only commands", () => {
+    const result = parseSlashCommand("/write draft");
+
+    expect(result.valid).toBe(false);
+    if (!result.valid) {
+      expect(result.error).toContain("不接受额外参数");
+    }
+  });
+
+  test("should enforce max positional args in validateCommandArgs", () => {
+    const result = validateCommandArgs("switch", ["my-book", "extra"]);
+
+    expect(result.valid).toBe(false);
+    if (!result.valid) {
+      expect(result.error).toContain("最多接受 1 个参数");
     }
   });
 

@@ -144,9 +144,6 @@ pnpm test -- chat-commands
 ```bash
 # Set max messages in history
 inkos chat --max-messages 100 <book-id>
-
-# Language preference
-inkos chat --lang en <book-id>
 ```
 
 ## Keyboard Shortcuts
@@ -181,7 +178,6 @@ Now possible with Ink:
 - [ ] Interactive prompts (confirm, select)
 - [ ] Split-screen layouts
 - [ ] Export chat history to Markdown
-- [ ] Book switching within chat
 
 ## Development
 
