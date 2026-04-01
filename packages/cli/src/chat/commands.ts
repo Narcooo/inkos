@@ -17,7 +17,7 @@ export const SLASH_COMMANDS: Record<SlashCommand, SlashCommandDefinition> = {
     description: "写下一章（自动续写最新章之后的一章）",
     usage: ["/write", "/write --guidance '增加动作戏'"],
     requiredArgs: 0,
-    optionalArgs: 1,
+    optionalArgs: 0,
     maxPositionalArgs: 0,
     options: {
       guidance: { required: false, needsValue: true },
@@ -129,7 +129,9 @@ function validatePositionalArgs(
  */
 export function getAutocompleteInput(command: SlashCommand): string {
   const definition = SLASH_COMMANDS[command];
-  const needsMoreInput = definition.requiredArgs > 0 || definition.optionalArgs > 0;
+  const maxPositionalArgs = definition.maxPositionalArgs
+    ?? definition.requiredArgs + definition.optionalArgs;
+  const needsMoreInput = maxPositionalArgs > 0 || (definition.options && Object.keys(definition.options).length > 0);
   return `/${command}${needsMoreInput ? " " : ""}`;
 }
 
