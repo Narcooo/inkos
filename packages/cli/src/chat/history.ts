@@ -4,7 +4,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { readFile, writeFile, mkdir, rm, rename, stat } from "node:fs/promises";
+import { readFile, writeFile, mkdir, rm, rename, stat, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { platform } from "node:os";
@@ -40,10 +40,10 @@ function isValidBookId(bookId: string): boolean {
  *
  * On Unix/Linux/macOS: Uses rename() which atomically replaces existing files.
  * On Windows: Uses a backup-and-rename strategy to minimize data loss risk:
- *   1. Clean up any existing backup file
+ *   1. Clean up stale backup files matching targetPath.*.bak pattern
  *   2. Rename target to backup (if exists)
  *   3. Rename temp to target
- *   4. Remove backup
+ *   4. Remove backup (best-effort)
  *
  * This ensures that if the process crashes between steps, either:
  * - The original file still exists (step 1/2 failure)
@@ -57,10 +57,22 @@ async function atomicReplaceFile(tempPath: string, targetPath: string): Promise<
     const backupPath = `${targetPath}.${randomUUID()}.bak`;
 
     try {
-      // Step 1: Clean up any stale backup files from previous crashed runs (best effort)
-      // Since backupPath uses a fresh UUID, this removes old *.bak files to prevent accumulation
-      // Note: This only cleans up one specific backup path pattern; full cleanup would require glob
-      await rm(backupPath, { force: true }).catch(() => undefined);
+      // Step 1: Clean up stale backup files from previous crashed runs
+      // Use glob-style cleanup to remove all matching targetPath.*.bak files
+      try {
+        const parentDir = join(targetPath, "..");
+        const targetBasename = targetPath.split("/").pop() || targetPath.split("\\").pop() || targetPath;
+        const files = await readdir(parentDir);
+        const staleBackups = files.filter(file =>
+          file.startsWith(`${targetBasename}.`) && file.endsWith(".bak")
+        );
+        // Remove all stale backup files (best effort, don't fail on errors)
+        for (const staleBackup of staleBackups) {
+          await rm(join(parentDir, staleBackup), { force: true }).catch(() => {});
+        }
+      } catch {
+        // Directory listing failed, proceed anyway (best-effort cleanup)
+      }
 
       // Step 2: Create backup of existing file (if any)
       try {
@@ -302,7 +314,13 @@ export class ChatHistoryManager {
           "utf-8"
         );
         return async () => {
-          await rm(lockDirPath, { recursive: true, force: true });
+          // Lock release is best-effort: cleanup failures should not affect core operations
+          try {
+            await rm(lockDirPath, { recursive: true, force: true });
+          } catch {
+            // Best-effort cleanup: ignore errors when releasing the lock
+            // The lock will be cleaned up by stale lock detection on next run
+          }
         };
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
@@ -536,9 +554,9 @@ export class ChatHistoryManager {
    */
   formatMessagesForDisplay(messages: ChatMessage[]): string[] {
     return messages.map((msg) => {
-      const date = new Date(msg.timestamp as any);
+      const date = new Date(msg.timestamp);
       const timestamp = Number.isNaN(date.getTime())
-        ? String((msg as any).timestamp ?? "Unknown time")
+        ? (msg.timestamp || "Unknown time")
         : date.toLocaleTimeString();
       const roleLabel = msg.role === "user" ? "You" : "InkOS";
 

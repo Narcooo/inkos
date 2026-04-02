@@ -9,16 +9,24 @@ import { resolveBookId, logError } from "../utils.js";
 export const chatCommand = new Command("chat")
   .description("Interactive chat with InkOS agent")
   .argument("[book-id]", "Book ID (auto-detect if omitted)")
-  .option("--max-messages <n>", "Max messages in history", (value) => Number.parseInt(value, 10), 100)
+  .option(
+    "--max-messages <n>",
+    "Max messages in history",
+    (value) => {
+      const n = Number(value);
+      if (!Number.isInteger(n) || n <= 0) {
+        throw new Error("--max-messages must be a positive integer");
+      }
+      return n;
+    },
+    100
+  )
   .action(async (bookIdArg: string | undefined, opts) => {
     try {
       const bookId = await resolveBookId(bookIdArg, process.cwd());
 
-      // Validate max-messages
+      // max-messages is already validated by the parser function above
       const maxMessages = opts.maxMessages;
-      if (isNaN(maxMessages) || maxMessages <= 0) {
-        throw new Error("--max-messages must be a positive integer");
-      }
 
       await startChat(bookId, {
         maxMessages,
