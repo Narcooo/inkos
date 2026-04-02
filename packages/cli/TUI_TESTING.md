@@ -176,7 +176,7 @@ npx tsx packages/cli/src/chat/test-mode.ts
 ### Q: TUI启动失败？
 A: 检查以下几点：
 1. 是否在项目根目录运行
-2. Node.js版本是否符合要求（≥18）
+2. Node.js版本是否符合要求（≥20）
 3. 是否有终端交互权限
 
 ### Q: 命令补全不工作？

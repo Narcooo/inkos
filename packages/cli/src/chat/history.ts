@@ -5,7 +5,7 @@
 
 import { randomUUID } from "node:crypto";
 import { readFile, writeFile, mkdir, rm, rename, stat, readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { join, dirname, basename } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { platform } from "node:os";
 import {
@@ -60,8 +60,8 @@ async function atomicReplaceFile(tempPath: string, targetPath: string): Promise<
       // Step 1: Clean up stale backup files from previous crashed runs
       // Use glob-style cleanup to remove all matching targetPath.*.bak files
       try {
-        const parentDir = join(targetPath, "..");
-        const targetBasename = targetPath.split("/").pop() || targetPath.split("\\").pop() || targetPath;
+        const parentDir = dirname(targetPath);
+        const targetBasename = basename(targetPath);
         const files = await readdir(parentDir);
         const staleBackups = files.filter(file =>
           file.startsWith(`${targetBasename}.`) && file.endsWith(".bak")

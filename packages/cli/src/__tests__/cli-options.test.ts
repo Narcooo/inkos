@@ -6,9 +6,8 @@
 import { describe, test, expect } from "vitest";
 
 describe("max-messages Parser Logic", () => {
-  // DESIGN DEFECT TEST 4: max-messages parsing
-  // Problem: Number.parseInt() silently truncates decimals (3.5 → 3)
-  // Expected: Should reject non-integer values as error message implies
+  // Test the correct implementation: Number()+Number.isInteger() validation
+  // This ensures non-integer values like "3.5" are rejected with clear error
 
   // Parser function extracted from chat.ts for testing
   const parseMaxMessages = (value: string): number => {
@@ -20,8 +19,7 @@ describe("max-messages Parser Logic", () => {
   };
 
   test("should reject decimal values (must be integer)", () => {
-    // Current bug: parseInt(3.5, 10) returns 3 (truncation)
-    // Expected: Should reject "3.5" with error
+    // Decimal values like "3.5" should be rejected (not truncated to 3)
 
     let parseError: Error | null = null;
     try {
