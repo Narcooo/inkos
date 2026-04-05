@@ -2056,6 +2056,13 @@ ${matrix}`,
       postWriteWarnings: [],
       hookHealthIssues: output.hookHealthIssues,
       tokenUsage: output.tokenUsage,
+      // Preserve runtime state artifacts from the original write output if the
+      // chapter analyzer did not produce new ones. Without this, normalizing
+      // chapter content causes runtimeStateDelta to be dropped, which prevents
+      // saveRuntimeStateSnapshot from running and leaves chapter_summaries.json
+      // stale — causing the next chapter to repeat the same plot events.
+      runtimeStateDelta: analyzed.runtimeStateDelta ?? output.runtimeStateDelta,
+      runtimeStateSnapshot: analyzed.runtimeStateSnapshot ?? output.runtimeStateSnapshot,
     };
   }
 
