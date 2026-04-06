@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type OpenAI from "openai";
-import { chatCompletion, type LLMClient } from "../llm/provider.js";
+import { chatCompletion, chatWithTools, type LLMClient, type ToolDefinition } from "../llm/provider.js";
 
 const ZERO_USAGE = {
   prompt_tokens: 11,
@@ -193,6 +193,158 @@ describe("chatCompletion stream fallback", () => {
           thinkingBudget: 0,
         },
       },
+    });
+  });
+});
+
+
+describe("chatWithTools Google native function calling", () => {
+  const weatherTool: ToolDefinition = {
+    name: "get_weather",
+    description: "Get weather by city",
+    parameters: {
+      type: "object",
+      properties: {
+        city: { type: "string" },
+      },
+      required: ["city"],
+    },
+  };
+
+  it("maps Gemini functionCall parts into InkOS tool calls", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      text: vi.fn().mockResolvedValue(JSON.stringify({
+        candidates: [{
+          content: {
+            parts: [
+              { text: "Let me check. " },
+              { functionCall: { id: "call-1", name: "get_weather", args: { city: "Auckland" } } },
+            ],
+          },
+        }],
+      })),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client: LLMClient = {
+      provider: "google",
+      apiFormat: "chat",
+      stream: true,
+      _google: {
+        apiKey: "test-google-key",
+        baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+      },
+      defaults: {
+        temperature: 0.7,
+        maxTokens: 512,
+        thinkingBudget: 0,
+        maxTokensCap: null,
+        extra: {},
+      },
+    };
+
+    const result = await chatWithTools(client, "gemini-2.5-flash", [
+      { role: "system", content: "You may call tools." },
+      { role: "user", content: "What's the weather in Auckland?" },
+    ], [weatherTool]);
+
+    expect(result).toEqual({
+      content: "Let me check. ",
+      toolCalls: [
+        {
+          id: "call-1",
+          name: "get_weather",
+          arguments: JSON.stringify({ city: "Auckland" }),
+        },
+      ],
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(String(requestInit.body))).toMatchObject({
+      systemInstruction: { parts: [{ text: "You may call tools." }] },
+      contents: [
+        { role: "user", parts: [{ text: "What's the weather in Auckland?" }] },
+      ],
+      tools: [{
+        functionDeclarations: [{
+          name: "get_weather",
+          description: "Get weather by city",
+        }],
+      }],
+      toolConfig: {
+        functionCallingConfig: { mode: "AUTO" },
+      },
+    });
+  });
+
+  it("replays assistant tool calls and tool results in Gemini native format", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      text: vi.fn().mockResolvedValue(JSON.stringify({
+        candidates: [{
+          content: {
+            parts: [{ text: "It is 18C in Auckland." }],
+          },
+        }],
+      })),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client: LLMClient = {
+      provider: "google",
+      apiFormat: "chat",
+      stream: true,
+      _google: {
+        apiKey: "test-google-key",
+        baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+      },
+      defaults: {
+        temperature: 0.7,
+        maxTokens: 512,
+        thinkingBudget: 0,
+        maxTokensCap: null,
+        extra: {},
+      },
+    };
+
+    const result = await chatWithTools(client, "gemini-2.5-flash", [
+      { role: "user", content: "What's the weather in Auckland?" },
+      {
+        role: "assistant",
+        content: "I'll check.",
+        toolCalls: [{
+          id: "call-1",
+          name: "get_weather",
+          arguments: JSON.stringify({ city: "Auckland" }),
+        }],
+      },
+      { role: "tool", toolCallId: "call-1", content: JSON.stringify({ temperatureC: 18 }) },
+    ], [weatherTool]);
+
+    expect(result).toEqual({
+      content: "It is 18C in Auckland.",
+      toolCalls: [],
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(String(requestInit.body))).toMatchObject({
+      contents: [
+        { role: "user", parts: [{ text: "What's the weather in Auckland?" }] },
+        {
+          role: "model",
+          parts: [
+            { text: "I'll check." },
+            { functionCall: { id: "call-1", name: "get_weather", args: { city: "Auckland" } } },
+          ],
+        },
+        {
+          role: "user",
+          parts: [
+            { functionResponse: { id: "call-1", name: "get_weather", response: { temperatureC: 18 } } },
+          ],
+        },
+      ],
     });
   });
 });
