@@ -100,6 +100,7 @@ export interface ToolCall {
   readonly id: string;
   readonly name: string;
   readonly arguments: string;
+  readonly thoughtSignature?: string;
 }
 
 export type AgentMessage =
@@ -822,6 +823,7 @@ interface GooglePart {
   readonly text?: string;
   readonly functionCall?: GoogleFunctionCallPart;
   readonly functionResponse?: GoogleFunctionResponsePart;
+  readonly thoughtSignature?: string;
 }
 
 interface GoogleContent {
@@ -893,6 +895,7 @@ function agentMessagesToGoogle(messages: ReadonlyArray<AgentMessage>): { systemI
               name: tc.name,
               args: parseMaybeJson(tc.arguments),
             },
+            ...(tc.thoughtSignature ? { thoughtSignature: tc.thoughtSignature } : {}),
           });
         }
       }
@@ -939,6 +942,7 @@ function extractGoogleToolCalls(data: unknown): ToolCall[] {
       id: part.functionCall.id ?? `google-tool-call-${index + 1}`,
       name: part.functionCall.name ?? "",
       arguments: JSON.stringify(part.functionCall.args ?? {}),
+      ...(part.thoughtSignature ? { thoughtSignature: part.thoughtSignature } : {}),
     }));
 }
 

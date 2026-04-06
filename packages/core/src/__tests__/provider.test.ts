@@ -219,7 +219,7 @@ describe("chatWithTools Google native function calling", () => {
           content: {
             parts: [
               { text: "Let me check. " },
-              { functionCall: { id: "call-1", name: "get_weather", args: { city: "Auckland" } } },
+              { functionCall: { id: "call-1", name: "get_weather", args: { city: "Auckland" } }, thoughtSignature: "sig-1" },
             ],
           },
         }],
@@ -256,6 +256,7 @@ describe("chatWithTools Google native function calling", () => {
           id: "call-1",
           name: "get_weather",
           arguments: JSON.stringify({ city: "Auckland" }),
+          thoughtSignature: "sig-1",
         },
       ],
     });
@@ -317,6 +318,7 @@ describe("chatWithTools Google native function calling", () => {
           id: "call-1",
           name: "get_weather",
           arguments: JSON.stringify({ city: "Auckland" }),
+          thoughtSignature: "sig-2",
         }],
       },
       { role: "tool", toolCallId: "call-1", content: JSON.stringify({ temperatureC: 18 }) },
@@ -335,7 +337,7 @@ describe("chatWithTools Google native function calling", () => {
           role: "model",
           parts: [
             { text: "I'll check." },
-            { functionCall: { id: "call-1", name: "get_weather", args: { city: "Auckland" } } },
+            { functionCall: { id: "call-1", name: "get_weather", args: { city: "Auckland" } }, thoughtSignature: "sig-2" },
           ],
         },
         {
