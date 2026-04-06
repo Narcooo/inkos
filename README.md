@@ -59,15 +59,17 @@ clawhub install inkos          # 从 ClawHub 安装 InkOS Skill
 
 ```bash
 inkos config set-global \
-  --provider <openai|anthropic|custom> \
+  --provider <openai|anthropic|custom|google> \
   --base-url <API 地址> \
   --api-key <你的 API Key> \
   --model <模型名>
 
-# provider: openai / anthropic / custom（兼容 OpenAI 格式的中转站选 custom）
-# base-url: 你的 API 提供商地址
-# api-key: 你的 API Key
-# model: 你的模型名称
+# provider: openai / anthropic / custom / google
+# - custom：兼容 OpenAI 格式的中转站
+# - google：Gemini 原生接口（推荐默认模型：gemini-2.5-flash）
+# base-url: API 提供商地址
+# api-key: API Key
+# model: 模型名称
 ```
 
 配置保存在 `~/.inkos/.env`，所有项目共享。之后新建项目不用再配。
@@ -81,10 +83,10 @@ inkos init my-novel     # 初始化项目
 
 ```bash
 # 必填
-INKOS_LLM_PROVIDER=                               # openai / anthropic / custom（兼容 OpenAI 接口的都选 custom）
-INKOS_LLM_BASE_URL=                               # API 地址（支持中转站、智谱、Gemini 等）
+INKOS_LLM_PROVIDER=                               # openai / anthropic / custom / google
+INKOS_LLM_BASE_URL=                               # API 地址（custom 用兼容 OpenAI 的地址；google 用 https://generativelanguage.googleapis.com/v1beta）
 INKOS_LLM_API_KEY=                                 # API Key
-INKOS_LLM_MODEL=                                   # 模型名
+INKOS_LLM_MODEL=                                   # 模型名（Google 原生推荐 gemini-2.5-flash）
 
 # 可选
 # INKOS_LLM_TEMPERATURE=0.7                       # 温度
@@ -106,6 +108,20 @@ inkos config show-models        # 查看当前路由
 ```
 
 未单独配置的 Agent 自动使用全局模型。
+
+**Google 原生 Provider（Gemini）**
+
+可直接使用 `--provider google` 走 Gemini 原生接口，无需再伪装成 OpenAI 兼容端点：
+
+```bash
+inkos config set-global \
+  --provider google \
+  --base-url https://generativelanguage.googleapis.com/v1beta \
+  --api-key <your-google-api-key> \
+  --model gemini-2.5-flash
+```
+
+当前推荐默认模型是 `gemini-2.5-flash`。`gemini-3.x` 预览模型已经做过联机验证，但目前更适合当作预览选项，不作为默认稳定推荐。
 
 ### v1 更新
 
@@ -199,6 +215,16 @@ inkos compose chapter 吞天魔帝
 ### 本地模型兼容
 
 支持任何 OpenAI 兼容接口（`--provider custom`）。Stream 自动降级——中转站不支持 SSE 时自动回退 sync。Fallback 解析器处理小模型不规范输出，流中断时自动恢复部分内容。
+
+### Google 原生 Provider
+
+InkOS 也支持 `--provider google` 直连 Gemini 原生接口。当前已经联机验证：
+
+- 非流式文本生成（`generateContent`）
+- Gemini 原生函数调用 / 工具调用回合
+- 工具调用后的结果回放，以及 `thoughtSignature` 的保留与续传
+
+当前边界：这是已验证能力范围，不宣称与其他 Provider 完全等价；推荐默认模型仍是 `gemini-2.5-flash`，`gemini-3.x` 预览模型已验证可用，但暂不作为默认稳定推荐。
 
 ### 可靠性保障
 
