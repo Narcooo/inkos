@@ -95,6 +95,8 @@ export async function loadProjectConfig(
     llm.extra = { ...(llm.extra as Record<string, unknown> ?? {}), ...extraFromEnv };
   }
   if (env.INKOS_LLM_API_FORMAT) llm.apiFormat = env.INKOS_LLM_API_FORMAT;
+  if (env.INKOS_LLM_STREAM === "true") llm.stream = true;
+  if (env.INKOS_LLM_STREAM === "false") llm.stream = false;
   config.llm = llm;
 
   // Global language override

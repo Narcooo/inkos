@@ -390,6 +390,16 @@ describe("LLMConfigSchema", () => {
     expect(result.provider).toBe("openai");
   });
 
+  it("accepts google as a native provider", () => {
+    const result = LLMConfigSchema.parse({
+      provider: "google",
+      baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+      apiKey: "AIza...",
+      model: "gemini-2.5-pro",
+    });
+    expect(result.provider).toBe("google");
+  });
+
   it("rejects invalid provider", () => {
     expect(() =>
       LLMConfigSchema.parse({

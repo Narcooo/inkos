@@ -13,6 +13,7 @@ const ENV_KEYS = [
   "INKOS_LLM_MAX_TOKENS",
   "INKOS_LLM_THINKING_BUDGET",
   "INKOS_LLM_API_FORMAT",
+  "INKOS_LLM_STREAM",
 ] as const;
 
 describe("loadProjectConfig local provider auth", () => {
@@ -76,5 +77,38 @@ describe("loadProjectConfig local provider auth", () => {
     }, null, 2), "utf-8");
     await writeFile(join(root, ".env"), "", "utf-8");
     await expect(loadProjectConfig(root)).rejects.toThrow(/INKOS_LLM_API_KEY not set/i);
+  });
+
+  it("loads google native config from project env overrides", async () => {
+    root = await mkdtemp(join(tmpdir(), "inkos-config-loader-google-"));
+    for (const key of ENV_KEYS) {
+      previousEnv.set(key, process.env[key]);
+      process.env[key] = "";
+    }
+
+    await writeFile(join(root, "inkos.json"), JSON.stringify({
+      name: "google-project",
+      version: "0.1.0",
+      llm: {
+        provider: "openai",
+        baseUrl: "https://api.openai.com/v1",
+        model: "gpt-5.4",
+      },
+    }, null, 2), "utf-8");
+    await writeFile(join(root, ".env"), [
+      "INKOS_LLM_PROVIDER=google",
+      "INKOS_LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta",
+      "INKOS_LLM_API_KEY=test-google-key",
+      "INKOS_LLM_MODEL=gemini-2.5-flash",
+      "INKOS_LLM_STREAM=false",
+      "",
+    ].join("\n"), "utf-8");
+
+    const config = await loadProjectConfig(root);
+
+    expect(config.llm.provider).toBe("google");
+    expect(config.llm.baseUrl).toBe("https://generativelanguage.googleapis.com/v1beta");
+    expect(config.llm.apiKey).toBe("test-google-key");
+    expect(config.llm.model).toBe("gemini-2.5-flash");
   });
 });

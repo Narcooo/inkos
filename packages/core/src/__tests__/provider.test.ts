@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type OpenAI from "openai";
 import { chatCompletion, type LLMClient } from "../llm/provider.js";
 
@@ -16,6 +16,10 @@ async function captureError(task: Promise<unknown>): Promise<Error> {
   }
   throw new Error("Expected promise to reject");
 }
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe("chatCompletion stream fallback", () => {
   it("falls back to sync chat completion when streamed chat returns no chunks", async () => {
@@ -132,5 +136,63 @@ describe("chatCompletion stream fallback", () => {
     expect(create.mock.calls[1]?.[0]).toMatchObject({ stream: false });
     expect(error.message).toContain("stream:true");
     expect(error.message).not.toContain("\"stream\": false");
+  });
+
+  it("calls Gemini native sync API and returns text", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      text: vi.fn().mockResolvedValue(JSON.stringify({
+        candidates: [
+          { content: { parts: [{ text: "OK" }] } },
+        ],
+        usageMetadata: {
+          promptTokenCount: 5,
+          candidatesTokenCount: 1,
+          totalTokenCount: 6,
+        },
+      })),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client: LLMClient = {
+      provider: "google",
+      apiFormat: "chat",
+      stream: false,
+      _google: {
+        apiKey: "test-google-key",
+        baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+      },
+      defaults: {
+        temperature: 0.7,
+        maxTokens: 512,
+        thinkingBudget: 0,
+        maxTokensCap: null,
+        extra: {},
+      },
+    };
+
+    const result = await chatCompletion(client, "gemini-2.5-flash", [
+      { role: "user", content: "Reply with exactly OK" },
+    ]);
+
+    expect(result.content).toBe("OK");
+    expect(result.usage).toEqual({
+      promptTokens: 5,
+      completionTokens: 1,
+      totalTokens: 6,
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/models/gemini-2.5-flash:generateContent?key=test-google-key"),
+      expect.objectContaining({ method: "POST" }),
+    );
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(String(requestInit.body))).toMatchObject({
+      generationConfig: {
+        thinkingConfig: {
+          thinkingBudget: 0,
+        },
+      },
+    });
   });
 });

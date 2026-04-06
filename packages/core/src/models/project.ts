@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const LLMConfigSchema = z.object({
-  provider: z.enum(["anthropic", "openai", "custom"]),
+  provider: z.enum(["anthropic", "openai", "custom", "google"]),
   baseUrl: z.string().url(),
   apiKey: z.string().default(""),
   model: z.string().min(1),
@@ -62,7 +62,7 @@ export type QualityGates = z.infer<typeof QualityGatesSchema>;
 
 export const AgentLLMOverrideSchema = z.object({
   model: z.string().min(1),
-  provider: z.enum(["anthropic", "openai", "custom"]).optional(),
+  provider: z.enum(["anthropic", "openai", "custom", "google"]).optional(),
   baseUrl: z.string().url().optional(),
   apiKeyEnv: z.string().optional(),
   stream: z.boolean().optional(),

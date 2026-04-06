@@ -90,7 +90,7 @@ export const initCommand = new Command("init")
           [
             "# LLM Configuration",
             "# Tip: Run 'inkos config set-global' to set once for all projects.",
-            "# Provider: openai (OpenAI / compatible proxy), anthropic (Anthropic native)",
+            "# Provider: openai (OpenAI native), custom (OpenAI-compatible proxy), anthropic (Anthropic native), google (Gemini native)",
             "INKOS_LLM_PROVIDER=openai",
             "INKOS_LLM_BASE_URL=",
             "INKOS_LLM_API_KEY=",
@@ -137,7 +137,7 @@ export const initCommand = new Command("init")
         log("Next steps:");
         if (name) log(`  cd ${name}`);
         log("  # Option 1: Set global config (recommended, one-time):");
-        log("  inkos config set-global --provider openai --base-url <your-api-url> --api-key <your-key> --model <your-model>");
+        log("  inkos config set-global --provider google --base-url https://generativelanguage.googleapis.com/v1beta --api-key <your-key> --model gemini-2.5-pro");
         log("  # Option 2: Edit .env for this project only");
         log("");
         log(exampleCreate);
