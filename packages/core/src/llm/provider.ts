@@ -416,10 +416,19 @@ async function chatCompletionOpenAIChat(
   try {
     for await (const chunk of stream) {
       const delta = chunk.choices[0]?.delta?.content;
-      if (delta) {
+      const reasoningDelta = (chunk.choices[0]?.delta as { reasoning_content?: string } | undefined)?.reasoning_content;
+
+      // GLM models (glm-4, glm-5) return content in reasoning_content field
+      if (reasoningDelta) {
+        // For GLM models, treat reasoning_content as main content
+        chunks.push(reasoningDelta);
+        monitor.onChunk(reasoningDelta);
+      } else if (delta) {
+        // Standard OpenAI format
         chunks.push(delta);
         monitor.onChunk(delta);
       }
+
       if (chunk.usage) {
         inputTokens = chunk.usage.prompt_tokens ?? 0;
         outputTokens = chunk.usage.completion_tokens ?? 0;
@@ -467,11 +476,17 @@ async function chatCompletionOpenAIChatSync(
   };
   const response = await client.chat.completions.create(syncParams);
 
-  const content = response.choices[0]?.message?.content ?? "";
-  if (!content) throw new Error("LLM returned empty response");
+  // GLM models (glm-4, glm-5) return content in reasoning_content field
+  const choice = response.choices[0]?.message;
+  const content = choice?.content ?? "";
+  const reasoningContent = (choice as { reasoning_content?: string } | undefined)?.reasoning_content ?? "";
+
+  // For GLM models, use reasoning_content when content is empty
+  const finalContent = content || reasoningContent;
+  if (!finalContent) throw new Error("LLM returned empty response");
 
   return {
-    content,
+    content: finalContent,
     usage: {
       promptTokens: response.usage?.prompt_tokens ?? 0,
       completionTokens: response.usage?.completion_tokens ?? 0,
