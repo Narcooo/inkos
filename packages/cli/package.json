@@ -43,8 +43,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@actalk/inkos-core": "1.1.1",
-    "@actalk/inkos-studio": "1.1.1",
+    "@actalk/inkos-core": "workspace:*",
+    "@actalk/inkos-studio": "workspace:*",
     "commander": "^13.0.0",
     "dotenv": "^16.4.0",
     "epub-gen-memory": "^1.0.10",
