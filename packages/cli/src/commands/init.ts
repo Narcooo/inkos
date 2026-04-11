@@ -74,10 +74,10 @@ export const initCommand = new Command("init")
             "# Project-level LLM overrides (optional)",
             "# Global config at ~/.inkos/.env will be used by default.",
             "# Uncomment below to override for this project only:",
-            "# INKOS_LLM_PROVIDER=openai",
-            "# INKOS_LLM_BASE_URL=",
+            "# INKOS_LLM_PROVIDER=google",
+            "# INKOS_LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta",
             "# INKOS_LLM_API_KEY=",
-            "# INKOS_LLM_MODEL=",
+            "# INKOS_LLM_MODEL=gemini-2.5-flash",
             "",
             "# Web search (optional):",
             "# TAVILY_API_KEY=tvly-xxxxx",
@@ -90,11 +90,12 @@ export const initCommand = new Command("init")
           [
             "# LLM Configuration",
             "# Tip: Run 'inkos config set-global' to set once for all projects.",
-            "# Provider: openai (OpenAI / compatible proxy), anthropic (Anthropic native)",
-            "INKOS_LLM_PROVIDER=openai",
-            "INKOS_LLM_BASE_URL=",
+            "# Recommended Google native default: gemini-2.5-flash (Gemini 3.x preview models were validated, but are not the default stable recommendation).",
+            "# Provider: openai (OpenAI native), custom (OpenAI-compatible proxy), anthropic (Anthropic native), google (Gemini native)",
+            "INKOS_LLM_PROVIDER=google",
+            "INKOS_LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta",
             "INKOS_LLM_API_KEY=",
-            "INKOS_LLM_MODEL=",
+            "INKOS_LLM_MODEL=gemini-2.5-flash",
             "",
             "# Optional parameters (defaults shown):",
             "# INKOS_LLM_TEMPERATURE=0.7",
@@ -107,9 +108,9 @@ export const initCommand = new Command("init")
             "",
             "# Anthropic example:",
             "# INKOS_LLM_PROVIDER=anthropic",
-            "# INKOS_LLM_PROVIDER=anthropic",
-            "# INKOS_LLM_BASE_URL=",
-            "# INKOS_LLM_MODEL=",
+            "# INKOS_LLM_BASE_URL=https://api.anthropic.com",
+            "# INKOS_LLM_API_KEY=",
+            "# INKOS_LLM_MODEL=claude-sonnet-4-20250514",
           ].join("\n"),
           "utf-8",
         );
@@ -137,8 +138,9 @@ export const initCommand = new Command("init")
         log("Next steps:");
         if (name) log(`  cd ${name}`);
         log("  # Option 1: Set global config (recommended, one-time):");
-        log("  inkos config set-global --provider openai --base-url <your-api-url> --api-key <your-key> --model <your-model>");
+        log("  inkos config set-global --provider google --base-url https://generativelanguage.googleapis.com/v1beta --api-key <your-key> --model gemini-2.5-flash");
         log("  # Option 2: Edit .env for this project only");
+        log("  # Note: gemini-2.5-flash is the recommended stable default; Gemini 3.x preview models were validated but remain preview choices.");
         log("");
         log(exampleCreate);
       }

@@ -70,11 +70,15 @@ export interface LLMMessage {
 }
 
 export interface LLMClient {
-  readonly provider: "openai" | "anthropic";
+  readonly provider: "openai" | "anthropic" | "google";
   readonly apiFormat: "chat" | "responses";
   readonly stream: boolean;
   readonly _openai?: OpenAI;
   readonly _anthropic?: Anthropic;
+  readonly _google?: {
+    readonly apiKey: string;
+    readonly baseUrl: string;
+  };
   readonly defaults: {
     readonly temperature: number;
     readonly maxTokens: number;
@@ -96,6 +100,7 @@ export interface ToolCall {
   readonly id: string;
   readonly name: string;
   readonly arguments: string;
+  readonly thoughtSignature?: string;
 }
 
 export type AgentMessage =
@@ -131,6 +136,18 @@ export function createLLMClient(config: LLMConfig): LLMClient {
       apiFormat,
       stream,
       _anthropic: new Anthropic({ apiKey: config.apiKey, baseURL }),
+      defaults,
+    };
+  }
+  if (config.provider === "google") {
+    return {
+      provider: "google",
+      apiFormat,
+      stream,
+      _google: {
+        apiKey: config.apiKey,
+        baseUrl: config.baseUrl.replace(/\/$/, ""),
+      },
       defaults,
     };
   }
@@ -278,13 +295,18 @@ export async function chatCompletion(
     extra: client.defaults.extra,
   };
   const onStreamProgress = options?.onStreamProgress;
-  const errorCtx = { baseUrl: client._openai?.baseURL ?? "(anthropic)", model };
+  const errorCtx = { baseUrl: client._openai?.baseURL ?? client._google?.baseUrl ?? "(anthropic)", model };
 
   try {
     if (client.provider === "anthropic") {
       return client.stream
         ? await chatCompletionAnthropic(client._anthropic!, model, messages, resolved, client.defaults.thinkingBudget, onStreamProgress)
         : await chatCompletionAnthropicSync(client._anthropic!, model, messages, resolved, client.defaults.thinkingBudget);
+    }
+    if (client.provider === "google") {
+      return client.stream
+        ? await chatCompletionGoogle(client._google!, model, messages, { ...resolved, thinkingBudget: client.defaults.thinkingBudget }, onStreamProgress)
+        : await chatCompletionGoogleSync(client._google!, model, messages, { ...resolved, thinkingBudget: client.defaults.thinkingBudget });
     }
     if (client.apiFormat === "responses") {
       return client.stream
@@ -310,6 +332,9 @@ export async function chatCompletion(
         try {
           if (client.provider === "anthropic") {
             return await chatCompletionAnthropicSync(client._anthropic!, model, messages, resolved, client.defaults.thinkingBudget);
+          }
+          if (client.provider === "google") {
+            return await chatCompletionGoogleSync(client._google!, model, messages, { ...resolved, thinkingBudget: client.defaults.thinkingBudget });
           }
           if (client.apiFormat === "responses") {
             return await chatCompletionOpenAIResponsesSync(client._openai!, model, messages, resolved, options?.webSearch);
@@ -375,6 +400,13 @@ export async function chatWithTools(
     // Tool-calling always uses streaming (only used by agent loop, not by writer/auditor)
     if (client.provider === "anthropic") {
       return await chatWithToolsAnthropic(client._anthropic!, model, messages, tools, resolved, client.defaults.thinkingBudget);
+    }
+    if (client.provider === "google") {
+      return await chatWithToolsGoogle(client._google!, model, messages, tools, {
+        ...resolved,
+        thinkingBudget: client.defaults.thinkingBudget,
+        extra: client.defaults.extra,
+      });
     }
     if (client.apiFormat === "responses") {
       return await chatWithToolsOpenAIResponses(client._openai!, model, messages, tools, resolved);
@@ -764,6 +796,332 @@ function agentMessagesToResponsesInput(
   }
 
   return result;
+}
+
+
+
+// === Google Gemini native API ===
+
+interface GoogleClient {
+  readonly apiKey: string;
+  readonly baseUrl: string;
+}
+
+interface GoogleFunctionCallPart {
+  readonly id?: string;
+  readonly name?: string;
+  readonly args?: unknown;
+}
+
+interface GoogleFunctionResponsePart {
+  readonly id?: string;
+  readonly name?: string;
+  readonly response?: unknown;
+}
+
+interface GooglePart {
+  readonly text?: string;
+  readonly functionCall?: GoogleFunctionCallPart;
+  readonly functionResponse?: GoogleFunctionResponsePart;
+  readonly thoughtSignature?: string;
+}
+
+interface GoogleContent {
+  readonly role: "user" | "model";
+  readonly parts: GooglePart[];
+}
+
+function collectGoogleSystemText(messages: ReadonlyArray<LLMMessage | AgentMessage>): string {
+  return messages
+    .filter((m): m is Extract<LLMMessage | AgentMessage, { role: "system" }> => m.role === "system")
+    .map((m) => m.content)
+    .join("\n\n");
+}
+
+function toGoogleContents(messages: ReadonlyArray<LLMMessage>): { systemInstruction?: { parts: Array<{ text: string }> }; contents: GoogleContent[] } {
+  const systemText = collectGoogleSystemText(messages);
+
+  return {
+    ...(systemText ? { systemInstruction: { parts: [{ text: systemText }] } } : {}),
+    contents: messages
+      .filter((m) => m.role !== "system")
+      .map((m) => ({
+        role: m.role === "assistant" ? "model" as const : "user" as const,
+        parts: [{ text: m.content }],
+      })),
+  };
+}
+
+function parseMaybeJson(value: string): unknown {
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return value;
+  }
+}
+
+function toGoogleFunctionResponsePayload(content: string): unknown {
+  const parsed = parseMaybeJson(content);
+  if (parsed !== null && typeof parsed === "object") {
+    return parsed;
+  }
+  return { result: parsed };
+}
+
+function agentMessagesToGoogle(messages: ReadonlyArray<AgentMessage>): { systemInstruction?: { parts: Array<{ text: string }> }; contents: GoogleContent[] } {
+  const systemText = collectGoogleSystemText(messages);
+  const contents: GoogleContent[] = [];
+  const toolNameById = new Map<string, string>();
+
+  for (const msg of messages) {
+    if (msg.role === "system") continue;
+
+    if (msg.role === "user") {
+      contents.push({ role: "user", parts: [{ text: msg.content }] });
+      continue;
+    }
+
+    if (msg.role === "assistant") {
+      const parts: GooglePart[] = [];
+      if (msg.content) {
+        parts.push({ text: msg.content });
+      }
+      if (msg.toolCalls) {
+        for (const tc of msg.toolCalls) {
+          toolNameById.set(tc.id, tc.name);
+          parts.push({
+            functionCall: {
+              id: tc.id,
+              name: tc.name,
+              args: parseMaybeJson(tc.arguments),
+            },
+            ...(tc.thoughtSignature ? { thoughtSignature: tc.thoughtSignature } : {}),
+          });
+        }
+      }
+      if (parts.length > 0) {
+        contents.push({ role: "model", parts });
+      }
+      continue;
+    }
+
+    const toolName = toolNameById.get(msg.toolCallId) ?? "unknown_tool";
+    contents.push({
+      role: "user",
+      parts: [{
+        functionResponse: {
+          id: msg.toolCallId,
+          name: toolName,
+          response: toGoogleFunctionResponsePayload(msg.content),
+        },
+      }],
+    });
+  }
+
+  return {
+    ...(systemText ? { systemInstruction: { parts: [{ text: systemText }] } } : {}),
+    contents,
+  };
+}
+
+function extractGoogleParts(data: unknown): GooglePart[] {
+  const candidates = (data as { candidates?: Array<{ content?: { parts?: GooglePart[] } }> }).candidates ?? [];
+  return candidates.flatMap((candidate) => candidate.content?.parts ?? []);
+}
+
+function extractGoogleText(data: unknown): string {
+  return extractGoogleParts(data)
+    .map((part) => part.text ?? "")
+    .join("");
+}
+
+function extractGoogleToolCalls(data: unknown): ToolCall[] {
+  return extractGoogleParts(data)
+    .filter((part): part is GooglePart & { functionCall: GoogleFunctionCallPart } => Boolean(part.functionCall?.name))
+    .map((part, index) => ({
+      id: part.functionCall.id ?? `google-tool-call-${index + 1}`,
+      name: part.functionCall.name ?? "",
+      arguments: JSON.stringify(part.functionCall.args ?? {}),
+      ...(part.thoughtSignature ? { thoughtSignature: part.thoughtSignature } : {}),
+    }));
+}
+
+function extractGoogleUsage(data: unknown): { promptTokens: number; completionTokens: number; totalTokens: number } {
+  const usage = (data as { usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; totalTokenCount?: number } }).usageMetadata;
+  return {
+    promptTokens: usage?.promptTokenCount ?? 0,
+    completionTokens: usage?.candidatesTokenCount ?? 0,
+    totalTokens: usage?.totalTokenCount ?? 0,
+  };
+}
+
+function buildGoogleGenerationConfig(options: {
+  readonly temperature: number;
+  readonly maxTokens: number;
+  readonly thinkingBudget: number;
+  readonly extra: Record<string, unknown>;
+}): Record<string, unknown> {
+  return {
+    temperature: options.temperature,
+    maxOutputTokens: options.maxTokens,
+    thinkingConfig: {
+      thinkingBudget: options.thinkingBudget,
+    },
+    ...options.extra,
+  };
+}
+
+async function chatCompletionGoogle(
+  client: GoogleClient,
+  model: string,
+  messages: ReadonlyArray<LLMMessage>,
+  options: { readonly temperature: number; readonly maxTokens: number; readonly thinkingBudget: number; readonly extra: Record<string, unknown> },
+  onStreamProgress?: OnStreamProgress,
+): Promise<LLMResponse> {
+  const url = `${client.baseUrl}/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(client.apiKey)}`;
+  const payload = {
+    ...toGoogleContents(messages),
+    generationConfig: buildGoogleGenerationConfig(options),
+  };
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok || !response.body) {
+    throw new Error(`${response.status} ${await response.text()}`);
+  }
+
+  const decoder = new TextDecoder();
+  const reader = response.body.getReader();
+  const monitor = createStreamMonitor(onStreamProgress);
+  const chunks: string[] = [];
+  let buffer = "";
+  let usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+
+  const flushEvent = (rawEvent: string): void => {
+    const lines = rawEvent.split(/\r?\n/).filter((line) => line.startsWith("data:"));
+    for (const line of lines) {
+      const data = line.slice(5).trim();
+      if (!data || data === "[DONE]") continue;
+      const parsed = JSON.parse(data) as unknown;
+      const text = extractGoogleText(parsed);
+      if (text) {
+        chunks.push(text);
+        monitor.onChunk(text);
+      }
+      const nextUsage = extractGoogleUsage(parsed);
+      if (nextUsage.totalTokens > 0) usage = nextUsage;
+    }
+  };
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let boundary = buffer.indexOf("\n\n");
+      while (boundary !== -1) {
+        const event = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+        flushEvent(event);
+        boundary = buffer.indexOf("\n\n");
+      }
+    }
+    buffer += decoder.decode();
+    if (buffer.trim()) flushEvent(buffer);
+  } catch (streamError) {
+    monitor.stop();
+    const partial = chunks.join("");
+    if (partial.length >= MIN_SALVAGEABLE_CHARS) {
+      throw new PartialResponseError(partial, streamError);
+    }
+    throw streamError;
+  } finally {
+    monitor.stop();
+    reader.releaseLock();
+  }
+
+  const content = chunks.join("");
+  if (!content) throw new Error("LLM returned empty response from Gemini stream");
+
+  return { content, usage };
+}
+
+async function chatCompletionGoogleSync(
+  client: GoogleClient,
+  model: string,
+  messages: ReadonlyArray<LLMMessage>,
+  options: { readonly temperature: number; readonly maxTokens: number; readonly thinkingBudget: number; readonly extra: Record<string, unknown> },
+): Promise<LLMResponse> {
+  const url = `${client.baseUrl}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(client.apiKey)}`;
+  const payload = {
+    ...toGoogleContents(messages),
+    generationConfig: buildGoogleGenerationConfig(options),
+  };
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const bodyText = await response.text();
+  if (!response.ok) {
+    throw new Error(`${response.status} ${bodyText}`);
+  }
+  const parsed = JSON.parse(bodyText) as unknown;
+  const content = extractGoogleText(parsed);
+  if (!content) throw new Error("LLM returned empty response from Gemini sync API");
+  return {
+    content,
+    usage: extractGoogleUsage(parsed),
+  };
+}
+
+async function chatWithToolsGoogle(
+  client: GoogleClient,
+  model: string,
+  messages: ReadonlyArray<AgentMessage>,
+  tools: ReadonlyArray<ToolDefinition>,
+  options: { readonly temperature: number; readonly maxTokens: number; readonly thinkingBudget: number; readonly extra: Record<string, unknown> },
+): Promise<ChatWithToolsResult> {
+  const url = `${client.baseUrl}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(client.apiKey)}`;
+  const payload = {
+    ...agentMessagesToGoogle(messages),
+    tools: [{
+      functionDeclarations: tools.map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters,
+      })),
+    }],
+    toolConfig: {
+      functionCallingConfig: {
+        mode: "AUTO",
+      },
+    },
+    generationConfig: buildGoogleGenerationConfig(options),
+  };
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const bodyText = await response.text();
+  if (!response.ok) {
+    throw new Error(`${response.status} ${bodyText}`);
+  }
+
+  const parsed = JSON.parse(bodyText) as unknown;
+  const content = extractGoogleText(parsed);
+  const toolCalls = extractGoogleToolCalls(parsed);
+  if (!content && toolCalls.length === 0) {
+    throw new Error("LLM returned empty response from Gemini tool-calling API");
+  }
+  return { content, toolCalls };
 }
 
 // === Anthropic Implementation ===

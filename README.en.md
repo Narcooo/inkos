@@ -51,12 +51,14 @@ Once installed, Claw can invoke InkOS atomic commands and control-surface operat
 ```bash
 inkos config set-global \
   --lang en \
-  --provider <openai|anthropic|custom> \
+  --provider <openai|anthropic|custom|google> \
   --base-url <API endpoint> \
   --api-key <your API key> \
   --model <model name>
 
-# provider: openai / anthropic / custom (use custom for OpenAI-compatible proxies)
+# provider: openai / anthropic / custom / google
+# - custom: use for OpenAI-compatible proxies
+# - google: Gemini native API (recommended default model: gemini-2.5-flash)
 # base-url: your API provider URL
 # api-key: your API key
 # model: your model name
@@ -73,10 +75,10 @@ inkos init my-novel     # Initialize project
 
 ```bash
 # Required
-INKOS_LLM_PROVIDER=                               # openai / anthropic / custom (use custom for any OpenAI-compatible API)
-INKOS_LLM_BASE_URL=                               # API endpoint
+INKOS_LLM_PROVIDER=                               # openai / anthropic / custom / google
+INKOS_LLM_BASE_URL=                               # API endpoint (for google use https://generativelanguage.googleapis.com/v1beta)
 INKOS_LLM_API_KEY=                                 # API Key
-INKOS_LLM_MODEL=                                   # Model name
+INKOS_LLM_MODEL=                                   # Model name (recommended for Google native: gemini-2.5-flash)
 
 # Language (defaults to global setting or genre default)
 # INKOS_DEFAULT_LANGUAGE=en                        # en or zh
@@ -101,6 +103,21 @@ inkos config show-models        # View current routing
 ```
 
 Agents without explicit overrides fall back to the global model.
+
+**Google Native Provider (Gemini)**
+
+You can also use Gemini through the native Google provider instead of an OpenAI-compatible shim:
+
+```bash
+inkos config set-global \
+  --lang en \
+  --provider google \
+  --base-url https://generativelanguage.googleapis.com/v1beta \
+  --api-key <your-google-api-key> \
+  --model gemini-2.5-flash
+```
+
+The recommended default model is `gemini-2.5-flash`. Gemini `3.x` preview models were validated online as well, but they are still treated as preview options rather than the default stable recommendation.
 
 ### v1 Update
 
@@ -220,6 +237,16 @@ Different agents can use different models and providers. Writer on Claude (stron
 ### Local Model Compatibility
 
 Supports any OpenAI-compatible endpoint (`--provider custom`). Stream auto-fallback — when SSE isn't supported, InkOS retries with sync mode automatically. Fallback parser handles non-standard output from smaller models, and partial content recovery kicks in on stream interruption.
+
+### Google Native Provider
+
+InkOS also supports `--provider google` for Gemini's native API. The following were validated online:
+
+- non-stream text generation via `generateContent`
+- Gemini-native function/tool calling turns
+- replaying tool results back to Gemini, including preserving and forwarding `thoughtSignature`
+
+Current boundary: this is the validated scope today, not a claim of full provider parity. The recommended default remains `gemini-2.5-flash`; Gemini `3.x` preview models were validated, but are not the default stable recommendation.
 
 ### Reliability
 

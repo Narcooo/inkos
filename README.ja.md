@@ -51,12 +51,14 @@ npm でインストール済み、またはリポジトリをクローン済み�
 ```bash
 inkos config set-global \
   --lang en \
-  --provider <openai|anthropic|custom> \
+  --provider <openai|anthropic|custom|google> \
   --base-url <APIエンドポイント> \
   --api-key <APIキー> \
   --model <モデル名>
 
-# provider: openai / anthropic / custom（OpenAI互換プロキシにはcustomを使用）
+# provider: openai / anthropic / custom / google
+# - custom：OpenAI互換プロキシ向け
+# - google：Gemini ネイティブ API（推奨デフォルトモデル: gemini-2.5-flash）
 # base-url: APIプロバイダーURL
 # api-key: APIキー
 # model: モデル名
@@ -73,10 +75,10 @@ inkos init my-novel     # プロジェクトを初期化
 
 ```bash
 # 必須
-INKOS_LLM_PROVIDER=                               # openai / anthropic / custom（OpenAI互換APIにはcustomを使用）
-INKOS_LLM_BASE_URL=                               # APIエンドポイント
+INKOS_LLM_PROVIDER=                               # openai / anthropic / custom / google
+INKOS_LLM_BASE_URL=                               # APIエンドポイント（google は https://generativelanguage.googleapis.com/v1beta）
 INKOS_LLM_API_KEY=                                 # APIキー
-INKOS_LLM_MODEL=                                   # モデル名
+INKOS_LLM_MODEL=                                   # モデル名（Google ネイティブ推奨: gemini-2.5-flash）
 
 # 言語（グローバル設定またはジャンルのデフォルトに準拠）
 # INKOS_DEFAULT_LANGUAGE=en                        # en または zh
@@ -101,6 +103,21 @@ inkos config show-models        # 現在のルーティングを表示
 ```
 
 明示的なオーバーライドがないエージェントはグローバルモデルにフォールバックします。
+
+**Google ネイティブ Provider（Gemini）**
+
+OpenAI互換のシムを使わず、`--provider google` で Gemini ネイティブ API を直接利用できます。
+
+```bash
+inkos config set-global \
+  --lang en \
+  --provider google \
+  --base-url https://generativelanguage.googleapis.com/v1beta \
+  --api-key <your-google-api-key> \
+  --model gemini-2.5-flash
+```
+
+推奨デフォルトモデルは `gemini-2.5-flash` です。Gemini `3.x` プレビューモデルもオンラインで検証済みですが、現時点ではプレビュー扱いであり、デフォルトの安定推奨にはしていません。
 
 ### v1 アップデート
 
@@ -220,6 +237,16 @@ inkos compose chapter my-book
 ### ローカルモデル互換性
 
 任意のOpenAI互換エンドポイント（`--provider custom`）に対応。ストリーム自動フォールバック — SSEがサポートされていない場合、InkOS は自動的に同期モードでリトライ。フォールバックパーサーが小型モデルの非標準出力を処理し、ストリーム中断時には部分コンテンツリカバリが作動。
+
+### Google ネイティブ Provider
+
+InkOS は `--provider google` による Gemini ネイティブ API にも対応しています。オンラインで検証済みなのは次の範囲です。
+
+- `generateContent` による非ストリームのテキスト生成
+- Gemini ネイティブの関数呼び出し / ツール呼び出しターン
+- ツール結果の Gemini への再投入、および `thoughtSignature` の保持と引き継ぎ
+
+現時点の境界: これは検証済みスコープの説明であり、他 Provider との完全な機能同等性を主張するものではありません。推奨デフォルトは引き続き `gemini-2.5-flash` で、Gemini `3.x` プレビューモデルは検証済みですがデフォルトの安定推奨ではありません。
 
 ### 信頼性
 
