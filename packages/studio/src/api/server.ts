@@ -451,9 +451,9 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     const storyDir = join(bookDir, "story");
     try {
       const files = await readdir(storyDir);
-      const mdFiles = files.filter((f) => f.endsWith(".md") || f.endsWith(".json"));
+      const filteredFiles = files.filter((f) => TRUTH_FILES.includes(f));
       const result = await Promise.all(
-        mdFiles.map(async (f) => {
+        filteredFiles.map(async (f) => {
           const content = await readFile(join(storyDir, f), "utf-8");
           return { name: f, size: content.length, preview: content.slice(0, 200) };
         }),

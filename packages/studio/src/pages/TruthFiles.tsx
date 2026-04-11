@@ -23,9 +23,15 @@ export function TruthFiles({ bookId, nav, theme, t }: { bookId: string; nav: Nav
   const [editMode, setEditMode] = useState(false);
   const [editText, setEditText] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
-  const { data: fileData, refetch: refetchFile } = useApi<{ file: string; content: string | null }>(
+  const { data: fileData, loading: fileLoading, error: fileError, refetch: refetchFile } = useApi<{ file: string; content: string | null }>(
     selected ? `/books/${bookId}/truth/${selected}` : "",
   );
+
+  // Clear edit mode when switching files
+  const handleSelect = (name: string) => {
+    setSelected(name);
+    setEditMode(false);
+  };
 
   const startEdit = () => {
     setEditText(fileData?.content ?? "");
@@ -72,7 +78,7 @@ export function TruthFiles({ bookId, nav, theme, t }: { bookId: string; nav: Nav
           {data?.files.map((f) => (
             <button
               key={f.name}
-              onClick={() => { setSelected(f.name); setEditMode(false); }}
+              onClick={() => handleSelect(f.name)}
               className={`w-full text-left px-3 py-2.5 text-sm border-b border-border/40 transition-colors ${
                 selected === f.name
                   ? "bg-primary/10 text-primary"
@@ -90,7 +96,15 @@ export function TruthFiles({ bookId, nav, theme, t }: { bookId: string; nav: Nav
 
         {/* Content viewer */}
         <div className={`border ${c.cardStatic} rounded-lg p-5 min-h-[400px] flex flex-col`}>
-          {selected && fileData?.content != null ? (
+          {fileLoading || (fileData && fileData.file !== selected) ? (
+            <div className="flex-1 flex items-center justify-center">
+              <div className="animate-pulse text-muted-foreground text-sm">Loading...</div>
+            </div>
+          ) : fileError ? (
+            <div className="flex-1 flex items-center justify-center">
+              <div className="text-destructive text-sm bg-destructive/10 px-4 py-2 rounded-md">{fileError}</div>
+            </div>
+          ) : selected && fileData?.content != null ? (
             <>
               <div className="flex items-center justify-end gap-2 mb-3">
                 {editMode ? (
