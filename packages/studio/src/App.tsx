@@ -20,7 +20,7 @@ import { useSSE } from "./hooks/use-sse";
 import { useTheme } from "./hooks/use-theme";
 import { useI18n } from "./hooks/use-i18n";
 import { postApi, useApi } from "./hooks/use-api";
-import { Sun, Moon, Bell, MessageSquare } from "lucide-react";
+import { Sun, Moon, MessageSquare } from "lucide-react";
 
 export type Route =
   | { page: "dashboard" }
@@ -136,11 +136,6 @@ export function App() {
               title={isDark ? "Switch to Light Mode" : "Switch to Dark Mode"}
             >
               {isDark ? <Sun size={16} /> : <Moon size={16} />}
-            </button>
-
-            <button className="w-8 h-8 flex items-center justify-center rounded-lg bg-secondary text-muted-foreground hover:text-foreground transition-all relative">
-              <Bell size={16} />
-              <span className="absolute top-1 right-1 w-2 h-2 bg-primary rounded-full border-2 border-background" />
             </button>
 
             {/* Chat Panel Toggle */}

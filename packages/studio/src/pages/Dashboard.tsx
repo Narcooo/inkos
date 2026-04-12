@@ -244,7 +244,10 @@ export function Dashboard({ nav, sse, theme, t }: { nav: Nav; sse: { messages: R
 
                 <div className="flex items-center gap-3 shrink-0 ml-6">
                   <button
-                    onClick={() => postApi(`/books/${book.id}/write-next`)}
+                    onClick={async () => {
+                      try { await postApi(`/books/${book.id}/write-next`); }
+                      catch (e) { alert(e instanceof Error ? e.message : "Write failed"); }
+                    }}
                     disabled={isWriting}
                     className={`flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-bold transition-all shadow-sm ${
                       isWriting

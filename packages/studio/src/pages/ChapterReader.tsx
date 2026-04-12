@@ -94,13 +94,21 @@ export function ChapterReader({ bookId, chapterNumber, nav, theme, t }: {
     .trim();
 
   const handleApprove = async () => {
-    await postApi(`/books/${bookId}/chapters/${chapterNumber}/approve`);
-    nav.toBook(bookId);
+    try {
+      await postApi(`/books/${bookId}/chapters/${chapterNumber}/approve`);
+      nav.toBook(bookId);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Approve failed");
+    }
   };
 
   const handleReject = async () => {
-    await postApi(`/books/${bookId}/chapters/${chapterNumber}/reject`);
-    nav.toBook(bookId);
+    try {
+      await postApi(`/books/${bookId}/chapters/${chapterNumber}/reject`);
+      nav.toBook(bookId);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Reject failed");
+    }
   };
 
   const paragraphs = body.split(/\n\n+/).filter(Boolean);

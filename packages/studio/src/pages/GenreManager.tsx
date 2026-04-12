@@ -4,6 +4,7 @@ import type { Theme } from "../hooks/use-theme";
 import type { TFunction } from "../hooks/use-i18n";
 import { useI18n } from "../hooks/use-i18n";
 import { useColors } from "../hooks/use-colors";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Plus, Pencil, Trash2 } from "lucide-react";
 
 interface GenreInfo {
@@ -209,6 +210,7 @@ export function GenreManager({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFu
   const [selected, setSelected] = useState<string | null>(null);
   const [formMode, setFormMode] = useState<"hidden" | "create" | "edit">("hidden");
   const [form, setForm] = useState<GenreFormData>(EMPTY_FORM);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
   // Only show genres matching current language, plus custom project genres
   const filteredGenres = data?.genres.filter((g) => g.language === lang || g.source === "project") ?? [];
@@ -300,13 +302,9 @@ export function GenreManager({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFu
 
   const handleDelete = async () => {
     if (!validSelected) return;
-    if (!window.confirm(`Delete genre "${validSelected}"?`)) return;
+    setConfirmDeleteOpen(false);
     try {
-      const res = await fetch(`/api/genres/${validSelected}`, { method: "DELETE" });
-      if (!res.ok) {
-        const json = await res.json() as { error?: string };
-        throw new Error(json.error ?? `${res.status}`);
-      }
+      await fetchJson(`/genres/${validSelected}`, { method: "DELETE" });
       setSelected(null);
       refetch();
     } catch (e) {
@@ -393,7 +391,7 @@ export function GenreManager({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFu
                   </button>
                   {selectedGenre?.source === "project" && (
                     <button
-                      onClick={handleDelete}
+                      onClick={() => setConfirmDeleteOpen(true)}
                       className={`flex items-center gap-1.5 px-3 py-1.5 text-sm ${c.btnDanger} rounded-md`}
                     >
                       <Trash2 size={14} />
@@ -449,6 +447,17 @@ export function GenreManager({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFu
           )}
         </div>
       </div>
+
+      <ConfirmDialog
+        open={confirmDeleteOpen}
+        title="Delete Genre"
+        message={`Delete genre "${validSelected}"?`}
+        confirmLabel={t("common.delete") ?? "Delete"}
+        cancelLabel={t("genre.cancel") ?? "Cancel"}
+        variant="danger"
+        onConfirm={() => void handleDelete()}
+        onCancel={() => setConfirmDeleteOpen(false)}
+      />
     </div>
   );
 }

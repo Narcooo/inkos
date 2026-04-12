@@ -57,6 +57,7 @@ interface Nav {
   toDashboard: () => void;
   toChapter: (bookId: string, num: number) => void;
   toAnalytics: (bookId: string) => void;
+  toTruth: (bookId: string) => void;
 }
 
 function translateChapterStatus(status: string, t: TFunction): string {
@@ -266,8 +267,12 @@ export function BookDetail({
   const handleApproveAll = async () => {
     if (!data) return;
     const reviewable = data.chapters.filter((ch) => ch.status === "ready-for-review");
-    for (const ch of reviewable) {
-      await postApi(`/books/${bookId}/chapters/${ch.number}/approve`);
+    const results = await Promise.allSettled(
+      reviewable.map((ch) => postApi(`/books/${bookId}/chapters/${ch.number}/approve`)),
+    );
+    const failed = results.filter((r) => r.status === "rejected").length;
+    if (failed > 0) {
+      alert(`${failed}/${reviewable.length} approve(s) failed`);
     }
     refetch();
   };
@@ -395,7 +400,7 @@ export function BookDetail({
             </button>
           )}
           <button
-            onClick={() => (nav as { toTruth?: (id: string) => void }).toTruth?.(bookId)}
+            onClick={() => nav.toTruth(bookId)}
             className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-secondary/50 text-muted-foreground rounded-lg hover:text-foreground hover:bg-secondary transition-all border border-border/50"
           >
             <Database size={14} />
@@ -534,14 +539,20 @@ export function BookDetail({
                       {ch.status === "ready-for-review" && (
                         <>
                           <button
-                            onClick={async () => { await postApi(`/books/${bookId}/chapters/${ch.number}/approve`); refetch(); }}
+                            onClick={async () => {
+                              try { await postApi(`/books/${bookId}/chapters/${ch.number}/approve`); refetch(); }
+                              catch (e) { alert(e instanceof Error ? e.message : "Approve failed"); }
+                            }}
                             className="p-2 rounded-lg bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500 hover:text-white transition-all shadow-sm"
                             title={t("book.approve")}
                           >
                             <Check size={14} />
                           </button>
                           <button
-                            onClick={async () => { await postApi(`/books/${bookId}/chapters/${ch.number}/reject`); refetch(); }}
+                            onClick={async () => {
+                              try { await postApi(`/books/${bookId}/chapters/${ch.number}/reject`); refetch(); }
+                              catch (e) { alert(e instanceof Error ? e.message : "Reject failed"); }
+                            }}
                             className="p-2 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive hover:text-white transition-all shadow-sm"
                             title={t("book.reject")}
                           >
@@ -551,9 +562,13 @@ export function BookDetail({
                       )}
                       <button
                         onClick={async () => {
-                          const auditResult = await fetchJson<{ passed?: boolean; issues?: unknown[] }>(`/books/${bookId}/audit/${ch.number}`, { method: "POST" });
-                          alert(auditResult.passed ? "Audit passed" : `Audit failed: ${auditResult.issues?.length ?? 0} issues`);
-                          refetch();
+                          try {
+                            const auditResult = await fetchJson<{ passed?: boolean; issues?: unknown[] }>(`/books/${bookId}/audit/${ch.number}`, { method: "POST" });
+                            alert(auditResult.passed ? "Audit passed" : `Audit failed: ${auditResult.issues?.length ?? 0} issues`);
+                            refetch();
+                          } catch (e) {
+                            alert(e instanceof Error ? e.message : "Audit failed");
+                          }
                         }}
                         className="p-2 rounded-lg bg-secondary text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all shadow-sm"
                         title={t("book.audit")}
