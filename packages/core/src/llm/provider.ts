@@ -70,7 +70,7 @@ export interface LLMMessage {
 }
 
 export interface LLMClient {
-  readonly provider: "openai" | "anthropic";
+  readonly provider: "openai" | "anthropic" | "minimax";
   readonly apiFormat: "chat" | "responses";
   readonly stream: boolean;
   readonly _openai?: OpenAI;
@@ -111,9 +111,17 @@ export interface ChatWithToolsResult {
 
 // === Factory ===
 
+/** MiniMax temperature must be in (0, 1]. Clamp to valid range. */
+function clampMiniMaxTemperature(temperature: number): number {
+  return Math.max(0.01, Math.min(temperature, 1.0));
+}
+
 export function createLLMClient(config: LLMConfig): LLMClient {
+  const isMiniMax = config.provider === "minimax";
   const defaults = {
-    temperature: config.temperature ?? 0.7,
+    temperature: isMiniMax
+      ? clampMiniMaxTemperature(config.temperature ?? 0.7)
+      : (config.temperature ?? 0.7),
     maxTokens: config.maxTokens ?? 8192,
     maxTokensCap: config.maxTokens ?? null, // only cap when user explicitly set maxTokens
     thinkingBudget: config.thinkingBudget ?? 0,
@@ -131,6 +139,16 @@ export function createLLMClient(config: LLMConfig): LLMClient {
       apiFormat,
       stream,
       _anthropic: new Anthropic({ apiKey: config.apiKey, baseURL }),
+      defaults,
+    };
+  }
+  if (config.provider === "minimax") {
+    const baseURL = config.baseUrl || "https://api.minimax.io/v1";
+    return {
+      provider: "minimax",
+      apiFormat,
+      stream,
+      _openai: new OpenAI({ apiKey: config.apiKey, baseURL }),
       defaults,
     };
   }
@@ -272,8 +290,9 @@ export async function chatCompletion(
 ): Promise<LLMResponse> {
   const perCallMax = options?.maxTokens ?? client.defaults.maxTokens;
   const cap = client.defaults.maxTokensCap;
+  const rawTemp = options?.temperature ?? client.defaults.temperature;
   const resolved = {
-    temperature: options?.temperature ?? client.defaults.temperature,
+    temperature: client.provider === "minimax" ? clampMiniMaxTemperature(rawTemp) : rawTemp,
     maxTokens: cap !== null ? Math.min(perCallMax, cap) : perCallMax,
     extra: client.defaults.extra,
   };
@@ -368,8 +387,9 @@ export async function chatWithTools(
   },
 ): Promise<ChatWithToolsResult> {
   try {
+    const rawTemp = options?.temperature ?? client.defaults.temperature;
     const resolved = {
-      temperature: options?.temperature ?? client.defaults.temperature,
+      temperature: client.provider === "minimax" ? clampMiniMaxTemperature(rawTemp) : rawTemp,
       maxTokens: options?.maxTokens ?? client.defaults.maxTokens,
     };
     // Tool-calling always uses streaming (only used by agent loop, not by writer/auditor)

@@ -51,18 +51,21 @@ Once installed, Claw can invoke InkOS atomic commands and control-surface operat
 ```bash
 inkos config set-global \
   --lang en \
-  --provider <openai|anthropic|custom> \
+  --provider <openai|anthropic|minimax|custom> \
   --base-url <API endpoint> \
   --api-key <your API key> \
   --model <model name>
 
-# provider: openai / anthropic / custom (use custom for OpenAI-compatible proxies)
+# provider: openai / anthropic / minimax / custom (use custom for OpenAI-compatible proxies)
 # base-url: your API provider URL
 # api-key: your API key
 # model: your model name
 ```
 
 `--lang en` sets English as the default writing language for all projects. Saved to `~/.inkos/.env`. New projects just work without extra config.
+
+> **MiniMax quick setup:** `inkos config set-global --lang en --provider minimax --base-url https://api.minimax.io/v1 --api-key <key> --model MiniMax-M2.7`
+> Supported models: `MiniMax-M2.7` (latest, 204K context), `MiniMax-M2.7-highspeed` (204K context). Temperature is auto-clamped to (0, 1].
 
 **Option 2: Per-project `.env`**
 
@@ -73,8 +76,8 @@ inkos init my-novel     # Initialize project
 
 ```bash
 # Required
-INKOS_LLM_PROVIDER=                               # openai / anthropic / custom (use custom for any OpenAI-compatible API)
-INKOS_LLM_BASE_URL=                               # API endpoint
+INKOS_LLM_PROVIDER=                               # openai / anthropic / minimax / custom (use custom for any OpenAI-compatible API)
+INKOS_LLM_BASE_URL=                               # API endpoint (supports MiniMax, proxies, etc.)
 INKOS_LLM_API_KEY=                                 # API Key
 INKOS_LLM_MODEL=                                   # Model name
 
