@@ -21,3 +21,4 @@ autoresearch/
 .playwright-cli/
 .superpowers/
 _*.md
+package-lock.json
