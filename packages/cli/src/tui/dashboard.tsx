@@ -18,7 +18,7 @@ import { formatTuiResult } from "./output.js";
 import { buildDashboardViewModel, type DashboardMessageRow } from "./dashboard-model.js";
 import { buildInputHistory, moveHistoryCursor } from "./input-history.js";
 import { formatModeLabel, getTuiCopy, normalizeStageLabel, type TuiLocale } from "./i18n.js";
-import { loadProjectSession, persistProjectSession, resolveSessionActiveBook } from "./session-store.js";
+import { persistProjectSession, resolveSessionActiveBook } from "./session-store.js";
 import { classifyLocalTuiCommand, parseDepthCommand } from "./local-commands.js";
 import {
   applySlashSuggestion,
@@ -391,8 +391,12 @@ export function InkTuiApp(props: InkTuiAppProps): React.JSX.Element {
       setSession(nextSession);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const failedSession = await loadProjectSession(props.projectRoot);
-      setSession(failedSession);
+      // Keep the current in-memory session instead of reloading from disk.
+      // Reloading discards unpersisted state (e.g. creationDraft progress).
+      setSession((current) => ({
+        ...current,
+        currentExecution: { ...current.currentExecution, status: "failed" as const, stageLabel: message },
+      }));
       setLastError(message);
     } finally {
       assistantDraftTimestampRef.current = null;
