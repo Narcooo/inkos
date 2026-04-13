@@ -504,7 +504,8 @@ export function createInteractionToolsFromDeps(
 
       const parsed = parseCreationDraftResult(response.content);
       if (!parsed) {
-        throw new Error("Book draft assistant returned invalid JSON.");
+        const preview = response.content?.slice(0, 200) ?? "(empty)";
+        throw new Error(`Book draft assistant returned invalid JSON. Response preview: ${preview}`);
       }
 
       return {

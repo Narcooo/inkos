@@ -155,6 +155,27 @@ export function canCreateFromDraft(draft?: BookCreationDraft): boolean {
   );
 }
 
+const MISSING_FIELD_ZH: Record<string, string> = {
+  title: "书名",
+  genre: "题材",
+  targetChapters: "目标章数",
+  chapterWordCount: "每章字数",
+  protagonist: "主角",
+  supportingCast: "配角",
+  conflictCore: "核心冲突",
+  worldPremise: "世界观",
+  volumeOutline: "卷纲方向",
+  blurb: "简介",
+  settingNotes: "设定备注",
+  authorIntent: "作者意图",
+  currentFocus: "当前焦点",
+};
+
+function localizeMissingField(field: string, lang: "zh" | "en"): string {
+  if (lang === "zh") return MISSING_FIELD_ZH[field] ?? field;
+  return field;
+}
+
 function stringify(val: unknown): string {
   if (typeof val === "string") return val;
   if (val === null || val === undefined) return "";
@@ -447,7 +468,7 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
                           key={field}
                           className="rounded-full border border-border/70 bg-secondary/50 px-3 py-1 text-xs text-muted-foreground"
                         >
-                          {field}
+                          {localizeMissingField(field, projectLang)}
                         </span>
                       ))}
                     </div>
