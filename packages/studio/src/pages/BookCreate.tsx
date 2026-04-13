@@ -155,28 +155,38 @@ export function canCreateFromDraft(draft?: BookCreationDraft): boolean {
   );
 }
 
+function stringify(val: unknown): string {
+  if (typeof val === "string") return val;
+  if (val === null || val === undefined) return "";
+  if (typeof val === "object") {
+    // LLM may return structured objects (e.g. {name, archetype, trait})
+    return Object.values(val as Record<string, unknown>).filter(Boolean).join("，");
+  }
+  return String(val);
+}
+
 export function buildCreationDraftSummary(
   draft: BookCreationDraft,
   language: "zh" | "en",
 ): ReadonlyArray<DraftSummaryRow> {
   const rows = language === "en"
     ? [
-        draft.title ? { key: "title", label: "Title", value: draft.title } : undefined,
-        draft.worldPremise ? { key: "worldPremise", label: "World", value: draft.worldPremise } : undefined,
-        draft.protagonist ? { key: "protagonist", label: "Protagonist", value: draft.protagonist } : undefined,
-        draft.conflictCore ? { key: "conflictCore", label: "Core Conflict", value: draft.conflictCore } : undefined,
-        draft.volumeOutline ? { key: "volumeOutline", label: "Volume Direction", value: draft.volumeOutline } : undefined,
-        draft.blurb ? { key: "blurb", label: "Blurb", value: draft.blurb } : undefined,
-        draft.nextQuestion ? { key: "nextQuestion", label: "Next", value: draft.nextQuestion } : undefined,
+        draft.title ? { key: "title", label: "Title", value: stringify(draft.title) } : undefined,
+        draft.worldPremise ? { key: "worldPremise", label: "World", value: stringify(draft.worldPremise) } : undefined,
+        draft.protagonist ? { key: "protagonist", label: "Protagonist", value: stringify(draft.protagonist) } : undefined,
+        draft.conflictCore ? { key: "conflictCore", label: "Core Conflict", value: stringify(draft.conflictCore) } : undefined,
+        draft.volumeOutline ? { key: "volumeOutline", label: "Volume Direction", value: stringify(draft.volumeOutline) } : undefined,
+        draft.blurb ? { key: "blurb", label: "Blurb", value: stringify(draft.blurb) } : undefined,
+        draft.nextQuestion ? { key: "nextQuestion", label: "Next", value: stringify(draft.nextQuestion) } : undefined,
       ]
     : [
-        draft.title ? { key: "title", label: "书名", value: draft.title } : undefined,
-        draft.worldPremise ? { key: "worldPremise", label: "世界观", value: draft.worldPremise } : undefined,
-        draft.protagonist ? { key: "protagonist", label: "主角", value: draft.protagonist } : undefined,
-        draft.conflictCore ? { key: "conflictCore", label: "核心冲突", value: draft.conflictCore } : undefined,
-        draft.volumeOutline ? { key: "volumeOutline", label: "卷纲方向", value: draft.volumeOutline } : undefined,
-        draft.blurb ? { key: "blurb", label: "简介", value: draft.blurb } : undefined,
-        draft.nextQuestion ? { key: "nextQuestion", label: "下一步", value: draft.nextQuestion } : undefined,
+        draft.title ? { key: "title", label: "书名", value: stringify(draft.title) } : undefined,
+        draft.worldPremise ? { key: "worldPremise", label: "世界观", value: stringify(draft.worldPremise) } : undefined,
+        draft.protagonist ? { key: "protagonist", label: "主角", value: stringify(draft.protagonist) } : undefined,
+        draft.conflictCore ? { key: "conflictCore", label: "核心冲突", value: stringify(draft.conflictCore) } : undefined,
+        draft.volumeOutline ? { key: "volumeOutline", label: "卷纲方向", value: stringify(draft.volumeOutline) } : undefined,
+        draft.blurb ? { key: "blurb", label: "简介", value: stringify(draft.blurb) } : undefined,
+        draft.nextQuestion ? { key: "nextQuestion", label: "下一步", value: stringify(draft.nextQuestion) } : undefined,
       ];
 
   return rows.filter((row): row is DraftSummaryRow => Boolean(row));
