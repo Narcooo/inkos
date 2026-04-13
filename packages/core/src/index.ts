@@ -140,6 +140,11 @@ export {
   type InteractionRuntimeTools,
   type InteractionRuntimeResult,
 } from "./interaction/runtime.js";
+export {
+  parseDraftDirectives,
+  createDirectiveStreamFilter,
+  type ParsedDraftResponse,
+} from "./interaction/draft-directive-parser.js";
 
 // LLM
 export { createLLMClient, chatCompletion, chatWithTools, createStreamMonitor, PartialResponseError, type LLMClient, type LLMResponse, type LLMMessage, type ToolDefinition, type ToolCall, type AgentMessage, type ChatWithToolsResult, type StreamProgress, type OnStreamProgress } from "./llm/provider.js";
