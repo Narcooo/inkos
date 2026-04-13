@@ -19,15 +19,25 @@ interface Nav {
   toBook: (id: string) => void;
 }
 
+interface ToolCall {
+  readonly name: string;
+  readonly arguments: Record<string, unknown>;
+}
+
 interface Message {
   readonly role: "user" | "assistant";
   readonly content: string;
   readonly timestamp: number;
+  readonly toolCall?: ToolCall;
 }
 
 interface AgentResponse {
   readonly response?: string;
   readonly error?: string | { code?: string; message?: string };
+  readonly details?: {
+    readonly draftRaw?: string;
+    readonly toolCall?: { readonly name: string; readonly arguments: Record<string, unknown> };
+  };
   readonly session?: {
     readonly activeBookId?: string;
     readonly creationDraft?: unknown;
@@ -77,10 +87,12 @@ function extractErrorMessage(error: string | { code?: string; message?: string }
 
 // ── Component ──
 
-export function ChatPage({ activeBookId, nav: _nav, theme, t, sse: _sse }: ChatPageProps) {
+export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPageProps) {
   const [messages, setMessages] = useState<ReadonlyArray<Message>>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [pendingBookArgs, setPendingBookArgs] = useState<Record<string, unknown> | null>(null);
+  const [bookCreating, setBookCreating] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -135,12 +147,38 @@ export function ChatPage({ activeBookId, nav: _nav, theme, t, sse: _sse }: ChatP
     const trimmed = text.trim();
     if (!trimmed || loading) return;
 
-    // In no-book mode, prefix with /new
     const instruction = hasBook ? trimmed : `/new ${trimmed}`;
 
     setInput("");
-    setMessages((prev) => [...prev, { role: "user", content: trimmed, timestamp: Date.now() }]);
+    const ts = Date.now();
+    setMessages((prev) => [...prev, { role: "user", content: trimmed, timestamp: ts }]);
     setLoading(true);
+
+    // Open a dedicated EventSource for streaming (bypasses shared 99-msg buffer)
+    const streamEs = new EventSource("/api/events");
+    const streamTs = ts + 1;
+    let streamStarted = false;
+
+    streamEs.addEventListener("draft:delta", (e: MessageEvent) => {
+      try {
+        const d = e.data ? JSON.parse(e.data) : null;
+        if (!d?.text) return;
+        if (!streamStarted) {
+          // First chunk: add a streaming assistant message
+          streamStarted = true;
+          setMessages((prev) => [...prev, { role: "assistant", content: d.text, timestamp: streamTs }]);
+        } else {
+          // Append to the streaming message
+          setMessages((prev) => {
+            const last = prev[prev.length - 1];
+            if (last?.timestamp === streamTs && last.role === "assistant") {
+              return [...prev.slice(0, -1), { ...last, content: last.content + d.text }];
+            }
+            return prev;
+          });
+        }
+      } catch { /* ignore */ }
+    });
 
     try {
       const data = await fetchJson<AgentResponse>("/agent", {
@@ -149,26 +187,51 @@ export function ChatPage({ activeBookId, nav: _nav, theme, t, sse: _sse }: ChatP
         body: JSON.stringify({ instruction, activeBookId }),
       });
 
+      streamEs.close();
+
+      // Replace streaming message with final content (draftRaw has ::: directives)
+      const finalContent = data.details?.draftRaw || data.response || "Acknowledged.";
+      const toolCall = data.details?.toolCall ?? undefined;
+
       if (data.error) {
-        setMessages((prev) => [...prev, {
-          role: "assistant",
-          content: `\u2717 ${extractErrorMessage(data.error!)}`,
-          timestamp: Date.now(),
-        }]);
+        setMessages((prev) => {
+          const filtered = streamStarted ? prev.filter((m) => m.timestamp !== streamTs) : prev;
+          return [...filtered, {
+            role: "assistant" as const,
+            content: `\u2717 ${extractErrorMessage(data.error!)}`,
+            timestamp: Date.now(),
+          }];
+        });
       } else {
-        const content = data.response ?? "Acknowledged.";
-        setMessages((prev) => [...prev, {
-          role: "assistant",
-          content,
-          timestamp: Date.now(),
-        }]);
+        setMessages((prev) => {
+          const msg: Message = {
+            role: "assistant" as const,
+            content: finalContent,
+            timestamp: Date.now(),
+            toolCall,
+          };
+          if (streamStarted) {
+            // Replace the streaming message
+            return prev.map((m) => m.timestamp === streamTs ? { ...m, content: finalContent, toolCall } : m);
+          }
+          return [...prev, msg];
+        });
+
+        // Initialize editable form state for create_book tool calls
+        if (toolCall?.name === "create_book") {
+          setPendingBookArgs({ ...toolCall.arguments });
+        }
       }
     } catch (e) {
-      setMessages((prev) => [...prev, {
-        role: "assistant",
-        content: `\u2717 ${e instanceof Error ? e.message : String(e)}`,
-        timestamp: Date.now(),
-      }]);
+      streamEs.close();
+      setMessages((prev) => {
+        const filtered = streamStarted ? prev.filter((m) => m.timestamp !== streamTs) : prev;
+        return [...filtered, {
+          role: "assistant" as const,
+          content: `\u2717 ${e instanceof Error ? e.message : String(e)}`,
+          timestamp: Date.now(),
+        }];
+      });
     } finally {
       setLoading(false);
     }
@@ -180,6 +243,31 @@ export function ChatPage({ activeBookId, nav: _nav, theme, t, sse: _sse }: ChatP
 
   const handleQuickAction = (command: string) => {
     void sendMessage(command);
+  };
+
+  const handleCreateBook = async () => {
+    if (!pendingBookArgs) return;
+    setBookCreating(true);
+    try {
+      const data = await fetchJson<AgentResponse>("/agent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ instruction: "/create", activeBookId }),
+      });
+      const newBookId = data.session?.activeBookId;
+      if (newBookId) nav.toBook(newBookId);
+    } catch (e) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant" as const,
+          content: `\u2717 ${e instanceof Error ? e.message : String(e)}`,
+          timestamp: Date.now(),
+        },
+      ]);
+    } finally {
+      setBookCreating(false);
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -218,6 +306,16 @@ export function ChatPage({ activeBookId, nav: _nav, theme, t, sse: _sse }: ChatP
                 content={msg.content}
                 timestamp={msg.timestamp}
                 theme={theme}
+                toolCall={msg.toolCall?.name === "create_book" && pendingBookArgs
+                  ? { name: msg.toolCall.name, arguments: pendingBookArgs }
+                  : msg.toolCall}
+                onArgsChange={msg.toolCall?.name === "create_book"
+                  ? (args) => setPendingBookArgs(args)
+                  : undefined}
+                onConfirm={msg.toolCall?.name === "create_book"
+                  ? () => void handleCreateBook()
+                  : undefined}
+                confirming={msg.toolCall?.name === "create_book" ? bookCreating : undefined}
               />
             ))}
 

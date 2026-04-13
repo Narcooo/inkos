@@ -600,7 +600,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       const response = result.responseText ?? "Acknowledged.";
 
       broadcast("agent:complete", { instruction, activeBookId, response });
-      return c.json({ response, session: result.session, request: result.request });
+      return c.json({ response, details: result.details, session: result.session, request: result.request });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       broadcast("agent:error", { instruction, activeBookId, error: msg });
