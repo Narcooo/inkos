@@ -265,7 +265,11 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
   const refreshDraft = async (): Promise<BookCreationDraft | undefined> => {
     const data = await fetchJson<InteractionSessionResponse>("/interaction/session");
     const nextDraft = data.session?.creationDraft;
-    setDraft(nextDraft);
+    // Only update if the server has a draft; don't clear local state
+    // when the server session hasn't been persisted yet.
+    if (nextDraft) {
+      setDraft(nextDraft);
+    }
     return nextDraft;
   };
 
@@ -322,7 +326,9 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
       const data = await runAgentInstruction(instruction);
       setInput("");
       setStatus(data.response ?? null);
-      setDraft(data.session?.creationDraft);
+      if (data.session?.creationDraft) {
+        setDraft(data.session.creationDraft);
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
