@@ -45,55 +45,50 @@ function normalizePlatform(platform?: string): Platform {
   }
 }
 
-function extractBalancedJsonObject(text: string): string | null {
-  const start = text.indexOf("{");
-  if (start < 0) {
-    return null;
-  }
+export function extractBalancedJsonObject(text: string): string | null {
+  // Strip markdown code blocks and <think> tags before searching
+  text = text.replace(/```(?:json)?\s*\n?/g, "").replace(/<\/?think>/g, "");
 
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
+  // Try each '{' as a potential JSON start. Thinking models may emit
+  // reasoning text with curly braces before the actual JSON object.
+  let searchFrom = 0;
+  while (searchFrom < text.length) {
+    const start = text.indexOf("{", searchFrom);
+    if (start < 0) return null;
 
-  for (let index = start; index < text.length; index += 1) {
-    const char = text[index]!;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    let end = -1;
 
-    if (inString) {
-      if (escaped) {
-        escaped = false;
+    for (let i = start; i < text.length; i++) {
+      const ch = text[i]!;
+      if (inString) {
+        if (escaped) { escaped = false; continue; }
+        if (ch === "\\") { escaped = true; continue; }
+        if (ch === "\"") { inString = false; }
         continue;
       }
-      if (char === "\\") {
-        escaped = true;
-        continue;
+      if (ch === "\"") { inString = true; continue; }
+      if (ch === "{") { depth++; continue; }
+      if (ch === "}") {
+        depth--;
+        if (depth === 0) { end = i; break; }
+        if (depth < 0) break;
       }
-      if (char === "\"") {
-        inString = false;
-      }
-      continue;
     }
 
-    if (char === "\"") {
-      inString = true;
-      continue;
-    }
-
-    if (char === "{") {
-      depth += 1;
-      continue;
-    }
-
-    if (char === "}") {
-      depth -= 1;
-      if (depth === 0) {
-        return text.slice(start, index + 1);
-      }
-      if (depth < 0) {
-        return null;
+    if (end > start) {
+      const candidate = text.slice(start, end + 1);
+      try {
+        JSON.parse(candidate);
+        return candidate;
+      } catch {
+        // Not valid JSON — try next '{'
       }
     }
+    searchFrom = start + 1;
   }
-
   return null;
 }
 
