@@ -1,5 +1,5 @@
 export const SLASH_COMMANDS = [
-  "/new <idea>",
+  "/new 输入你的想法",
   "/draft",
   "/create",
   "/discard",

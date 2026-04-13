@@ -36,6 +36,7 @@ export interface TuiCopy {
     readonly status: (stage: string, mode: string) => string;
     readonly config: string;
     readonly depthSet: (depthLabel: string) => string;
+    readonly newBookGuide: string;
     readonly noLlmConfig: string;
     readonly setupProvider: string;
     readonly toolInitFailed: (message: string) => string;
@@ -93,16 +94,17 @@ const ZH_CN: TuiCopy = {
   composer: {
     placeholder: "告诉 InkOS 要写什么、修改什么，或解释什么…",
     emptyConversation: "先告诉 InkOS 你要做什么。",
-    helper: "回车发送 • /new • /draft • /create • /write • /books • /open • /mode • /depth • /help",
+    helper: "回车发送 • /new 输入你的想法，自动构建新书 • /draft • /create • /write • /books • /open • /mode • /depth • /help",
     submitting: "处理中…",
     failed: "上次请求失败",
     ready: "就绪",
   },
   notes: {
-    help: "可用命令：/new、/draft、/create、/discard、/write、/books、/open、/mode、/rewrite、/focus、/truth、/rename、/replace、/export、/status、/clear、/depth、/quit。也支持直接输入自然语言。",
+    help: "可用命令：/new（输入想法，自动构建新书）、/draft、/create、/discard、/write、/books、/open、/mode、/rewrite、/focus、/truth、/rename、/replace、/export、/status、/clear、/depth、/quit。也支持直接输入自然语言。",
     status: (stage, mode) => `当前状态：${stage}（${mode}）。`,
     config: "当前 Ink 仪表盘里还不支持交互式 /config。请使用 inkos config set-global。",
     depthSet: (depthLabel) => `思考深度已切换为 ${depthLabel}。`,
+    newBookGuide: "开始构思新书。直接描述你的想法——题材、世界观、主角、核心冲突都可以。AI 会逐步引导你完善草案，随时用 /draft 查看进度，/create 建书。",
     noLlmConfig: "未发现 LLM 配置。",
     setupProvider: "先配置 API 提供方。",
     toolInitFailed: (message) => `初始化 TUI 工具失败：${message}`,
@@ -181,16 +183,17 @@ const EN: TuiCopy = {
   composer: {
     placeholder: "Ask InkOS to write, revise, or explain…",
     emptyConversation: "Start by asking InkOS what to do.",
-    helper: "Enter to send • /new • /draft • /create • /write • /books • /open • /mode • /depth • /help",
+    helper: "Enter to send • /new describe your idea to start a book • /draft • /create • /write • /books • /open • /mode • /depth • /help",
     submitting: "Submitting…",
     failed: "Last request failed",
     ready: "Ready",
   },
   notes: {
-    help: "Commands: /new, /draft, /create, /discard, /write, /books, /open, /mode, /rewrite, /focus, /truth, /rename, /replace, /export, /status, /clear, /depth, /quit. Natural language still works.",
+    help: "Commands: /new (describe your idea to start a book), /draft, /create, /discard, /write, /books, /open, /mode, /rewrite, /focus, /truth, /rename, /replace, /export, /status, /clear, /depth, /quit. Natural language still works.",
     status: (stage, mode) => `Status: ${stage} (${mode}).`,
     config: "Interactive /config is not available inside the Ink dashboard yet. Use inkos config set-global.",
     depthSet: (depthLabel) => `Thinking depth set to ${depthLabel}.`,
+    newBookGuide: "Starting a new book. Describe your idea — genre, world, protagonist, core conflict, anything. The AI will guide you step by step. Use /draft to check progress, /create to finalize.",
     noLlmConfig: "No LLM configuration found.",
     setupProvider: "Let's set up your API provider first.",
     toolInitFailed: (message) => `Failed to initialize TUI tools: ${message}`,

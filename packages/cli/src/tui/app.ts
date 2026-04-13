@@ -140,6 +140,9 @@ export async function launchTui(
       onChatTextDelta: (text) => {
         chatStreamBridge.onTextDelta?.(text);
       },
+      onDraftTextDelta: (text) => {
+        chatStreamBridge.onTextDelta?.(text);
+      },
     }));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
