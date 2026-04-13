@@ -2,7 +2,7 @@ import type { AutomationMode } from "./modes.js";
 import { routeInteractionRequest } from "./request-router.js";
 import type { InteractionRequest } from "./intents.js";
 import type { ExecutionState, InteractionEvent } from "./events.js";
-import type { PendingDecision, InteractionSession } from "./session.js";
+import type { PendingDecision, InteractionSession, DraftRound } from "./session.js";
 import {
   appendInteractionEvent,
   bindActiveBook,
@@ -380,7 +380,20 @@ async function handleDraftLifecycleRequest(params: {
           en: "Book-draft tool did not return draft data.",
         }));
       }
-      const nextSession = appendToolEvents(updateCreationDraft(session, draft), metadata.events);
+      const newRound: DraftRound = {
+        roundId: (session.draftRounds?.length ?? 0) + 1,
+        userMessage: request.instruction ?? "",
+        assistantRaw: metadata.details?.draftRaw as string ?? "",
+        fieldsUpdated: (metadata.details?.fieldsUpdated as string[]) ?? [],
+        summary: metadata.details?.draftSummary as string ?? "",
+        timestamp: Date.now(),
+      };
+      const withDraft = updateCreationDraft(session, draft);
+      const withRounds = {
+        ...withDraft,
+        draftRounds: [...(withDraft.draftRounds ?? []), newRound],
+      };
+      const nextSession = appendToolEvents(withRounds, metadata.events);
       const completed = {
         ...markCompleted(nextSession),
         currentExecution: metadata.currentExecution ?? markCompleted(nextSession).currentExecution,
