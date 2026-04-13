@@ -90,10 +90,12 @@ export {
 } from "./interaction/events.js";
 export {
   BookCreationDraftSchema,
+  DraftRoundSchema,
   PendingDecisionSchema,
   InteractionMessageSchema,
   InteractionSessionSchema,
   type BookCreationDraft,
+  type DraftRound,
   type PendingDecision,
   type InteractionMessage,
   type InteractionSession,

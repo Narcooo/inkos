@@ -44,12 +44,24 @@ export const BookCreationDraftSchema = z.object({
 
 export type BookCreationDraft = z.infer<typeof BookCreationDraftSchema>;
 
+export const DraftRoundSchema = z.object({
+  roundId: z.number().int().min(1),
+  userMessage: z.string(),
+  assistantRaw: z.string(),
+  fieldsUpdated: z.array(z.string()).default([]),
+  summary: z.string().default(""),
+  timestamp: z.number().int().nonnegative(),
+});
+
+export type DraftRound = z.infer<typeof DraftRoundSchema>;
+
 export const InteractionSessionSchema = z.object({
   sessionId: z.string().min(1),
   projectRoot: z.string().min(1),
   activeBookId: z.string().min(1).optional(),
   activeChapterNumber: z.number().int().min(1).optional(),
   creationDraft: BookCreationDraftSchema.optional(),
+  draftRounds: z.array(DraftRoundSchema).default([]),
   automationMode: AutomationModeSchema.default("semi"),
   messages: z.array(InteractionMessageSchema).default([]),
   events: z.array(InteractionEventSchema).default([]),
@@ -100,6 +112,7 @@ export function clearCreationDraft(session: InteractionSession): InteractionSess
   return {
     ...session,
     creationDraft: undefined,
+    draftRounds: [],
   };
 }
 
