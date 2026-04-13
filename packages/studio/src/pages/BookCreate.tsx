@@ -179,9 +179,10 @@ const MISSING_FIELD_ZH: Record<string, string> = {
 };
 
 function localizeMissingField(field: string, lang: "zh" | "en"): string {
+  // If field already contains CJK characters, it's already localized by the LLM
+  if (/[\u4e00-\u9fff]/.test(field)) return field;
   if (lang === "zh") {
     return MISSING_FIELD_ZH[field]
-      // Fallback: camelCase → spaced words
       ?? field.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
   }
   return field;
