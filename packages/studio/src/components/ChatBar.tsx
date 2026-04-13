@@ -234,6 +234,7 @@ export function ChatPanel({ open, onClose, t, sse, activeBookId }: {
   const [sessionMeta, setSessionMeta] = useState<SharedSessionMeta>({});
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   // Auto-scroll on new messages
   useEffect(() => {
@@ -482,7 +483,12 @@ export function ChatPanel({ open, onClose, t, sse, activeBookId }: {
             </div>
             <div className="flex items-center gap-1">
               <button
-                onClick={() => setMessages([])}
+                onClick={() => {
+                  abortRef.current?.abort();
+                  abortRef.current = null;
+                  setMessages([]);
+                  setLoading(false);
+                }}
                 className="p-1.5 rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors group"
                 title="Clear conversation"
               >
