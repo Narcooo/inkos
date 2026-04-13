@@ -2,10 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createInteractionToolsFromDeps } from "../interaction/project-tools.js";
 
 const mockChatCompletion = vi.hoisted(() => vi.fn());
+const mockChatWithTools = vi.hoisted(() => vi.fn());
 
 vi.mock("../index.js", async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
-  return { ...actual, chatCompletion: mockChatCompletion };
+  return { ...actual, chatCompletion: mockChatCompletion, chatWithTools: mockChatWithTools };
 });
 
 const fakePipeline = {
@@ -26,7 +27,7 @@ const fakeState = {
   listBooks: vi.fn(async () => []),
 };
 
-const MOCK_RESPONSE = {
+const MOCK_CHAT_RESPONSE = {
   content: [
     "好的，你想写都市异能，请问主角是什么类型的能力？",
     "",
@@ -35,6 +36,17 @@ const MOCK_RESPONSE = {
     ":::",
   ].join("\n"),
   tokensUsed: { prompt: 5, completion: 80, total: 85 },
+};
+
+const MOCK_TOOL_RESPONSE = {
+  content: "好的，已根据你的描述生成建书参数。",
+  toolCalls: [
+    {
+      id: "call_1",
+      name: "create_book",
+      arguments: JSON.stringify({ title: "都市异能", genre: "urban", platform: "tomato", brief: "都市异能题材" }),
+    },
+  ],
 };
 
 describe("chat tool – maxTokens forwarding", () => {
@@ -95,13 +107,13 @@ describe("chat tool – maxTokens forwarding", () => {
   });
 });
 
-describe("developBookDraft – maxTokens not capped", () => {
+describe("developBookDraft – uses chatWithTools", () => {
   beforeEach(() => {
-    mockChatCompletion.mockResolvedValue(MOCK_RESPONSE);
-    mockChatCompletion.mockClear();
+    mockChatWithTools.mockResolvedValue(MOCK_TOOL_RESPONSE);
+    mockChatWithTools.mockClear();
   });
 
-  it("does not pass maxTokens to chatCompletion so thinking models are not truncated", async () => {
+  it("calls chatWithTools with create_book tool and does not pass maxTokens", async () => {
     const tools = createInteractionToolsFromDeps(
       fakePipeline as never,
       fakeState as never,
@@ -109,8 +121,50 @@ describe("developBookDraft – maxTokens not capped", () => {
 
     await tools.developBookDraft?.("我想写都市异能", undefined);
 
-    expect(mockChatCompletion).toHaveBeenCalledOnce();
-    const options = mockChatCompletion.mock.calls[0]?.[3] as Record<string, unknown> | undefined;
+    expect(mockChatWithTools).toHaveBeenCalledOnce();
+    const options = mockChatWithTools.mock.calls[0]?.[4] as Record<string, unknown> | undefined;
     expect(options).not.toHaveProperty("maxTokens");
+  });
+
+  it("extracts tool call arguments into the creation draft", async () => {
+    const tools = createInteractionToolsFromDeps(
+      fakePipeline as never,
+      fakeState as never,
+    );
+
+    const result = await tools.developBookDraft?.("我想写都市异能", undefined) as Record<string, unknown>;
+    const interaction = (result as { __interaction: Record<string, unknown> }).__interaction;
+    const details = interaction.details as Record<string, unknown>;
+
+    expect(details.creationDraft).toEqual(expect.objectContaining({
+      title: "都市异能",
+      genre: "urban",
+      platform: "tomato",
+      blurb: "都市异能题材",
+      readyToCreate: true,
+    }));
+    expect(details.toolCall).toEqual({
+      name: "create_book",
+      arguments: { title: "都市异能", genre: "urban", platform: "tomato", brief: "都市异能题材" },
+    });
+  });
+
+  it("returns fallback when no LLM is configured", async () => {
+    const noLlmPipeline = {
+      config: {},
+      writeNextChapter: vi.fn(),
+      reviseDraft: vi.fn(),
+    };
+
+    const tools = createInteractionToolsFromDeps(
+      noLlmPipeline as never,
+      fakeState as never,
+    );
+
+    const result = await tools.developBookDraft?.("我想写都市异能", undefined) as Record<string, unknown>;
+    const interaction = (result as { __interaction: Record<string, unknown> }).__interaction;
+
+    expect(mockChatWithTools).not.toHaveBeenCalled();
+    expect(interaction.responseText).toContain("请先配置 LLM 模型");
   });
 });
