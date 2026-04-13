@@ -3,7 +3,7 @@ import {
   coerceSharedSessionMessages,
   formatSharedSessionContext,
   resolveDirectWriteTarget,
-} from "./ChatBar";
+} from "./chat-utils";
 
 describe("resolveDirectWriteTarget", () => {
   it("prefers the active book when the user is already inside a book flow", () => {

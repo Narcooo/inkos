@@ -1,9 +1,7 @@
 import { useState, useEffect } from "react";
 import { Sidebar } from "./components/Sidebar";
-import { ChatPanel } from "./components/ChatBar";
 import { Dashboard } from "./pages/Dashboard";
-import { BookDetail } from "./pages/BookDetail";
-import { BookCreate } from "./pages/BookCreate";
+import { ChatPage } from "./pages/ChatPage";
 import { ChapterReader } from "./pages/ChapterReader";
 import { Analytics } from "./pages/Analytics";
 import { ConfigView } from "./pages/ConfigView";
@@ -16,12 +14,13 @@ import { ImportManager } from "./pages/ImportManager";
 import { RadarView } from "./pages/RadarView";
 import { DoctorView } from "./pages/DoctorView";
 import { LanguageSelector } from "./pages/LanguageSelector";
+import { FloatingPanels } from "./components/chat/FloatingPanels";
+import { BookInfoPanel } from "./components/chat/BookInfoPanel";
 import { useSSE } from "./hooks/use-sse";
 import { useTheme } from "./hooks/use-theme";
 import { useI18n } from "./hooks/use-i18n";
 import { postApi, useApi } from "./hooks/use-api";
-import { Sun, Moon, MessageSquare } from "lucide-react";
-import { DEFAULT_CHAT_OPEN } from "./app-state";
+import { Sun, Moon } from "lucide-react";
 
 export type Route =
   | { page: "dashboard" }
@@ -53,7 +52,6 @@ export function App() {
   const { data: project, refetch: refetchProject } = useApi<{ language: string; languageExplicit: boolean }>("/project");
   const [showLanguageSelector, setShowLanguageSelector] = useState(false);
   const [ready, setReady] = useState(false);
-  const [chatOpen, setChatOpen] = useState(DEFAULT_CHAT_OPEN);
 
   const isDark = theme === "dark";
 
@@ -138,51 +136,89 @@ export function App() {
             >
               {isDark ? <Sun size={16} /> : <Moon size={16} />}
             </button>
-
-            {/* Chat Panel Toggle */}
-            <button
-              onClick={() => setChatOpen((prev) => !prev)}
-              className={`w-8 h-8 flex items-center justify-center rounded-lg transition-all shadow-sm ${
-                chatOpen
-                  ? "bg-primary text-primary-foreground shadow-primary/20"
-                  : "bg-secondary text-muted-foreground hover:text-primary hover:bg-primary/10"
-              }`}
-              title="Toggle AI Assistant"
-            >
-              <MessageSquare size={16} />
-            </button>
           </div>
         </header>
 
         {/* Main Content Area */}
         <main className="flex-1 overflow-y-auto scroll-smooth">
-          <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
-            {route.page === "dashboard" && <Dashboard nav={nav} sse={sse} theme={theme} t={t} />}
-            {route.page === "book" && <BookDetail bookId={route.bookId} nav={nav} theme={theme} t={t} sse={sse} />}
-            {route.page === "book-create" && <BookCreate nav={nav} theme={theme} t={t} />}
-            {route.page === "chapter" && <ChapterReader bookId={route.bookId} chapterNumber={route.chapterNumber} nav={nav} theme={theme} t={t} />}
-            {route.page === "analytics" && <Analytics bookId={route.bookId} nav={nav} theme={theme} t={t} />}
-            {route.page === "config" && <ConfigView nav={nav} theme={theme} t={t} />}
-            {route.page === "truth" && <TruthFiles bookId={route.bookId} nav={nav} theme={theme} t={t} />}
-            {route.page === "daemon" && <DaemonControl nav={nav} theme={theme} t={t} sse={sse} />}
-            {route.page === "logs" && <LogViewer nav={nav} theme={theme} t={t} />}
-            {route.page === "genres" && <GenreManager nav={nav} theme={theme} t={t} />}
-            {route.page === "style" && <StyleManager nav={nav} theme={theme} t={t} />}
-            {route.page === "import" && <ImportManager nav={nav} theme={theme} t={t} />}
-            {route.page === "radar" && <RadarView nav={nav} theme={theme} t={t} />}
-            {route.page === "doctor" && <DoctorView nav={nav} theme={theme} t={t} />}
-          </div>
+          {route.page === "dashboard" && (
+            <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
+              <Dashboard nav={nav} sse={sse} theme={theme} t={t} />
+            </div>
+          )}
+          {(route.page === "book" || route.page === "book-create") && (
+            <>
+              <ChatPage
+                activeBookId={route.page === "book" ? route.bookId : undefined}
+                nav={nav}
+                theme={theme}
+                t={t}
+                sse={sse}
+              />
+              {route.page === "book" && (
+                <FloatingPanels>
+                  <BookInfoPanel bookId={route.bookId} theme={theme} t={t} />
+                </FloatingPanels>
+              )}
+            </>
+          )}
+          {route.page === "chapter" && (
+            <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
+              <ChapterReader bookId={route.bookId} chapterNumber={route.chapterNumber} nav={nav} theme={theme} t={t} />
+            </div>
+          )}
+          {route.page === "analytics" && (
+            <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
+              <Analytics bookId={route.bookId} nav={nav} theme={theme} t={t} />
+            </div>
+          )}
+          {route.page === "config" && (
+            <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
+              <ConfigView nav={nav} theme={theme} t={t} />
+            </div>
+          )}
+          {route.page === "truth" && (
+            <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
+              <TruthFiles bookId={route.bookId} nav={nav} theme={theme} t={t} />
+            </div>
+          )}
+          {route.page === "daemon" && (
+            <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
+              <DaemonControl nav={nav} theme={theme} t={t} sse={sse} />
+            </div>
+          )}
+          {route.page === "logs" && (
+            <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
+              <LogViewer nav={nav} theme={theme} t={t} />
+            </div>
+          )}
+          {route.page === "genres" && (
+            <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
+              <GenreManager nav={nav} theme={theme} t={t} />
+            </div>
+          )}
+          {route.page === "style" && (
+            <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
+              <StyleManager nav={nav} theme={theme} t={t} />
+            </div>
+          )}
+          {route.page === "import" && (
+            <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
+              <ImportManager nav={nav} theme={theme} t={t} />
+            </div>
+          )}
+          {route.page === "radar" && (
+            <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
+              <RadarView nav={nav} theme={theme} t={t} />
+            </div>
+          )}
+          {route.page === "doctor" && (
+            <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
+              <DoctorView nav={nav} theme={theme} t={t} />
+            </div>
+          )}
         </main>
       </div>
-
-      {/* Right Chat Panel */}
-      <ChatPanel
-        open={chatOpen}
-        onClose={() => setChatOpen(false)}
-        t={t}
-        sse={sse}
-        activeBookId={activeBookId}
-      />
     </div>
   );
 }
