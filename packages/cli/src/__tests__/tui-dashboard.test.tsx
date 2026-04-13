@@ -36,6 +36,7 @@ function createSession(): InteractionSession {
         detail: "Preparing chapter 12.",
       },
     ],
+    draftRounds: [],
   };
 }
 

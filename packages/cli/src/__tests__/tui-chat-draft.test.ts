@@ -13,6 +13,7 @@ function createSession(): InteractionSession {
     automationMode: "semi",
     messages: [],
     events: [],
+    draftRounds: [],
   };
 }
 
