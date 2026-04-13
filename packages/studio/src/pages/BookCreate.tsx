@@ -158,21 +158,32 @@ export function canCreateFromDraft(draft?: BookCreationDraft): boolean {
 const MISSING_FIELD_ZH: Record<string, string> = {
   title: "书名",
   genre: "题材",
+  platform: "平台",
+  language: "语言",
   targetChapters: "目标章数",
   chapterWordCount: "每章字数",
   protagonist: "主角",
+  protagonistDetails: "主角详情",
   supportingCast: "配角",
+  antagonist: "反派",
   conflictCore: "核心冲突",
+  specificCrime: "具体案件",
   worldPremise: "世界观",
   volumeOutline: "卷纲方向",
   blurb: "简介",
   settingNotes: "设定备注",
   authorIntent: "作者意图",
   currentFocus: "当前焦点",
+  platformDecision: "平台选择",
+  constraints: "约束条件",
 };
 
 function localizeMissingField(field: string, lang: "zh" | "en"): string {
-  if (lang === "zh") return MISSING_FIELD_ZH[field] ?? field;
+  if (lang === "zh") {
+    return MISSING_FIELD_ZH[field]
+      // Fallback: camelCase → spaced words
+      ?? field.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
+  }
   return field;
 }
 
