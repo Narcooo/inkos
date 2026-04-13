@@ -586,7 +586,11 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
     try {
       const pipeline = new PipelineRunner(await buildPipelineConfig());
-      const tools = createInteractionToolsFromDeps(pipeline, state);
+      const tools = createInteractionToolsFromDeps(pipeline, state, {
+        onDraftTextDelta: (text) => {
+          broadcast("draft:delta", { text });
+        },
+      });
       const result = await processProjectInteractionInput({
         projectRoot: root,
         input: instruction,

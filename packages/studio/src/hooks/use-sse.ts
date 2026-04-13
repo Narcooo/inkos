@@ -45,6 +45,7 @@ export const STUDIO_SSE_EVENTS = [
   "fanfic:refresh:start",
   "fanfic:refresh:complete",
   "fanfic:refresh:error",
+  "draft:delta",
   "radar:start",
   "radar:complete",
   "radar:error",

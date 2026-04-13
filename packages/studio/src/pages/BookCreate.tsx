@@ -1,20 +1,22 @@
-import { useEffect, useMemo, useState } from "react";
-import type { BookCreationDraft } from "@actalk/inkos-core";
-import { fetchJson, useApi } from "../hooks/use-api";
+import { useEffect, useRef, useState, useCallback } from "react";
+import type { BookCreationDraft, DraftRound } from "@actalk/inkos-core";
+import { fetchJson } from "../hooks/use-api";
 import type { Theme } from "../hooks/use-theme";
 import type { TFunction } from "../hooks/use-i18n";
+import type { SSEMessage } from "../hooks/use-sse";
 import { useColors } from "../hooks/use-colors";
+import { StreamMessage } from "../components/book-create/StreamMessage";
+import { RoundSummary } from "../components/book-create/RoundSummary";
+import { DraftReadyBar } from "../components/book-create/DraftReadyBar";
+import { ComposerBar } from "../components/book-create/ComposerBar";
+
+// ---------------------------------------------------------------------------
+// Exported utilities (kept for tests)
+// ---------------------------------------------------------------------------
 
 interface Nav {
   toDashboard: () => void;
   toBook: (id: string) => void;
-}
-
-interface GenreInfo {
-  readonly id: string;
-  readonly name: string;
-  readonly source: "project" | "builtin";
-  readonly language: "zh" | "en";
 }
 
 interface PlatformOption {
@@ -28,47 +30,30 @@ export interface DraftSummaryRow {
   readonly value: string;
 }
 
-interface InteractionSessionResponse {
-  readonly session?: {
-    readonly activeBookId?: string;
-    readonly creationDraft?: BookCreationDraft;
-  };
-  readonly activeBookId?: string;
-}
-
 interface AgentResponse {
   readonly response?: string;
   readonly error?: string;
   readonly session?: {
     readonly activeBookId?: string;
     readonly creationDraft?: BookCreationDraft;
+    readonly draftRounds?: DraftRound[];
   };
 }
 
-interface PlatformCopy {
-  readonly idleTitle: string;
-  readonly idleBody: string;
-  readonly promptLabel: string;
-  readonly promptPlaceholder: string;
-  readonly promptPlaceholderFollowup: string;
-  readonly submit: string;
-  readonly submitting: string;
-  readonly create: string;
-  readonly creating: string;
-  readonly discard: string;
-  readonly draftHeading: string;
-  readonly missingHeading: string;
-  readonly missingHint: string;
-  readonly syncedHint: string;
-  readonly helperTitle: string;
-  readonly helperBody: string;
+interface InteractionSessionResponse {
+  readonly session?: {
+    readonly activeBookId?: string;
+    readonly creationDraft?: BookCreationDraft;
+    readonly draftRounds?: DraftRound[];
+  };
+  readonly activeBookId?: string;
 }
 
 const PLATFORMS_ZH: ReadonlyArray<PlatformOption> = [
-  { value: "tomato", label: "番茄小说" },
-  { value: "qidian", label: "起点中文网" },
-  { value: "feilu", label: "飞卢" },
-  { value: "other", label: "其他" },
+  { value: "tomato", label: "\u756A\u8304\u5C0F\u8BF4" },
+  { value: "qidian", label: "\u8D77\u70B9\u4E2D\u6587\u7F51" },
+  { value: "feilu", label: "\u98DE\u5362" },
+  { value: "other", label: "\u5176\u4ED6" },
 ];
 
 const PLATFORMS_EN: ReadonlyArray<PlatformOption> = [
@@ -77,45 +62,6 @@ const PLATFORMS_EN: ReadonlyArray<PlatformOption> = [
   { value: "scribble-hub", label: "Scribble Hub" },
   { value: "other", label: "Other" },
 ];
-
-const PAGE_COPY: Record<"zh" | "en", PlatformCopy> = {
-  zh: {
-    idleTitle: "从一句模糊想法开始",
-    idleBody: "直接描述题材、世界观、主角、核心冲突，或告诉我你想先改哪一块。共享草案会在 TUI 和 Studio Chat 之间同步。",
-    promptLabel: "继续打磨这本书",
-    promptPlaceholder: "例如：我想写个港风商战悬疑，主角先做灰产再洗白。",
-    promptPlaceholderFollowup: "例如：世界观改成近未来港口城；女主不要太早出场；卷一先查账再砸场。",
-    submit: "更新草案",
-    submitting: "处理中…",
-    create: "按当前草案建书",
-    creating: "创建中…",
-    discard: "丢弃草案",
-    draftHeading: "当前 foundation 草案",
-    missingHeading: "还缺这些关键信息",
-    missingHint: "这些字段未必都要一次填满，但缺得太多时不要急着建书。",
-    syncedHint: "这份草案和 TUI / Studio Chat 共享。",
-    helperTitle: "建议这样推进",
-    helperBody: "先定世界观和主角，再定核心冲突、简介和卷一方向。想看当前草案时，可以在 TUI 里用 /draft。",
-  },
-  en: {
-    idleTitle: "Start from a rough idea",
-    idleBody: "Describe the genre, world, protagonist, and core conflict. The shared draft stays in sync across TUI and Studio Chat.",
-    promptLabel: "Refine this book",
-    promptPlaceholder: "Example: I want a harbor-noir business thriller about a fixer trying to go legit.",
-    promptPlaceholderFollowup: "Example: move the world to a near-future port city; delay the heroine; make volume one about chasing ledgers first.",
-    submit: "Update draft",
-    submitting: "Working…",
-    create: "Create book from draft",
-    creating: "Creating…",
-    discard: "Discard draft",
-    draftHeading: "Current foundation draft",
-    missingHeading: "Still missing",
-    missingHint: "You do not need every field immediately, but do not create the book while the foundation is still vague.",
-    syncedHint: "This draft is shared with TUI and Studio Chat.",
-    helperTitle: "Recommended flow",
-    helperBody: "Lock the world and protagonist first, then settle the conflict, blurb, and volume-one direction. In TUI, use /draft to inspect the same draft.",
-  },
-};
 
 export function pickValidValue(current: string, available: ReadonlyArray<string>): string {
   if (current && available.includes(current)) {
@@ -170,17 +116,21 @@ export function buildCreationDraftSummary(
         draft.nextQuestion ? { key: "nextQuestion", label: "Next", value: draft.nextQuestion } : undefined,
       ]
     : [
-        draft.title ? { key: "title", label: "书名", value: draft.title } : undefined,
-        draft.worldPremise ? { key: "worldPremise", label: "世界观", value: draft.worldPremise } : undefined,
-        draft.protagonist ? { key: "protagonist", label: "主角", value: draft.protagonist } : undefined,
-        draft.conflictCore ? { key: "conflictCore", label: "核心冲突", value: draft.conflictCore } : undefined,
-        draft.volumeOutline ? { key: "volumeOutline", label: "卷纲方向", value: draft.volumeOutline } : undefined,
-        draft.blurb ? { key: "blurb", label: "简介", value: draft.blurb } : undefined,
-        draft.nextQuestion ? { key: "nextQuestion", label: "下一步", value: draft.nextQuestion } : undefined,
+        draft.title ? { key: "title", label: "\u4E66\u540D", value: draft.title } : undefined,
+        draft.worldPremise ? { key: "worldPremise", label: "\u4E16\u754C\u89C2", value: draft.worldPremise } : undefined,
+        draft.protagonist ? { key: "protagonist", label: "\u4E3B\u89D2", value: draft.protagonist } : undefined,
+        draft.conflictCore ? { key: "conflictCore", label: "\u6838\u5FC3\u51B2\u7A81", value: draft.conflictCore } : undefined,
+        draft.volumeOutline ? { key: "volumeOutline", label: "\u5377\u7EB2\u65B9\u5411", value: draft.volumeOutline } : undefined,
+        draft.blurb ? { key: "blurb", label: "\u7B80\u4ECB", value: draft.blurb } : undefined,
+        draft.nextQuestion ? { key: "nextQuestion", label: "\u4E0B\u4E00\u6B65", value: draft.nextQuestion } : undefined,
       ];
 
   return rows.filter((row): row is DraftSummaryRow => Boolean(row));
 }
+
+// ---------------------------------------------------------------------------
+// waitForBookReady
+// ---------------------------------------------------------------------------
 
 interface WaitForBookReadyOptions {
   readonly fetchBook?: (bookId: string) => Promise<unknown>;
@@ -192,7 +142,6 @@ interface WaitForBookReadyOptions {
 
 const DEFAULT_BOOK_READY_MAX_ATTEMPTS = 120;
 const DEFAULT_BOOK_READY_DELAY_MS = 250;
-const CREATION_DRAFT_SYNC_INTERVAL_MS = 2500;
 
 export async function waitForBookReady(
   bookId: string,
@@ -243,97 +192,119 @@ export async function waitForBookReady(
   throw lastError instanceof Error ? lastError : new Error(`Book "${bookId}" was not ready`);
 }
 
-export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunction }) {
-  const c = useColors(theme);
-  const { data: project } = useApi<{ language: string }>("/project");
-  const projectLang = (project?.language ?? "zh") as "zh" | "en";
-  const copy = PAGE_COPY[projectLang];
+// ---------------------------------------------------------------------------
+// BookCreate component
+// ---------------------------------------------------------------------------
 
-  const [draft, setDraft] = useState<BookCreationDraft | undefined>();
-  const [input, setInput] = useState("");
-  const [loadingDraft, setLoadingDraft] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
+export function BookCreate({ nav, theme, t, sse }: {
+  nav: Nav;
+  theme: Theme;
+  t: TFunction;
+  sse: { messages: ReadonlyArray<SSEMessage>; connected: boolean };
+}) {
+  const c = useColors(theme);
+
+  // ---- State ----
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [serverDraft, setServerDraft] = useState<BookCreationDraft | undefined>();
+  const [rounds, setRounds] = useState<DraftRound[]>([]);
+  const [currentContent, setCurrentContent] = useState("");
+  const [streaming, setStreaming] = useState(false);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [status, setStatus] = useState<string | null>(null);
+  const [input, setInput] = useState("");
+  const [expandedRound, setExpandedRound] = useState<number | null>(null);
 
-  const summaryRows = useMemo(
-    () => (draft ? buildCreationDraftSummary(draft, projectLang) : []),
-    [draft, projectLang],
-  );
+  const scrollRef = useRef<HTMLDivElement>(null);
 
-  const refreshDraft = async (): Promise<BookCreationDraft | undefined> => {
-    const data = await fetchJson<InteractionSessionResponse>("/interaction/session");
-    const nextDraft = data.session?.creationDraft;
-    setDraft(nextDraft);
-    return nextDraft;
-  };
+  // Auto-scroll when streaming content changes
+  useEffect(() => {
+    if (scrollRef.current && streaming) {
+      scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+    }
+  }, [currentContent, streaming]);
 
+  // ---- Load existing session on mount ----
   useEffect(() => {
     let cancelled = false;
-    setLoadingDraft(true);
-    void refreshDraft()
-      .catch((cause) => {
-        if (!cancelled) {
-          setError(cause instanceof Error ? cause.message : String(cause));
+    void fetchJson<InteractionSessionResponse>("/interaction/session")
+      .then((data) => {
+        if (cancelled) return;
+        setServerDraft(data.session?.creationDraft);
+        if (data.session?.draftRounds?.length) {
+          setRounds(data.session.draftRounds);
         }
       })
-      .finally(() => {
-        if (!cancelled) {
-          setLoadingDraft(false);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
+      .catch(() => undefined);
+    return () => { cancelled = true; };
   }, []);
 
+  // ---- SSE draft:delta listener ----
+  const sseProcessedRef = useRef(0);
   useEffect(() => {
-    if (submitting || creating) {
-      return;
+    const msgs = sse.messages;
+    if (msgs.length <= sseProcessedRef.current) return;
+
+    for (let i = sseProcessedRef.current; i < msgs.length; i++) {
+      const msg = msgs[i]!;
+      if (msg.event === "draft:delta") {
+        const data = msg.data as { text?: string } | null;
+        if (data?.text) {
+          setCurrentContent((prev) => prev + data.text);
+        }
+      }
     }
+    sseProcessedRef.current = msgs.length;
+  }, [sse.messages]);
 
-    const timer = setInterval(() => {
-      void refreshDraft().catch(() => undefined);
-    }, CREATION_DRAFT_SYNC_INTERVAL_MS);
+  // ---- Handlers ----
 
-    return () => {
-      clearInterval(timer);
-    };
-  }, [submitting, creating]);
-
-  const runAgentInstruction = async (instruction: string): Promise<AgentResponse> => {
+  const runAgentInstruction = useCallback(async (instruction: string): Promise<AgentResponse> => {
     return fetchJson<AgentResponse>("/agent", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ instruction }),
     });
-  };
+  }, []);
 
-  const handleDraftSubmit = async () => {
-    const instruction = resolveDraftInstruction(input, Boolean(draft));
-    if (!instruction) {
-      return;
+  const handleSubmit = useCallback(async () => {
+    const instruction = resolveDraftInstruction(input, Boolean(serverDraft) || rounds.length > 0);
+    if (!instruction) return;
+
+    // Build instruction with user field edits
+    const editedFields = Object.entries(draft);
+    let fullInstruction = instruction;
+    if (editedFields.length > 0) {
+      const editsBlock = editedFields
+        .map(([k, v]) => `${k}: ${v}`)
+        .join("\n");
+      fullInstruction = `${instruction}\n\n[field edits]\n${editsBlock}`;
     }
 
-    setSubmitting(true);
+    setStreaming(true);
+    setCurrentContent("");
     setError(null);
+
     try {
-      const data = await runAgentInstruction(instruction);
+      const data = await runAgentInstruction(fullInstruction);
       setInput("");
-      setStatus(data.response ?? null);
-      setDraft(data.session?.creationDraft);
+      setServerDraft(data.session?.creationDraft);
+
+      // Push the completed round into history
+      if (data.session?.draftRounds?.length) {
+        setRounds(data.session.draftRounds);
+      }
+      // Reset local draft edits for next round
+      setDraft({});
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
-      setSubmitting(false);
+      setStreaming(false);
     }
-  };
+  }, [input, draft, serverDraft, rounds.length, runAgentInstruction]);
 
-  const handleCreate = async () => {
-    if (!canCreateFromDraft(draft)) {
-      return;
-    }
+  const handleCreate = useCallback(async () => {
+    if (!canCreateFromDraft(serverDraft)) return;
 
     setCreating(true);
     setError(null);
@@ -341,10 +312,9 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
       const data = await runAgentInstruction("/create");
       const bookId = data.session?.activeBookId;
       if (!bookId) {
-        throw new Error(projectLang === "zh" ? "创建完成后没有返回书籍 ID。" : "Create succeeded but no book id was returned.");
+        throw new Error("\u521B\u5EFA\u5B8C\u6210\u540E\u6CA1\u6709\u8FD4\u56DE\u4E66\u7C4D ID\u3002");
       }
-      setStatus(data.response ?? null);
-      setDraft(undefined);
+      setServerDraft(undefined);
       await waitForBookReady(bookId);
       nav.toBook(bookId);
     } catch (cause) {
@@ -352,149 +322,127 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
     } finally {
       setCreating(false);
     }
-  };
+  }, [serverDraft, runAgentInstruction, nav]);
 
-  const handleDiscard = async () => {
-    setSubmitting(true);
+  const handleDiscard = useCallback(async () => {
+    setStreaming(true);
     setError(null);
     try {
-      const data = await runAgentInstruction("/discard");
-      setStatus(data.response ?? null);
-      setDraft(undefined);
+      await runAgentInstruction("/discard");
+      setServerDraft(undefined);
+      setRounds([]);
+      setCurrentContent("");
+      setDraft({});
       setInput("");
-      await refreshDraft().catch(() => undefined);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
-      setSubmitting(false);
+      setStreaming(false);
     }
-  };
+  }, [runAgentInstruction]);
+
+  const handleFieldChange = useCallback((key: string, value: string) => {
+    setDraft((prev) => ({ ...prev, [key]: value }));
+  }, []);
+
+  const isReady = canCreateFromDraft(serverDraft);
+  const hasDraft = Boolean(serverDraft) || rounds.length > 0;
+  const placeholder = hasDraft
+    ? "\u4F8B\u5982\uFF1A\u4E16\u754C\u89C2\u6539\u6210\u8FD1\u672A\u6765\u6E2F\u53E3\u57CE\uFF1B\u5973\u4E3B\u4E0D\u8981\u592A\u65E9\u51FA\u573A\uFF1B\u5377\u4E00\u5148\u67E5\u8D26\u518D\u7838\u573A\u3002"
+    : "\u4F8B\u5982\uFF1A\u6211\u60F3\u5199\u4E2A\u6E2F\u98CE\u5546\u6218\u60AC\u7591\uFF0C\u4E3B\u89D2\u5148\u505A\u7070\u4EA7\u518D\u6D17\u767D\u3002";
 
   return (
-    <div className="max-w-4xl mx-auto space-y-8">
-      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+    <div className="max-w-2xl mx-auto flex flex-col min-h-[calc(100vh-4rem)]">
+      {/* Breadcrumb */}
+      <div className="flex items-center gap-2 text-sm text-muted-foreground pt-6 px-1">
         <button onClick={nav.toDashboard} className={c.link}>{t("bread.books")}</button>
         <span className="text-border">/</span>
         <span>{t("bread.newBook")}</span>
       </div>
 
-      <div className="space-y-3">
+      {/* Title */}
+      <div className="space-y-2 pt-6 pb-4 px-1">
         <h1 className="font-serif text-3xl">{t("create.title")}</h1>
-        <p className="text-sm text-muted-foreground leading-7">{copy.idleBody}</p>
+        <p className="text-sm text-muted-foreground leading-7">
+          {"\u76F4\u63A5\u63CF\u8FF0\u9898\u6750\u3001\u4E16\u754C\u89C2\u3001\u4E3B\u89D2\u3001\u6838\u5FC3\u51B2\u7A81\uFF0C\u6216\u544A\u8BC9\u6211\u4F60\u60F3\u5148\u6539\u54EA\u4E00\u5757\u3002"}
+        </p>
       </div>
 
+      {/* Error */}
       {error && (
-        <div className={`border ${c.error} rounded-md px-4 py-3`}>
+        <div className={`border ${c.error} rounded-md px-4 py-3 mx-1 mb-4`}>
           {error}
         </div>
       )}
 
-      {status && (
-        <div className="border border-primary/20 bg-primary/5 rounded-md px-4 py-3 text-sm text-primary">
-          {status}
-        </div>
-      )}
-
-      <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-        <section className="space-y-4">
-          <div className="rounded-2xl border border-border/60 bg-card/70 p-5 space-y-4">
-            <div className="space-y-1">
-              <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground font-bold">
-                {copy.draftHeading}
-              </div>
-              <div className="text-xs text-muted-foreground">
-                {copy.syncedHint}
-              </div>
-            </div>
-
-            {loadingDraft ? (
-              <div className="text-sm text-muted-foreground">{projectLang === "zh" ? "读取共享草案中…" : "Loading shared draft…"}</div>
-            ) : draft ? (
-              <div className="space-y-4">
-                {summaryRows.length > 0 ? (
-                  <div className="space-y-3">
-                    {summaryRows.map((row) => (
-                      <div key={row.key} className="rounded-xl border border-border/50 bg-background/70 px-4 py-3">
-                        <div className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground font-semibold">{row.label}</div>
-                        <div className="mt-1 text-sm leading-7 whitespace-pre-wrap">{row.value}</div>
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
-
-                {draft.missingFields.length > 0 ? (
-                  <div className="space-y-2">
-                    <div className="text-xs font-medium text-foreground">{copy.missingHeading}</div>
-                    <div className="flex flex-wrap gap-2">
-                      {draft.missingFields.map((field) => (
-                        <span
-                          key={field}
-                          className="rounded-full border border-border/70 bg-secondary/50 px-3 py-1 text-xs text-muted-foreground"
-                        >
-                          {field}
-                        </span>
-                      ))}
-                    </div>
-                    <p className="text-xs text-muted-foreground">{copy.missingHint}</p>
-                  </div>
-                ) : null}
-              </div>
-            ) : (
-              <div className="rounded-xl border border-dashed border-border/70 bg-background/50 px-5 py-6">
-                <div className="font-medium">{copy.idleTitle}</div>
-                <p className="mt-2 text-sm text-muted-foreground leading-7">
-                  {copy.helperBody}
-                </p>
-              </div>
+      {/* Scrollable content area */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto space-y-3 px-1 pb-4">
+        {/* History rounds */}
+        {rounds.map((round) => (
+          <RoundSummary
+            key={round.roundId}
+            round={round}
+            expanded={expandedRound === round.roundId}
+            onToggle={() => setExpandedRound(
+              expandedRound === round.roundId ? null : round.roundId,
             )}
-          </div>
-        </section>
+          />
+        ))}
 
-        <section className="space-y-4">
-          <div className="rounded-2xl border border-border/60 bg-card/70 p-5 space-y-4">
-            <div className="space-y-1">
-              <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground font-bold">
-                {copy.promptLabel}
-              </div>
-              <div className="text-xs text-muted-foreground">
-                {copy.helperTitle}
-              </div>
-            </div>
-
-            <textarea
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              rows={10}
-              className={`w-full ${c.input} rounded-xl px-4 py-3 focus:outline-none text-sm leading-7 resize-y`}
-              placeholder={draft ? copy.promptPlaceholderFollowup : copy.promptPlaceholder}
+        {/* Current AI response with inline forms */}
+        {currentContent && (
+          <div className="rounded-2xl border border-border/60 bg-card/70 p-5">
+            <StreamMessage
+              content={currentContent}
+              onFieldChange={handleFieldChange}
+              fieldValues={draft}
+              theme={theme}
             />
-
-            <div className="flex flex-wrap gap-3">
-              <button
-                onClick={handleDraftSubmit}
-                disabled={submitting || creating || !input.trim()}
-                className={`px-4 py-3 ${c.btnPrimary} rounded-md disabled:opacity-50 font-medium text-sm`}
-              >
-                {submitting ? copy.submitting : copy.submit}
-              </button>
-              <button
-                onClick={handleCreate}
-                disabled={!canCreateFromDraft(draft) || creating || submitting}
-                className={`px-4 py-3 rounded-md border border-border bg-secondary text-secondary-foreground disabled:opacity-50 font-medium text-sm`}
-              >
-                {creating ? copy.creating : copy.create}
-              </button>
-              <button
-                onClick={handleDiscard}
-                disabled={!draft || submitting || creating}
-                className="px-4 py-3 rounded-md border border-border text-muted-foreground hover:text-foreground hover:border-foreground/20 disabled:opacity-50 font-medium text-sm"
-              >
-                {copy.discard}
-              </button>
-            </div>
           </div>
-        </section>
+        )}
+
+        {/* Streaming indicator */}
+        {streaming && !currentContent && (
+          <div className="flex items-center gap-2 px-1 py-3 text-sm text-muted-foreground">
+            <span className="w-1.5 h-1.5 bg-primary/50 rounded-full animate-pulse" />
+            <span className="w-1.5 h-1.5 bg-primary/50 rounded-full animate-pulse" style={{ animationDelay: "150ms" }} />
+            <span className="w-1.5 h-1.5 bg-primary/50 rounded-full animate-pulse" style={{ animationDelay: "300ms" }} />
+          </div>
+        )}
+
+        {/* Draft ready bar */}
+        {isReady && !streaming && (
+          <DraftReadyBar
+            onConfirm={handleCreate}
+            onContinue={() => {/* focus input - no-op, user just keeps typing */}}
+            creating={creating}
+            theme={theme}
+          />
+        )}
+
+        {/* Discard button (only shown if there's an active draft) */}
+        {hasDraft && !streaming && !creating && (
+          <div className="flex justify-end px-1">
+            <button
+              type="button"
+              onClick={handleDiscard}
+              className="text-xs text-muted-foreground hover:text-destructive transition-colors"
+            >
+              {"\u4E22\u5F03\u8349\u6848"}
+            </button>
+          </div>
+        )}
       </div>
+
+      {/* Bottom composer */}
+      <ComposerBar
+        value={input}
+        onChange={setInput}
+        onSubmit={handleSubmit}
+        disabled={streaming || creating}
+        placeholder={placeholder}
+        theme={theme}
+      />
     </div>
   );
 }

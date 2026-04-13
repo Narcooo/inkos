@@ -159,7 +159,7 @@ export function App() {
           <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
             {route.page === "dashboard" && <Dashboard nav={nav} sse={sse} theme={theme} t={t} />}
             {route.page === "book" && <BookDetail bookId={route.bookId} nav={nav} theme={theme} t={t} sse={sse} />}
-            {route.page === "book-create" && <BookCreate nav={nav} theme={theme} t={t} />}
+            {route.page === "book-create" && <BookCreate nav={nav} theme={theme} t={t} sse={sse} />}
             {route.page === "chapter" && <ChapterReader bookId={route.bookId} chapterNumber={route.chapterNumber} nav={nav} theme={theme} t={t} />}
             {route.page === "analytics" && <Analytics bookId={route.bookId} nav={nav} theme={theme} t={t} />}
             {route.page === "config" && <ConfigView nav={nav} theme={theme} t={t} />}
