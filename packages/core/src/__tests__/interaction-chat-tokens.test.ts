@@ -27,10 +27,13 @@ const fakeState = {
 };
 
 const MOCK_RESPONSE = {
-  content: JSON.stringify({
-    assistantReply: "好的，你想写都市异能，请问主角是什么类型的能力？",
-    draft: { concept: "都市异能", missingFields: ["title", "genre"], readyToCreate: false },
-  }),
+  content: [
+    "好的，你想写都市异能，请问主角是什么类型的能力？",
+    "",
+    ':::field{key="title" label="书名"}',
+    "都市异能",
+    ":::",
+  ].join("\n"),
   tokensUsed: { prompt: 5, completion: 80, total: 85 },
 };
 

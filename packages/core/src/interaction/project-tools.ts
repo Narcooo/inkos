@@ -11,6 +11,7 @@ import type {
   Platform,
 } from "../index.js";
 import { chatCompletion } from "../index.js";
+import { parseDraftDirectives, createDirectiveStreamFilter } from "./draft-directive-parser.js";
 import { executeEditTransaction } from "./edit-controller.js";
 import type { InteractionRuntimeTools } from "./runtime.js";
 import type { BookCreationDraft } from "./session.js";
@@ -42,84 +43,6 @@ function normalizePlatform(platform?: string): Platform {
       return platform;
     default:
       return "other";
-  }
-}
-
-function extractBalancedJsonObject(text: string): string | null {
-  const start = text.indexOf("{");
-  if (start < 0) {
-    return null;
-  }
-
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-
-  for (let index = start; index < text.length; index += 1) {
-    const char = text[index]!;
-
-    if (inString) {
-      if (escaped) {
-        escaped = false;
-        continue;
-      }
-      if (char === "\\") {
-        escaped = true;
-        continue;
-      }
-      if (char === "\"") {
-        inString = false;
-      }
-      continue;
-    }
-
-    if (char === "\"") {
-      inString = true;
-      continue;
-    }
-
-    if (char === "{") {
-      depth += 1;
-      continue;
-    }
-
-    if (char === "}") {
-      depth -= 1;
-      if (depth === 0) {
-        return text.slice(start, index + 1);
-      }
-      if (depth < 0) {
-        return null;
-      }
-    }
-  }
-
-  return null;
-}
-
-function parseCreationDraftResult(text: string): {
-  readonly assistantReply: string;
-  readonly draft: BookCreationDraft;
-} | null {
-  const candidate = extractBalancedJsonObject(text);
-  if (!candidate) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(candidate) as {
-      assistantReply?: string;
-      draft?: BookCreationDraft;
-    };
-    if (!parsed.assistantReply || !parsed.draft) {
-      return null;
-    }
-    return {
-      assistantReply: parsed.assistantReply,
-      draft: parsed.draft,
-    };
-  } catch {
-    return null;
   }
 }
 
@@ -437,11 +360,183 @@ async function withPipelineInteractionTelemetry<T extends { chapterNumber?: numb
   }
 }
 
+const BOOK_DRAFT_SYSTEM_PROMPT = [
+  "你是 InkOS 的建书引导员，负责帮用户从一句模糊想法出发，逐步打磨出一份可以开始写作的 foundation 草案。",
+  "",
+  "## 基础工作原则",
+  "1. 请参考用户提供的已有草案内容，在此基础上推进，创作出具有延续性的设定。",
+  "2. 你需要根据用户需求和创作情况维护草案内容，帮助用户管理和组织好书籍的基础结构。",
+  "",
+  "## 创作任务处理流程",
+  "1. 在构建草案或执行复杂创作任务之前，请先输出你的构思计划，和用户确认后再推进。",
+  "2. 当用户拒绝你的建议时，说明用户对当前方向不满意，请重新和用户沟通你的构思计划，不要直接继续。",
+  "3. 先确立世界观和主角设定，确保用户确认满意后再推进核心冲突和卷纲方向。",
+  "4. 每一步完成后，请主动和用户确认内容是否满意，如果用户不满意，请根据用户需求调整，直到用户确认满意后再推进下一步。",
+  "",
+  "## 草案应涵盖的要素",
+  "",
+  "### 1. 风格",
+  "定义小说的文字气质和叙事基调：",
+  "- **叙事视角**：主要视角（如第三人称有限视角）、视角切换规则",
+  "- **语言基调**：整体气质（冷峻写实 / 华丽奇幻 / 轻松幽默 / 沉郁诗意）、时代感 / 地域感",
+  "- **节奏偏好**：动作场景短句为主、日常场景长句铺陈",
+  "- **对话风格**：对话功能（推进剧情 / 展现性格 / 蕴含潜台词）、口语化程度",
+  "",
+  "### 2. 世界观与设定",
+  "记录小说中的设定信息，包括物品 / 场景 / 概念等，记录要包含创作内容所需要的各个方面信息。",
+  "",
+  "### 3. 角色",
+  "记录小说中的角色信息，包括身份背景和经历、性格、外貌特征、能力和关系网络、内在驱动和成长弧光。主要角色需要详细设定，次要角色简要描述。",
+  "",
+  "### 4. 核心冲突与剧情方向",
+  "明确小说的整体方向和核心矛盾。包含核心冲突、主线走向、卷一具体方向。",
+  "",
+  "### 5. 发布规划",
+  "平台选择、目标章数、每章字数。不同平台的节奏和字数要求差别很大——番茄读者要节奏快、钩子密；起点读者能接受更重的设定铺垫。",
+  "",
+  "## 输出格式",
+  "",
+  "你的回复是 markdown 文本，中间穿插表单标记块。用户在流式对话界面中看到你的回复，表单块会渲染为可交互的输入控件。用户可以直接在控件中修改内容，修改会在下一轮对话时随草案一起发送给你。",
+  "",
+  "可用标记：",
+  "",
+  ':::field{key="字段名" label="显示标签"}',
+  "预填内容",
+  ":::",
+  "",
+  ':::field{key="字段名" label="显示标签" type="textarea"}',
+  "多行预填内容",
+  ":::",
+  "",
+  ':::pick{key="字段名" label="显示标签"}',
+  "- 选项一",
+  "- 选项二",
+  "- 选项三",
+  ":::",
+  "",
+  ':::number{key="字段名" label="显示标签"}',
+  "默认值",
+  ":::",
+  "",
+  ':::group{label="组标签"}',
+  "（嵌套多个 field / number）",
+  ":::",
+  "",
+  "### 输出规范",
+  "1. 先输出你的思考和建议（自然的对话文本），再给出对应的表单块让用户确认或修改。",
+  "2. 需要用户做选择时用 :::pick，需要用户填写或确认内容时用 :::field。",
+  "3. 当信息足以推导出合理默认值时，大胆预填进表单——让用户改比让用户从零写更轻松。预填内容要体现你对该题材的理解，不要写泛泛的占位符。",
+  "4. 每轮只推进一到两个焦点，不要一次铺开所有字段。",
+  "5. 当核心要素（书名、题材、世界观、主角、核心冲突、平台、章节规划）都已有内容时，在回复末尾明确告知用户草案已就绪，可以开始写了。",
+].join("\n");
+
+/** Map directive field keys to BookCreationDraft property names. */
+function applyFieldsToDraft(
+  existing: BookCreationDraft | undefined,
+  fields: Readonly<Record<string, string>>,
+  concept: string,
+): BookCreationDraft {
+  const draft: BookCreationDraft = {
+    concept,
+    missingFields: [],
+    readyToCreate: false,
+    ...(existing ?? {}),
+  };
+
+  for (const [key, value] of Object.entries(fields)) {
+    if (!value) continue;
+
+    switch (key) {
+      case "title":
+        draft.title = value;
+        break;
+      case "genre":
+        draft.genre = value;
+        break;
+      case "platform":
+        draft.platform = value;
+        break;
+      case "language":
+        if (value === "zh" || value === "en") draft.language = value;
+        break;
+      case "targetChapters": {
+        const n = parseInt(value, 10);
+        if (!Number.isNaN(n) && n > 0) draft.targetChapters = n;
+        break;
+      }
+      case "chapterWordCount":
+      case "chapterLength": {
+        const n = parseInt(value, 10);
+        if (!Number.isNaN(n) && n > 0) draft.chapterWordCount = n;
+        break;
+      }
+      case "blurb":
+        draft.blurb = value;
+        break;
+      case "worldPremise":
+        draft.worldPremise = value;
+        break;
+      case "settingNotes":
+        draft.settingNotes = value;
+        break;
+      case "protagonist":
+        draft.protagonist = value;
+        break;
+      case "supportingCast":
+        draft.supportingCast = value;
+        break;
+      case "conflictCore":
+        draft.conflictCore = value;
+        break;
+      case "volumeOutline":
+        draft.volumeOutline = value;
+        break;
+      case "constraints":
+        draft.constraints = value;
+        break;
+      case "authorIntent":
+        draft.authorIntent = value;
+        break;
+      case "currentFocus":
+        draft.currentFocus = value;
+        break;
+      // Unknown keys are silently ignored — the LLM may emit
+      // application-level keys we don't map to the draft struct.
+    }
+  }
+
+  return draft;
+}
+
+function formatDraftForUserMessage(
+  existingDraft: BookCreationDraft | undefined,
+  userMessage: string,
+): string {
+  const parts: string[] = [];
+
+  if (existingDraft) {
+    parts.push("## 当前草案状态");
+    const entries = Object.entries(existingDraft).filter(
+      ([, v]) => v !== undefined && v !== "" && !(Array.isArray(v) && v.length === 0),
+    );
+    for (const [key, value] of entries) {
+      parts.push(`- **${key}**: ${typeof value === "object" ? JSON.stringify(value) : String(value)}`);
+    }
+    parts.push("");
+  }
+
+  parts.push("## 用户输入");
+  parts.push(userMessage);
+
+  return parts.join("\n");
+}
+
 export function createInteractionToolsFromDeps(
   pipeline: PipelineLike,
   state: StateLike,
   hooks?: {
     readonly onChatTextDelta?: (text: string) => void;
+    readonly onDraftTextDelta?: (text: string) => void;
     readonly getChatRequestOptions?: () => {
       readonly temperature?: number;
       readonly maxTokens?: number;
@@ -453,11 +548,13 @@ export function createInteractionToolsFromDeps(
   return {
     listBooks: () => state.listBooks(),
     developBookDraft: async (input, existingDraft) => {
+      const concept = existingDraft?.concept ?? input;
+
       if (!instrumentedPipeline.config?.client || !instrumentedPipeline.config?.model) {
-        const concept = existingDraft?.concept ?? input;
+        const fallbackText = "先把这本书的大概方向收住。你更想写长篇连载，还是十来章能收住的版本？";
         return {
           __interaction: {
-            responseText: "先把这本书的大概方向收住。你更想写长篇连载，还是十来章能收住的版本？",
+            responseText: fallbackText,
             details: {
               creationDraft: {
                 concept,
@@ -470,53 +567,55 @@ export function createInteractionToolsFromDeps(
                 blurb: existingDraft?.blurb,
                 authorIntent: existingDraft?.authorIntent,
                 currentFocus: existingDraft?.currentFocus,
-                nextQuestion: "你更想写长篇连载，还是十来章能收住的版本？",
                 missingFields: existingDraft?.missingFields ?? ["title", "genre", "targetChapters"],
                 readyToCreate: existingDraft?.readyToCreate ?? false,
               } satisfies BookCreationDraft,
+              draftRaw: fallbackText,
+              draftSummary: "",
+              fieldsUpdated: [] as string[],
             },
           },
         };
       }
 
+      const streamFilter = createDirectiveStreamFilter();
       const response = await chatCompletion(
         instrumentedPipeline.config.client,
         instrumentedPipeline.config.model,
         [
           {
             role: "system",
-            content: [
-              "You are InkOS book ideation assistant.",
-              "Turn the user's latest message and the current draft into a tighter book creation draft.",
-              "Ask at most one sharp next question.",
-              "Default to concise Chinese unless the draft language is clearly English.",
-              "Return JSON only with keys assistantReply and draft.",
-              "draft must include concept and may include title, genre, platform, language, targetChapters, chapterWordCount, blurb, worldPremise, settingNotes, protagonist, supportingCast, conflictCore, volumeOutline, constraints, authorIntent, currentFocus, nextQuestion, missingFields, readyToCreate.",
-              "Help the user decide and revise worldview, setting, protagonist, supporting cast, core conflict, blurb, and volume direction.",
-              "Be conservative: only mark readyToCreate=true when the draft already has a workable title, genre, targetChapters, chapterWordCount, and enough setting/conflict detail to generate a foundation.",
-            ].join(" "),
+            content: BOOK_DRAFT_SYSTEM_PROMPT,
           },
           {
             role: "user",
-            content: JSON.stringify({
-              currentDraft: existingDraft ?? null,
-              latestMessage: input,
-            }, null, 2),
+            content: formatDraftForUserMessage(existingDraft, input),
           },
         ],
-        { temperature: 0.4 },
+        {
+          temperature: 0.4,
+          onTextDelta: hooks?.onDraftTextDelta
+            ? (delta: string) => {
+                const visible = streamFilter(delta);
+                if (visible) {
+                  hooks!.onDraftTextDelta!(visible);
+                }
+              }
+            : undefined,
+        },
       );
 
-      const parsed = parseCreationDraftResult(response.content);
-      if (!parsed) {
-        throw new Error("Book draft assistant returned invalid JSON.");
-      }
+      const parsed = parseDraftDirectives(response.content);
+      const mergedDraft = applyFieldsToDraft(existingDraft, parsed.fields, concept);
 
       return {
         __interaction: {
-          responseText: parsed.assistantReply,
+          responseText: parsed.textContent,
           details: {
-            creationDraft: parsed.draft,
+            creationDraft: mergedDraft,
+            draftRaw: parsed.raw,
+            draftSummary: parsed.summary,
+            fieldsUpdated: Object.keys(parsed.fields),
           },
         },
       };
