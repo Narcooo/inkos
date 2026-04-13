@@ -105,13 +105,9 @@ export function InkTuiDashboard(props: InkTuiDashboardProps): React.JSX.Element 
         )}
       </Box>
 
-      {/* Status strip */}
+      {/* Composer area */}
       <Box flexDirection="column" marginTop={1}>
         <Text color={WARM_BORDER}>{thinRule}</Text>
-        <Box marginTop={1}>
-          <ExecutionBadge status={model.executionStatus} color={activeAccent} />
-          <Text color={activeAccent}> {model.statusPrimaryLine}</Text>
-        </Box>
 
         {/* Composer input */}
         <Box
@@ -158,6 +154,10 @@ export function InkTuiDashboard(props: InkTuiDashboardProps): React.JSX.Element 
               })}
             </Box>
           ) : null}
+        </Box>
+        <Box marginTop={1}>
+          <ExecutionBadge status={model.executionStatus} color={activeAccent} />
+          <Text color={activeAccent}> {model.statusPrimaryLine}</Text>
         </Box>
       </Box>
     </Box>

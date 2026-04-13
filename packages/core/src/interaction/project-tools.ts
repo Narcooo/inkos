@@ -428,6 +428,41 @@ const BOOK_DRAFT_SYSTEM_PROMPT = [
   "3. 当信息足以推导出合理默认值时，大胆预填进表单——让用户改比让用户从零写更轻松。预填内容要体现你对该题材的理解，不要写泛泛的占位符。",
   "4. 每轮只推进一到两个焦点，不要一次铺开所有字段。",
   "5. 当核心要素（书名、题材、世界观、主角、核心冲突、平台、章节规划）都已有内容时，在回复末尾明确告知用户草案已就绪，可以开始写了。",
+  "",
+  "## 重要：你必须使用 ::: 标记块",
+  "",
+  "你的每一轮回复中必须包含至少一个 :::field、:::pick 或 :::number 标记块来固定草案字段。不要只输出纯文本讨论——讨论完毕后必须用标记块把结论写入草案。这些标记块会被系统解析并保存到草案中，如果你不输出标记块，用户的选择就会丢失。",
+  "",
+  "## 完整示例",
+  "",
+  "假设用户说「我想写一本港风商战悬疑」，你的回复应该是这样的：",
+  "",
+  "---示例开始---",
+  "",
+  "港风商战悬疑很有张力，我先帮你搭一个骨架。",
+  "",
+  ':::field{key="genre" label="题材"}',
+  "港风商战悬疑",
+  ":::",
+  "",
+  "世界观方面，商战悬疑需要一个权力交错的都市背景——",
+  "",
+  ':::field{key="worldPremise" label="世界观" type="textarea"}',
+  "近未来港口城市，灰色产业链与金融精英交织的地下经济圈。城市表面繁荣但权力暗流涌动。",
+  ":::",
+  "",
+  "接下来确定发布平台，不同平台节奏差异很大：",
+  "",
+  ':::pick{key="platform" label="目标平台"}',
+  "- 番茄小说",
+  "- 起点中文网",
+  "- 飞卢",
+  "- 其他",
+  ":::",
+  "",
+  "你觉得这个世界观方向对吗？确认后我们来定主角。",
+  "",
+  "---示例结束---",
 ].join("\n");
 
 /** Map directive field keys to BookCreationDraft property names. */
@@ -537,6 +572,7 @@ export function createInteractionToolsFromDeps(
   hooks?: {
     readonly onChatTextDelta?: (text: string) => void;
     readonly onDraftTextDelta?: (text: string) => void;
+    readonly onDraftRawDelta?: (text: string) => void;
     readonly getChatRequestOptions?: () => {
       readonly temperature?: number;
       readonly maxTokens?: number;
@@ -594,11 +630,16 @@ export function createInteractionToolsFromDeps(
         ],
         {
           temperature: 0.4,
-          onTextDelta: hooks?.onDraftTextDelta
+          onTextDelta: (hooks?.onDraftTextDelta || hooks?.onDraftRawDelta)
             ? (delta: string) => {
-                const visible = streamFilter(delta);
-                if (visible) {
-                  hooks!.onDraftTextDelta!(visible);
+                if (hooks?.onDraftRawDelta) {
+                  hooks.onDraftRawDelta(delta);
+                }
+                if (hooks?.onDraftTextDelta) {
+                  const visible = streamFilter(delta);
+                  if (visible) {
+                    hooks.onDraftTextDelta(visible);
+                  }
                 }
               }
             : undefined,

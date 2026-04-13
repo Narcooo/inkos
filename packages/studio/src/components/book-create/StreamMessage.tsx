@@ -223,11 +223,28 @@ function parseContentToNodes(content: string): RenderNode[] {
 // Render nodes
 // ---------------------------------------------------------------------------
 
+/** Minimal markdown → HTML: bold, paragraphs, line breaks. */
+function renderMarkdownHtml(text: string): string {
+  return text
+    // Escape HTML entities
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    // Bold: **text** (non-greedy, no nested *)
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    // Paragraphs: double newline
+    .replace(/\n{2,}/g, '</p><p class="mt-3">')
+    // Single newline → <br>
+    .replace(/\n/g, "<br />");
+}
+
 function TextBlock({ text }: { readonly text: string }) {
+  const html = renderMarkdownHtml(text);
   return (
-    <div className="text-sm leading-7 whitespace-pre-wrap text-foreground font-serif">
-      {text}
-    </div>
+    <div
+      className="text-sm leading-7 text-foreground"
+      dangerouslySetInnerHTML={{ __html: `<p>${html}</p>` }}
+    />
   );
 }
 
