@@ -11,7 +11,6 @@ import {
   computeAnalytics,
   loadProjectConfig,
   loadProjectSession,
-  processProjectInteractionInput,
   processProjectInteractionRequest,
   resolveSessionActiveBook,
   findOrCreateBookSession,
@@ -19,6 +18,7 @@ import {
   loadBookSession,
   persistBookSession,
   appendBookSessionMessage,
+  runAgentSession,
   type PipelineConfig,
   type ProjectConfig,
   type LogSink,
@@ -625,7 +625,11 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
   });
 
   app.post("/api/agent", async (c) => {
-    const { instruction, activeBookId, sessionId } = await c.req.json<{ instruction: string; activeBookId?: string; sessionId?: string }>();
+    const { instruction, activeBookId, sessionId } = await c.req.json<{
+      instruction: string;
+      activeBookId?: string;
+      sessionId?: string;
+    }>();
     if (!instruction?.trim()) {
       return c.json({ error: "No instruction provided" }, 400);
     }
@@ -633,80 +637,88 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     broadcast("agent:start", { instruction, activeBookId });
 
     try {
+      // Load config + create pipeline and LLM client
+      const config = await loadCurrentProjectConfig({ requireApiKey: true });
       const pipeline = new PipelineRunner(await buildPipelineConfig());
-      const tools = createInteractionToolsFromDeps(pipeline, state, {
-        onDraftTextDelta: (text) => {
-          broadcast("draft:delta", { text });
+      const client = createLLMClient(config.llm);
+
+      // Resolve or create BookSession for history
+      let bookSession: BookSession;
+      if (sessionId) {
+        bookSession =
+          (await loadBookSession(root, sessionId)) ??
+          (await findOrCreateBookSession(root, activeBookId ?? null));
+      } else {
+        bookSession = await findOrCreateBookSession(root, activeBookId ?? null);
+      }
+
+      // Build initial message context from persisted session
+      const initialMessages = bookSession.messages
+        .filter((m) => m.role === "user" || m.role === "assistant")
+        .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
+
+      // Resolve model — _piModel is a Model<Api> from pi-ai
+      const model = client._piModel
+        ? client._piModel
+        : { provider: config.llm.provider ?? "anthropic", modelId: config.llm.model };
+
+      // Run pi-agent session
+      const result = await runAgentSession(
+        {
+          model,
+          apiKey: client._apiKey,
+          pipeline,
+          projectRoot: root,
+          bookId: activeBookId ?? null,
+          sessionId: bookSession.sessionId,
+          language: config.language ?? "zh",
+          onEvent: (event) => {
+            if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
+              broadcast("draft:delta", { text: event.assistantMessageEvent.delta });
+            }
+            if (event.type === "tool_execution_start") {
+              broadcast("tool:start", { tool: event.toolName, args: event.args });
+            }
+            if (event.type === "tool_execution_update") {
+              broadcast("tool:update", { tool: event.toolName, partialResult: event.partialResult });
+            }
+            if (event.type === "tool_execution_end") {
+              broadcast("tool:end", { tool: event.toolName, result: event.result });
+            }
+          },
         },
+        instruction,
+        initialMessages,
+      );
+
+      // Persist user + assistant messages to BookSession
+      bookSession = appendBookSessionMessage(bookSession, {
+        role: "user",
+        content: instruction,
+        timestamp: Date.now(),
       });
-      const result = await processProjectInteractionInput({
-        projectRoot: root,
-        input: instruction,
-        tools,
-        activeBookId,
-      });
-      const response = result.responseText ?? "Acknowledged.";
-
-      broadcast("agent:complete", { instruction, activeBookId, response });
-
-      // Dual-write to per-book BookSession
-      try {
-        let bookSession: BookSession;
-        if (sessionId) {
-          bookSession = await loadBookSession(root, sessionId) ?? await findOrCreateBookSession(root, activeBookId ?? null);
-        } else {
-          bookSession = await findOrCreateBookSession(root, activeBookId ?? null);
-        }
-
-        const userMsg = { role: "user" as const, content: instruction, timestamp: Date.now() };
-        bookSession = appendBookSessionMessage(bookSession, userMsg);
-
-        const responseText = result.responseText ?? "";
-        if (responseText) {
-          const assistantMsg = { role: "assistant" as const, content: responseText, timestamp: Date.now() + 1 };
-          bookSession = appendBookSessionMessage(bookSession, assistantMsg);
-        }
-
-        if (result.session?.currentExecution) {
-          bookSession = { ...bookSession, currentExecution: result.session.currentExecution };
-        }
-        if (result.session?.creationDraft) {
-          bookSession = { ...bookSession, creationDraft: result.session.creationDraft };
-        }
-
-        // If book was just created, update bookId on the session
-        const newBookId = result.session?.activeBookId;
-        if (newBookId && !bookSession.bookId) {
-          bookSession = { ...bookSession, bookId: newBookId };
-        }
-
-        await persistBookSession(root, bookSession);
-
-        // Include sessionId in response
-        return c.json({
-          response: result.responseText,
-          details: result.details,
-          session: { ...result.session, sessionId: bookSession.sessionId },
-          request: result.request,
-        });
-      } catch (e) {
-        // If dual-write fails, still return the original result
-        return c.json({
-          response: result.responseText,
-          details: result.details,
-          session: result.session,
-          request: result.request,
+      if (result.responseText) {
+        bookSession = appendBookSessionMessage(bookSession, {
+          role: "assistant",
+          content: result.responseText,
+          timestamp: Date.now() + 1,
         });
       }
+      await persistBookSession(root, bookSession);
+
+      broadcast("agent:complete", { instruction, activeBookId });
+
+      return c.json({
+        response: result.responseText,
+        session: { sessionId: bookSession.sessionId },
+      });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       broadcast("agent:error", { instruction, activeBookId, error: msg });
-      return c.json({
-        error: {
-          code: "INTERACTION_ERROR",
-          message: msg,
-        },
-      }, 500);
+      return c.json(
+        { error: { code: "AGENT_ERROR", message: msg } },
+        500,
+      );
     }
   });
 
