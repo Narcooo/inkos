@@ -75,6 +75,7 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
   const hasBook = Boolean(activeBookId);
 
   // -- Available models grouped by service --
+  const [modelsLoading, setModelsLoading] = useState(true);
   const [availableModels, setAvailableModels] = useState<Array<{
     service: string;
     label: string;
@@ -99,7 +100,8 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
         );
         setAvailableModels(grouped.filter((g) => g.models.length > 0));
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setModelsLoading(false));
   }, []);
 
   // Auto-scroll on new messages or progress updates
@@ -296,8 +298,10 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
                   {loading ? <Loader2 size={14} className="animate-spin" /> : <ArrowUp size={14} strokeWidth={2.5} />}
                 </button>
               </div>
-              {availableModels.length > 0 && (
-                <div className="flex items-center gap-2 px-3 pb-2 border-t border-border/20 pt-1.5">
+              <div className="flex items-center gap-2 px-3 pb-2 border-t border-border/20 pt-1.5">
+                {modelsLoading ? (
+                  <div className="h-7 w-24 rounded-md bg-muted/40 animate-pulse" />
+                ) : availableModels.length > 0 ? (
                   <PromptInputSelect
                     value={selectedModel && selectedService ? `${selectedService}:${selectedModel}` : ""}
                     onValueChange={(v) => {
@@ -331,8 +335,15 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
                       </div>
                     </PromptInputSelectContent>
                   </PromptInputSelect>
-                </div>
-              )}
+                ) : (
+                  <button
+                    onClick={() => nav.toServices()}
+                    className="text-xs text-muted-foreground/50 hover:text-primary transition-colors"
+                  >
+                    配置模型 →
+                  </button>
+                )}
+              </div>
             </div>
           )}
         </div>

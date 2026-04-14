@@ -527,9 +527,11 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
   });
 
   app.get("/api/v1/services/:service/models", async (c) => {
-    const { listModelsForService } = await import("@actalk/inkos-core");
-    const apiKey = c.req.query("apiKey");
-    const models = await listModelsForService(c.req.param("service"), apiKey);
+    const { listModelsForService, getServiceApiKey } = await import("@actalk/inkos-core");
+    const service = c.req.param("service");
+    // Use query param if provided, otherwise look up from secrets
+    const apiKey = c.req.query("apiKey") || await getServiceApiKey(root, service);
+    const models = await listModelsForService(service, apiKey ?? undefined);
     return c.json({ models });
   });
 
