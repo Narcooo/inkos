@@ -37,6 +37,7 @@ interface Nav {
   toBook: (id: string) => void;
   toAnalytics: (id: string) => void;
   toBookCreate: () => void;
+  toServices: () => void;
 }
 
 function BookMenu({ bookId, bookTitle, nav, t, onDelete, onOpenChange }: {
@@ -129,6 +130,13 @@ export function Dashboard({ nav, sse, theme, t }: { nav: Nav; sse: { messages: R
   const [menuOpenBookId, setMenuOpenBookId] = useState<string | null>(null);
   const { data, loading, error, refetch } = useApi<{ books: ReadonlyArray<BookSummary> }>("/books");
   const writingBooks = useMemo(() => deriveActiveBookIds(sse.messages), [sse.messages]);
+  const [hasServices, setHasServices] = useState<boolean>(true);
+
+  useEffect(() => {
+    fetchJson<{ services: any[] }>("/services/config")
+      .then((data) => setHasServices((data.services?.length ?? 0) > 0))
+      .catch(() => setHasServices(false));
+  }, []);
 
   const logEvents = sse.messages.filter((m) => m.event === "log").slice(-8);
   const progressEvent = sse.messages.filter((m) => m.event === "llm:progress").slice(-1)[0];
@@ -179,6 +187,20 @@ export function Dashboard({ nav, sse, theme, t }: { nav: Nav; sse: { messages: R
 
   return (
     <div className="space-y-12">
+      {!hasServices && (
+        <div className="rounded-xl border border-amber-500/40 bg-amber-950/20 px-5 py-4 mb-8 flex items-center justify-between">
+          <div>
+            <div className="text-sm text-amber-500 font-medium">还没有配置 AI 模型</div>
+            <div className="text-xs text-amber-500/60 mt-0.5">配好一个服务商才能开始创作</div>
+          </div>
+          <button
+            onClick={nav.toServices}
+            className="px-4 py-2 text-xs rounded-lg bg-amber-500 text-black font-medium hover:opacity-90"
+          >
+            去配置
+          </button>
+        </div>
+      )}
       <div className="flex items-end justify-between border-b border-border/40 pb-8">
         <div>
           <h1 className="font-serif text-4xl mb-2">{t("dash.title")}</h1>

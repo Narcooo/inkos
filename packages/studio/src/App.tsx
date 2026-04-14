@@ -21,7 +21,7 @@ import { BookSidebar, BookSidebarToggle } from "./components/chat/BookSidebar";
 import { useSSE } from "./hooks/use-sse";
 import { useTheme } from "./hooks/use-theme";
 import { useI18n } from "./hooks/use-i18n";
-import { postApi, useApi } from "./hooks/use-api";
+import { postApi, putApi, useApi } from "./hooks/use-api";
 import { Sun, Moon } from "lucide-react";
 
 export type { HashRoute as Route } from "./hooks/use-hash-route";
@@ -35,7 +35,7 @@ export function App() {
   const { route, setRoute } = useHashRoute();
   const sse = useSSE();
   const { theme, setTheme } = useTheme();
-  const { t } = useI18n();
+  const { t, lang: currentLang } = useI18n();
   const { data: project, refetch: refetchProject } = useApi<{ language: string; languageExplicit: boolean }>("/project");
   const [showLanguageSelector, setShowLanguageSelector] = useState(false);
   const [ready, setReady] = useState(false);
@@ -118,13 +118,32 @@ export function App() {
           </div>
 
           <div className="flex items-center gap-3">
+            <div className="flex gap-0.5 bg-muted/50 rounded-md p-0.5">
+              <button
+                onClick={async () => {
+                  await putApi("/project", { language: "zh" });
+                  refetchProject();
+                }}
+                className={`text-xs px-2 py-0.5 rounded ${currentLang === "zh" ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}
+              >
+                中
+              </button>
+              <button
+                onClick={async () => {
+                  await putApi("/project", { language: "en" });
+                  refetchProject();
+                }}
+                className={`text-xs px-2 py-0.5 rounded ${currentLang === "en" ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}
+              >
+                EN
+              </button>
+            </div>
 
             <button
               onClick={() => setTheme(isDark ? "light" : "dark")}
-              className="w-8 h-8 flex items-center justify-center rounded-lg bg-secondary text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all shadow-sm"
-              title={isDark ? "Switch to Light Mode" : "Switch to Dark Mode"}
+              className="text-muted-foreground hover:text-foreground transition-colors"
             >
-              {isDark ? <Sun size={16} /> : <Moon size={16} />}
+              {isDark ? <Sun size={14} /> : <Moon size={14} />}
             </button>
           </div>
         </header>
