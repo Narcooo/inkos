@@ -10,6 +10,11 @@ import {
   BotMessageSquare,
   ArrowUp,
 } from "lucide-react";
+import { Shimmer } from "../components/ai-elements/shimmer";
+import {
+  Message,
+  MessageContent,
+} from "../components/ai-elements/message";
 
 // -- Types --
 
@@ -136,16 +141,13 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
 
             {/* Thinking indicator */}
             {loading && (
-              <div className="flex gap-3">
-                <div className="w-7 h-7 rounded-lg bg-secondary flex items-center justify-center shrink-0">
-                  <Loader2 size={14} className="text-primary animate-spin" />
-                </div>
-                <div className="bg-card border border-border/50 px-4 py-2.5 rounded-2xl rounded-tl-sm flex gap-1.5 items-center">
-                  <span className="w-1.5 h-1.5 bg-primary/50 rounded-full animate-pulse" />
-                  <span className="w-1.5 h-1.5 bg-primary/50 rounded-full animate-pulse [animation-delay:150ms]" />
-                  <span className="w-1.5 h-1.5 bg-primary/50 rounded-full animate-pulse [animation-delay:300ms]" />
-                </div>
-              </div>
+              <Message from="assistant">
+                <MessageContent>
+                  <Shimmer className="text-sm" duration={1.5}>
+                    {isZh ? "思考中..." : "Thinking..."}
+                  </Shimmer>
+                </MessageContent>
+              </Message>
             )}
 
             {/* Book creation progress */}
