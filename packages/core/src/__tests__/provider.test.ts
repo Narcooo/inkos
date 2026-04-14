@@ -1,16 +1,125 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type OpenAI from "openai";
+import type { AssistantMessage, Model, Api } from "@mariozechner/pi-ai";
 import {
   __resetFixedTemperatureWarnings,
   chatCompletion,
   type LLMClient,
 } from "../llm/provider.js";
 
-const ZERO_USAGE = {
-  prompt_tokens: 11,
-  completion_tokens: 7,
-  total_tokens: 18,
-} as const;
+// ── Mock @mariozechner/pi-ai ──────────────────────────────────────────────────
+// We intercept streamSimple so tests don't hit the network.
+
+const mockStreamSimple = vi.fn();
+
+vi.mock("@mariozechner/pi-ai", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@mariozechner/pi-ai")>();
+  return {
+    ...original,
+    streamSimple: (...args: unknown[]) => mockStreamSimple(...args),
+  };
+});
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+const MOCK_USAGE = {
+  input: 11,
+  output: 7,
+  cacheRead: 0,
+  cacheWrite: 0,
+  totalTokens: 18,
+  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+};
+
+function makeAssistantMessage(text: string): AssistantMessage {
+  return {
+    role: "assistant",
+    content: [{ type: "text", text }],
+    api: "openai-completions" as Api,
+    provider: "openai",
+    model: "test-model",
+    usage: MOCK_USAGE,
+    stopReason: "stop",
+    timestamp: Date.now(),
+  };
+}
+
+/** Builds an async iterable that emits the given events. */
+function makeEventStream(
+  events: Array<Record<string, unknown>>,
+): AsyncIterable<Record<string, unknown>> {
+  return {
+    [Symbol.asyncIterator](): AsyncIterator<Record<string, unknown>> {
+      let i = 0;
+      return {
+        async next() {
+          if (i < events.length) return { value: events[i++]!, done: false };
+          return { value: undefined as unknown as Record<string, unknown>, done: true };
+        },
+      };
+    },
+  };
+}
+
+/** Stream that emits one text_delta and then done. */
+function makeTextStream(text: string): AsyncIterable<Record<string, unknown>> {
+  const msg = makeAssistantMessage(text);
+  return makeEventStream([
+    { type: "text_delta", contentIndex: 0, delta: text, partial: msg },
+    { type: "done", reason: "stop", message: msg },
+  ]);
+}
+
+/** Stream that emits only done with empty content. */
+function makeEmptyStream(): AsyncIterable<Record<string, unknown>> {
+  const msg = makeAssistantMessage("");
+  return makeEventStream([
+    { type: "done", reason: "stop", message: msg },
+  ]);
+}
+
+/** Stream that throws immediately. */
+function makeErrorStream(message: string): AsyncIterable<Record<string, unknown>> {
+  return {
+    [Symbol.asyncIterator](): AsyncIterator<Record<string, unknown>> {
+      return {
+        async next() {
+          throw new Error(message);
+        },
+      };
+    },
+  };
+}
+
+const MOCK_PI_MODEL: Model<Api> = {
+  id: "test-model",
+  name: "test-model",
+  api: "openai-completions",
+  provider: "openai",
+  baseUrl: "https://api.openai.com/v1",
+  reasoning: false,
+  input: ["text"],
+  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+  contextWindow: 128000,
+  maxTokens: 8192,
+};
+
+function makeClient(temperature = 0.7, extra: Partial<LLMClient> = {}): LLMClient {
+  return {
+    provider: "openai",
+    apiFormat: "chat",
+    stream: true,
+    _piModel: MOCK_PI_MODEL,
+    _apiKey: "test-key",
+    defaults: {
+      temperature,
+      maxTokens: 512,
+      thinkingBudget: 0,
+      maxTokensCap: null,
+      extra: {},
+    },
+    ...extra,
+  };
+}
 
 async function captureError(task: Promise<unknown>): Promise<Error> {
   try {
@@ -21,261 +130,139 @@ async function captureError(task: Promise<unknown>): Promise<Error> {
   throw new Error("Expected promise to reject");
 }
 
-describe("chatCompletion stream fallback", () => {
-  it("falls back to sync chat completion when streamed chat returns no chunks", async () => {
-    const create = vi.fn()
-      .mockResolvedValueOnce({
-        async *[Symbol.asyncIterator](): AsyncIterableIterator<unknown> {
-          return;
-        },
-      })
-      .mockResolvedValueOnce({
-        choices: [{ message: { content: "fallback content" } }],
-        usage: ZERO_USAGE,
-      });
+// ── Tests ─────────────────────────────────────────────────────────────────────
 
-    const client: LLMClient = {
-      provider: "openai",
-      apiFormat: "chat",
-      stream: true,
-      _openai: {
-        chat: {
-          completions: {
-            create,
-          },
-        },
-      } as unknown as OpenAI,
-      defaults: {
-        temperature: 0.7,
-        maxTokens: 512,
-        thinkingBudget: 0, maxTokensCap: null,
-        extra: {},
-      },
-    };
+describe("chatCompletion via pi-ai", () => {
+  beforeEach(() => {
+    mockStreamSimple.mockReset();
+  });
 
+  it("returns text content from a successful stream", async () => {
+    mockStreamSimple.mockReturnValue(makeTextStream("hello world"));
+
+    const client = makeClient();
     const result = await chatCompletion(client, "test-model", [
       { role: "user", content: "ping" },
     ]);
 
-    expect(result.content).toBe("fallback content");
-    expect(result.usage).toEqual({
-      promptTokens: 11,
-      completionTokens: 7,
-      totalTokens: 18,
-    });
-    expect(create).toHaveBeenCalledTimes(2);
-    expect(create.mock.calls[0]?.[0]).toMatchObject({ stream: true });
-    expect(create.mock.calls[1]?.[0]).toMatchObject({ stream: false });
+    expect(result.content).toBe("hello world");
+    expect(result.usage.promptTokens).toBe(11);
+    expect(result.usage.completionTokens).toBe(7);
+    expect(result.usage.totalTokens).toBe(18);
+    expect(mockStreamSimple).toHaveBeenCalledOnce();
   });
 
-  it("does not blindly suggest stream false for generic 400 errors", async () => {
-    const create = vi.fn().mockRejectedValue(new Error("400 Bad Request"));
+  it("throws when stream produces no text content", async () => {
+    mockStreamSimple.mockReturnValue(makeEmptyStream());
 
-    const client: LLMClient = {
-      provider: "openai",
-      apiFormat: "chat",
-      stream: false,
-      _openai: {
-        chat: {
-          completions: {
-            create,
-          },
-        },
-      } as unknown as OpenAI,
-      defaults: {
-        temperature: 0.7,
-        maxTokens: 512,
-        thinkingBudget: 0, maxTokensCap: null,
-        extra: {},
-      },
-    };
+    const client = makeClient();
+    const error = await captureError(
+      chatCompletion(client, "test-model", [{ role: "user", content: "ping" }]),
+    );
 
-    const error = await captureError(chatCompletion(client, "test-model", [
-      { role: "user", content: "ping" },
-    ]));
+    expect(error.message).toContain("empty response");
+  });
+
+  it("wraps 400 API errors with a user-friendly message", async () => {
+    mockStreamSimple.mockReturnValue(makeErrorStream("400 Bad Request"));
+
+    const client = makeClient();
+    const error = await captureError(
+      chatCompletion(client, "test-model", [{ role: "user", content: "ping" }]),
+    );
 
     expect(error.message).toContain("API 返回 400");
-    expect(error.message).not.toContain("\"stream\": false");
     expect(error.message).toContain("检查提供方文档");
   });
 
-  it("reports when sync fallback is rejected because provider requires streaming", async () => {
-    const create = vi.fn()
-      .mockResolvedValueOnce({
-        async *[Symbol.asyncIterator](): AsyncIterableIterator<unknown> {
-          return;
-        },
-      })
-      .mockRejectedValueOnce(new Error("400 {\"detail\":\"Stream must be set to true\"}"));
+  it("wraps 401 errors with an unauthorized message", async () => {
+    mockStreamSimple.mockReturnValue(makeErrorStream("401 Unauthorized"));
 
-    const client: LLMClient = {
-      provider: "openai",
-      apiFormat: "chat",
-      stream: true,
-      _openai: {
-        chat: {
-          completions: {
-            create,
-          },
-        },
-      } as unknown as OpenAI,
-      defaults: {
-        temperature: 0.7,
-        maxTokens: 512,
-        thinkingBudget: 0, maxTokensCap: null,
-        extra: {},
-      },
-    };
-
-    const error = await captureError(chatCompletion(client, "test-model", [
-      { role: "user", content: "ping" },
-    ]));
-
-    expect(create).toHaveBeenCalledTimes(2);
-    expect(create.mock.calls[0]?.[0]).toMatchObject({ stream: true });
-    expect(create.mock.calls[1]?.[0]).toMatchObject({ stream: false });
-    expect(error.message).toContain("stream:true");
-    expect(error.message).not.toContain("\"stream\": false");
-  });
-});
-
-describe("chatCompletion empty-response diagnostics", () => {
-  it("includes finish_reason and reasoning stats when stream has only reasoning_content", async () => {
-    // Stream: only reasoning_content, no content → empty → falls back to sync → sync also empty
-    const create = vi.fn()
-      .mockResolvedValueOnce({
-        async *[Symbol.asyncIterator](): AsyncIterableIterator<unknown> {
-          yield {
-            choices: [{
-              delta: { reasoning_content: "Let me think about this..." },
-              finish_reason: null,
-            }],
-          };
-          yield {
-            choices: [{
-              delta: { reasoning_content: "The answer is clear." },
-              finish_reason: "stop",
-            }],
-            usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 },
-          };
-        },
-      })
-      // Sync fallback also returns empty
-      .mockResolvedValueOnce({
-        choices: [{
-          message: { content: "" },
-          finish_reason: "stop",
-        }],
-        usage: ZERO_USAGE,
-      });
-
-    const client: LLMClient = {
-      provider: "openai",
-      apiFormat: "chat",
-      stream: true,
-      _openai: {
-        chat: { completions: { create } },
-      } as unknown as OpenAI,
-      defaults: {
-        temperature: 0.7,
-        maxTokens: 2048,
-        thinkingBudget: 0,
-        maxTokensCap: null,
-        extra: {},
-      },
-    };
-
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const client = makeClient();
     const error = await captureError(
-      chatCompletion(client, "test-model", [{ role: "user", content: "validate" }]),
+      chatCompletion(client, "test-model", [{ role: "user", content: "ping" }]),
     );
-    const warnMessages = warn.mock.calls.map((c) => String(c[0]));
-    warn.mockRestore();
 
-    // The stream path should have logged diagnostics via console.warn
-    expect(warnMessages.some((m) => m.includes("reasoning_content"))).toBe(true);
-    // The final error (from sync fallback) should contain finish_reason
-    expect(error.message).toContain("finish_reason");
+    expect(error.message).toContain("API 返回 401");
   });
 
-  it("includes finish_reason in sync empty-response error", async () => {
-    const create = vi.fn().mockResolvedValueOnce({
-      choices: [{
-        message: { content: "" },
-        finish_reason: "content_filter",
-      }],
-      usage: ZERO_USAGE,
+  it("wraps connection errors with a friendly message", async () => {
+    mockStreamSimple.mockReturnValue(makeErrorStream("fetch failed: ECONNREFUSED"));
+
+    const client = makeClient();
+    const error = await captureError(
+      chatCompletion(client, "test-model", [{ role: "user", content: "ping" }]),
+    );
+
+    expect(error.message).toContain("无法连接到 API 服务");
+  });
+
+  it("passes temperature and maxTokens to streamSimple", async () => {
+    mockStreamSimple.mockReturnValue(makeTextStream("ok"));
+
+    const client = makeClient(0.5);
+    await chatCompletion(client, "test-model", [{ role: "user", content: "hi" }], {
+      temperature: 0.3,
+      maxTokens: 256,
     });
 
-    const client: LLMClient = {
-      provider: "openai",
-      apiFormat: "chat",
-      stream: false,
-      _openai: {
-        chat: { completions: { create } },
-      } as unknown as OpenAI,
-      defaults: {
-        temperature: 0.7,
-        maxTokens: 2048,
-        thinkingBudget: 0,
-        maxTokensCap: null,
-        extra: {},
-      },
-    };
+    const opts = mockStreamSimple.mock.calls[0]?.[2] as Record<string, unknown>;
+    expect(opts.temperature).toBe(0.3);
+    expect(opts.maxTokens).toBe(256);
+  });
 
-    const error = await captureError(
-      chatCompletion(client, "test-model", [{ role: "user", content: "validate" }]),
-    );
+  it("uses client defaults when no per-call overrides are provided", async () => {
+    mockStreamSimple.mockReturnValue(makeTextStream("ok"));
 
-    expect(error.message).toContain("content_filter");
+    const client = makeClient(0.8);
+    await chatCompletion(client, "test-model", [{ role: "user", content: "hi" }]);
+
+    const opts = mockStreamSimple.mock.calls[0]?.[2] as Record<string, unknown>;
+    expect(opts.temperature).toBe(0.8);
+    expect(opts.maxTokens).toBe(512);
+  });
+
+  it("calls onTextDelta for each text chunk", async () => {
+    const msg = makeAssistantMessage("abc");
+    mockStreamSimple.mockReturnValue(makeEventStream([
+      { type: "text_delta", contentIndex: 0, delta: "a", partial: msg },
+      { type: "text_delta", contentIndex: 0, delta: "b", partial: msg },
+      { type: "text_delta", contentIndex: 0, delta: "c", partial: msg },
+      { type: "done", reason: "stop", message: msg },
+    ]));
+
+    const deltas: string[] = [];
+    const client = makeClient();
+    await chatCompletion(client, "test-model", [{ role: "user", content: "hi" }], {
+      onTextDelta: (d) => deltas.push(d),
+    });
+
+    expect(deltas).toEqual(["a", "b", "c"]);
   });
 });
 
 describe("chatCompletion fixed-temperature clamp (thinking models)", () => {
   beforeEach(() => {
     __resetFixedTemperatureWarnings();
+    mockStreamSimple.mockReset();
+    mockStreamSimple.mockReturnValue(makeTextStream("ok"));
   });
 
-  function makeSyncClient(create: ReturnType<typeof vi.fn>, temperature: number): LLMClient {
-    return {
-      provider: "openai",
-      apiFormat: "chat",
-      stream: false,
-      _openai: {
-        chat: { completions: { create } },
-      } as unknown as OpenAI,
-      defaults: {
-        temperature,
-        maxTokens: 512,
-        thinkingBudget: 0,
-        maxTokensCap: null,
-        extra: {},
-      },
-    };
-  }
-
-  const OK_RESPONSE = {
-    choices: [{ message: { content: "ok" } }],
-    usage: ZERO_USAGE,
-  };
-
   it("forces temperature=1 for kimi-k2.5 even when client default is 0.7", async () => {
-    const create = vi.fn().mockResolvedValue(OK_RESPONSE);
-    const client = makeSyncClient(create, 0.7);
+    const client = makeClient(0.7);
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     await chatCompletion(client, "kimi-k2.5", [{ role: "user", content: "hi" }]);
 
-    expect(create).toHaveBeenCalledTimes(1);
-    expect(create.mock.calls[0]?.[0]).toMatchObject({ temperature: 1 });
+    const opts = mockStreamSimple.mock.calls[0]?.[2] as Record<string, unknown>;
+    expect(opts.temperature).toBe(1);
     expect(warn).toHaveBeenCalledOnce();
     expect(warn.mock.calls[0]?.[0]).toContain("kimi-k2.5");
     warn.mockRestore();
   });
 
   it("clamps per-call temperature override (0.3) to 1 for kimi-k2.5", async () => {
-    const create = vi.fn().mockResolvedValue(OK_RESPONSE);
-    const client = makeSyncClient(create, 0.7);
+    const client = makeClient(0.7);
     vi.spyOn(console, "warn").mockImplementation(() => {});
 
     await chatCompletion(
@@ -285,12 +272,12 @@ describe("chatCompletion fixed-temperature clamp (thinking models)", () => {
       { temperature: 0.3 },
     );
 
-    expect(create.mock.calls[0]?.[0]).toMatchObject({ temperature: 1 });
+    const opts = mockStreamSimple.mock.calls[0]?.[2] as Record<string, unknown>;
+    expect(opts.temperature).toBe(1);
   });
 
   it("only warns once per model name across multiple calls", async () => {
-    const create = vi.fn().mockResolvedValue(OK_RESPONSE);
-    const client = makeSyncClient(create, 0.7);
+    const client = makeClient(0.7);
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     await chatCompletion(client, "kimi-k2.5", [{ role: "user", content: "a" }]);
@@ -302,20 +289,19 @@ describe("chatCompletion fixed-temperature clamp (thinking models)", () => {
   });
 
   it("also clamps any model name containing 'thinking'", async () => {
-    const create = vi.fn().mockResolvedValue(OK_RESPONSE);
-    const client = makeSyncClient(create, 0.5);
+    const client = makeClient(0.5);
     vi.spyOn(console, "warn").mockImplementation(() => {});
 
     await chatCompletion(client, "kimi-thinking-preview", [
       { role: "user", content: "hi" },
     ]);
 
-    expect(create.mock.calls[0]?.[0]).toMatchObject({ temperature: 1 });
+    const opts = mockStreamSimple.mock.calls[0]?.[2] as Record<string, unknown>;
+    expect(opts.temperature).toBe(1);
   });
 
   it("leaves regular models untouched (no clamp, no warning)", async () => {
-    const create = vi.fn().mockResolvedValue(OK_RESPONSE);
-    const client = makeSyncClient(create, 0.7);
+    const client = makeClient(0.7);
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     await chatCompletion(
@@ -325,19 +311,20 @@ describe("chatCompletion fixed-temperature clamp (thinking models)", () => {
       { temperature: 0.3 },
     );
 
-    expect(create.mock.calls[0]?.[0]).toMatchObject({ temperature: 0.3 });
+    const opts = mockStreamSimple.mock.calls[0]?.[2] as Record<string, unknown>;
+    expect(opts.temperature).toBe(0.3);
     expect(warn).not.toHaveBeenCalled();
     warn.mockRestore();
   });
 
   it("does not warn when requested temperature is already 1", async () => {
-    const create = vi.fn().mockResolvedValue(OK_RESPONSE);
-    const client = makeSyncClient(create, 1);
+    const client = makeClient(1);
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     await chatCompletion(client, "kimi-k2.5", [{ role: "user", content: "hi" }]);
 
-    expect(create.mock.calls[0]?.[0]).toMatchObject({ temperature: 1 });
+    const opts = mockStreamSimple.mock.calls[0]?.[2] as Record<string, unknown>;
+    expect(opts.temperature).toBe(1);
     expect(warn).not.toHaveBeenCalled();
     warn.mockRestore();
   });
