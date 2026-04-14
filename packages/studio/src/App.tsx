@@ -139,14 +139,14 @@ export function App() {
         </header>
 
         {/* Main Content Area */}
-        <main className="flex-1 overflow-y-auto scroll-smooth">
+        <main className="flex-1 relative overflow-y-auto scroll-smooth">
           {route.page === "dashboard" && (
             <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
               <Dashboard nav={nav} sse={sse} theme={theme} t={t} />
             </div>
           )}
           {(route.page === "book" || route.page === "book-create") && (
-            <div className="flex flex-1 min-w-0">
+            <div className="absolute inset-0 flex min-w-0">
               <ChatPage
                 activeBookId={route.page === "book" ? route.bookId : undefined}
                 nav={nav}

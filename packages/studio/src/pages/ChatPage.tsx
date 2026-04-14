@@ -1,8 +1,8 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useRef, useEffect } from "react";
 import type { Theme } from "../hooks/use-theme";
 import type { TFunction } from "../hooks/use-i18n";
 import type { SSEMessage } from "../hooks/use-sse";
-import { fetchJson } from "../hooks/use-api";
+import { useChatStore } from "../store/chat";
 import { ChatMessage } from "../components/chat/ChatMessage";
 import { QuickActions } from "../components/chat/QuickActions";
 import {
@@ -18,49 +18,6 @@ interface Nav {
   toBook: (id: string) => void;
 }
 
-interface ToolCall {
-  readonly name: string;
-  readonly arguments: Record<string, unknown>;
-}
-
-interface Message {
-  readonly role: "user" | "assistant";
-  readonly content: string;
-  readonly timestamp: number;
-  readonly toolCall?: ToolCall;
-}
-
-interface AgentResponse {
-  readonly response?: string;
-  readonly error?: string | { code?: string; message?: string };
-  readonly details?: {
-    readonly draftRaw?: string;
-    readonly toolCall?: { readonly name: string; readonly arguments: Record<string, unknown> };
-  };
-  readonly session?: {
-    readonly activeBookId?: string;
-    readonly creationDraft?: unknown;
-    readonly messages?: ReadonlyArray<{
-      role: "user" | "assistant" | "system";
-      content: string;
-      timestamp: number;
-    }>;
-  };
-  readonly request?: unknown;
-}
-
-interface SessionResponse {
-  readonly session?: {
-    readonly activeBookId?: string;
-    readonly messages?: ReadonlyArray<{
-      role: "user" | "assistant" | "system";
-      content: string;
-      timestamp: number;
-    }>;
-  };
-  readonly activeBookId?: string;
-}
-
 export interface ChatPageProps {
   readonly activeBookId?: string;
   readonly nav: Nav;
@@ -69,30 +26,24 @@ export interface ChatPageProps {
   readonly sse: { messages: ReadonlyArray<SSEMessage>; connected: boolean };
 }
 
-// -- Helpers --
-
-function coerceSessionMessages(
-  messages: ReadonlyArray<{ role: "user" | "assistant" | "system"; content: string; timestamp: number }>,
-): ReadonlyArray<Message> {
-  return messages
-    .filter((m) => m.role === "user" || m.role === "assistant")
-    .map((m) => ({ role: m.role as "user" | "assistant", content: m.content, timestamp: m.timestamp }));
-}
-
-function extractErrorMessage(error: string | { code?: string; message?: string }): string {
-  if (typeof error === "string") return error;
-  return error.message ?? "Unknown error";
-}
-
 // -- Component --
 
 export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPageProps) {
-  const [messages, setMessages] = useState<ReadonlyArray<Message>>([]);
-  const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [pendingBookArgs, setPendingBookArgs] = useState<Record<string, unknown> | null>(null);
-  const [bookCreating, setBookCreating] = useState(false);
-  const [createProgress, setCreateProgress] = useState("");
+  // -- Store selectors --
+  const messages = useChatStore((s) => s.messages);
+  const input = useChatStore((s) => s.input);
+  const loading = useChatStore((s) => s.loading);
+  const pendingBookArgs = useChatStore((s) => s.pendingBookArgs);
+  const bookCreating = useChatStore((s) => s.bookCreating);
+  const createProgress = useChatStore((s) => s.createProgress);
+
+  // -- Store actions --
+  const setInput = useChatStore((s) => s.setInput);
+  const sendMessage = useChatStore((s) => s.sendMessage);
+  const setPendingBookArgs = useChatStore((s) => s.setPendingBookArgs);
+  const handleCreateBook = useChatStore((s) => s.handleCreateBook);
+  const setCreateProgress = useChatStore((s) => s.setCreateProgress);
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -121,159 +72,32 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
       } catch { /* ignore */ }
     });
     return () => { es.close(); };
-  }, [bookCreating]);
+  }, [bookCreating, setCreateProgress]);
 
   // Load session messages on mount
   useEffect(() => {
-    let cancelled = false;
-    void fetchJson<SessionResponse>("/interaction/session")
-      .then((data) => {
-        if (cancelled) return;
-        const sessionMessages = data.session?.messages;
-        if (sessionMessages && sessionMessages.length > 0) {
-          setMessages((current) => {
-            if (current.length > 0) return current;
-            return coerceSessionMessages(sessionMessages);
-          });
-        }
-      })
-      .catch(() => {
-        // Session load failed -- start with empty state
-      });
-    return () => { cancelled = true; };
+    useChatStore.getState().loadSession();
   }, []);
 
-  const sendMessage = useCallback(async (text: string) => {
-    const trimmed = text.trim();
-    if (!trimmed || loading) return;
+  const onSend = (text: string) => {
+    void sendMessage(text, activeBookId);
+  };
 
-    const instruction = hasBook ? trimmed : `/new ${trimmed}`;
-
-    setInput("");
-    const ts = Date.now();
-    setMessages((prev) => [...prev, { role: "user", content: trimmed, timestamp: ts }]);
-    setLoading(true);
-
-    // Open a dedicated EventSource for streaming (bypasses shared 99-msg buffer)
-    const streamEs = new EventSource("/api/events");
-    const streamTs = ts + 1;
-    let streamStarted = false;
-
-    streamEs.addEventListener("draft:delta", (e: MessageEvent) => {
-      try {
-        const d = e.data ? JSON.parse(e.data) : null;
-        if (!d?.text) return;
-        if (!streamStarted) {
-          // First chunk: add a streaming assistant message
-          streamStarted = true;
-          setMessages((prev) => [...prev, { role: "assistant", content: d.text, timestamp: streamTs }]);
-        } else {
-          // Append to the streaming message
-          setMessages((prev) => {
-            const last = prev[prev.length - 1];
-            if (last?.timestamp === streamTs && last.role === "assistant") {
-              return [...prev.slice(0, -1), { ...last, content: last.content + d.text }];
-            }
-            return prev;
-          });
-        }
-      } catch { /* ignore */ }
-    });
-
-    try {
-      const data = await fetchJson<AgentResponse>("/agent", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ instruction, activeBookId }),
-      });
-
-      streamEs.close();
-
-      // Replace streaming message with final content (draftRaw has ::: directives)
-      const finalContent = data.details?.draftRaw || data.response || "Acknowledged.";
-      const toolCall = data.details?.toolCall ?? undefined;
-
-      if (data.error) {
-        setMessages((prev) => {
-          const filtered = streamStarted ? prev.filter((m) => m.timestamp !== streamTs) : prev;
-          return [...filtered, {
-            role: "assistant" as const,
-            content: `\u2717 ${extractErrorMessage(data.error!)}`,
-            timestamp: Date.now(),
-          }];
-        });
-      } else {
-        setMessages((prev) => {
-          const msg: Message = {
-            role: "assistant" as const,
-            content: finalContent,
-            timestamp: Date.now(),
-            toolCall,
-          };
-          if (streamStarted) {
-            // Replace the streaming message
-            return prev.map((m) => m.timestamp === streamTs ? { ...m, content: finalContent, toolCall } : m);
-          }
-          return [...prev, msg];
-        });
-
-        // Initialize editable form state for create_book tool calls
-        if (toolCall?.name === "create_book") {
-          setPendingBookArgs({ ...toolCall.arguments });
-        }
-      }
-    } catch (e) {
-      streamEs.close();
-      setMessages((prev) => {
-        const filtered = streamStarted ? prev.filter((m) => m.timestamp !== streamTs) : prev;
-        return [...filtered, {
-          role: "assistant" as const,
-          content: `\u2717 ${e instanceof Error ? e.message : String(e)}`,
-          timestamp: Date.now(),
-        }];
-      });
-    } finally {
-      setLoading(false);
-    }
-  }, [loading, hasBook, activeBookId]);
+  const onCreateBook = async () => {
+    const newBookId = await handleCreateBook(activeBookId);
+    if (newBookId) nav.toBook(newBookId);
+  };
 
   const handleQuickAction = (command: string) => {
-    void sendMessage(command);
+    void sendMessage(command, activeBookId);
   };
-
-  const handleCreateBook = async () => {
-    if (!pendingBookArgs) return;
-    setBookCreating(true);
-    try {
-      const data = await fetchJson<AgentResponse>("/agent", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ instruction: "/create", activeBookId }),
-      });
-      const newBookId = data.session?.activeBookId;
-      if (newBookId) nav.toBook(newBookId);
-    } catch (e) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant" as const,
-          content: `\u2717 ${e instanceof Error ? e.message : String(e)}`,
-          timestamp: Date.now(),
-        },
-      ]);
-    } finally {
-      setBookCreating(false);
-    }
-  };
-
-
 
   const emptyGuidance = isZh
     ? "\u544A\u8BC9\u6211\u4F60\u60F3\u5199\u4EC0\u4E48\u2014\u2014\u9898\u6750\u3001\u4E16\u754C\u89C2\u3001\u4E3B\u89D2\u3001\u6838\u5FC3\u51B2\u7A81"
     : "Tell me what you want to write \u2014 genre, world, protagonist, core conflict";
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full flex-1 min-w-0">
       {/* Message scroll area */}
       <div
         ref={scrollRef}
@@ -304,7 +128,7 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
                   ? (args) => setPendingBookArgs(args)
                   : undefined}
                 onConfirm={msg.toolCall?.name === "create_book"
-                  ? () => void handleCreateBook()
+                  ? () => void onCreateBook()
                   : undefined}
                 confirming={msg.toolCall?.name === "create_book" ? bookCreating : undefined}
               />
@@ -363,7 +187,7 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
             <div className="flex items-center gap-3">
               <button
                 type="button"
-                onClick={() => void handleCreateBook()}
+                onClick={() => void onCreateBook()}
                 disabled={bookCreating}
                 className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50"
               >
@@ -375,14 +199,14 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
                   type="text"
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void sendMessage(input); } }}
+                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onSend(input); } }}
                   placeholder={isZh ? "或输入修改要求…" : "Or type changes..."}
                   className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground/50"
                 />
                 {input.trim() && (
                   <button
                     type="button"
-                    onClick={() => void sendMessage(input)}
+                    onClick={() => onSend(input)}
                     className="w-7 h-7 rounded-lg bg-primary text-primary-foreground flex items-center justify-center shrink-0 hover:scale-105 active:scale-95 transition-all"
                   >
                     <ArrowUp size={12} strokeWidth={2.5} />
@@ -397,7 +221,7 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
                 ref={textareaRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void sendMessage(input); } }}
+                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onSend(input); } }}
                 placeholder={isZh ? "输入指令..." : "Enter command..."}
                 disabled={loading}
                 rows={1}
@@ -405,7 +229,7 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
               />
               <button
                 type="button"
-                onClick={() => void sendMessage(input)}
+                onClick={() => onSend(input)}
                 disabled={!input.trim() || loading}
                 className="w-8 h-8 rounded-lg bg-primary text-primary-foreground flex items-center justify-center shrink-0 hover:scale-105 active:scale-95 transition-all disabled:opacity-20 disabled:scale-100 shadow-sm shadow-primary/20"
               >

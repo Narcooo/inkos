@@ -90,7 +90,7 @@ export function BookSidebar({ bookId, theme, t, sse }: BookSidebarProps) {
   const sidebarView = useChatStore((s) => s.sidebarView);
 
   return (
-    <aside className="hidden lg:flex w-[300px] shrink-0 flex-col border-l border-border/20 bg-background/30 backdrop-blur-sm overflow-y-auto">
+    <aside className="hidden lg:flex w-[300px] shrink-0 flex-col bg-background/30 backdrop-blur-sm overflow-y-auto">
       {sidebarView === "artifact" ? (
         <ArtifactView bookId={bookId} />
       ) : (
