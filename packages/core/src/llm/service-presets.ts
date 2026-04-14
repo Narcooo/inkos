@@ -53,7 +53,7 @@ export function guessServiceFromBaseUrl(baseUrl: string): string {
 }
 
 // pi-ai service → pi-ai provider 映射
-const SERVICE_TO_PI_PROVIDER: Record<string, string> = {
+export const SERVICE_TO_PI_PROVIDER: Record<string, string> = {
   openai: "openai",
   anthropic: "anthropic",
   deepseek: "openai",         // OpenAI 兼容，pi-ai 无独立 provider
