@@ -163,6 +163,7 @@ export * from "./agent/index.js";
 // LLM
 export { createLLMClient, chatCompletion, chatWithTools, createStreamMonitor, PartialResponseError, type LLMClient, type LLMResponse, type LLMMessage, type ToolDefinition, type ToolCall, type AgentMessage, type ChatWithToolsResult, type StreamProgress, type OnStreamProgress } from "./llm/provider.js";
 export { SERVICE_PRESETS, resolveServicePreset, guessServiceFromBaseUrl, listModelsForService, listServicesWithModelCount, type ServicePreset, type ModelInfo } from "./llm/service-presets.js";
+export { loadSecrets, saveSecrets, getServiceApiKey, type SecretsFile } from "./llm/secrets.js";
 
 // Agents
 export { BaseAgent, type AgentContext } from "./agents/base.js";
