@@ -1,10 +1,12 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import type { Theme } from "../../hooks/use-theme";
 import type { TFunction } from "../../hooks/use-i18n";
 import type { SSEMessage } from "../../hooks/use-sse";
 import { useChatStore } from "../../store/chat";
 import { fetchJson } from "../../hooks/use-api";
-import { PanelRightClose, PanelRightOpen, ArrowLeft, Loader2 } from "lucide-react";
+import { PanelRightClose, PanelRightOpen, ArrowLeft, Loader2, Pencil, Save, X } from "lucide-react";
+import { Streamdown } from "streamdown";
+import { cjk } from "@streamdown/cjk";
 import { ProgressSection } from "../sidebar/ProgressSection";
 import { FoundationSection } from "../sidebar/FoundationSection";
 import { SummarySection } from "../sidebar/SummarySection";
@@ -28,22 +30,68 @@ const FOUNDATION_LABELS: Record<string, string> = {
   "character_matrix.md": "角色矩阵",
 };
 
+const streamdownPlugins = { cjk };
+
 function ArtifactView({ bookId }: { readonly bookId: string }) {
   const artifactFile = useChatStore((s) => s.artifactFile);
+  const artifactChapter = useChatStore((s) => s.artifactChapter);
   const closeArtifact = useChatStore((s) => s.closeArtifact);
   const [content, setContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(false);
+  const [editContent, setEditContent] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const isChapter = artifactChapter !== null;
+  const label = isChapter
+    ? `第 ${artifactChapter} 章`
+    : artifactFile ? FOUNDATION_LABELS[artifactFile] ?? artifactFile : "";
 
   useEffect(() => {
-    if (!artifactFile) return;
+    setEditing(false);
     setLoading(true);
-    fetchJson<{ content: string | null }>(`/books/${bookId}/truth/${artifactFile}`)
-      .then((data) => setContent(data.content ?? ""))
-      .catch(() => setContent(null))
-      .finally(() => setLoading(false));
-  }, [bookId, artifactFile]);
+    if (isChapter) {
+      fetchJson<{ content: string }>(`/books/${bookId}/chapters/${artifactChapter}`)
+        .then((data) => setContent(data.content ?? ""))
+        .catch(() => setContent(null))
+        .finally(() => setLoading(false));
+    } else if (artifactFile) {
+      fetchJson<{ content: string | null }>(`/books/${bookId}/truth/${artifactFile}`)
+        .then((data) => setContent(data.content ?? ""))
+        .catch(() => setContent(null))
+        .finally(() => setLoading(false));
+    }
+  }, [bookId, artifactFile, artifactChapter, isChapter]);
 
-  const label = artifactFile ? FOUNDATION_LABELS[artifactFile] ?? artifactFile : "";
+  const handleEdit = useCallback(() => {
+    setEditContent(content ?? "");
+    setEditing(true);
+  }, [content]);
+
+  const handleSave = useCallback(async () => {
+    setSaving(true);
+    try {
+      if (isChapter) {
+        await fetchJson(`/books/${bookId}/chapters/${artifactChapter}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content: editContent }),
+        });
+      } else if (artifactFile) {
+        await fetchJson(`/books/${bookId}/truth/${artifactFile}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content: editContent }),
+        });
+      }
+      setContent(editContent);
+      setEditing(false);
+    } catch {
+      // keep editing state on error
+    } finally {
+      setSaving(false);
+    }
+  }, [bookId, artifactFile, artifactChapter, isChapter, editContent]);
 
   return (
     <div className="flex flex-col h-full">
@@ -54,18 +102,49 @@ function ArtifactView({ bookId }: { readonly bookId: string }) {
         >
           <ArrowLeft size={14} />
         </button>
-        <span className="text-sm font-medium truncate">{label}</span>
+        <span className="text-sm font-medium truncate flex-1">{label}</span>
+        {!loading && content !== null && !editing && (
+          <button
+            onClick={handleEdit}
+            className="w-6 h-6 rounded-md flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors"
+          >
+            <Pencil size={12} />
+          </button>
+        )}
+        {editing && (
+          <div className="flex items-center gap-1">
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="w-6 h-6 rounded-md flex items-center justify-center text-emerald-500 hover:bg-emerald-500/10 transition-colors"
+            >
+              {saving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+            </button>
+            <button
+              onClick={() => setEditing(false)}
+              className="w-6 h-6 rounded-md flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors"
+            >
+              <X size={12} />
+            </button>
+          </div>
+        )}
       </div>
-      <div className="flex-1 overflow-y-auto px-4 py-3">
+      <div className="flex-1 overflow-y-auto">
         {loading ? (
           <div className="flex items-center justify-center py-8">
             <Loader2 size={16} className="text-muted-foreground animate-spin" />
           </div>
         ) : content === null ? (
-          <p className="text-xs text-muted-foreground/50 italic">文件不存在</p>
+          <p className="text-xs text-muted-foreground/50 italic px-4 py-3">文件不存在</p>
+        ) : editing ? (
+          <textarea
+            value={editContent}
+            onChange={(e) => setEditContent(e.target.value)}
+            className="w-full h-full min-h-[300px] bg-transparent text-sm leading-7 px-4 py-3 resize-none outline-none border-0 font-mono"
+          />
         ) : (
-          <div className="prose prose-sm prose-neutral dark:prose-invert max-w-none text-sm leading-7 [&_table]:text-xs [&_h2]:text-sm [&_h3]:text-xs">
-            {content}
+          <div className="px-4 py-3 text-sm leading-7">
+            <Streamdown content={content} plugins={streamdownPlugins} />
           </div>
         )}
       </div>

@@ -67,7 +67,8 @@ export interface CreateState {
   createProgress: string;
   bookDataVersion: number;
   sidebarView: "panel" | "artifact";
-  artifactFile: string | null;
+  artifactFile: string | null;         // foundation file name, e.g. "story_bible.md"
+  artifactChapter: number | null;      // chapter number, e.g. 1
   bookSummary: BookSummary | null;
 }
 
@@ -96,6 +97,7 @@ export interface CreateActions {
   handleCreateBook: (activeBookId?: string) => Promise<string | null>;
   bumpBookDataVersion: () => void;
   openArtifact: (file: string) => void;
+  openChapterArtifact: (chapterNum: number) => void;
   closeArtifact: () => void;
   setBookSummary: (summary: BookSummary | null) => void;
 }

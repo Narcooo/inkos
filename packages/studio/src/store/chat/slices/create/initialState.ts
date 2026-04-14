@@ -7,5 +7,6 @@ export const initialCreateState: CreateState = {
   bookDataVersion: 0,
   sidebarView: "panel",
   artifactFile: null,
+  artifactChapter: null,
   bookSummary: null,
 };
