@@ -224,9 +224,9 @@ export function ServiceDetailPage({
           <div className="space-y-2">
             <p className="text-sm font-medium text-muted-foreground">可用模型</p>
             <div className="rounded-lg border border-border divide-y divide-border/50 max-h-48 overflow-y-auto">
-              {models.map((m) => (
-                <div key={m} className="px-3 py-2 text-sm font-mono text-foreground/80">
-                  {m}
+              {models.map((m: any) => (
+                <div key={m.id ?? m} className="px-3 py-2 text-sm font-mono text-foreground/80">
+                  {m.name ?? m.id ?? String(m)}
                 </div>
               ))}
             </div>
