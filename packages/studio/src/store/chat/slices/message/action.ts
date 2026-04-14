@@ -356,25 +356,15 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
         const d = e.data ? JSON.parse(e.data) : null;
         const msg = d?.message as string | undefined;
         if (!msg) return;
-        const stageMatch = msg.match(/^(?:阶段：|Stage: )(.+)$/);
-        if (!stageMatch) return;
-        const stageName = stageMatch[1];
 
         set((s) => {
           const [msgs, stream] = getOrCreateStream(s.messages, streamTs);
           const runningTool = findRunningToolPart([...(stream.parts ?? [])]);
-          if (!runningTool?.execution.stages) return s;
+          if (!runningTool) return s;
 
           const parts = (stream.parts ?? []).map((p) => {
             if (p.type !== "tool" || p.execution.id !== runningTool.execution.id) return p;
-            let found = false;
-            const stages = p.execution.stages!.map((stage) => {
-              if (stage.label === stageName) { found = true; return { ...stage, status: "active" as const }; }
-              if (!found && stage.status === "active") return { ...stage, status: "completed" as const, progress: undefined };
-              return stage;
-            });
-            if (!found) return p;
-            return { type: "tool" as const, execution: { ...p.execution, stages } };
+            return { type: "tool" as const, execution: { ...p.execution, logs: [...(p.execution.logs ?? []), msg] } };
           });
           const flat = deriveFlat(parts);
           return { messages: replaceLast(msgs, { ...stream, ...flat, parts }) };

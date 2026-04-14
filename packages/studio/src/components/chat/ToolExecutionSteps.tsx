@@ -126,22 +126,25 @@ function PipelineExecution({ exec }: { exec: ToolExecution }) {
       </CollapsibleTrigger>
       <CollapsibleContent>
         <div className="px-3 pb-3 pt-1">
-          {exec.stages && exec.stages.length > 0 && (
-            <ul className="space-y-1.5">
-              {exec.stages.map((stage, i) => (
-                <li key={i} className="flex items-center gap-2.5">
-                  <StageIcon status={stage.status} />
-                  <span className={`text-xs ${stage.status === "pending" ? "text-muted-foreground/40" : "text-muted-foreground"}`}>
-                    {stage.label}
-                  </span>
-                  {stage.status === "active" && (
-                    <span className="text-[10px] text-primary/70 ml-auto">
-                      {stage.progress ? formatProgress(stage.progress) : `${Math.round(elapsedMs / 1000)}s`}
-                    </span>
-                  )}
-                </li>
-              ))}
+          {/* Real-time execution logs */}
+          {exec.logs && exec.logs.length > 0 && (
+            <ul className="space-y-0.5">
+              {exec.logs.map((log, i) => {
+                const isError = log.startsWith("[error]") || /error/i.test(log);
+                const isWarn = log.startsWith("[warning]") || /warning|警告/i.test(log);
+                return (
+                  <li key={i} className={`text-xs font-mono truncate ${isError ? "text-destructive" : isWarn ? "text-yellow-600 dark:text-yellow-400" : "text-muted-foreground"}`}>
+                    {log}
+                  </li>
+                );
+              })}
+              {isActive && (
+                <li className="text-xs text-muted-foreground/50 animate-pulse">...</li>
+              )}
             </ul>
+          )}
+          {isActive && (!exec.logs || exec.logs.length === 0) && (
+            <div className="text-xs text-muted-foreground/50 animate-pulse">等待日志...</div>
           )}
           {exec.status === "error" && exec.error && (
             <div className="mt-2 text-xs text-destructive bg-destructive/5 rounded-lg px-2.5 py-2">

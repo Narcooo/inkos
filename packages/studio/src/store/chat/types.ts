@@ -26,6 +26,7 @@ export interface ToolExecution {
   result?: string;
   error?: string;
   stages?: PipelineStage[];
+  logs?: string[];
   startedAt: number;
   completedAt?: number;
 }
