@@ -311,3 +311,13 @@ h3 { font-size: 1.25rem; }
   transition: width 300ms cubic-bezier(0.16, 1, 0.3, 1),
               opacity 200ms ease-out;
 }
+
+/* ── Streamdown overrides ── */
+[data-streamdown="table-wrapper"] {
+  border: none;
+  background: transparent;
+  padding: 0;
+}
+[data-streamdown="table-wrapper"] > .flex.items-center.justify-end {
+  display: none;
+}
