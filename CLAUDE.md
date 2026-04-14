@@ -5,10 +5,10 @@ AI 长篇小说写作平台。monorepo: `packages/core`（运行时）、`packag
 ## 常用命令
 
 ```bash
-pnpm dev              # 启动 studio dev server (core + cli + studio)
+pnpm dev              # 从根目录启动！core tsc --watch + studio Vite HMR + API server
 pnpm build            # 全量构建
 pnpm test             # vitest 全仓测试
-pnpm --filter @actalk/inkos-studio build   # 单独构建 studio client
+pnpm --filter @actalk/inkos-core build     # 改了 core 后必须重建（或用 pnpm dev 自动 watch）
 ```
 
 ## 设计文档
@@ -39,5 +39,8 @@ pnpm --filter @actalk/inkos-studio build   # 单独构建 studio client
 
 - **建书流程**: `core/interaction/project-tools.ts` → `CREATE_BOOK_TOOL` + `chatWithTools` → Studio `ChatPage` → `BookFormCard`
 - **Studio 入口**: `studio/src/App.tsx` → route 驱动页面切换
-- **状态管理**: `studio/src/store/chat/` — Zustand，LobeHub slice 约定（详见 infra spec）
+- **状态管理**: Zustand store，LobeHub slice 约定
+  - `studio/src/store/chat/` — 对话消息、创建流程、侧边栏状态
+  - `studio/src/store/service/` — 服务商连接状态、模型列表缓存、model picker 三态（loading/no-models/ready）
+  - **原则**: 组件只读 store selector，不在组件内 useMemo/useState 派生跨页面共享的状态；派生逻辑放 store 的 selector（如 `getModelPickerStatus`、`getGroupedModels`）
 - **SSE 事件**: `studio/src/hooks/use-sse.ts`（共享 buffer）+ 组件内直连 EventSource（流式渲染）

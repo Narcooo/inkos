@@ -79,4 +79,29 @@ export const useServiceStore = create<ServiceStore>()((set, get) => ({
     set({ services: [], servicesLoading: false });
     await get().fetchServices();
   },
+
+  // -- Selectors --
+
+  getModelPickerStatus: () => {
+    const { services, servicesLoading, modelsByService } = get();
+    if (servicesLoading || services.length === 0) return "loading";
+    const connected = services.filter((s) => s.connected);
+    if (connected.length === 0) return "no-models";
+    const anyLoading = connected.some((s) => modelsByService[s.service]?.loading);
+    if (anyLoading) return "loading";
+    const anyModels = connected.some((s) => (modelsByService[s.service]?.models.length ?? 0) > 0);
+    return anyModels ? "ready" : "no-models";
+  },
+
+  getGroupedModels: () => {
+    const { services, modelsByService } = get();
+    const groups: Array<{ service: string; label: string; models: ReadonlyArray<{ id: string; name?: string }> }> = [];
+    for (const svc of services.filter((s) => s.connected)) {
+      const entry = modelsByService[svc.service];
+      if (entry?.models.length) {
+        groups.push({ service: svc.service, label: svc.label, models: entry.models });
+      }
+    }
+    return groups;
+  },
 }));

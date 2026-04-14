@@ -40,6 +40,23 @@ export interface ServiceActions {
   refreshServices: () => Promise<void>;
 }
 
+// -- Derived (selectors) --
+
+export interface ModelGroup {
+  readonly service: string;
+  readonly label: string;
+  readonly models: ReadonlyArray<ModelInfo>;
+}
+
+export type ModelPickerStatus = "loading" | "no-models" | "ready";
+
+export interface ServiceSelectors {
+  /** Model picker status: loading → no-models → ready */
+  getModelPickerStatus: () => ModelPickerStatus;
+  /** Grouped models for dropdown, derived from store state */
+  getGroupedModels: () => ReadonlyArray<ModelGroup>;
+}
+
 // -- Composed --
 
-export type ServiceStore = ServiceState & ServiceActions;
+export type ServiceStore = ServiceState & ServiceActions & ServiceSelectors;

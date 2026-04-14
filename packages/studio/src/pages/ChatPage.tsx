@@ -1,4 +1,4 @@
-import { useRef, useEffect, useMemo } from "react";
+import { useRef, useEffect } from "react";
 import type { Theme } from "../hooks/use-theme";
 import type { TFunction } from "../hooks/use-i18n";
 import type { SSEMessage } from "../hooks/use-sse";
@@ -74,35 +74,17 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
   const hasBook = Boolean(activeBookId);
 
   // -- Available models from service store --
-  // -- Model picker (reads store directly, no local fetch) --
-  const services = useServiceStore((s) => s.services);
-  const modelsByService = useServiceStore((s) => s.modelsByService);
+  // -- Model picker (all state from Zustand store) --
+  const modelPickerStatus = useServiceStore((s) => s.getModelPickerStatus());
+  const groupedModels = useServiceStore((s) => s.getGroupedModels());
   const fetchServices = useServiceStore((s) => s.fetchServices);
   const fetchModels = useServiceStore((s) => s.fetchModels);
+  const connectedServices = useServiceStore((s) => s.services.filter((sv) => sv.connected));
 
   useEffect(() => { void fetchServices(); }, [fetchServices]);
-  // Fetch models for connected services (once)
   useEffect(() => {
-    for (const svc of services.filter((s) => s.connected)) {
-      void fetchModels(svc.service);
-    }
-  }, [services, fetchModels]);
-
-  // Grouped models derived from store — instant, no async
-  const groupedModels = useMemo(() => {
-    const groups: Array<{ service: string; label: string; models: ReadonlyArray<{ id: string; name?: string }> }> = [];
-    for (const svc of services.filter((s) => s.connected)) {
-      const entry = modelsByService[svc.service];
-      if (entry?.models.length) {
-        groups.push({ service: svc.service, label: svc.label, models: entry.models });
-      }
-    }
-    return groups;
-  }, [services, modelsByService]);
-
-  const hasModels = groupedModels.length > 0;
-  const modelsStillLoading = services.length === 0 ||
-    services.filter((s) => s.connected).some((s) => modelsByService[s.service]?.loading);
+    for (const svc of connectedServices) void fetchModels(svc.service);
+  }, [connectedServices.length, fetchModels]);
 
   // Auto-scroll on new messages or progress updates
   useEffect(() => {
@@ -299,9 +281,9 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
                 </button>
               </div>
               <div className="flex items-center gap-2 px-3 pb-2 border-t border-border/20 pt-1.5">
-                {modelsStillLoading ? (
+                {modelPickerStatus === "loading" ? (
                   <span className="text-xs text-muted-foreground/40 animate-pulse">加载模型...</span>
-                ) : hasModels ? (
+                ) : modelPickerStatus === "ready" ? (
                   <DropdownMenu>
                     <DropdownMenuTrigger className="flex items-center gap-1.5 px-2 py-1 rounded-md hover:bg-muted text-sm transition-colors cursor-pointer">
                       <span className="font-medium text-xs truncate max-w-[140px]">
