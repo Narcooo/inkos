@@ -1,14 +1,13 @@
 import { useState } from "react";
 import { useApi } from "../hooks/use-api";
 import { fetchJson } from "../hooks/use-api";
-import { Eye, EyeOff, Loader2 } from "lucide-react";
+import { Eye, EyeOff, Loader2, ArrowLeft } from "lucide-react";
 
 interface ServiceStatus {
   readonly service: string;
   readonly label: string;
   readonly connected: boolean;
   readonly modelCount: number;
-  readonly apiKey?: string;
 }
 
 interface ServicesResponse {
@@ -17,13 +16,36 @@ interface ServicesResponse {
 
 interface TestResult {
   readonly ok: boolean;
-  readonly models?: ReadonlyArray<string>;
+  readonly models?: ReadonlyArray<{ id: string; name?: string }>;
   readonly modelCount?: number;
   readonly error?: string;
 }
 
 interface Nav {
   toServices: () => void;
+}
+
+// Skeleton for loading state
+function DetailSkeleton() {
+  return (
+    <div className="max-w-xl mx-auto space-y-6 animate-pulse">
+      <div className="h-4 w-16 bg-muted rounded" />
+      <div className="flex items-center gap-3">
+        <div className="h-7 w-40 bg-muted rounded" />
+        <div className="h-5 w-14 bg-muted/60 rounded-full" />
+      </div>
+      <div className="space-y-4">
+        <div className="h-3 w-16 bg-muted/60 rounded" />
+        <div className="h-10 w-full bg-muted/40 rounded-lg" />
+      </div>
+      <div className="h-9 w-24 bg-muted/40 rounded-lg" />
+      <div className="space-y-2 pt-4 border-t border-border/20">
+        <div className="h-3 w-20 bg-muted/60 rounded" />
+        <div className="h-8 w-full bg-muted/30 rounded-lg" />
+        <div className="h-8 w-full bg-muted/30 rounded-lg" />
+      </div>
+    </div>
+  );
 }
 
 export function ServiceDetailPage({
@@ -53,11 +75,7 @@ export function ServiceDetailPage({
   const label = isCustom ? (customName || "自定义服务") : (svc?.label ?? serviceId);
   const connected = !isCustom && (svc?.connected ?? false);
 
-  if (loading) {
-    return (
-      <div className="text-muted-foreground py-20 text-center text-sm">加载中...</div>
-    );
-  }
+  if (loading) return <DetailSkeleton />;
 
   if (error) {
     return (
@@ -66,10 +84,12 @@ export function ServiceDetailPage({
   }
 
   const handleTest = async () => {
-    if (!apiKey.trim()) {
+    const trimmedKey = apiKey.trim();
+    if (!trimmedKey) {
       setTestResult({ ok: false, error: "请先输入 API Key" });
       return;
     }
+    setApiKey(trimmedKey);
     setTesting(true);
     setTestResult(null);
     try {
@@ -78,7 +98,7 @@ export function ServiceDetailPage({
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ apiKey: apiKey.trim() }),
+          body: JSON.stringify({ apiKey: trimmedKey }),
         },
       );
       setTestResult(result);
@@ -90,14 +110,16 @@ export function ServiceDetailPage({
   };
 
   const handleSave = async () => {
+    const trimmedKey = apiKey.trim();
+    setApiKey(trimmedKey);
     setSaving(true);
     setSaveMsg(null);
     try {
-      if (apiKey.trim()) {
+      if (trimmedKey) {
         await fetchJson(`/services/${encodeURIComponent(serviceId)}/secret`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ apiKey: apiKey.trim() }),
+          body: JSON.stringify({ apiKey: trimmedKey }),
         });
       }
       await fetchJson("/services/config", {
@@ -125,41 +147,37 @@ export function ServiceDetailPage({
   const models = testResult?.ok ? (testResult.models ?? []) : [];
 
   return (
-    <div className="max-w-xl mx-auto space-y-8">
+    <div className="max-w-xl mx-auto space-y-6">
       {/* Back link */}
       <button
         onClick={nav.toServices}
-        className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
+        className="flex items-center gap-1.5 text-sm text-muted-foreground/70 hover:text-foreground transition-colors"
       >
-        ← 返回
+        <ArrowLeft size={14} />
+        返回
       </button>
 
       {/* Title + status */}
       <div className="flex items-center gap-3">
-        <h1 className="font-serif text-3xl">{label}</h1>
-        <span
-          className={[
-            "text-xs px-2 py-0.5 rounded-full font-medium",
-            connected
-              ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
-              : "bg-muted text-muted-foreground",
-          ].join(" ")}
-        >
-          {connected ? "已连接" : "未配置"}
-        </span>
+        <h1 className="font-serif text-2xl">{label}</h1>
+        {connected && (
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 font-medium">
+            已连接
+          </span>
+        )}
       </div>
 
-      <div className="space-y-6">
+      <div className="space-y-5">
         {/* Custom service extra fields */}
         {isCustom && (
-          <>
+          <div className="grid grid-cols-2 gap-4">
             <Field label="服务名称">
               <input
                 type="text"
                 value={customName}
                 onChange={(e) => setCustomName(e.target.value)}
                 placeholder="例如：本地 Ollama"
-                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+                className="w-full rounded-lg border border-border/60 bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary/30"
               />
             </Field>
             <Field label="Base URL">
@@ -168,10 +186,10 @@ export function ServiceDetailPage({
                 value={baseUrl}
                 onChange={(e) => setBaseUrl(e.target.value)}
                 placeholder="https://api.example.com/v1"
-                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/40"
+                className="w-full rounded-lg border border-border/60 bg-background px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-primary/30"
               />
             </Field>
-          </>
+          </div>
         )}
 
         {/* API Key */}
@@ -182,39 +200,46 @@ export function ServiceDetailPage({
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
               placeholder="sk-..."
-              className="w-full rounded-lg border border-border bg-background px-3 py-2 pr-10 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/40"
+              className="w-full rounded-lg border border-border/60 bg-background px-3 py-2 pr-10 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-primary/30"
             />
             <button
               type="button"
               onClick={() => setShowKey((v) => !v)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground/50 hover:text-muted-foreground transition-colors"
             >
-              {showKey ? <EyeOff size={15} /> : <Eye size={15} />}
+              {showKey ? <EyeOff size={14} /> : <Eye size={14} />}
             </button>
           </div>
         </Field>
 
-        {/* Test connection */}
-        <div className="flex items-center gap-3">
+        {/* Test connection + Save — inline */}
+        <div className="flex items-center gap-2">
           <button
             onClick={handleTest}
             disabled={testing}
-            className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg border border-border hover:bg-secondary transition-colors disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3.5 py-2 text-xs rounded-lg border border-border/60 hover:bg-secondary/50 transition-colors disabled:opacity-50"
           >
-            {testing && <Loader2 size={14} className="animate-spin" />}
+            {testing && <Loader2 size={12} className="animate-spin" />}
             测试连接
           </button>
-
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="flex items-center gap-1.5 px-3.5 py-2 text-xs rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+          >
+            {saving && <Loader2 size={12} className="animate-spin" />}
+            保存
+          </button>
           {testResult && (
-            <span
-              className={[
-                "text-sm",
-                testResult.ok ? "text-emerald-600 dark:text-emerald-400" : "text-destructive",
-              ].join(" ")}
-            >
+            <span className={`text-xs ${testResult.ok ? "text-emerald-500" : "text-destructive"}`}>
               {testResult.ok
-                ? `连接成功，找到 ${testResult.modelCount ?? models.length} 个模型`
+                ? `连接成功，${testResult.modelCount ?? models.length} 个模型`
                 : (testResult.error ?? "连接失败")}
+            </span>
+          )}
+          {saveMsg && (
+            <span className={`text-xs ${saveMsg === "已保存" ? "text-emerald-500" : "text-destructive"}`}>
+              {saveMsg}
             </span>
           )}
         </div>
@@ -222,78 +247,64 @@ export function ServiceDetailPage({
         {/* Model list */}
         {models.length > 0 && (
           <div className="space-y-2">
-            <p className="text-sm font-medium text-muted-foreground">可用模型</p>
-            <div className="rounded-lg border border-border divide-y divide-border/50 max-h-48 overflow-y-auto">
+            <p className="text-xs text-muted-foreground/70 font-medium uppercase tracking-wider">
+              可用模型（{models.length}）
+            </p>
+            <div className="flex gap-1.5 flex-wrap">
               {models.map((m: any) => (
-                <div key={m.id ?? m} className="px-3 py-2 text-sm font-mono text-foreground/80">
+                <span
+                  key={m.id ?? String(m)}
+                  className="text-[11px] px-2.5 py-1 rounded-md bg-emerald-500/[0.06] text-emerald-600 dark:text-emerald-400 border border-emerald-500/15"
+                >
                   {m.name ?? m.id ?? String(m)}
-                </div>
+                </span>
               ))}
             </div>
           </div>
         )}
 
         {/* Advanced params */}
-        <div className="space-y-4 pt-2 border-t border-border/40">
-          <p className="text-sm font-medium">高级参数</p>
+        <details className="group pt-2 border-t border-border/20">
+          <summary className="text-xs text-muted-foreground/60 cursor-pointer select-none hover:text-muted-foreground transition-colors py-2">
+            高级参数
+          </summary>
+          <div className="space-y-4 pt-2">
+            <Field label="temperature">
+              <div className="flex items-center gap-3">
+                <input
+                  type="range"
+                  min="0"
+                  max="2"
+                  step="0.05"
+                  value={temperature}
+                  onChange={(e) => setTemperature(e.target.value)}
+                  className="flex-1 accent-primary h-1"
+                />
+                <input
+                  type="number"
+                  value={temperature}
+                  onChange={(e) => setTemperature(e.target.value)}
+                  min="0"
+                  max="2"
+                  step="0.05"
+                  className="w-16 rounded-md border border-border/60 bg-background px-2 py-1 text-xs text-right font-mono focus:outline-none focus:ring-1 focus:ring-primary/30"
+                />
+              </div>
+            </Field>
 
-          <Field label="temperature">
-            <div className="flex items-center gap-3">
-              <input
-                type="range"
-                min="0"
-                max="2"
-                step="0.05"
-                value={temperature}
-                onChange={(e) => setTemperature(e.target.value)}
-                className="flex-1 accent-primary"
-              />
+            <Field label="maxTokens">
               <input
                 type="number"
-                value={temperature}
-                onChange={(e) => setTemperature(e.target.value)}
-                min="0"
-                max="2"
-                step="0.05"
-                className="w-20 rounded-lg border border-border bg-background px-2 py-1 text-sm text-right focus:outline-none focus:ring-2 focus:ring-primary/40"
+                value={maxTokens}
+                onChange={(e) => setMaxTokens(e.target.value)}
+                min="256"
+                max="200000"
+                step="256"
+                className="w-full rounded-md border border-border/60 bg-background px-3 py-1.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-primary/30"
               />
-            </div>
-          </Field>
-
-          <Field label="maxTokens">
-            <input
-              type="number"
-              value={maxTokens}
-              onChange={(e) => setMaxTokens(e.target.value)}
-              min="256"
-              max="200000"
-              step="256"
-              className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-right focus:outline-none focus:ring-2 focus:ring-primary/40"
-            />
-          </Field>
-        </div>
-
-        {/* Save */}
-        <div className="flex items-center justify-end gap-3 pt-2">
-          {saveMsg && (
-            <span
-              className={[
-                "text-sm",
-                saveMsg === "已保存" ? "text-emerald-600 dark:text-emerald-400" : "text-destructive",
-              ].join(" ")}
-            >
-              {saveMsg}
-            </span>
-          )}
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="flex items-center gap-2 px-5 py-2.5 text-sm rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
-          >
-            {saving && <Loader2 size={14} className="animate-spin" />}
-            保存
-          </button>
-        </div>
+            </Field>
+          </div>
+        </details>
       </div>
     </div>
   );
@@ -302,7 +313,7 @@ export function ServiceDetailPage({
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="space-y-1.5">
-      <label className="block text-sm font-medium text-muted-foreground">{label}</label>
+      <label className="block text-xs text-muted-foreground/70 font-medium">{label}</label>
       {children}
     </div>
   );
