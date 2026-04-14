@@ -53,9 +53,6 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
   }),
 
   loadSession: async (bookId) => {
-    // Don't reset messages if currently streaming — would lose in-flight data
-    if (get().loading) return;
-
     try {
       const data = await fetchJson<{ session: { sessionId: string; messages?: SessionMessage[] } }>("/sessions", {
         method: "POST",
@@ -63,22 +60,20 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
         body: JSON.stringify({ bookId: bookId ?? null }),
       });
       const session = data.session;
-
-      // Only reset messages if session changed (different book)
       const prevSessionId = get().currentSessionId;
+
+      // Same session + already have messages → skip reload
       if (prevSessionId === session.sessionId && get().messages.length > 0) {
-        // Same session, already have messages — skip reload
         return;
       }
 
-      set({ currentSessionId: session.sessionId, messages: [] });
+      // Different session → stop any in-flight streaming and switch
+      set({ currentSessionId: session.sessionId, messages: [], loading: false });
       if (session.messages && session.messages.length > 0) {
         get().loadSessionMessages(session.messages);
       }
     } catch {
-      if (!get().loading) {
-        set({ currentSessionId: null, messages: [] });
-      }
+      set({ currentSessionId: null, messages: [], loading: false });
     }
   },
 
