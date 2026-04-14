@@ -168,13 +168,13 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
   }
 
   async function buildPipelineConfig(
-    overrides?: Partial<Pick<PipelineConfig, "externalContext">>,
+    overrides?: Partial<Pick<PipelineConfig, "externalContext" | "client" | "model">>,
   ): Promise<PipelineConfig> {
     const currentConfig = await loadCurrentProjectConfig();
     const logger = createLogger({ tag: "studio", sinks: [sseSink] });
     return {
-      client: createLLMClient(currentConfig.llm),
-      model: currentConfig.llm.model,
+      client: overrides?.client ?? createLLMClient(currentConfig.llm),
+      model: overrides?.model ?? currentConfig.llm.model,
       projectRoot: root,
       defaultLLMConfig: currentConfig.llm,
       modelOverrides: currentConfig.modelOverrides,
@@ -846,9 +846,8 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     broadcast("agent:start", { instruction, activeBookId });
 
     try {
-      // Load config + create pipeline and LLM client
+      // Load config + create LLM client (pipeline created after model resolution)
       const config = await loadCurrentProjectConfig({ requireApiKey: true });
-      const pipeline = new PipelineRunner(await buildPipelineConfig());
       const client = createLLMClient(config.llm);
 
       // Resolve or create BookSession for history
@@ -932,6 +931,20 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
       const model = resolvedModel!;
       const agentApiKey = resolvedApiKey;
+
+      // Create pipeline with resolved model (so sub_agent tools use the frontend-selected model)
+      const pipelineClient = (reqService && reqModel && resolvedApiKey)
+        ? createLLMClient({
+            ...config.llm,
+            service: reqService,
+            model: reqModel,
+            apiKey: resolvedApiKey,
+          })
+        : client;
+      const pipeline = new PipelineRunner(await buildPipelineConfig({
+        client: pipelineClient,
+        model: reqModel ?? config.llm.model,
+      }));
 
       // Run pi-agent session
       const collectedToolExecs: CollectedToolExec[] = [];
