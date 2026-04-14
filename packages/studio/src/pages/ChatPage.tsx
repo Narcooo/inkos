@@ -74,10 +74,10 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
     return () => { es.close(); };
   }, [bookCreating, setCreateProgress]);
 
-  // Load session messages on mount
+  // Load session messages on mount or when activeBookId changes
   useEffect(() => {
-    useChatStore.getState().loadSession();
-  }, []);
+    useChatStore.getState().loadSession(activeBookId);
+  }, [activeBookId]);
 
   const onSend = (text: string) => {
     void sendMessage(text, activeBookId);

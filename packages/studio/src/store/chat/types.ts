@@ -35,6 +35,7 @@ export interface AgentResponse {
 
 export interface SessionResponse {
   readonly session?: {
+    readonly sessionId?: string;
     readonly activeBookId?: string;
     readonly messages?: ReadonlyArray<SessionMessage>;
   };
@@ -53,6 +54,7 @@ export interface MessageState {
   messages: ReadonlyArray<Message>;
   input: string;
   loading: boolean;
+  currentSessionId: string | null;
 }
 
 export interface CreateState {
@@ -78,7 +80,7 @@ export interface MessageActions {
   addErrorMessage: (errorMsg: string) => void;
   setLoading: (loading: boolean) => void;
   loadSessionMessages: (msgs: ReadonlyArray<SessionMessage>) => void;
-  loadSession: () => Promise<void>;
+  loadSession: (bookId?: string) => Promise<void>;
   sendMessage: (text: string, activeBookId?: string) => Promise<void>;
 }
 

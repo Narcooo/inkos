@@ -1,5 +1,5 @@
 import type { StateCreator } from "zustand";
-import type { ChatStore, MessageActions, AgentResponse, SessionResponse } from "../../types";
+import type { ChatStore, MessageActions, AgentResponse, SessionMessage } from "../../types";
 import { fetchJson } from "../../../../hooks/use-api";
 
 function extractErrorMessage(error: string | { code?: string; message?: string }): string {
@@ -50,15 +50,21 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
     };
   }),
 
-  loadSession: async () => {
+  loadSession: async (bookId) => {
     try {
-      const data = await fetchJson<SessionResponse>("/interaction/session");
-      const sessionMessages = data.session?.messages;
-      if (sessionMessages && sessionMessages.length > 0) {
-        get().loadSessionMessages(sessionMessages);
+      // Find or create a per-book session
+      const data = await fetchJson<{ session: { sessionId: string; messages?: SessionMessage[] } }>("/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bookId: bookId ?? null }),
+      });
+      const session = data.session;
+      set({ currentSessionId: session.sessionId, messages: [] });
+      if (session.messages && session.messages.length > 0) {
+        get().loadSessionMessages(session.messages);
       }
     } catch {
-      // Session load failed — start with empty state
+      set({ currentSessionId: null, messages: [] });
     }
   },
 
@@ -85,7 +91,7 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
       const data = await fetchJson<AgentResponse>("/agent", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ instruction, activeBookId }),
+        body: JSON.stringify({ instruction, activeBookId, sessionId: get().currentSessionId }),
       });
 
       streamEs.close();

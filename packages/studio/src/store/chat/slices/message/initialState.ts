@@ -4,4 +4,5 @@ export const initialMessageState: MessageState = {
   messages: [],
   input: "",
   loading: false,
+  currentSessionId: null,
 };
