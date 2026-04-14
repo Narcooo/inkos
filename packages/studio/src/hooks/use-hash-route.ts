@@ -39,6 +39,8 @@ function routeToHash(route: HashRoute): string {
   }
 }
 
+export { parseHash, routeToHash }; // for testing
+
 const HASH_PAGES = new Set(["dashboard", "book", "book-create", "config"]);
 
 export function useHashRoute() {
