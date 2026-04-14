@@ -59,6 +59,55 @@ export const InteractionSessionSchema = z.object({
 
 export type InteractionSession = z.infer<typeof InteractionSessionSchema>;
 
+// -- Per-book session --
+
+export const BookSessionSchema = z.object({
+  sessionId: z.string().min(1),
+  bookId: z.string().nullable(),
+  messages: z.array(InteractionMessageSchema).default([]),
+  creationDraft: BookCreationDraftSchema.optional(),
+  draftRounds: z.array(DraftRoundSchema).default([]),
+  events: z.array(InteractionEventSchema).default([]),
+  currentExecution: ExecutionStateSchema.optional(),
+  createdAt: z.number().int().nonnegative(),
+  updatedAt: z.number().int().nonnegative(),
+});
+
+export type BookSession = z.infer<typeof BookSessionSchema>;
+
+// -- Global session (simplified) --
+
+export const GlobalSessionSchema = z.object({
+  activeBookId: z.string().min(1).optional(),
+  automationMode: AutomationModeSchema.default("semi"),
+});
+
+export type GlobalSession = z.infer<typeof GlobalSessionSchema>;
+
+export function createBookSession(bookId: string | null): BookSession {
+  const now = Date.now();
+  return {
+    sessionId: `${now}-${Math.random().toString(36).slice(2, 8)}`,
+    bookId,
+    messages: [],
+    draftRounds: [],
+    events: [],
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+export function appendBookSessionMessage(
+  session: BookSession,
+  message: InteractionMessage,
+): BookSession {
+  return {
+    ...session,
+    messages: [...session.messages, message].sort((a, b) => a.timestamp - b.timestamp),
+    updatedAt: Date.now(),
+  };
+}
+
 export function bindActiveBook(
   session: InteractionSession,
   bookId: string,

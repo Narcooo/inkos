@@ -104,6 +104,12 @@ export {
   updateCreationDraft,
   appendInteractionMessage,
   appendInteractionEvent,
+  BookSessionSchema,
+  GlobalSessionSchema,
+  type BookSession,
+  type GlobalSession,
+  createBookSession,
+  appendBookSessionMessage,
 } from "./interaction/session.js";
 export {
   resolveProjectSessionPath,
