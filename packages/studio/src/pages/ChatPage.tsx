@@ -283,7 +283,8 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
                 <div className="flex items-center gap-2 px-3 pb-2 border-t border-border/20 pt-1.5">
                   <PromptInputSelect
                     value={selectedModel && selectedService ? `${selectedService}:${selectedModel}` : ""}
-                    onValueChange={(value) => {
+                    onValueChange={(v) => {
+                      const value = String(v);
                       const colonIdx = value.indexOf(":");
                       if (colonIdx > 0) {
                         setSelectedModel(value.slice(colonIdx + 1), value.slice(0, colonIdx));
@@ -309,7 +310,7 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
                         className="px-2 py-1.5 text-xs text-primary cursor-pointer hover:underline border-t border-border/30"
                         onClick={() => nav.toServices()}
                       >
-                        ⚙ 管理服务商
+                        管理服务商 →
                       </div>
                     </PromptInputSelectContent>
                   </PromptInputSelect>
