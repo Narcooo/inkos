@@ -103,6 +103,24 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
       .map((s) => ({ service: s.service, label: s.label, models: modelsByService[s.service]!.models }));
   }, [services, modelsByService]);
 
+  // Auto-select first model when models load and none selected
+  useEffect(() => {
+    if (!selectedModel && groupedModels.length > 0) {
+      const first = groupedModels[0];
+      if (first.models.length > 0) {
+        setSelectedModel(first.models[0].id, first.service);
+      }
+    }
+  }, [groupedModels, selectedModel, setSelectedModel]);
+
+  // Auto-resize textarea
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+  }, [input]);
+
   // Auto-scroll on new messages or progress updates
   useEffect(() => {
     if (scrollRef.current) {
@@ -294,7 +312,7 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
                   placeholder={isZh ? "输入指令..." : "Enter command..."}
                   disabled={loading}
                   rows={1}
-                  className="flex-1 bg-transparent text-sm leading-6 placeholder:text-muted-foreground/50 outline-none! border-none! ring-0! shadow-none focus:outline-none! focus:ring-0! focus:border-none! resize-none disabled:opacity-50 max-h-[200px]"
+                  className="flex-1 bg-transparent text-sm leading-6 placeholder:text-muted-foreground/50 outline-none! border-none! ring-0! shadow-none focus:outline-none! focus:ring-0! focus:border-none! resize-none disabled:opacity-50 max-h-[200px] overflow-y-auto"
                 />
                 <button
                   type="button"

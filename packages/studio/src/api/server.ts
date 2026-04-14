@@ -940,6 +940,15 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       broadcast("agent:error", { instruction, activeBookId, error: msg });
+
+      // Agent busy — return 429 with user-friendly message
+      if (/already processing|prompt.*queue/i.test(msg)) {
+        return c.json({
+          error: { code: "AGENT_BUSY", message: "正在处理中，请等待当前操作完成" },
+          response: "正在处理中，请等待当前操作完成后再发送。",
+        }, 429);
+      }
+
       return c.json(
         { error: { code: "AGENT_ERROR", message: msg } },
         500,
