@@ -55,6 +55,8 @@ export interface MessageState {
   input: string;
   loading: boolean;
   currentSessionId: string | null;
+  selectedModel: string | null;
+  selectedService: string | null;
 }
 
 export interface CreateState {
@@ -82,6 +84,7 @@ export interface MessageActions {
   loadSessionMessages: (msgs: ReadonlyArray<SessionMessage>) => void;
   loadSession: (bookId?: string) => Promise<void>;
   sendMessage: (text: string, activeBookId?: string) => Promise<void>;
+  setSelectedModel: (model: string, service: string) => void;
 }
 
 export interface CreateActions {

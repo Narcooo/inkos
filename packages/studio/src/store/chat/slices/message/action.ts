@@ -41,6 +41,8 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
 
   setLoading: (loading) => set({ loading }),
 
+  setSelectedModel: (model, service) => set({ selectedModel: model, selectedService: service }),
+
   loadSessionMessages: (msgs) => set((s) => {
     if (s.messages.length > 0) return s;
     return {
@@ -109,7 +111,13 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
       const data = await fetchJson<AgentResponse>("/agent", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ instruction, activeBookId, sessionId: get().currentSessionId }),
+        body: JSON.stringify({
+          instruction,
+          activeBookId,
+          sessionId: get().currentSessionId,
+          model: get().selectedModel ?? undefined,
+          service: get().selectedService ?? undefined,
+        }),
       });
 
       streamEs.close();

@@ -1,8 +1,16 @@
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useState } from "react";
 import type { Theme } from "../hooks/use-theme";
 import type { TFunction } from "../hooks/use-i18n";
 import type { SSEMessage } from "../hooks/use-sse";
 import { useChatStore } from "../store/chat";
+import { fetchJson } from "../hooks/use-api";
+import {
+  PromptInputSelect,
+  PromptInputSelectTrigger,
+  PromptInputSelectValue,
+  PromptInputSelectContent,
+  PromptInputSelectItem,
+} from "../components/ai-elements/prompt-input";
 import { ChatMessage } from "../components/chat/ChatMessage";
 import { QuickActions } from "../components/chat/QuickActions";
 import {
@@ -21,6 +29,7 @@ import {
 interface Nav {
   toDashboard: () => void;
   toBook: (id: string) => void;
+  toServices: () => void;
 }
 
 export interface ChatPageProps {
@@ -41,6 +50,8 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
   const pendingBookArgs = useChatStore((s) => s.pendingBookArgs);
   const bookCreating = useChatStore((s) => s.bookCreating);
   const createProgress = useChatStore((s) => s.createProgress);
+  const selectedModel = useChatStore((s) => s.selectedModel);
+  const selectedService = useChatStore((s) => s.selectedService);
 
   // -- Store actions --
   const setInput = useChatStore((s) => s.setInput);
@@ -48,12 +59,41 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
   const setPendingBookArgs = useChatStore((s) => s.setPendingBookArgs);
   const handleCreateBook = useChatStore((s) => s.handleCreateBook);
   const setCreateProgress = useChatStore((s) => s.setCreateProgress);
+  const setSelectedModel = useChatStore((s) => s.setSelectedModel);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const isZh = t("nav.connected") === "\u5DF2\u8FDE\u63A5";
   const hasBook = Boolean(activeBookId);
+
+  // -- Available models grouped by service --
+  const [availableModels, setAvailableModels] = useState<Array<{
+    service: string;
+    label: string;
+    models: Array<{ id: string; name?: string }>;
+  }>>([]);
+
+  useEffect(() => {
+    void fetchJson<{ services: Array<{ service: string; label: string; connected: boolean }> }>("/services")
+      .then(async (data) => {
+        const connected = data.services.filter((s) => s.connected);
+        const grouped = await Promise.all(
+          connected.map(async (svc) => {
+            try {
+              const res = await fetchJson<{ models: Array<{ id: string; name?: string }> }>(
+                `/services/${encodeURIComponent(svc.service)}/models`
+              );
+              return { service: svc.service, label: svc.label, models: res.models ?? [] };
+            } catch {
+              return { service: svc.service, label: svc.label, models: [] };
+            }
+          })
+        );
+        setAvailableModels(grouped.filter((g) => g.models.length > 0));
+      })
+      .catch(() => {});
+  }, []);
 
   // Auto-scroll on new messages or progress updates
   useEffect(() => {
@@ -218,25 +258,63 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
             </div>
           ) : (
             /* Normal input */
-            <div className="flex items-end gap-2 rounded-xl bg-secondary/30 border border-border/40 px-3 py-2 focus-within:border-primary/40 focus-within:ring-2 focus-within:ring-primary/10 transition-all">
-              <textarea
-                ref={textareaRef}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onSend(input); } }}
-                placeholder={isZh ? "输入指令..." : "Enter command..."}
-                disabled={loading}
-                rows={1}
-                className="flex-1 bg-transparent text-sm leading-6 placeholder:text-muted-foreground/50 outline-none resize-none disabled:opacity-50 max-h-[200px]"
-              />
-              <button
-                type="button"
-                onClick={() => onSend(input)}
-                disabled={!input.trim() || loading}
-                className="w-8 h-8 rounded-lg bg-primary text-primary-foreground flex items-center justify-center shrink-0 hover:scale-105 active:scale-95 transition-all disabled:opacity-20 disabled:scale-100 shadow-sm shadow-primary/20"
-              >
-                {loading ? <Loader2 size={14} className="animate-spin" /> : <ArrowUp size={14} strokeWidth={2.5} />}
-              </button>
+            <div className="rounded-xl bg-secondary/30 border border-border/40 focus-within:border-primary/40 focus-within:ring-2 focus-within:ring-primary/10 transition-all">
+              <div className="flex items-end gap-2 px-3 py-2">
+                <textarea
+                  ref={textareaRef}
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onSend(input); } }}
+                  placeholder={isZh ? "输入指令..." : "Enter command..."}
+                  disabled={loading}
+                  rows={1}
+                  className="flex-1 bg-transparent text-sm leading-6 placeholder:text-muted-foreground/50 outline-none resize-none disabled:opacity-50 max-h-[200px]"
+                />
+                <button
+                  type="button"
+                  onClick={() => onSend(input)}
+                  disabled={!input.trim() || loading}
+                  className="w-8 h-8 rounded-lg bg-primary text-primary-foreground flex items-center justify-center shrink-0 hover:scale-105 active:scale-95 transition-all disabled:opacity-20 disabled:scale-100 shadow-sm shadow-primary/20"
+                >
+                  {loading ? <Loader2 size={14} className="animate-spin" /> : <ArrowUp size={14} strokeWidth={2.5} />}
+                </button>
+              </div>
+              {availableModels.length > 0 && (
+                <div className="flex items-center gap-2 px-3 pb-2 border-t border-border/20 pt-1.5">
+                  <PromptInputSelect
+                    value={selectedModel && selectedService ? `${selectedService}:${selectedModel}` : ""}
+                    onValueChange={(value) => {
+                      const colonIdx = value.indexOf(":");
+                      if (colonIdx > 0) {
+                        setSelectedModel(value.slice(colonIdx + 1), value.slice(0, colonIdx));
+                      }
+                    }}
+                  >
+                    <PromptInputSelectTrigger className="h-7 text-xs">
+                      <PromptInputSelectValue placeholder="选择模型" />
+                    </PromptInputSelectTrigger>
+                    <PromptInputSelectContent>
+                      {availableModels.map((group) =>
+                        group.models.map((m) => (
+                          <PromptInputSelectItem
+                            key={`${group.service}:${m.id}`}
+                            value={`${group.service}:${m.id}`}
+                          >
+                            <span className="text-muted-foreground text-[10px] mr-1">{group.label}</span>
+                            {m.name ?? m.id}
+                          </PromptInputSelectItem>
+                        ))
+                      )}
+                      <div
+                        className="px-2 py-1.5 text-xs text-primary cursor-pointer hover:underline border-t border-border/30"
+                        onClick={() => nav.toServices()}
+                      >
+                        ⚙ 管理服务商
+                      </div>
+                    </PromptInputSelectContent>
+                  </PromptInputSelect>
+                </div>
+              )}
             </div>
           )}
         </div>

@@ -5,4 +5,6 @@ export const initialMessageState: MessageState = {
   input: "",
   loading: false,
   currentSessionId: null,
+  selectedModel: null,
+  selectedService: null,
 };
