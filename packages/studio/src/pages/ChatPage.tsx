@@ -3,16 +3,20 @@ import type { Theme } from "../hooks/use-theme";
 import type { TFunction } from "../hooks/use-i18n";
 import type { SSEMessage } from "../hooks/use-sse";
 import { fetchJson } from "../hooks/use-api";
-import { cn } from "../lib/utils";
 import { ChatMessage } from "../components/chat/ChatMessage";
 import { QuickActions } from "../components/chat/QuickActions";
 import {
-  ArrowUp,
+  PromptInput,
+  PromptInputTextarea,
+  PromptInputFooter,
+  PromptInputSubmit,
+} from "../components/ai-elements/prompt-input";
+import {
   Loader2,
   BotMessageSquare,
 } from "lucide-react";
 
-// ── Types ──
+// -- Types --
 
 interface Nav {
   toDashboard: () => void;
@@ -70,7 +74,7 @@ export interface ChatPageProps {
   readonly sse: { messages: ReadonlyArray<SSEMessage>; connected: boolean };
 }
 
-// ── Helpers ──
+// -- Helpers --
 
 function coerceSessionMessages(
   messages: ReadonlyArray<{ role: "user" | "assistant" | "system"; content: string; timestamp: number }>,
@@ -85,7 +89,7 @@ function extractErrorMessage(error: string | { code?: string; message?: string }
   return error.message ?? "Unknown error";
 }
 
-// ── Component ──
+// -- Component --
 
 export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPageProps) {
   const [messages, setMessages] = useState<ReadonlyArray<Message>>([]);
@@ -93,18 +97,35 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
   const [loading, setLoading] = useState(false);
   const [pendingBookArgs, setPendingBookArgs] = useState<Record<string, unknown> | null>(null);
   const [bookCreating, setBookCreating] = useState(false);
+  const [createProgress, setCreateProgress] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const isZh = t("nav.connected") === "已连接";
+  const isZh = t("nav.connected") === "\u5DF2\u8FDE\u63A5";
   const hasBook = Boolean(activeBookId);
 
-  // Auto-scroll on new messages
+  // Auto-scroll on new messages or progress updates
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
     }
-  }, [messages]);
+  }, [messages, createProgress]);
+
+  // Listen for pipeline log events during book creation
+  useEffect(() => {
+    if (!bookCreating) {
+      setCreateProgress("");
+      return;
+    }
+    const es = new EventSource("/api/events");
+    es.addEventListener("log", (e: MessageEvent) => {
+      try {
+        const data = e.data ? JSON.parse(e.data) : null;
+        const msg = data?.message as string | undefined;
+        if (msg) setCreateProgress(msg);
+      } catch { /* ignore */ }
+    });
+    return () => { es.close(); };
+  }, [bookCreating]);
 
   // Load session messages on mount
   useEffect(() => {
@@ -121,29 +142,12 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
         }
       })
       .catch(() => {
-        // Session load failed — start with empty state
+        // Session load failed -- start with empty state
       });
     return () => { cancelled = true; };
   }, []);
 
-  // Auto-resize textarea
-  const adjustTextareaHeight = useCallback(() => {
-    const ta = textareaRef.current;
-    if (!ta) return;
-    ta.style.height = "auto";
-    ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
-  }, []);
-
-  useEffect(() => {
-    adjustTextareaHeight();
-  }, [input, adjustTextareaHeight]);
-
-  // Focus textarea on mount
-  useEffect(() => {
-    textareaRef.current?.focus();
-  }, []);
-
-  const sendMessage = async (text: string) => {
+  const sendMessage = useCallback(async (text: string) => {
     const trimmed = text.trim();
     if (!trimmed || loading) return;
 
@@ -235,11 +239,7 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleSubmit = () => {
-    void sendMessage(input);
-  };
+  }, [loading, hasBook, activeBookId]);
 
   const handleQuickAction = (command: string) => {
     void sendMessage(command);
@@ -270,16 +270,13 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSubmit();
-    }
-  };
+  const handlePromptSubmit = useCallback(({ text }: { text: string }) => {
+    void sendMessage(text);
+  }, [sendMessage]);
 
   const emptyGuidance = isZh
-    ? "告诉我你想写什么——题材、世界观、主角、核心冲突"
-    : "Tell me what you want to write — genre, world, protagonist, core conflict";
+    ? "\u544A\u8BC9\u6211\u4F60\u60F3\u5199\u4EC0\u4E48\u2014\u2014\u9898\u6750\u3001\u4E16\u754C\u89C2\u3001\u4E3B\u89D2\u3001\u6838\u5FC3\u51B2\u7A81"
+    : "Tell me what you want to write \u2014 genre, world, protagonist, core conflict";
 
   return (
     <div className="flex flex-col h-full">
@@ -332,6 +329,23 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
                 </div>
               </div>
             )}
+
+            {/* Book creation progress */}
+            {bookCreating && (
+              <div className="flex gap-3 items-start">
+                <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+                  <Loader2 size={14} className="text-primary animate-spin" />
+                </div>
+                <div className="bg-card border border-border/50 px-4 py-3 rounded-2xl rounded-tl-sm text-sm space-y-1">
+                  <div className="font-medium text-foreground">{isZh ? "\u6B63\u5728\u521B\u5EFA\u4E66\u7C4D..." : "Creating book..."}</div>
+                  {createProgress && (
+                    <div className="text-xs text-muted-foreground font-mono truncate max-w-md">
+                      {createProgress}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -350,35 +364,23 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
       {/* Input area */}
       <div className="shrink-0 border-t border-border/40 px-4 py-3">
         <div className="max-w-3xl mx-auto">
-          <div
-            className={cn(
-              "flex items-end gap-2 rounded-xl bg-secondary/30 border border-border/40 px-3 py-2",
-              "focus-within:border-primary/40 focus-within:ring-2 focus-within:ring-primary/10 transition-all",
-            )}
+          <PromptInput
+            onSubmit={handlePromptSubmit}
           >
-            <textarea
-              ref={textareaRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={isZh ? "输入指令..." : "Enter command..."}
+            <PromptInputTextarea
+              placeholder={isZh ? "\u8F93\u5165\u6307\u4EE4..." : "Enter command..."}
               disabled={loading}
-              rows={1}
-              className="flex-1 bg-transparent text-sm leading-6 placeholder:text-muted-foreground/50 outline-none ring-0 shadow-none resize-none disabled:opacity-50 max-h-[200px]"
-              style={{ outline: "none", boxShadow: "none" }}
+              value={input}
+              onChange={(e) => setInput(e.currentTarget.value)}
             />
-            <button
-              onClick={handleSubmit}
-              disabled={!input.trim() || loading}
-              className="w-8 h-8 rounded-lg bg-primary text-primary-foreground flex items-center justify-center shrink-0 hover:scale-105 active:scale-95 transition-all disabled:opacity-20 disabled:scale-100 shadow-sm shadow-primary/20"
-            >
-              {loading ? (
-                <Loader2 size={14} className="animate-spin" />
-              ) : (
-                <ArrowUp size={14} strokeWidth={2.5} />
-              )}
-            </button>
-          </div>
+            <PromptInputFooter>
+              <div />
+              <PromptInputSubmit
+                disabled={!input.trim() || loading}
+                status={loading ? "submitted" : "ready"}
+              />
+            </PromptInputFooter>
+          </PromptInput>
         </div>
       </div>
     </div>
