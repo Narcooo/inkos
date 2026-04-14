@@ -11,10 +11,34 @@ export const PendingDecisionSchema = z.object({
 
 export type PendingDecision = z.infer<typeof PendingDecisionSchema>;
 
+export const PipelineStageSchema = z.object({
+  label: z.string(),
+  status: z.enum(["pending", "active", "completed"]),
+});
+
+export type PipelineStage = z.infer<typeof PipelineStageSchema>;
+
+export const ToolExecutionSchema = z.object({
+  id: z.string(),
+  tool: z.string(),
+  agent: z.string().optional(),
+  label: z.string(),
+  status: z.enum(["running", "processing", "completed", "error"]),
+  args: z.record(z.unknown()).optional(),
+  result: z.string().optional(),
+  error: z.string().optional(),
+  stages: z.array(PipelineStageSchema).optional(),
+  startedAt: z.number(),
+  completedAt: z.number().optional(),
+});
+
+export type ToolExecution = z.infer<typeof ToolExecutionSchema>;
+
 export const InteractionMessageSchema = z.object({
   role: z.enum(["user", "assistant", "system"]),
   content: z.string().min(1),
   thinking: z.string().optional(),
+  toolExecutions: z.array(ToolExecutionSchema).optional(),
   timestamp: z.number().int().nonnegative(),
 });
 
