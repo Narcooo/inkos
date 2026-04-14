@@ -200,44 +200,70 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
                   <ChatMessage role="user" content={msg.content} timestamp={msg.timestamp} theme={theme} />
                 ) : msg.parts && msg.parts.length > 0 ? (
                   /* Assistant message — parts-based rendering (chronological) */
+                  /* Merge consecutive utility tool parts into one group */
                   <>
-                    {msg.parts.map((part, pi) => {
-                      if (part.type === "thinking") {
-                        return (
-                          <div key={`t-${pi}`} className="mb-2">
-                            <Reasoning isStreaming={part.streaming}>
-                              <ReasoningTrigger />
-                              <ReasoningContent>{part.content}</ReasoningContent>
-                            </Reasoning>
-                          </div>
-                        );
+                    {(() => {
+                      type RenderItem =
+                        | { kind: "thinking"; pi: number; part: Extract<typeof msg.parts[0], { type: "thinking" }> }
+                        | { kind: "text"; pi: number; part: Extract<typeof msg.parts[0], { type: "text" }> }
+                        | { kind: "tools"; parts: Array<Extract<typeof msg.parts[0], { type: "tool" }>>; startIdx: number };
+
+                      const items: RenderItem[] = [];
+                      for (let pi = 0; pi < msg.parts!.length; pi++) {
+                        const part = msg.parts![pi];
+                        if (part.type === "thinking") {
+                          items.push({ kind: "thinking", pi, part });
+                        } else if (part.type === "text") {
+                          items.push({ kind: "text", pi, part });
+                        } else if (part.type === "tool") {
+                          // Merge consecutive tool parts into one group
+                          const last = items[items.length - 1];
+                          if (last?.kind === "tools") {
+                            last.parts.push(part);
+                          } else {
+                            items.push({ kind: "tools", parts: [part], startIdx: pi });
+                          }
+                        }
                       }
-                      if (part.type === "tool") {
-                        return <ToolExecutionSteps key={`x-${part.execution.id}`} executions={[part.execution]} />;
-                      }
-                      if (part.type === "text" && part.content) {
-                        return (
-                          <ChatMessage
-                            key={`c-${pi}`}
-                            role="assistant"
-                            content={part.content}
-                            timestamp={msg.timestamp}
-                            theme={theme}
-                            toolCall={msg.toolCall?.name === "create_book" && pendingBookArgs
-                              ? { name: msg.toolCall.name, arguments: pendingBookArgs }
-                              : msg.toolCall}
-                            onArgsChange={msg.toolCall?.name === "create_book"
-                              ? (args) => setPendingBookArgs(args)
-                              : undefined}
-                            onConfirm={msg.toolCall?.name === "create_book"
-                              ? () => void onCreateBook()
-                              : undefined}
-                            confirming={msg.toolCall?.name === "create_book" ? bookCreating : undefined}
-                          />
-                        );
-                      }
-                      return null;
-                    })}
+
+                      return items.map((item) => {
+                        if (item.kind === "thinking") {
+                          return (
+                            <div key={`t-${item.pi}`} className="mb-2">
+                              <Reasoning isStreaming={item.part.streaming}>
+                                <ReasoningTrigger />
+                                <ReasoningContent>{item.part.content}</ReasoningContent>
+                              </Reasoning>
+                            </div>
+                          );
+                        }
+                        if (item.kind === "tools") {
+                          return <ToolExecutionSteps key={`x-${item.startIdx}`} executions={item.parts.map(p => p.execution)} />;
+                        }
+                        if (item.kind === "text" && item.part.content) {
+                          return (
+                            <ChatMessage
+                              key={`c-${item.pi}`}
+                              role="assistant"
+                              content={item.part.content}
+                              timestamp={msg.timestamp}
+                              theme={theme}
+                              toolCall={msg.toolCall?.name === "create_book" && pendingBookArgs
+                                ? { name: msg.toolCall.name, arguments: pendingBookArgs }
+                                : msg.toolCall}
+                              onArgsChange={msg.toolCall?.name === "create_book"
+                                ? (args) => setPendingBookArgs(args)
+                                : undefined}
+                              onConfirm={msg.toolCall?.name === "create_book"
+                                ? () => void onCreateBook()
+                                : undefined}
+                              confirming={msg.toolCall?.name === "create_book" ? bookCreating : undefined}
+                            />
+                          );
+                        }
+                        return null;
+                      });
+                    })()}
                   </>
                 ) : (
                   /* Assistant message — fallback (no parts, e.g. error messages) */
