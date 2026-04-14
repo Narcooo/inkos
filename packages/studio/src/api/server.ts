@@ -14,10 +14,16 @@ import {
   processProjectInteractionInput,
   processProjectInteractionRequest,
   resolveSessionActiveBook,
+  findOrCreateBookSession,
+  listBookSessions,
+  loadBookSession,
+  persistBookSession,
+  appendBookSessionMessage,
   type PipelineConfig,
   type ProjectConfig,
   type LogSink,
   type LogEntry,
+  type BookSession,
 } from "@actalk/inkos-core";
 import { access, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -576,8 +582,35 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     });
   });
 
+  // -- Per-book session endpoints --
+
+  app.get("/api/sessions", async (c) => {
+    const bookId = c.req.query("bookId");
+    const sessions = await listBookSessions(root, bookId === undefined ? null : bookId === "null" ? null : bookId);
+    return c.json({ sessions: sessions.map((s) => ({
+      sessionId: s.sessionId,
+      bookId: s.bookId,
+      messageCount: s.messages.length,
+      createdAt: s.createdAt,
+      updatedAt: s.updatedAt,
+    })) });
+  });
+
+  app.get("/api/sessions/:sessionId", async (c) => {
+    const session = await loadBookSession(root, c.req.param("sessionId"));
+    if (!session) return c.json({ error: "Session not found" }, 404);
+    return c.json({ session });
+  });
+
+  app.post("/api/sessions", async (c) => {
+    const body = await c.req.json<{ bookId?: string | null }>().catch(() => ({}));
+    const bookId = (body as { bookId?: string | null }).bookId ?? null;
+    const session = await findOrCreateBookSession(root, bookId);
+    return c.json({ session });
+  });
+
   app.post("/api/agent", async (c) => {
-    const { instruction, activeBookId } = await c.req.json<{ instruction: string; activeBookId?: string }>();
+    const { instruction, activeBookId, sessionId } = await c.req.json<{ instruction: string; activeBookId?: string; sessionId?: string }>();
     if (!instruction?.trim()) {
       return c.json({ error: "No instruction provided" }, 400);
     }
@@ -600,7 +633,56 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       const response = result.responseText ?? "Acknowledged.";
 
       broadcast("agent:complete", { instruction, activeBookId, response });
-      return c.json({ response, details: result.details, session: result.session, request: result.request });
+
+      // Dual-write to per-book BookSession
+      try {
+        let bookSession: BookSession;
+        if (sessionId) {
+          bookSession = await loadBookSession(root, sessionId) ?? await findOrCreateBookSession(root, activeBookId ?? null);
+        } else {
+          bookSession = await findOrCreateBookSession(root, activeBookId ?? null);
+        }
+
+        const userMsg = { role: "user" as const, content: instruction, timestamp: Date.now() };
+        bookSession = appendBookSessionMessage(bookSession, userMsg);
+
+        const responseText = result.responseText ?? "";
+        if (responseText) {
+          const assistantMsg = { role: "assistant" as const, content: responseText, timestamp: Date.now() + 1 };
+          bookSession = appendBookSessionMessage(bookSession, assistantMsg);
+        }
+
+        if (result.session?.currentExecution) {
+          bookSession = { ...bookSession, currentExecution: result.session.currentExecution };
+        }
+        if (result.session?.creationDraft) {
+          bookSession = { ...bookSession, creationDraft: result.session.creationDraft };
+        }
+
+        // If book was just created, update bookId on the session
+        const newBookId = result.session?.activeBookId;
+        if (newBookId && !bookSession.bookId) {
+          bookSession = { ...bookSession, bookId: newBookId };
+        }
+
+        await persistBookSession(root, bookSession);
+
+        // Include sessionId in response
+        return c.json({
+          response: result.responseText,
+          details: result.details,
+          session: { ...result.session, sessionId: bookSession.sessionId },
+          request: result.request,
+        });
+      } catch (e) {
+        // If dual-write fails, still return the original result
+        return c.json({
+          response: result.responseText,
+          details: result.details,
+          session: result.session,
+          request: result.request,
+        });
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       broadcast("agent:error", { instruction, activeBookId, error: msg });
