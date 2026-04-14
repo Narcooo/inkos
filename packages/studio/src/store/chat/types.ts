@@ -9,6 +9,7 @@ export interface PipelineStage {
   label: string;
   status: "pending" | "active" | "completed";
   progress?: {
+    status?: string;          // "thinking" | "streaming" | ...
     elapsedMs: number;
     totalChars: number;
     chineseChars: number;

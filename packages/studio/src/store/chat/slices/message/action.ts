@@ -337,12 +337,12 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
       } catch { /* ignore */ }
     });
 
-    // -- LLM streaming progress --
+    // -- LLM streaming progress (all statuses: thinking, streaming, etc.) --
 
     streamEs.addEventListener("llm:progress", (e: MessageEvent) => {
       try {
         const d = e.data ? JSON.parse(e.data) : null;
-        if (!d || d.status !== "streaming") return;
+        if (!d) return;
 
         set((s) => {
           const last = s.messages[s.messages.length - 1];
@@ -354,7 +354,7 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
           const exec = last.toolExecutions![execIdx];
           const stages = exec.stages!.map((stage) =>
             stage.status === "active"
-              ? { ...stage, progress: { elapsedMs: d.elapsedMs, totalChars: d.totalChars, chineseChars: d.chineseChars } }
+              ? { ...stage, progress: { status: d.status, elapsedMs: d.elapsedMs, totalChars: d.totalChars, chineseChars: d.chineseChars } }
               : stage
           );
 

@@ -61,10 +61,12 @@ function StageIcon({ status }: { status: PipelineStage["status"] }) {
 
 function formatProgress(progress: NonNullable<PipelineStage["progress"]>): string {
   const secs = Math.round(progress.elapsedMs / 1000);
-  const chars = progress.chineseChars > 0
-    ? `${progress.totalChars}字`
-    : `${progress.totalChars} chars`;
-  return `${secs}s · ${chars}`;
+  const statusLabel = progress.status === "thinking" ? "思考中" : "";
+  const chars = progress.totalChars > 0
+    ? progress.chineseChars > 0 ? `${progress.totalChars}字` : `${progress.totalChars} chars`
+    : "";
+  const parts = [statusLabel, `${secs}s`, chars].filter(Boolean);
+  return parts.join(" · ");
 }
 
 function formatDuration(startedAt: number, completedAt?: number): string {
@@ -73,11 +75,25 @@ function formatDuration(startedAt: number, completedAt?: number): string {
   return secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m ${secs % 60}s`;
 }
 
+// -- Live elapsed timer hook --
+
+function useElapsedTimer(startedAt: number, active: boolean): number {
+  const [elapsed, setElapsed] = useState(() => active ? Date.now() - startedAt : 0);
+  useEffect(() => {
+    if (!active) return;
+    setElapsed(Date.now() - startedAt);
+    const id = setInterval(() => setElapsed(Date.now() - startedAt), 1000);
+    return () => clearInterval(id);
+  }, [startedAt, active]);
+  return elapsed;
+}
+
 // -- Pipeline operation (sub_agent) --
 
 function PipelineExecution({ exec }: { exec: ToolExecution }) {
   const isActive = exec.status === "running" || exec.status === "processing";
   const [open, setOpen] = useState(isActive);
+  const elapsedMs = useElapsedTimer(exec.startedAt, isActive);
 
   useEffect(() => {
     if (exec.status === "running") setOpen(true);
@@ -99,11 +115,11 @@ function PipelineExecution({ exec }: { exec: ToolExecution }) {
           </span>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          {exec.completedAt && (
-            <span className="text-[10px] text-muted-foreground/60">
-              {formatDuration(exec.startedAt, exec.completedAt)}
-            </span>
-          )}
+          <span className="text-[10px] text-muted-foreground/60">
+            {isActive
+              ? formatDuration(exec.startedAt, exec.startedAt + elapsedMs)
+              : exec.completedAt ? formatDuration(exec.startedAt, exec.completedAt) : ""}
+          </span>
           <ExecStatusBadge status={exec.status} />
           <ChevronDown size={14} className={`text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
         </div>
@@ -118,9 +134,9 @@ function PipelineExecution({ exec }: { exec: ToolExecution }) {
                   <span className={`text-xs ${stage.status === "pending" ? "text-muted-foreground/40" : "text-muted-foreground"}`}>
                     {stage.label}
                   </span>
-                  {stage.status === "active" && stage.progress && (
+                  {stage.status === "active" && (
                     <span className="text-[10px] text-primary/70 ml-auto">
-                      {formatProgress(stage.progress)}
+                      {stage.progress ? formatProgress(stage.progress) : `${Math.round(elapsedMs / 1000)}s`}
                     </span>
                   )}
                 </li>

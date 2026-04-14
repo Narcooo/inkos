@@ -181,13 +181,12 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       notifyChannels: currentConfig.notify,
       logger,
       onStreamProgress: (progress) => {
-        if (progress.status === "streaming") {
-          broadcast("llm:progress", {
-            elapsedMs: progress.elapsedMs,
-            totalChars: progress.totalChars,
-            chineseChars: progress.chineseChars,
-          });
-        }
+        broadcast("llm:progress", {
+          status: progress.status,
+          elapsedMs: progress.elapsedMs,
+          totalChars: progress.totalChars,
+          chineseChars: progress.chineseChars,
+        });
       },
       externalContext: overrides?.externalContext,
     };
