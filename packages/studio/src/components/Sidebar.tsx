@@ -87,10 +87,10 @@ export function Sidebar({ nav, activePage, sse, t }: {
             </span>
             <button
               onClick={nav.toBookCreate}
-              className="p-1 rounded-md text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all group"
-              title={t("nav.newBook")}
+              className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all"
             >
-              <Plus size={14} className="group-hover:rotate-90 transition-transform duration-300" />
+              <Plus size={12} />
+              <span>{t("nav.newBook")}</span>
             </button>
           </div>
 
