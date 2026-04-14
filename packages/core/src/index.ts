@@ -119,7 +119,10 @@ export {
   loadProjectSession,
   persistProjectSession,
   resolveSessionActiveBook,
+  loadGlobalSession,
+  persistGlobalSession,
 } from "./interaction/project-session-store.js";
+export { loadBookSession, persistBookSession, listBookSessions, findOrCreateBookSession } from "./interaction/book-session-store.js";
 export { routeInteractionRequest } from "./interaction/request-router.js";
 export {
   routeNaturalLanguageIntent,
