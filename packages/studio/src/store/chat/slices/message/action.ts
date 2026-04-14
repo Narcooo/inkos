@@ -82,22 +82,40 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
     get().addUserMessage(trimmed);
 
     const streamEs = new EventSource("/api/v1/events");
-    // Reset thinking state at start
-    set({ thinkingText: "", thinkingStreaming: false });
 
     streamEs.addEventListener("thinking:start", () => {
-      set({ thinkingText: "", thinkingStreaming: true });
+      // Create or update the streaming message with thinking state
+      set((s) => {
+        const last = s.messages[s.messages.length - 1];
+        if (last?.timestamp === streamTs && last.role === "assistant") {
+          return { messages: [...s.messages.slice(0, -1), { ...last, thinking: "", thinkingStreaming: true }] };
+        }
+        return { messages: [...s.messages, { role: "assistant" as const, content: "", thinking: "", thinkingStreaming: true, timestamp: streamTs }] };
+      });
     });
 
     streamEs.addEventListener("thinking:delta", (e: MessageEvent) => {
       try {
         const d = e.data ? JSON.parse(e.data) : null;
-        if (d?.text) set((s) => ({ thinkingText: s.thinkingText + d.text }));
+        if (!d?.text) return;
+        set((s) => {
+          const last = s.messages[s.messages.length - 1];
+          if (last?.timestamp === streamTs && last.role === "assistant") {
+            return { messages: [...s.messages.slice(0, -1), { ...last, thinking: (last.thinking ?? "") + d.text }] };
+          }
+          return s;
+        });
       } catch { /* ignore */ }
     });
 
     streamEs.addEventListener("thinking:end", () => {
-      set({ thinkingStreaming: false });
+      set((s) => {
+        const last = s.messages[s.messages.length - 1];
+        if (last?.timestamp === streamTs && last.role === "assistant") {
+          return { messages: [...s.messages.slice(0, -1), { ...last, thinkingStreaming: false }] };
+        }
+        return s;
+      });
     });
 
     streamEs.addEventListener("draft:delta", (e: MessageEvent) => {
@@ -174,7 +192,7 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
         get().addErrorMessage(errorMsg);
       }
     } finally {
-      set({ loading: false, thinkingStreaming: false });
+      set({ loading: false });
     }
   },
 });

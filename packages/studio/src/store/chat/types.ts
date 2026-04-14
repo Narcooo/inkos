@@ -8,6 +8,8 @@ export interface ToolCall {
 export interface Message {
   readonly role: "user" | "assistant";
   readonly content: string;
+  readonly thinking?: string;
+  readonly thinkingStreaming?: boolean;
   readonly timestamp: number;
   readonly toolCall?: ToolCall;
 }
@@ -57,8 +59,6 @@ export interface MessageState {
   currentSessionId: string | null;
   selectedModel: string | null;
   selectedService: string | null;
-  thinkingText: string;
-  thinkingStreaming: boolean;
 }
 
 export interface CreateState {

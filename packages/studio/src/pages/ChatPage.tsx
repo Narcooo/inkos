@@ -57,8 +57,6 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
   const createProgress = useChatStore((s) => s.createProgress);
   const selectedModel = useChatStore((s) => s.selectedModel);
   const selectedService = useChatStore((s) => s.selectedService);
-  const thinkingText = useChatStore((s) => s.thinkingText);
-  const thinkingStreaming = useChatStore((s) => s.thinkingStreaming);
 
   // -- Store actions --
   const setInput = useChatStore((s) => s.setInput);
@@ -167,37 +165,37 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
         ) : (
           <div className="max-w-3xl mx-auto space-y-4">
             {messages.map((msg, i) => (
-              <ChatMessage
-                key={`${msg.timestamp}-${i}`}
-                role={msg.role}
-                content={msg.content}
-                timestamp={msg.timestamp}
-                theme={theme}
-                toolCall={msg.toolCall?.name === "create_book" && pendingBookArgs
-                  ? { name: msg.toolCall.name, arguments: pendingBookArgs }
-                  : msg.toolCall}
-                onArgsChange={msg.toolCall?.name === "create_book"
-                  ? (args) => setPendingBookArgs(args)
-                  : undefined}
-                onConfirm={msg.toolCall?.name === "create_book"
-                  ? () => void onCreateBook()
-                  : undefined}
-                confirming={msg.toolCall?.name === "create_book" ? bookCreating : undefined}
-              />
+              <div key={`${msg.timestamp}-${i}`}>
+                {/* Thinking (rendered before text, follows stream order) */}
+                {msg.role === "assistant" && msg.thinking && (
+                  <div className="mb-2">
+                    <Reasoning isStreaming={msg.thinkingStreaming ?? false}>
+                      <ReasoningTrigger />
+                      <ReasoningContent>{msg.thinking}</ReasoningContent>
+                    </Reasoning>
+                  </div>
+                )}
+                <ChatMessage
+                  role={msg.role}
+                  content={msg.content}
+                  timestamp={msg.timestamp}
+                  theme={theme}
+                  toolCall={msg.toolCall?.name === "create_book" && pendingBookArgs
+                    ? { name: msg.toolCall.name, arguments: pendingBookArgs }
+                    : msg.toolCall}
+                  onArgsChange={msg.toolCall?.name === "create_book"
+                    ? (args) => setPendingBookArgs(args)
+                    : undefined}
+                  onConfirm={msg.toolCall?.name === "create_book"
+                    ? () => void onCreateBook()
+                    : undefined}
+                  confirming={msg.toolCall?.name === "create_book" ? bookCreating : undefined}
+                />
+              </div>
             ))}
 
-            {/* Reasoning / Thinking */}
-            {(thinkingStreaming || thinkingText) && (
-              <div className="max-w-3xl mx-auto">
-                <Reasoning isStreaming={thinkingStreaming}>
-                  <ReasoningTrigger />
-                  <ReasoningContent>{thinkingText}</ReasoningContent>
-                </Reasoning>
-              </div>
-            )}
-
-            {/* Loading indicator (no thinking content) */}
-            {loading && !thinkingStreaming && !thinkingText && (
+            {/* Loading indicator (only when no streaming message yet) */}
+            {loading && !messages.some((m) => m.role === "assistant" && (m.thinkingStreaming || (!m.content && m.thinking))) && (
               <Message from="assistant">
                 <MessageContent>
                   <Shimmer className="text-sm" duration={1.5}>
