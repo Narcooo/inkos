@@ -35,6 +35,75 @@ import { isSafeBookId } from "./safety.js";
 import { ApiError } from "./errors.js";
 import { buildStudioBookConfig } from "./book-create.js";
 
+// -- Pipeline stage definitions per agent type --
+
+const PIPELINE_STAGES: Record<string, string[]> = {
+  writer: [
+    "准备章节输入", "撰写章节草稿", "落盘最终章节",
+    "生成最终真相文件", "校验真相文件变更", "同步记忆索引",
+    "更新章节索引与快照",
+  ],
+  architect: [
+    "生成基础设定", "保存书籍配置", "写入基础设定文件",
+    "初始化控制文档", "创建初始快照",
+  ],
+  reviser: [
+    "加载修订上下文", "修订章节", "落盘修订结果",
+    "更新索引与快照",
+  ],
+  auditor: ["审计章节"],
+};
+
+const AGENT_LABELS: Record<string, string> = {
+  architect: "建书", writer: "写作", auditor: "审计",
+  reviser: "修订", exporter: "导出",
+};
+const TOOL_LABELS: Record<string, string> = {
+  read: "读取文件", edit: "编辑文件", grep: "搜索", ls: "列目录",
+};
+
+function resolveToolLabel(tool: string, agent?: string): string {
+  if (tool === "sub_agent" && agent) return AGENT_LABELS[agent] ?? agent;
+  return TOOL_LABELS[tool] ?? tool;
+}
+
+function summarizeResult(result: unknown): string {
+  if (typeof result === "string") return result.slice(0, 200);
+  if (result && typeof result === "object") {
+    const r = result as Record<string, unknown>;
+    if (typeof r.content === "string") return r.content.slice(0, 200);
+    if (typeof r.text === "string") return r.text.slice(0, 200);
+  }
+  return String(result).slice(0, 200);
+}
+
+function extractToolError(result: unknown): string {
+  if (typeof result === "string") return result.slice(0, 500);
+  if (result && typeof result === "object") {
+    const r = result as Record<string, unknown>;
+    if (typeof r.content === "string") return r.content.slice(0, 500);
+    if (r.content && Array.isArray(r.content)) {
+      const textPart = r.content.find((c: any) => c.type === "text");
+      if (textPart) return (textPart as any).text?.slice(0, 500) ?? "";
+    }
+  }
+  return String(result).slice(0, 500);
+}
+
+interface CollectedToolExec {
+  id: string;
+  tool: string;
+  agent?: string;
+  label: string;
+  status: "running" | "completed" | "error";
+  args?: Record<string, unknown>;
+  result?: string;
+  error?: string;
+  stages?: Array<{ label: string; status: "pending" | "completed" }>;
+  startedAt: number;
+  completedAt?: number;
+}
+
 // --- Event bus for SSE ---
 
 type EventHandler = (event: string, data: unknown) => void;
@@ -866,7 +935,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       const agentApiKey = resolvedApiKey;
 
       // Run pi-agent session
-      let activeWriterToolCallId: string | null = null;
+      const collectedToolExecs: CollectedToolExec[] = [];
       const result = await runAgentSession(
         {
           model,
@@ -890,21 +959,48 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
               }
             }
             if (event.type === "tool_execution_start") {
-              broadcast("tool:start", { tool: event.toolName, args: event.args });
-              if (event.toolName === "sub_agent" && (event.args as Record<string, unknown>)?.agent === "writer") {
-                activeWriterToolCallId = event.toolCallId;
-                broadcast("write:start", { bookId: activeBookId });
-              }
+              const args = event.args as Record<string, unknown> | undefined;
+              const agent = event.toolName === "sub_agent" ? (args?.agent as string | undefined) : undefined;
+              const stages = agent ? (PIPELINE_STAGES[agent] ?? []) : [];
+
+              collectedToolExecs.push({
+                id: event.toolCallId,
+                tool: event.toolName,
+                agent,
+                label: resolveToolLabel(event.toolName, agent),
+                status: "running",
+                args,
+                stages: stages.length > 0
+                  ? stages.map(l => ({ label: l, status: "pending" as const }))
+                  : undefined,
+                startedAt: Date.now(),
+              });
+
+              broadcast("tool:start", {
+                id: event.toolCallId,
+                tool: event.toolName,
+                args,
+                stages,
+              });
             }
             if (event.type === "tool_execution_update") {
               broadcast("tool:update", { tool: event.toolName, partialResult: event.partialResult });
             }
             if (event.type === "tool_execution_end") {
-              broadcast("tool:end", { tool: event.toolName, result: event.result });
-              if (event.toolCallId === activeWriterToolCallId) {
-                activeWriterToolCallId = null;
-                broadcast("write:complete", { bookId: activeBookId });
+              const exec = collectedToolExecs.find(t => t.id === event.toolCallId);
+              if (exec) {
+                exec.status = event.isError ? "error" : "completed";
+                exec.completedAt = Date.now();
+                exec.stages = exec.stages?.map(s => ({ ...s, status: "completed" as const }));
+                if (event.isError) exec.error = extractToolError(event.result);
+                else exec.result = summarizeResult(event.result);
               }
+              broadcast("tool:end", {
+                id: event.toolCallId,
+                tool: event.toolName,
+                result: event.result,
+                isError: event.isError,
+              });
             }
           },
         },
@@ -919,13 +1015,13 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
         timestamp: Date.now(),
       });
       if (result.responseText) {
-        // Find thinking from the last assistant message in result
         const lastAssistant = result.messages?.filter((m: any) => m.role === "assistant").pop();
         const thinking = lastAssistant?.thinking;
         bookSession = appendBookSessionMessage(bookSession, {
           role: "assistant",
           content: result.responseText,
           ...(thinking ? { thinking } : {}),
+          ...(collectedToolExecs.length > 0 ? { toolExecutions: collectedToolExecs } : {}),
           timestamp: Date.now() + 1,
         });
       }

@@ -5,6 +5,30 @@ export interface ToolCall {
   readonly arguments: Record<string, unknown>;
 }
 
+export interface PipelineStage {
+  label: string;
+  status: "pending" | "active" | "completed";
+  progress?: {
+    elapsedMs: number;
+    totalChars: number;
+    chineseChars: number;
+  };
+}
+
+export interface ToolExecution {
+  id: string;
+  tool: string;
+  agent?: string;
+  label: string;
+  status: "running" | "processing" | "completed" | "error";
+  args?: Record<string, unknown>;
+  result?: string;
+  error?: string;
+  stages?: PipelineStage[];
+  startedAt: number;
+  completedAt?: number;
+}
+
 export interface Message {
   readonly role: "user" | "assistant";
   readonly content: string;
@@ -12,6 +36,7 @@ export interface Message {
   readonly thinkingStreaming?: boolean;
   readonly timestamp: number;
   readonly toolCall?: ToolCall;
+  readonly toolExecutions?: ToolExecution[];
 }
 
 export interface SessionMessage {
@@ -62,8 +87,6 @@ export interface MessageState {
   selectedService: string | null;
   /** Active EventSource ref — closed on session switch */
   _activeStream: EventSource | null;
-  /** Active pipeline operation (from SSE tool events) */
-  activeOperation: string | null;
 }
 
 export interface CreateState {

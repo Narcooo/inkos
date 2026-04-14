@@ -17,6 +17,7 @@ import {
 } from "../components/ai-elements/reasoning";
 import { ChatMessage } from "../components/chat/ChatMessage";
 import { QuickActions } from "../components/chat/QuickActions";
+import { ToolExecutionSteps } from "../components/chat/ToolExecutionSteps";
 import {
   Loader2,
   BotMessageSquare,
@@ -58,8 +59,6 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
   const createProgress = useChatStore((s) => s.createProgress);
   const selectedModel = useChatStore((s) => s.selectedModel);
   const selectedService = useChatStore((s) => s.selectedService);
-  const activeOperation = useChatStore((s) => s.activeOperation);
-
   // -- Store actions --
   const setInput = useChatStore((s) => s.setInput);
   const sendMessage = useChatStore((s) => s.sendMessage);
@@ -73,6 +72,15 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
 
   const isZh = t("nav.connected") === "\u5DF2\u8FDE\u63A5";
   const hasBook = Boolean(activeBookId);
+
+  // Derived: is the assistant currently streaming/thinking/executing tools?
+  const isStreaming = useMemo(() => {
+    const last = messages[messages.length - 1];
+    if (!last || last.role !== "assistant") return false;
+    return last.thinkingStreaming === true
+      || !last.content
+      || (last.toolExecutions?.some(t => t.status === "running" || t.status === "processing") ?? false);
+  }, [messages]);
 
   // -- Model picker: read raw state, derive with useMemo (stable refs) --
   const services = useServiceStore((s) => s.services);
@@ -212,19 +220,15 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
                     : undefined}
                   confirming={msg.toolCall?.name === "create_book" ? bookCreating : undefined}
                 />
+                {/* Tool executions */}
+                {msg.role === "assistant" && msg.toolExecutions && msg.toolExecutions.length > 0 && (
+                  <ToolExecutionSteps executions={msg.toolExecutions} />
+                )}
               </div>
             ))}
 
-            {/* Pipeline operation indicator */}
-            {activeOperation && (
-              <div className="flex items-center gap-2 py-1">
-                <Loader2 size={12} className="text-primary animate-spin" />
-                <span className="text-xs text-muted-foreground">{activeOperation}</span>
-              </div>
-            )}
-
-            {/* Loading indicator (only when no streaming message and no operation) */}
-            {loading && !activeOperation && !messages.some((m) => m.role === "assistant" && (m.thinkingStreaming || (!m.content && m.thinking))) && (
+            {/* Loading indicator — only when loading and no streaming activity */}
+            {loading && !isStreaming && (
               <Message from="assistant">
                 <MessageContent>
                   <Shimmer className="text-sm" duration={1.5}>
