@@ -19,6 +19,7 @@ import {
   persistBookSession,
   appendBookSessionMessage,
   runAgentSession,
+  resolveServiceModel,
   loadSecrets,
   saveSecrets,
   type PipelineConfig,
@@ -677,11 +678,14 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
   });
 
   app.post("/api/agent", async (c) => {
-    const { instruction, activeBookId, sessionId } = await c.req.json<{
+    const { instruction, activeBookId, sessionId: reqSessionId, model: reqModel, service: reqService } = await c.req.json<{
       instruction: string;
       activeBookId?: string;
       sessionId?: string;
+      model?: string;
+      service?: string;
     }>();
+    const sessionId = reqSessionId;
     if (!instruction?.trim()) {
       return c.json({ error: "No instruction provided" }, 400);
     }
@@ -709,17 +713,46 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
         .filter((m) => m.role === "user" || m.role === "assistant")
         .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
 
-      // Resolve model — _piModel is a Model<Api> from pi-ai
-      const model = client._piModel
-        ? client._piModel
-        : { provider: config.llm.provider ?? "anthropic", modelId: config.llm.model };
+      // Resolve model — multi-service resolution
+      let resolvedModel: import("@mariozechner/pi-ai").Model<import("@mariozechner/pi-ai").Api>;
+      let resolvedApiKey: string | undefined;
+      const rawConfig = config.llm as unknown as Record<string, unknown>;
+      if (reqService && reqModel) {
+        // Explicit service + model from request body
+        const resolved = await resolveServiceModel(reqService, reqModel, root);
+        resolvedModel = resolved.model;
+        resolvedApiKey = resolved.apiKey;
+      } else if (Array.isArray(rawConfig.services) && rawConfig.defaultModel) {
+        // New multi-service config format: use services[0] + defaultModel
+        const firstService = (rawConfig.services as Array<{ service: string }>)[0];
+        const defaultModelId = rawConfig.defaultModel as string;
+        if (firstService?.service) {
+          const resolved = await resolveServiceModel(firstService.service, defaultModelId, root);
+          resolvedModel = resolved.model;
+          resolvedApiKey = resolved.apiKey;
+        } else {
+          // Fallback to legacy path
+          resolvedModel = client._piModel
+            ? client._piModel
+            : { provider: config.llm.provider ?? "anthropic", modelId: config.llm.model } as any;
+          resolvedApiKey = client._apiKey;
+        }
+      } else {
+        // Legacy fallback: use existing createLLMClient path
+        resolvedModel = client._piModel
+          ? client._piModel
+          : { provider: config.llm.provider ?? "anthropic", modelId: config.llm.model } as any;
+        resolvedApiKey = client._apiKey;
+      }
+      const model = resolvedModel;
+      const agentApiKey = resolvedApiKey;
 
       // Run pi-agent session
       let activeWriterToolCallId: string | null = null;
       const result = await runAgentSession(
         {
           model,
-          apiKey: client._apiKey,
+          apiKey: agentApiKey,
           pipeline,
           projectRoot: root,
           bookId: activeBookId ?? null,

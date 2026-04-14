@@ -186,6 +186,24 @@ export async function runAgentSession(
   // ----- Resolve or create Agent -----
   let cached = agentCache.get(sessionId);
 
+  if (cached) {
+    // Check if model changed — evict and rebuild if so
+    const currentModelId = (cached.agent.state.model as any)?.id;
+    const newModelId = typeof config.model === 'object' && 'id' in config.model
+      ? (config.model as any).id
+      : undefined;
+    if (currentModelId && newModelId && currentModelId !== newModelId) {
+      // Preserve conversation messages for re-injection
+      const preservedMessages = agentMessagesToPlain(cached.agent.state.messages);
+      agentCache.delete(sessionId);
+      cached = undefined;
+      // Pass preserved messages as initialMessages if none were provided
+      if (!initialMessages || initialMessages.length === 0) {
+        initialMessages = preservedMessages;
+      }
+    }
+  }
+
   if (!cached) {
     const model = resolveModel(config.model);
     const agent = new Agent({

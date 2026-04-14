@@ -22,6 +22,12 @@ const processProjectInteractionRequestMock = vi.fn();
 const createInteractionToolsFromDepsMock = vi.fn(() => ({}));
 const loadProjectSessionMock = vi.fn();
 const resolveSessionActiveBookMock = vi.fn();
+const runAgentSessionMock = vi.fn();
+const findOrCreateBookSessionMock = vi.fn();
+const loadBookSessionMock = vi.fn();
+const persistBookSessionMock = vi.fn();
+const appendBookSessionMessageMock = vi.fn();
+const resolveServiceModelMock = vi.fn();
 
 const logger = {
   child: () => logger,
@@ -112,6 +118,12 @@ vi.mock("@actalk/inkos-core", () => {
     createInteractionToolsFromDeps: createInteractionToolsFromDepsMock,
     loadProjectSession: loadProjectSessionMock,
     resolveSessionActiveBook: resolveSessionActiveBookMock,
+    runAgentSession: runAgentSessionMock,
+    findOrCreateBookSession: findOrCreateBookSessionMock,
+    loadBookSession: loadBookSessionMock,
+    persistBookSession: persistBookSessionMock,
+    appendBookSessionMessage: appendBookSessionMessageMock,
+    resolveServiceModel: resolveServiceModelMock,
     GLOBAL_ENV_PATH: join(tmpdir(), "inkos-global.env"),
   };
 });
@@ -262,6 +274,30 @@ describe("createStudioServer daemon lifecycle", () => {
     saveChapterIndexMock.mockResolvedValue(undefined);
     rollbackToChapterMock.mockResolvedValue([]);
     pipelineConfigs.length = 0;
+    runAgentSessionMock.mockReset();
+    findOrCreateBookSessionMock.mockReset();
+    loadBookSessionMock.mockReset();
+    persistBookSessionMock.mockReset();
+    appendBookSessionMessageMock.mockReset();
+    resolveServiceModelMock.mockReset();
+    // Default BookSession for agent tests
+    const defaultBookSession = {
+      sessionId: "agent-session-1",
+      projectRoot: root,
+      activeBookId: "demo-book",
+      messages: [],
+      events: [],
+    };
+    findOrCreateBookSessionMock.mockResolvedValue(defaultBookSession);
+    loadBookSessionMock.mockResolvedValue(null);
+    persistBookSessionMock.mockResolvedValue(undefined);
+    appendBookSessionMessageMock.mockImplementation(
+      (session: unknown, _msg: unknown) => session,
+    );
+    runAgentSessionMock.mockResolvedValue({
+      responseText: "Agent response.",
+      messages: [],
+    });
   });
 
   afterEach(async () => {
@@ -655,20 +691,13 @@ describe("createStudioServer daemon lifecycle", () => {
     });
   });
 
-  it("routes /api/agent through the shared interaction control layer", async () => {
-    processProjectInteractionInputMock.mockResolvedValue({
-      request: { intent: "write_next", bookId: "demo-book" },
+  it("routes /api/agent through runAgentSession and returns response + sessionId", async () => {
+    runAgentSessionMock.mockResolvedValueOnce({
       responseText: "Completed write_next for demo-book.",
-      session: {
-        sessionId: "session-1",
-        projectRoot: root,
-        activeBookId: "demo-book",
-        automationMode: "semi",
-        messages: [
-          { role: "user", content: "continue", timestamp: 1 },
-          { role: "assistant", content: "Completed write_next for demo-book.", timestamp: 2 },
-        ],
-      },
+      messages: [
+        { role: "user", content: "continue" },
+        { role: "assistant", content: "Completed write_next for demo-book." },
+      ],
     });
 
     const { createStudioServer } = await import("./server.js");
@@ -683,21 +712,22 @@ describe("createStudioServer daemon lifecycle", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
       response: "Completed write_next for demo-book.",
-      request: { intent: "write_next", bookId: "demo-book" },
       session: expect.objectContaining({
-        activeBookId: "demo-book",
+        sessionId: "agent-session-1",
       }),
     });
-    expect(createInteractionToolsFromDepsMock).toHaveBeenCalledTimes(1);
-    expect(processProjectInteractionInputMock).toHaveBeenCalledWith(expect.objectContaining({
-      projectRoot: root,
-      input: "continue",
-      activeBookId: "demo-book",
-    }));
+    expect(runAgentSessionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bookId: "demo-book",
+        projectRoot: root,
+      }),
+      "continue",
+      expect.any(Array),
+    );
   });
 
-  it("returns 500 with an error payload when the shared agent execution fails", async () => {
-    processProjectInteractionInputMock.mockRejectedValueOnce(new Error("boom"));
+  it("returns 500 with an error payload when the agent session fails", async () => {
+    runAgentSessionMock.mockRejectedValueOnce(new Error("boom"));
 
     const { createStudioServer } = await import("./server.js");
     const app = createStudioServer(cloneProjectConfig() as never, root);
@@ -711,7 +741,7 @@ describe("createStudioServer daemon lifecycle", () => {
     expect(response.status).toBe(500);
     await expect(response.json()).resolves.toEqual({
       error: {
-        code: "INTERACTION_ERROR",
+        code: "AGENT_ERROR",
         message: "boom",
       },
     });
