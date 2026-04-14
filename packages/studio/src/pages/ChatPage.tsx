@@ -58,6 +58,7 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
   const createProgress = useChatStore((s) => s.createProgress);
   const selectedModel = useChatStore((s) => s.selectedModel);
   const selectedService = useChatStore((s) => s.selectedService);
+  const activeOperation = useChatStore((s) => s.activeOperation);
 
   // -- Store actions --
   const setInput = useChatStore((s) => s.setInput);
@@ -196,8 +197,16 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
               </div>
             ))}
 
-            {/* Loading indicator (only when no streaming message yet) */}
-            {loading && !messages.some((m) => m.role === "assistant" && (m.thinkingStreaming || (!m.content && m.thinking))) && (
+            {/* Pipeline operation indicator */}
+            {activeOperation && (
+              <div className="flex items-center gap-2 py-1">
+                <Loader2 size={12} className="text-primary animate-spin" />
+                <span className="text-xs text-muted-foreground">{activeOperation}</span>
+              </div>
+            )}
+
+            {/* Loading indicator (only when no streaming message and no operation) */}
+            {loading && !activeOperation && !messages.some((m) => m.role === "assistant" && (m.thinkingStreaming || (!m.content && m.thinking))) && (
               <Message from="assistant">
                 <MessageContent>
                   <Shimmer className="text-sm" duration={1.5}>

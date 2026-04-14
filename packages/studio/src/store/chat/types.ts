@@ -61,6 +61,8 @@ export interface MessageState {
   selectedService: string | null;
   /** Active EventSource ref — closed on session switch */
   _activeStream: EventSource | null;
+  /** Active pipeline operation (from SSE tool events) */
+  activeOperation: string | null;
 }
 
 export interface CreateState {

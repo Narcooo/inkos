@@ -146,7 +146,11 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
     streamEs.addEventListener("tool:start", (e: MessageEvent) => {
       try {
         const d = e.data ? JSON.parse(e.data) : null;
-        if (d?.tool) console.log("[tool:start]", d.tool, d.args);
+        if (d?.tool === "sub_agent") {
+          const agent = (d.args as Record<string, unknown>)?.agent as string | undefined;
+          const labels: Record<string, string> = { writer: "正在写作", auditor: "正在审计", reviser: "正在修订", exporter: "正在导出" };
+          set({ activeOperation: labels[agent ?? ""] ?? `执行 ${agent}` });
+        }
       } catch { /* ignore */ }
     });
 
@@ -154,7 +158,7 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
       try {
         const d = e.data ? JSON.parse(e.data) : null;
         if (d?.tool) {
-          console.log("[tool:end]", d.tool);
+          set({ activeOperation: null });
           // Bump bookDataVersion to refresh sidebar after tool completion
           get().bumpBookDataVersion();
         }

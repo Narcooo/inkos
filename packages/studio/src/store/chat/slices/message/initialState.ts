@@ -8,4 +8,5 @@ export const initialMessageState: MessageState = {
   selectedModel: null,
   selectedService: null,
   _activeStream: null,
+  activeOperation: null,
 };
