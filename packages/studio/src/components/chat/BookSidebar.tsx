@@ -155,15 +155,39 @@ function ArtifactView({ bookId }: { readonly bookId: string }) {
 function PanelView({ bookId, theme: _theme, t, sse }: BookSidebarProps) {
   const isZh = t("nav.connected") === "\u5DF2\u8FDE\u63A5";
 
-  const chatLoading = useChatStore((s) => s.loading);
+  // Show writing indicator only during pipeline operations (write/audit/revise)
+  const [activeOp, setActiveOp] = useState<string | null>(null);
+  useEffect(() => {
+    const latest = sse.messages;
+    if (latest.length === 0) return;
+    const last = latest[latest.length - 1];
+    if (last.event === "write:start") setActiveOp("write");
+    else if (last.event === "tool:start") {
+      const data = last.data as { tool?: string; args?: { agent?: string } } | null;
+      if (data?.tool === "sub_agent") {
+        const agent = data.args?.agent;
+        if (agent === "writer") setActiveOp("write");
+        else if (agent === "auditor") setActiveOp("audit");
+        else if (agent === "reviser") setActiveOp("revise");
+      }
+    } else if (last.event === "write:complete" || last.event === "tool:end") {
+      setActiveOp(null);
+    }
+  }, [sse.messages]);
+
+  const OP_LABELS: Record<string, string> = {
+    write: isZh ? "正在写作中..." : "Writing...",
+    audit: isZh ? "正在审计中..." : "Auditing...",
+    revise: isZh ? "正在修订中..." : "Revising...",
+  };
 
   return (
     <div className="flex flex-col gap-2 p-3">
-      {chatLoading && (
+      {activeOp && (
         <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-primary/5 border border-primary/10">
           <Loader2 size={12} className="text-primary animate-spin shrink-0" />
           <span className="text-xs text-primary font-medium">
-            {isZh ? "正在写作中..." : "Writing..."}
+            {OP_LABELS[activeOp] ?? activeOp}
           </span>
         </div>
       )}
