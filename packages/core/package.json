@@ -44,11 +44,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.78.0",
     "@mariozechner/pi-ai": "^0.67.1",
     "dotenv": "^16.4.0",
     "js-yaml": "^4.1.1",
-    "openai": "^4.80.0",
     "zod": "^3.24.0"
   },
   "devDependencies": {
