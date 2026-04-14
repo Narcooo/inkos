@@ -1,16 +1,15 @@
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useMemo } from "react";
 import type { Theme } from "../hooks/use-theme";
 import type { TFunction } from "../hooks/use-i18n";
 import type { SSEMessage } from "../hooks/use-sse";
 import { useChatStore } from "../store/chat";
 import { useServiceStore } from "../store/service";
 import {
-  PromptInputSelect,
-  PromptInputSelectTrigger,
-  PromptInputSelectValue,
-  PromptInputSelectContent,
-  PromptInputSelectItem,
-} from "../components/ai-elements/prompt-input";
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "../components/ui/dropdown-menu";
 import {
   Reasoning,
   ReasoningTrigger,
@@ -22,6 +21,8 @@ import {
   Loader2,
   BotMessageSquare,
   ArrowUp,
+  ChevronDown,
+  Check,
 } from "lucide-react";
 import { Shimmer } from "../components/ai-elements/shimmer";
 import {
@@ -73,32 +74,33 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
   const hasBook = Boolean(activeBookId);
 
   // -- Available models from service store --
+  // -- Model picker (reads store directly, no local fetch) --
   const services = useServiceStore((s) => s.services);
-  const servicesLoading = useServiceStore((s) => s.servicesLoading);
   const modelsByService = useServiceStore((s) => s.modelsByService);
   const fetchServices = useServiceStore((s) => s.fetchServices);
   const fetchModels = useServiceStore((s) => s.fetchModels);
 
   useEffect(() => { void fetchServices(); }, [fetchServices]);
-
-  // Fetch models for connected services
-  const connectedServices = services.filter((s) => s.connected);
+  // Fetch models for connected services (once)
   useEffect(() => {
-    for (const svc of connectedServices) {
+    for (const svc of services.filter((s) => s.connected)) {
       void fetchModels(svc.service);
     }
-  }, [connectedServices.map((s) => s.service).join(","), fetchModels]);
+  }, [services, fetchModels]);
 
-  const modelsLoading = servicesLoading || connectedServices.some(
-    (s) => modelsByService[s.service]?.loading,
-  );
-  const availableModels = connectedServices
-    .map((svc) => ({
-      service: svc.service,
-      label: svc.label,
-      models: modelsByService[svc.service]?.models ?? [],
-    }))
-    .filter((g) => g.models.length > 0);
+  // Grouped models derived from store — instant, no async
+  const groupedModels = useMemo(() => {
+    const groups: Array<{ service: string; label: string; models: ReadonlyArray<{ id: string; name?: string }> }> = [];
+    for (const svc of services.filter((s) => s.connected)) {
+      const entry = modelsByService[svc.service];
+      if (entry?.models.length) {
+        groups.push({ service: svc.service, label: svc.label, models: entry.models });
+      }
+    }
+    return groups;
+  }, [services, modelsByService]);
+
+  const hasModels = groupedModels.length > 0;
 
   // Auto-scroll on new messages or progress updates
   useEffect(() => {
@@ -283,7 +285,7 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
                   placeholder={isZh ? "输入指令..." : "Enter command..."}
                   disabled={loading}
                   rows={1}
-                  className="flex-1 bg-transparent text-sm leading-6 placeholder:text-muted-foreground/50 outline-none border-0 ring-0 focus:outline-none focus:ring-0 focus:border-0 resize-none disabled:opacity-50 max-h-[200px]"
+                  className="flex-1 bg-transparent text-sm leading-6 placeholder:text-muted-foreground/50 outline-none! border-none! ring-0! shadow-none focus:outline-none! focus:ring-0! focus:border-none! resize-none disabled:opacity-50 max-h-[200px]"
                 />
                 <button
                   type="button"
@@ -295,42 +297,46 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
                 </button>
               </div>
               <div className="flex items-center gap-2 px-3 pb-2 border-t border-border/20 pt-1.5">
-                {modelsLoading ? (
-                  <div className="h-7 w-24 rounded-md bg-muted/40 animate-pulse" />
-                ) : availableModels.length > 0 ? (
-                  <PromptInputSelect
-                    value={selectedModel && selectedService ? `${selectedService}:${selectedModel}` : ""}
-                    onValueChange={(v) => {
-                      const value = String(v);
-                      const colonIdx = value.indexOf(":");
-                      if (colonIdx > 0) {
-                        setSelectedModel(value.slice(colonIdx + 1), value.slice(0, colonIdx));
-                      }
-                    }}
-                  >
-                    <PromptInputSelectTrigger className="h-7 text-xs">
-                      <PromptInputSelectValue placeholder="选择模型" />
-                    </PromptInputSelectTrigger>
-                    <PromptInputSelectContent>
-                      {availableModels.map((group) =>
-                        group.models.map((m) => (
-                          <PromptInputSelectItem
-                            key={`${group.service}:${m.id}`}
-                            value={`${group.service}:${m.id}`}
-                          >
-                            <span className="text-muted-foreground text-[10px] mr-1">{group.label}</span>
-                            {m.name ?? m.id}
-                          </PromptInputSelectItem>
-                        ))
-                      )}
-                      <div
-                        className="px-2 py-1.5 text-xs text-primary cursor-pointer hover:underline border-t border-border/30"
-                        onClick={() => nav.toServices()}
-                      >
-                        管理服务商 →
+                {hasModels ? (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button className="flex items-center gap-1.5 px-2 py-1 rounded-md hover:bg-muted text-sm transition-colors">
+                        <span className="font-medium text-xs truncate max-w-[140px]">
+                          {selectedModel ?? "选择模型"}
+                        </span>
+                        <ChevronDown size={14} className="text-muted-foreground" />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent side="top" align="start" className="w-60 max-h-72 overflow-y-auto">
+                      {groupedModels.map((group) => (
+                        <div key={group.service}>
+                          <div className="px-2 py-1.5 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+                            {group.label}
+                          </div>
+                          {group.models.map((m) => {
+                            const isSelected = selectedModel === m.id && selectedService === group.service;
+                            return (
+                              <DropdownMenuItem
+                                key={`${group.service}:${m.id}`}
+                                onSelect={() => setSelectedModel(m.id, group.service)}
+                                className={isSelected ? "bg-muted/50" : ""}
+                              >
+                                <div className="flex flex-1 items-center justify-between">
+                                  <span className="text-sm">{m.name ?? m.id}</span>
+                                  {isSelected && <Check size={14} className="text-primary shrink-0" />}
+                                </div>
+                              </DropdownMenuItem>
+                            );
+                          })}
+                        </div>
+                      ))}
+                      <div className="border-t border-border/30 mt-1">
+                        <DropdownMenuItem onSelect={() => nav.toServices()} className="text-primary">
+                          管理服务商
+                        </DropdownMenuItem>
                       </div>
-                    </PromptInputSelectContent>
-                  </PromptInputSelect>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 ) : (
                   <button
                     onClick={() => nav.toServices()}
