@@ -299,13 +299,11 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
               <div className="flex items-center gap-2 px-3 pb-2 border-t border-border/20 pt-1.5">
                 {hasModels ? (
                   <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <button className="flex items-center gap-1.5 px-2 py-1 rounded-md hover:bg-muted text-sm transition-colors">
-                        <span className="font-medium text-xs truncate max-w-[140px]">
-                          {selectedModel ?? "选择模型"}
-                        </span>
-                        <ChevronDown size={14} className="text-muted-foreground" />
-                      </button>
+                    <DropdownMenuTrigger className="flex items-center gap-1.5 px-2 py-1 rounded-md hover:bg-muted text-sm transition-colors cursor-pointer">
+                      <span className="font-medium text-xs truncate max-w-[140px]">
+                        {selectedModel ?? "选择模型"}
+                      </span>
+                      <ChevronDown size={14} className="text-muted-foreground" />
                     </DropdownMenuTrigger>
                     <DropdownMenuContent side="top" align="start" className="w-60 max-h-72 overflow-y-auto">
                       {groupedModels.map((group) => (
