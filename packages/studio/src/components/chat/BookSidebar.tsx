@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import type { Theme } from "../../hooks/use-theme";
 import type { TFunction } from "../../hooks/use-i18n";
 import type { SSEMessage } from "../../hooks/use-sse";
@@ -165,11 +165,44 @@ function PanelView({ bookId, theme: _theme, t, sse }: BookSidebarProps) {
   );
 }
 
+const SIDEBAR_MIN = 280;
+const SIDEBAR_MAX = 700;
+const SIDEBAR_DEFAULT = 420;
+
 export function BookSidebar({ bookId, theme, t, sse }: BookSidebarProps) {
   const sidebarView = useChatStore((s) => s.sidebarView);
+  const [width, setWidth] = useState(SIDEBAR_DEFAULT);
+  const dragging = useRef(false);
+
+  const onMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    dragging.current = true;
+    const startX = e.clientX;
+    const startW = width;
+    const onMove = (ev: MouseEvent) => {
+      if (!dragging.current) return;
+      const delta = startX - ev.clientX;
+      setWidth(Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, startW + delta)));
+    };
+    const onUp = () => {
+      dragging.current = false;
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }, [width]);
 
   return (
-    <aside className="hidden lg:flex w-[300px] shrink-0 flex-col bg-background/30 backdrop-blur-sm overflow-y-auto">
+    <aside
+      className="hidden lg:flex shrink-0 flex-col bg-background/30 backdrop-blur-sm overflow-y-auto relative"
+      style={{ width }}
+    >
+      {/* Resize handle */}
+      <div
+        onMouseDown={onMouseDown}
+        className="absolute left-0 top-0 h-full w-1 cursor-col-resize hover:bg-primary/20 active:bg-primary/30 transition-colors z-10"
+      />
       {sidebarView === "artifact" ? (
         <ArtifactView bookId={bookId} />
       ) : (
@@ -196,7 +229,7 @@ export function BookSidebarToggle({ bookId, theme, t, sse }: BookSidebarProps) {
         <div className="fixed inset-0 z-40 lg:hidden" onClick={() => setOpen(false)}>
           <div className="absolute inset-0 bg-black/20 backdrop-blur-sm" />
           <aside
-            className="absolute right-0 top-0 h-full w-[300px] bg-background border-l border-border/20 overflow-y-auto"
+            className="absolute right-0 top-0 h-full w-[420px] max-w-[85vw] bg-background border-l border-border/20 overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between px-3 py-2 border-b border-border/20">
