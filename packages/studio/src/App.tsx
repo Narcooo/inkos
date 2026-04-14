@@ -6,7 +6,8 @@ import { Dashboard } from "./pages/Dashboard";
 import { ChatPage } from "./pages/ChatPage";
 import { ChapterReader } from "./pages/ChapterReader";
 import { Analytics } from "./pages/Analytics";
-import { ConfigView } from "./pages/ConfigView";
+import { ServiceListPage } from "./pages/ServiceListPage";
+import { ServiceDetailPage } from "./pages/ServiceDetailPage";
 import { TruthFiles } from "./pages/TruthFiles";
 import { DaemonControl } from "./pages/DaemonControl";
 import { LogViewer } from "./pages/LogViewer";
@@ -61,7 +62,8 @@ export function App() {
     toChapter: (bookId: string, chapterNumber: number) =>
       setRoute({ page: "chapter", bookId, chapterNumber }),
     toAnalytics: (bookId: string) => setRoute({ page: "analytics", bookId }),
-    toConfig: () => setRoute({ page: "config" }),
+    toServices: () => setRoute({ page: "services" }),
+    toServiceDetail: (id: string) => setRoute({ page: "service-detail", serviceId: id }),
     toTruth: (bookId: string) => setRoute({ page: "truth", bookId }),
     toDaemon: () => setRoute({ page: "daemon" }),
     toLogs: () => setRoute({ page: "logs" }),
@@ -76,7 +78,9 @@ export function App() {
   const activePage =
     activeBookId
       ? `book:${activeBookId}`
-      : route.page;
+      : route.page === "service-detail"
+        ? "services"
+        : route.page;
 
   if (!ready) {
     return (
@@ -159,9 +163,14 @@ export function App() {
               <Analytics bookId={route.bookId} nav={nav} theme={theme} t={t} />
             </div>
           )}
-          {route.page === "config" && (
+          {route.page === "services" && (
             <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
-              <ConfigView nav={nav} theme={theme} t={t} />
+              <ServiceListPage nav={nav} />
+            </div>
+          )}
+          {route.page === "service-detail" && (
+            <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
+              <ServiceDetailPage serviceId={route.serviceId} nav={nav} />
             </div>
           )}
           {route.page === "truth" && (

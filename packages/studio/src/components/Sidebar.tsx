@@ -29,7 +29,7 @@ interface Nav {
   toDashboard: () => void;
   toBook: (id: string) => void;
   toBookCreate: () => void;
-  toConfig: () => void;
+  toServices: () => void;
   toDaemon: () => void;
   toLogs: () => void;
   toGenres: () => void;
@@ -140,8 +140,8 @@ export function Sidebar({ nav, activePage, sse, t }: {
             <SidebarItem
               label={t("nav.config")}
               icon={<Settings size={16} />}
-              active={activePage === "config"}
-              onClick={nav.toConfig}
+              active={activePage === "services"}
+              onClick={nav.toServices}
             />
             <SidebarItem
               label={t("nav.daemon")}

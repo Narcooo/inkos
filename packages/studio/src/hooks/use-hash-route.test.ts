@@ -23,8 +23,20 @@ describe("hash route", () => {
       expect(parseHash("#/book/new")).toEqual({ page: "book-create" });
     });
 
-    it("parses config", () => {
-      expect(parseHash("#/config")).toEqual({ page: "config" });
+    it("parses config as services (redirect)", () => {
+      expect(parseHash("#/config")).toEqual({ page: "services" });
+    });
+
+    it("parses services", () => {
+      expect(parseHash("#/services")).toEqual({ page: "services" });
+    });
+
+    it("parses service-detail", () => {
+      expect(parseHash("#/services/openai")).toEqual({ page: "service-detail", serviceId: "openai" });
+    });
+
+    it("decodes encoded serviceId", () => {
+      expect(parseHash("#/services/%E8%87%AA%E5%AE%9A%E4%B9%89")).toEqual({ page: "service-detail", serviceId: "自定义" });
     });
 
     it("falls back to dashboard for unknown hash", () => {
@@ -51,8 +63,18 @@ describe("hash route", () => {
       expect(routeToHash({ page: "book-create" })).toBe("#/book/new");
     });
 
-    it("config -> #/config", () => {
-      expect(routeToHash({ page: "config" })).toBe("#/config");
+    it("services -> #/services", () => {
+      expect(routeToHash({ page: "services" })).toBe("#/services");
+    });
+
+    it("service-detail -> #/services/{id}", () => {
+      expect(routeToHash({ page: "service-detail", serviceId: "openai" })).toBe("#/services/openai");
+    });
+
+    it("encodes Chinese serviceId", () => {
+      const hash = routeToHash({ page: "service-detail", serviceId: "自定义" });
+      expect(hash).toContain("#/services/");
+      expect(decodeURIComponent(hash)).toContain("自定义");
     });
 
     it("non-hash pages return empty string", () => {
