@@ -38,6 +38,8 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
   const loading = useServiceStore((s) => s.servicesLoading);
   const fetchServices = useServiceStore((s) => s.fetchServices);
   const refreshServices = useServiceStore((s) => s.refreshServices);
+  const setStoreModels = useServiceStore((s) => s.setModels);
+  const clearStoreModels = useServiceStore((s) => s.clearModels);
 
   useEffect(() => { void fetchServices(); }, [fetchServices]);
 
@@ -94,9 +96,12 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
         { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ apiKey: trimmedKey }) },
       );
       if (result.ok) {
-        setStatus({ state: "connected", models: result.models ?? [] });
+        const models = result.models ?? [];
+        setStatus({ state: "connected", models });
+        setStoreModels(serviceId, models); // Write to global store
       } else {
         setStatus({ state: "error", message: result.error ?? "连接失败" });
+        clearStoreModels(serviceId);
       }
     } catch (e) {
       setStatus({ state: "error", message: e instanceof Error ? e.message : "连接失败" });
@@ -130,18 +135,23 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
       });
       setStatus({ state: "saved" });
       void refreshServices();
-      // After 2s, transition to correct state
+      // After 1.5s, transition to correct state
       setTimeout(() => {
         if (trimmedKey) {
-          // Re-fetch models to verify
           setStatus({ state: "testing" });
           fetchJson<{ models: ModelInfo[] }>(`/services/${encodeURIComponent(serviceId)}/models`)
             .then((data) => {
               const m = data.models ?? [];
-              setStatus(m.length > 0 ? { state: "connected", models: m } : { state: "idle" });
+              if (m.length > 0) {
+                setStatus({ state: "connected", models: m });
+                setStoreModels(serviceId, m); // Cache for chat picker
+              } else {
+                setStatus({ state: "idle" });
+              }
             })
             .catch(() => setStatus({ state: "idle" }));
         } else {
+          clearStoreModels(serviceId);
           setStatus({ state: "idle" });
         }
       }, 1500);

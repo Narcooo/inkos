@@ -58,8 +58,25 @@ export const useServiceStore = create<ServiceStore>()((set, get) => ({
     }
   },
 
+  setModels: (service, models) => {
+    set((s) => ({
+      modelsByService: {
+        ...s.modelsByService,
+        [service]: { models, loading: false, error: null },
+      },
+    }));
+  },
+
+  clearModels: (service) => {
+    set((s) => {
+      const next = { ...s.modelsByService };
+      delete next[service];
+      return { modelsByService: next };
+    });
+  },
+
   refreshServices: async () => {
-    set({ services: [], servicesLoading: false, modelsByService: {} });
+    set({ services: [], servicesLoading: false });
     await get().fetchServices();
   },
 }));

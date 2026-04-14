@@ -32,6 +32,10 @@ export interface ServiceActions {
   fetchServices: () => Promise<void>;
   /** Fetch models for a specific service (calls external API) */
   fetchModels: (service: string) => Promise<void>;
+  /** Write models directly (from test connection result) */
+  setModels: (service: string, models: ReadonlyArray<ModelInfo>) => void;
+  /** Clear models for a service (key removed) */
+  clearModels: (service: string) => void;
   /** Invalidate and re-fetch services (after saving a key) */
   refreshServices: () => Promise<void>;
 }
