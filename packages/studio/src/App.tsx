@@ -14,8 +14,7 @@ import { ImportManager } from "./pages/ImportManager";
 import { RadarView } from "./pages/RadarView";
 import { DoctorView } from "./pages/DoctorView";
 import { LanguageSelector } from "./pages/LanguageSelector";
-import { FloatingPanels } from "./components/chat/FloatingPanels";
-import { BookInfoPanel } from "./components/chat/BookInfoPanel";
+import { BookSidebar, BookSidebarToggle } from "./components/chat/BookSidebar";
 import { useSSE } from "./hooks/use-sse";
 import { useTheme } from "./hooks/use-theme";
 import { useI18n } from "./hooks/use-i18n";
@@ -147,7 +146,7 @@ export function App() {
             </div>
           )}
           {(route.page === "book" || route.page === "book-create") && (
-            <>
+            <div className="flex flex-1 min-w-0">
               <ChatPage
                 activeBookId={route.page === "book" ? route.bookId : undefined}
                 nav={nav}
@@ -156,11 +155,12 @@ export function App() {
                 sse={sse}
               />
               {route.page === "book" && (
-                <FloatingPanels>
-                  <BookInfoPanel bookId={route.bookId} theme={theme} t={t} />
-                </FloatingPanels>
+                <>
+                  <BookSidebar bookId={route.bookId} theme={theme} t={t} sse={sse} />
+                  <BookSidebarToggle bookId={route.bookId} theme={theme} t={t} sse={sse} />
+                </>
               )}
-            </>
+            </div>
           )}
           {route.page === "chapter" && (
             <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
