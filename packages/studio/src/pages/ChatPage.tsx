@@ -316,7 +316,7 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
                             return (
                               <DropdownMenuItem
                                 key={`${group.service}:${m.id}`}
-                                onSelect={() => setSelectedModel(m.id, group.service)}
+                                onClick={() => setSelectedModel(m.id, group.service)}
                                 className={isSelected ? "bg-muted/50" : ""}
                               >
                                 <div className="flex flex-1 items-center justify-between">
@@ -329,7 +329,7 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
                         </div>
                       ))}
                       <div className="border-t border-border/30 mt-1">
-                        <DropdownMenuItem onSelect={() => nav.toServices()} className="text-primary">
+                        <DropdownMenuItem onClick={() => nav.toServices()} className="text-primary">
                           管理服务商
                         </DropdownMenuItem>
                       </div>
