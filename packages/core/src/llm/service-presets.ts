@@ -2,25 +2,42 @@ export interface ServicePreset {
   readonly api: string;
   readonly baseUrl: string;
   readonly label: string;
+  readonly temperatureRange?: [number, number];
+  readonly defaultTemperature?: number;
+  readonly writingTemperature?: number;
+  readonly temperatureHint?: string;
 }
 
 export const SERVICE_PRESETS: Record<string, ServicePreset> = {
-  openai:       { api: "openai-responses",   baseUrl: "https://api.openai.com/v1",                         label: "OpenAI" },
-  anthropic:    { api: "anthropic-messages",  baseUrl: "https://api.anthropic.com",                         label: "Anthropic" },
-  deepseek:     { api: "openai-completions",  baseUrl: "https://api.deepseek.com",                          label: "DeepSeek" },
-  moonshot:     { api: "openai-completions",  baseUrl: "https://api.moonshot.cn/v1",                        label: "Moonshot (Kimi)" },
-  minimax:      { api: "openai-completions",  baseUrl: "https://api.minimax.chat/v1",                       label: "MiniMax" },
-  bailian:      { api: "openai-completions",  baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", label: "百炼 (通义千问)" },
-  zhipu:        { api: "openai-completions",  baseUrl: "https://open.bigmodel.cn/api/paas/v4",              label: "智谱 GLM" },
-  siliconflow:  { api: "openai-completions",  baseUrl: "https://api.siliconflow.cn/v1",                     label: "硅基流动" },
-  ppio:         { api: "openai-completions",  baseUrl: "https://api.ppinfra.com/v3/openai",                 label: "PPIO" },
-  openrouter:   { api: "openai-responses",    baseUrl: "https://openrouter.ai/api/v1",                      label: "OpenRouter" },
-  ollama:       { api: "openai-completions",  baseUrl: "http://localhost:11434/v1",                          label: "Ollama (本地)" },
-  custom:       { api: "openai-completions",  baseUrl: "",                                                   label: "自定义端点" },
+  openai:      { api: "openai-responses",   baseUrl: "https://api.openai.com/v1",                         label: "OpenAI",          temperatureRange: [0, 2], defaultTemperature: 1.0, writingTemperature: 1.0 },
+  anthropic:   { api: "anthropic-messages",  baseUrl: "https://api.anthropic.com",                         label: "Anthropic",       temperatureRange: [0, 1], defaultTemperature: 1.0, writingTemperature: 1.0, temperatureHint: "不要同时改 temperature 和 top_p" },
+  deepseek:    { api: "openai-completions",  baseUrl: "https://api.deepseek.com",                          label: "DeepSeek",        temperatureRange: [0, 2], defaultTemperature: 1.0, writingTemperature: 1.5, temperatureHint: "创意写作推荐 1.5" },
+  moonshot:    { api: "openai-completions",  baseUrl: "https://api.moonshot.cn/v1",                        label: "Moonshot (Kimi)", temperatureRange: [0, 1], defaultTemperature: 0.3, writingTemperature: 1.0, temperatureHint: "kimi-k2.5 推荐 temperature=1.0" },
+  minimax:     { api: "openai-completions",  baseUrl: "https://api.minimax.chat/v1",                       label: "MiniMax",         temperatureRange: [0, 2], defaultTemperature: 0.9, writingTemperature: 0.9 },
+  bailian:     { api: "openai-completions",  baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", label: "百炼 (通义千问)", temperatureRange: [0, 2], defaultTemperature: 0.7, writingTemperature: 1.0 },
+  zhipu:       { api: "openai-completions",  baseUrl: "https://open.bigmodel.cn/api/paas/v4",              label: "智谱 GLM",        temperatureRange: [0, 1], defaultTemperature: 0.95, writingTemperature: 0.95 },
+  siliconflow: { api: "openai-completions",  baseUrl: "https://api.siliconflow.cn/v1",                     label: "硅基流动" },
+  ppio:        { api: "openai-completions",  baseUrl: "https://api.ppinfra.com/v3/openai",                 label: "PPIO" },
+  openrouter:  { api: "openai-responses",    baseUrl: "https://openrouter.ai/api/v1",                      label: "OpenRouter" },
+  ollama:      { api: "openai-completions",  baseUrl: "http://localhost:11434/v1",                         label: "Ollama (本地)" },
+  custom:      { api: "openai-completions",  baseUrl: "",                                                   label: "自定义端点" },
 };
 
 export function resolveServicePreset(service: string): ServicePreset | undefined {
   return SERVICE_PRESETS[service];
+}
+
+const DEFAULT_TEMPERATURE_RANGE: [number, number] = [0, 2];
+
+export function clampTemperature(service: string, temperature: number): number {
+  const preset = resolveServicePreset(service);
+  const [min, max] = preset?.temperatureRange ?? DEFAULT_TEMPERATURE_RANGE;
+  return Math.max(min, Math.min(max, temperature));
+}
+
+export function getWritingTemperature(service: string): number {
+  const preset = resolveServicePreset(service);
+  return preset?.writingTemperature ?? preset?.defaultTemperature ?? 1.0;
 }
 
 export function guessServiceFromBaseUrl(baseUrl: string): string {
