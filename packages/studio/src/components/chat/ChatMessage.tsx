@@ -59,23 +59,20 @@ export function ChatMessage({
         )}
 
         {isUser ? (
-          <div className="text-sm leading-relaxed">{content}</div>
+          <div className="flex items-end gap-2">
+            <div className="text-sm leading-relaxed">{content}</div>
+            <span className="text-[9px] font-mono text-primary-foreground/40 shrink-0">
+              {new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            </span>
+          </div>
         ) : (
-          <MessageResponse>{content}</MessageResponse>
+          <>
+            <MessageResponse>{content}</MessageResponse>
+            <div className="text-[9px] font-mono text-muted-foreground/40">
+              {new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            </div>
+          </>
         )}
-
-        {/* Timestamp */}
-        <div
-          className={cn(
-            "text-[9px] font-mono",
-            isUser ? "text-primary-foreground/40" : "text-muted-foreground/40",
-          )}
-        >
-          {new Date(timestamp).toLocaleTimeString([], {
-            hour: "2-digit",
-            minute: "2-digit",
-          })}
-        </div>
       </MessageContent>
 
       {hasBookForm && (
