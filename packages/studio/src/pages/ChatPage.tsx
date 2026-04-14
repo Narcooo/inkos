@@ -101,6 +101,8 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
   }, [services, modelsByService]);
 
   const hasModels = groupedModels.length > 0;
+  const modelsStillLoading = services.length === 0 ||
+    services.filter((s) => s.connected).some((s) => modelsByService[s.service]?.loading);
 
   // Auto-scroll on new messages or progress updates
   useEffect(() => {
@@ -297,7 +299,9 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
                 </button>
               </div>
               <div className="flex items-center gap-2 px-3 pb-2 border-t border-border/20 pt-1.5">
-                {hasModels ? (
+                {modelsStillLoading ? (
+                  <span className="text-xs text-muted-foreground/40 animate-pulse">加载模型...</span>
+                ) : hasModels ? (
                   <DropdownMenu>
                     <DropdownMenuTrigger className="flex items-center gap-1.5 px-2 py-1 rounded-md hover:bg-muted text-sm transition-colors cursor-pointer">
                       <span className="font-medium text-xs truncate max-w-[140px]">
