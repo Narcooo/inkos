@@ -177,24 +177,46 @@ export interface ToolExecutionStepsProps {
   executions: ToolExecution[];
 }
 
-export function ToolExecutionSteps({ executions }: ToolExecutionStepsProps) {
-  const { pipelines, utilities } = useMemo(() => {
-    const pipelines: ToolExecution[] = [];
-    const utilities: ToolExecution[] = [];
-    for (const exec of executions) {
-      if (exec.tool === "sub_agent") pipelines.push(exec);
-      else utilities.push(exec);
+/**
+ * Group executions chronologically: pipeline ops render individually,
+ * consecutive utility tools are merged into a single collapsed group.
+ */
+type RenderGroup =
+  | { type: "pipeline"; exec: ToolExecution }
+  | { type: "utilities"; execs: ToolExecution[] };
+
+function groupChronologically(executions: ToolExecution[]): RenderGroup[] {
+  const groups: RenderGroup[] = [];
+  let utilBuf: ToolExecution[] = [];
+
+  const flushUtils = () => {
+    if (utilBuf.length > 0) {
+      groups.push({ type: "utilities", execs: utilBuf });
+      utilBuf = [];
     }
-    return { pipelines, utilities };
-  }, [executions]);
+  };
+
+  for (const exec of executions) {
+    if (exec.tool === "sub_agent") {
+      flushUtils();
+      groups.push({ type: "pipeline", exec });
+    } else {
+      utilBuf.push(exec);
+    }
+  }
+  flushUtils();
+  return groups;
+}
+
+export function ToolExecutionSteps({ executions }: ToolExecutionStepsProps) {
+  const groups = useMemo(() => groupChronologically(executions), [executions]);
 
   return (
     <div className="space-y-2 mt-2">
-      {pipelines.map((exec) => (
-        <PipelineExecution key={exec.id} exec={exec} />
-      ))}
-      {utilities.length > 0 && (
-        <UtilityToolsGroup execs={utilities} />
+      {groups.map((g, i) =>
+        g.type === "pipeline"
+          ? <PipelineExecution key={g.exec.id} exec={g.exec} />
+          : <UtilityToolsGroup key={`utils-${i}`} execs={g.execs} />
       )}
     </div>
   );
