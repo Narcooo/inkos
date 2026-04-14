@@ -285,7 +285,7 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
                   placeholder={isZh ? "输入指令..." : "Enter command..."}
                   disabled={loading}
                   rows={1}
-                  className="flex-1 bg-transparent text-sm leading-6 placeholder:text-muted-foreground/50 outline-none resize-none disabled:opacity-50 max-h-[200px]"
+                  className="flex-1 bg-transparent text-sm leading-6 placeholder:text-muted-foreground/50 outline-none border-0 ring-0 focus:outline-none focus:ring-0 focus:border-0 resize-none disabled:opacity-50 max-h-[200px]"
                 />
                 <button
                   type="button"
