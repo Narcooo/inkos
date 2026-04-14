@@ -429,37 +429,23 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
   // --- Model discovery ---
 
   app.get("/api/v1/services", async (c) => {
-    const { listModelsForService, resolveServicePreset } = await import("@actalk/inkos-core");
+    const { resolveServicePreset } = await import("@actalk/inkos-core");
     const secrets = await loadSecrets(root);
 
-    // All built-in services (except custom)
     const SERVICE_KEYS = [
       "openai", "anthropic", "deepseek", "moonshot", "minimax",
       "bailian", "zhipu", "siliconflow", "ppio", "openrouter", "ollama",
     ];
 
-    const services = await Promise.all(
-      SERVICE_KEYS.map(async (key) => {
-        const preset = resolveServicePreset(key);
-        const apiKey = secrets.services[key]?.apiKey;
-        const connected = Boolean(apiKey);
-        let modelCount = 0;
-        if (connected) {
-          try {
-            const models = await listModelsForService(key, apiKey);
-            modelCount = models.length;
-          } catch {
-            modelCount = 0;
-          }
-        }
-        return {
-          service: key,
-          label: preset?.label ?? key,
-          connected,
-          modelCount,
-        };
-      }),
-    );
+    // Fast: only check connection status from secrets, no external API calls
+    const services = SERVICE_KEYS.map((key) => {
+      const preset = resolveServicePreset(key);
+      return {
+        service: key,
+        label: preset?.label ?? key,
+        connected: Boolean(secrets.services[key]?.apiKey),
+      };
+    });
 
     // Add custom services from inkos.json
     try {
@@ -469,12 +455,10 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       for (const svc of config.llm?.services ?? []) {
         if (svc.service === "custom") {
           const secretKey = `custom:${svc.name}`;
-          const apiKey = secrets.services[secretKey]?.apiKey;
           services.push({
             service: secretKey,
             label: svc.name ?? "Custom",
-            connected: Boolean(apiKey),
-            modelCount: 0,
+            connected: Boolean(secrets.services[secretKey]?.apiKey),
           });
         }
       }

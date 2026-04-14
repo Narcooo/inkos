@@ -4,7 +4,6 @@ interface ServiceInfo {
   readonly service: string;
   readonly label: string;
   readonly connected: boolean;
-  readonly modelCount: number;
 }
 
 interface ServicesResponse {
@@ -112,7 +111,7 @@ function ServiceCard({
         />
       </div>
       <span className="text-xs text-muted-foreground/60">
-        {connected ? `${svc.modelCount} 个模型` : "未配置"}
+        {connected ? "已连接" : "未配置"}
       </span>
     </button>
   );
