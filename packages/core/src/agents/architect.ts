@@ -279,7 +279,7 @@ ${finalRequirementsPrompt}`;
     const response = await this.chat([
       { role: "system", content: langPrefix + systemPrompt },
       { role: "user", content: userMessage },
-    ], { maxTokens: 16384, temperature: 0.8 });
+    ], { temperature: 0.8 });
 
     return this.parseSections(response.content);
   }
@@ -676,7 +676,7 @@ ${keyPrinciplesPrompt}`;
         role: "user",
         content: userMessage,
       },
-    ], { maxTokens: 16384, temperature: 0.5 });
+    ], { temperature: 0.5 });
 
     return this.parseSections(response.content);
   }
@@ -765,7 +765,7 @@ prohibitions:
         role: "user",
         content: `请为标题为"${book.title}"的${fanficMode}模式同人小说生成基础设定。目标${book.targetChapters}章，每章${book.chapterWordCount}字。`,
       },
-    ], { maxTokens: 16384, temperature: 0.7 });
+    ], { temperature: 0.7 });
 
     return this.parseSections(response.content);
   }

@@ -125,6 +125,54 @@ describe("validateChapterTruthPersistence", () => {
     expect(logger.warn).toHaveBeenCalledWith("  [unsupported_change] 正文写铜牌在怀里，但 state 说未携带。");
   });
 
+  it("degrades gracefully when validator throws (e.g. LLM returned empty response)", async () => {
+    const validator = {
+      validate: vi.fn().mockRejectedValue(new Error("LLM returned empty response")),
+    };
+    const writer = {
+      settleChapterState: vi.fn(),
+    };
+    const logWarn = vi.fn();
+    const logger = { warn: vi.fn() };
+
+    const result = await validateChapterTruthPersistence({
+      writer,
+      validator,
+      book: BOOK,
+      bookDir: "/tmp/book",
+      chapterNumber: 1,
+      title: "Test Chapter",
+      content: "Chapter content.",
+      persistenceOutput: createWriterOutput({
+        updatedState: "new state",
+        updatedHooks: "new hooks",
+        updatedLedger: "new ledger",
+      }),
+      auditResult: createAuditResult(),
+      previousTruth: {
+        oldState: "old state",
+        oldHooks: "old hooks",
+        oldLedger: "old ledger",
+      },
+      language: "zh",
+      logWarn,
+      logger,
+    });
+
+    expect(result.chapterStatus).toBe("state-degraded");
+    expect(result.persistenceOutput.updatedState).toBe("old state");
+    expect(result.persistenceOutput.updatedHooks).toBe("old hooks");
+    expect(result.persistenceOutput.updatedLedger).toBe("old ledger");
+    expect(result.degradedIssues).toEqual([
+      expect.objectContaining({
+        severity: "warning",
+        category: "state-validation",
+      }),
+    ]);
+    // Should NOT have attempted settlement retry
+    expect(writer.settleChapterState).not.toHaveBeenCalled();
+  });
+
   it("degrades persistence output and appends audit issues when retry still fails", async () => {
     const validator = {
       validate: vi.fn()

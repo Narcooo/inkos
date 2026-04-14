@@ -94,7 +94,7 @@ ${rankingsText}
           content: `请基于上面的实时排行榜数据，分析当前网文市场热度，给出开书建议。`,
         },
       ],
-      { temperature: 0.6, maxTokens: 4096 },
+      { temperature: 0.6 },
     );
 
     return this.parseResult(response.content);

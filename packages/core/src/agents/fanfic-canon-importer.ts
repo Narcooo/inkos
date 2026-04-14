@@ -94,7 +94,7 @@ ${truncated ? "\n注意：原作素材过长，已截断。请基于已有部分
         { role: "system", content: systemPrompt },
         { role: "user", content: `以下是原作《${sourceName}》的素材：\n\n${text}` },
       ],
-      { maxTokens: 8192, temperature: 0.3 },
+      { temperature: 0.3 },
     );
 
     const content = response.content;
