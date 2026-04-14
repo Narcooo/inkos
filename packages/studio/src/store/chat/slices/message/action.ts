@@ -87,6 +87,24 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
       } catch { /* ignore */ }
     });
 
+    streamEs.addEventListener("tool:start", (e: MessageEvent) => {
+      try {
+        const d = e.data ? JSON.parse(e.data) : null;
+        if (d?.tool) console.log("[tool:start]", d.tool, d.args);
+      } catch { /* ignore */ }
+    });
+
+    streamEs.addEventListener("tool:end", (e: MessageEvent) => {
+      try {
+        const d = e.data ? JSON.parse(e.data) : null;
+        if (d?.tool) {
+          console.log("[tool:end]", d.tool);
+          // Bump bookDataVersion to refresh sidebar after tool completion
+          get().bumpBookDataVersion();
+        }
+      } catch { /* ignore */ }
+    });
+
     try {
       const data = await fetchJson<AgentResponse>("/agent", {
         method: "POST",
