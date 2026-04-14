@@ -138,13 +138,7 @@ function PipelineExecution({ exec }: { exec: ToolExecution }) {
                   </li>
                 );
               })}
-              {isActive && (
-                <li className="text-xs text-muted-foreground/50 animate-pulse">...</li>
-              )}
             </ul>
-          )}
-          {isActive && (!exec.logs || exec.logs.length === 0) && (
-            <div className="text-xs text-muted-foreground/50 animate-pulse">等待日志...</div>
           )}
           {exec.status === "error" && exec.error && (
             <div className="mt-2 text-xs text-destructive bg-destructive/5 rounded-lg px-2.5 py-2">
