@@ -30,6 +30,13 @@ export interface ToolExecution {
   completedAt?: number;
 }
 
+// -- Message parts (chronologically ordered for rendering) --
+
+export type MessagePart =
+  | { type: "thinking"; content: string; streaming: boolean }
+  | { type: "text"; content: string }
+  | { type: "tool"; execution: ToolExecution };
+
 export interface Message {
   readonly role: "user" | "assistant";
   readonly content: string;
@@ -38,6 +45,7 @@ export interface Message {
   readonly timestamp: number;
   readonly toolCall?: ToolCall;
   readonly toolExecutions?: ToolExecution[];
+  readonly parts?: MessagePart[];              // chronological parts for interleaved rendering
 }
 
 export interface SessionMessage {
