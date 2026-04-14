@@ -106,8 +106,8 @@ function PipelineExecution({ exec }: { exec: ToolExecution }) {
   const bookId = exec.args?.bookId as string | undefined;
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen}>
-      <CollapsibleTrigger className="w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl bg-card/60 hover:bg-card/80 transition-colors cursor-pointer">
+    <Collapsible open={open} onOpenChange={setOpen} className="rounded-xl border border-border/40 bg-card/60">
+      <CollapsibleTrigger className="w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl hover:bg-card/80 transition-colors cursor-pointer">
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-sm font-medium text-foreground truncate">
             {exec.label}
