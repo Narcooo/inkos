@@ -149,4 +149,50 @@ describe("persistChapterArtifacts", () => {
     expect(snapshotState).not.toHaveBeenCalled();
     expect(syncCurrentStateFactHistory).not.toHaveBeenCalled();
   });
+
+  it("replaces existing entry for the same chapter number instead of appending", async () => {
+    const saveChapterIndex = vi.fn().mockResolvedValue(undefined);
+    const existingEntry: ChapterMeta = {
+      number: 1,
+      title: "Old Title",
+      status: "drafted",
+      wordCount: 500,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      auditIssues: [],
+      lengthWarnings: [],
+    };
+
+    await persistChapterArtifacts({
+      chapterNumber: 1,
+      chapterTitle: "New Title",
+      status: "ready-for-review",
+      auditResult: createAuditResult(),
+      finalWordCount: 2000,
+      lengthWarnings: [],
+      degradedIssues: [],
+      tokenUsage: ZERO_USAGE,
+      loadChapterIndex: async () => [existingEntry],
+      saveChapter: vi.fn().mockResolvedValue(undefined),
+      saveTruthFiles: vi.fn().mockResolvedValue(undefined),
+      saveChapterIndex,
+      markBookActiveIfNeeded: vi.fn().mockResolvedValue(undefined),
+      persistAuditDriftGuidance: vi.fn().mockResolvedValue(undefined),
+      snapshotState: vi.fn().mockResolvedValue(undefined),
+      syncCurrentStateFactHistory: vi.fn().mockResolvedValue(undefined),
+      logSnapshotStage: vi.fn(),
+      now: () => "2026-04-01T00:00:00.000Z",
+    });
+
+    const savedIndex = saveChapterIndex.mock.calls[0][0] as ChapterMeta[];
+    // Must have exactly 1 entry, not 2
+    expect(savedIndex).toHaveLength(1);
+    expect(savedIndex[0].number).toBe(1);
+    expect(savedIndex[0].title).toBe("New Title");
+    expect(savedIndex[0].wordCount).toBe(2000);
+    expect(savedIndex[0].status).toBe("ready-for-review");
+    // Must preserve original createdAt
+    expect(savedIndex[0].createdAt).toBe("2026-01-01T00:00:00.000Z");
+    expect(savedIndex[0].updatedAt).toBe("2026-04-01T00:00:00.000Z");
+  });
 });
