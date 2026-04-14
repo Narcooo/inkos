@@ -161,7 +161,7 @@ export function BookDetail({
     setConfirmDeleteOpen(false);
     setDeleting(true);
     try {
-      const res = await fetch(`/api/books/${bookId}`, { method: "DELETE" });
+      const res = await fetch(`/api/v1/books/${bookId}`, { method: "DELETE" });
       if (!res.ok) {
         const json = await res.json().catch(() => ({}));
         throw new Error((json as { error?: string }).error ?? `${res.status}`);
@@ -299,7 +299,7 @@ export function BookDetail({
   const currentTargetChapters = settingsTargetChapters ?? book.targetChapters ?? 0;
   const currentStatus = settingsStatus ?? (book.status as BookStatus);
 
-  const exportHref = `/api/books/${bookId}/export?format=${exportFormat}${exportApprovedOnly ? "&approvedOnly=true" : ""}`;
+  const exportHref = `/api/v1/books/${bookId}/export?format=${exportFormat}${exportApprovedOnly ? "&approvedOnly=true" : ""}`;
 
   return (
     <div className="space-y-8 fade-in">

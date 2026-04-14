@@ -67,14 +67,14 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
   });
 
   // BookId validation middleware — blocks path traversal on all book routes
-  app.use("/api/books/:id/*", async (c, next) => {
+  app.use("/api/v1/books/:id/*", async (c, next) => {
     const bookId = c.req.param("id");
     if (!isSafeBookId(bookId)) {
       throw new ApiError(400, "INVALID_BOOK_ID", `Invalid book ID: "${bookId}"`);
     }
     await next();
   });
-  app.use("/api/books/:id", async (c, next) => {
+  app.use("/api/v1/books/:id", async (c, next) => {
     const bookId = c.req.param("id");
     if (!isSafeBookId(bookId)) {
       throw new ApiError(400, "INVALID_BOOK_ID", `Invalid book ID: "${bookId}"`);
@@ -125,7 +125,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // --- Books ---
 
-  app.get("/api/books", async (c) => {
+  app.get("/api/v1/books", async (c) => {
     const bookIds = await state.listBooks();
     const books = await Promise.all(
       bookIds.map(async (id) => {
@@ -137,7 +137,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     return c.json({ books });
   });
 
-  app.get("/api/books/:id", async (c) => {
+  app.get("/api/v1/books/:id", async (c) => {
     const id = c.req.param("id");
     try {
       const book = await state.loadBookConfig(id);
@@ -151,7 +151,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // --- Genres ---
 
-  app.get("/api/genres", async (c) => {
+  app.get("/api/v1/genres", async (c) => {
     const { listAvailableGenres, readGenreProfile } = await import("@actalk/inkos-core");
     const rawGenres = await listAvailableGenres(root);
     const genres = await Promise.all(
@@ -169,7 +169,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // --- Book Create ---
 
-  app.post("/api/books/create", async (c) => {
+  app.post("/api/v1/books/create", async (c) => {
     const body = await c.req.json<{
       title: string;
       genre: string;
@@ -228,7 +228,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     return c.json({ status: "creating", bookId });
   });
 
-  app.get("/api/books/:id/create-status", async (c) => {
+  app.get("/api/v1/books/:id/create-status", async (c) => {
     const id = c.req.param("id");
     const status = bookCreateStatus.get(id);
     if (!status) {
@@ -239,7 +239,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // --- Chapters ---
 
-  app.get("/api/books/:id/chapters/:num", async (c) => {
+  app.get("/api/v1/books/:id/chapters/:num", async (c) => {
     const id = c.req.param("id");
     const num = parseInt(c.req.param("num"), 10);
     const bookDir = state.bookDir(id);
@@ -259,7 +259,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // --- Chapter Save ---
 
-  app.put("/api/books/:id/chapters/:num", async (c) => {
+  app.put("/api/v1/books/:id/chapters/:num", async (c) => {
     const id = c.req.param("id");
     const num = parseInt(c.req.param("num"), 10);
     const bookDir = state.bookDir(id);
@@ -290,7 +290,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     "style_guide.md", "parent_canon.md", "fanfic_canon.md", "book_rules.md",
   ];
 
-  app.get("/api/books/:id/truth/:file", async (c) => {
+  app.get("/api/v1/books/:id/truth/:file", async (c) => {
     const id = c.req.param("id");
     const file = c.req.param("file");
 
@@ -309,7 +309,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // --- Analytics ---
 
-  app.get("/api/books/:id/analytics", async (c) => {
+  app.get("/api/v1/books/:id/analytics", async (c) => {
     const id = c.req.param("id");
     try {
       const chapters = await state.loadChapterIndex(id);
@@ -321,7 +321,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // --- Actions ---
 
-  app.post("/api/books/:id/write-next", async (c) => {
+  app.post("/api/v1/books/:id/write-next", async (c) => {
     const id = c.req.param("id");
     const body = await c.req.json<{ wordCount?: number }>().catch(() => ({ wordCount: undefined }));
 
@@ -341,7 +341,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     return c.json({ status: "writing", bookId: id });
   });
 
-  app.post("/api/books/:id/draft", async (c) => {
+  app.post("/api/v1/books/:id/draft", async (c) => {
     const id = c.req.param("id");
     const body = await c.req.json<{ wordCount?: number; context?: string }>().catch(() => ({ wordCount: undefined, context: undefined }));
 
@@ -360,7 +360,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     return c.json({ status: "drafting", bookId: id });
   });
 
-  app.post("/api/books/:id/chapters/:num/approve", async (c) => {
+  app.post("/api/v1/books/:id/chapters/:num/approve", async (c) => {
     const id = c.req.param("id");
     const num = parseInt(c.req.param("num"), 10);
 
@@ -376,7 +376,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     }
   });
 
-  app.post("/api/books/:id/chapters/:num/reject", async (c) => {
+  app.post("/api/v1/books/:id/chapters/:num/reject", async (c) => {
     const id = c.req.param("id");
     const num = parseInt(c.req.param("num"), 10);
 
@@ -403,7 +403,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // --- SSE ---
 
-  app.get("/api/events", (c) => {
+  app.get("/api/v1/events", (c) => {
     return streamSSE(c, async (stream) => {
       const handler: EventHandler = (event, data) => {
         stream.writeSSE({ event, data: JSON.stringify(data) });
@@ -427,7 +427,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // --- Model discovery ---
 
-  app.get("/api/services", async (c) => {
+  app.get("/api/v1/services", async (c) => {
     const { listServicesWithModelCount } = await import("@actalk/inkos-core");
     const [services, secrets] = await Promise.all([
       listServicesWithModelCount(),
@@ -440,7 +440,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     return c.json({ services: servicesWithStatus });
   });
 
-  app.get("/api/services/config", async (c) => {
+  app.get("/api/v1/services/config", async (c) => {
     const configPath = join(root, "inkos.json");
     const raw = await readFile(configPath, "utf-8");
     const config = JSON.parse(raw);
@@ -448,7 +448,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     return c.json({ services, defaultModel: config.llm?.defaultModel ?? null });
   });
 
-  app.put("/api/services/config", async (c) => {
+  app.put("/api/v1/services/config", async (c) => {
     const body = await c.req.json<{ services: any[]; defaultModel?: string }>();
     const configPath = join(root, "inkos.json");
     const raw = await readFile(configPath, "utf-8");
@@ -462,7 +462,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     return c.json({ ok: true });
   });
 
-  app.post("/api/services/:service/test", async (c) => {
+  app.post("/api/v1/services/:service/test", async (c) => {
     const { listModelsForService } = await import("@actalk/inkos-core");
     const service = c.req.param("service");
     const { apiKey } = await c.req.json<{ apiKey: string }>();
@@ -474,7 +474,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     }
   });
 
-  app.put("/api/services/:service/secret", async (c) => {
+  app.put("/api/v1/services/:service/secret", async (c) => {
     const service = c.req.param("service");
     const { apiKey } = await c.req.json<{ apiKey: string }>();
     const secrets = await loadSecrets(root);
@@ -483,7 +483,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     return c.json({ ok: true });
   });
 
-  app.get("/api/services/:service/models", async (c) => {
+  app.get("/api/v1/services/:service/models", async (c) => {
     const { listModelsForService } = await import("@actalk/inkos-core");
     const apiKey = c.req.query("apiKey");
     const models = await listModelsForService(c.req.param("service"), apiKey);
@@ -492,7 +492,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // --- Project info ---
 
-  app.get("/api/project", async (c) => {
+  app.get("/api/v1/project", async (c) => {
     const currentConfig = await loadCurrentProjectConfig({ requireApiKey: false });
     // Check if language was explicitly set in inkos.json (not just the schema default)
     const raw = JSON.parse(await readFile(join(root, "inkos.json"), "utf-8"));
@@ -513,7 +513,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // --- Config editing ---
 
-  app.put("/api/project", async (c) => {
+  app.put("/api/v1/project", async (c) => {
     const updates = await c.req.json<Record<string, unknown>>();
     const configPath = join(root, "inkos.json");
     try {
@@ -542,7 +542,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // --- Truth files browser ---
 
-  app.get("/api/books/:id/truth", async (c) => {
+  app.get("/api/v1/books/:id/truth", async (c) => {
     const id = c.req.param("id");
     const bookDir = state.bookDir(id);
     const storyDir = join(bookDir, "story");
@@ -565,13 +565,13 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   let schedulerInstance: import("@actalk/inkos-core").Scheduler | null = null;
 
-  app.get("/api/daemon", (c) => {
+  app.get("/api/v1/daemon", (c) => {
     return c.json({
       running: schedulerInstance?.isRunning ?? false,
     });
   });
 
-  app.post("/api/daemon/start", async (c) => {
+  app.post("/api/v1/daemon/start", async (c) => {
     if (schedulerInstance?.isRunning) {
       return c.json({ error: "Daemon already running" }, 400);
     }
@@ -611,7 +611,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     }
   });
 
-  app.post("/api/daemon/stop", (c) => {
+  app.post("/api/v1/daemon/stop", (c) => {
     if (!schedulerInstance?.isRunning) {
       return c.json({ error: "Daemon not running" }, 400);
     }
@@ -623,7 +623,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // --- Logs ---
 
-  app.get("/api/logs", async (c) => {
+  app.get("/api/v1/logs", async (c) => {
     const logPath = join(root, "inkos.log");
     try {
       const content = await readFile(logPath, "utf-8");
@@ -639,7 +639,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // --- Agent chat ---
 
-  app.get("/api/interaction/session", async (c) => {
+  app.get("/api/v1/interaction/session", async (c) => {
     const session = await loadProjectSession(root);
     const activeBookId = await resolveSessionActiveBook(root, session);
     return c.json({
@@ -652,7 +652,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // -- Per-book session endpoints --
 
-  app.get("/api/sessions", async (c) => {
+  app.get("/api/v1/sessions", async (c) => {
     const bookId = c.req.query("bookId");
     const sessions = await listBookSessions(root, bookId === undefined ? null : bookId === "null" ? null : bookId);
     return c.json({ sessions: sessions.map((s) => ({
@@ -664,20 +664,20 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     })) });
   });
 
-  app.get("/api/sessions/:sessionId", async (c) => {
+  app.get("/api/v1/sessions/:sessionId", async (c) => {
     const session = await loadBookSession(root, c.req.param("sessionId"));
     if (!session) return c.json({ error: "Session not found" }, 404);
     return c.json({ session });
   });
 
-  app.post("/api/sessions", async (c) => {
+  app.post("/api/v1/sessions", async (c) => {
     const body = await c.req.json<{ bookId?: string | null }>().catch(() => ({}));
     const bookId = (body as { bookId?: string | null }).bookId ?? null;
     const session = await findOrCreateBookSession(root, bookId);
     return c.json({ session });
   });
 
-  app.post("/api/agent", async (c) => {
+  app.post("/api/v1/agent", async (c) => {
     const { instruction, activeBookId, sessionId: reqSessionId, model: reqModel, service: reqService } = await c.req.json<{
       instruction: string;
       activeBookId?: string;
@@ -818,7 +818,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // --- Language setup ---
 
-  app.post("/api/project/language", async (c) => {
+  app.post("/api/v1/project/language", async (c) => {
     const { language } = await c.req.json<{ language: "zh" | "en" }>();
     const configPath = join(root, "inkos.json");
     try {
@@ -835,7 +835,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // --- Audit ---
 
-  app.post("/api/books/:id/audit/:chapter", async (c) => {
+  app.post("/api/v1/books/:id/audit/:chapter", async (c) => {
     const id = c.req.param("id");
     const chapterNum = parseInt(c.req.param("chapter"), 10);
     const bookDir = state.bookDir(id);
@@ -869,7 +869,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // --- Revise ---
 
-  app.post("/api/books/:id/revise/:chapter", async (c) => {
+  app.post("/api/v1/books/:id/revise/:chapter", async (c) => {
     const id = c.req.param("id");
     const chapterNum = parseInt(c.req.param("chapter"), 10);
     const bookDir = state.bookDir(id);
@@ -905,7 +905,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // --- Export ---
 
-  app.get("/api/books/:id/export", async (c) => {
+  app.get("/api/v1/books/:id/export", async (c) => {
     const id = c.req.param("id");
     const format = (c.req.query("format") ?? "txt") as string;
     const approvedOnly = c.req.query("approvedOnly") === "true";
@@ -971,7 +971,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // --- Export to file (save to project dir) ---
 
-  app.post("/api/books/:id/export-save", async (c) => {
+  app.post("/api/v1/books/:id/export-save", async (c) => {
     const id = c.req.param("id");
     const { format, approvedOnly } = await c.req.json<{ format?: string; approvedOnly?: boolean }>().catch(() => ({ format: "txt", approvedOnly: false }));
     const fmt = format ?? "txt";
@@ -1006,7 +1006,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // --- Genre detail + copy ---
 
-  app.get("/api/genres/:id", async (c) => {
+  app.get("/api/v1/genres/:id", async (c) => {
     const genreId = c.req.param("id");
     try {
       const { readGenreProfile } = await import("@actalk/inkos-core");
@@ -1017,7 +1017,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     }
   });
 
-  app.post("/api/genres/:id/copy", async (c) => {
+  app.post("/api/v1/genres/:id/copy", async (c) => {
     const genreId = c.req.param("id");
     if (/[/\\\0]/.test(genreId) || genreId.includes("..")) {
       throw new ApiError(400, "INVALID_GENRE_ID", `Invalid genre ID: "${genreId}"`);
@@ -1037,12 +1037,12 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // --- Model overrides ---
 
-  app.get("/api/project/model-overrides", async (c) => {
+  app.get("/api/v1/project/model-overrides", async (c) => {
     const raw = JSON.parse(await readFile(join(root, "inkos.json"), "utf-8"));
     return c.json({ overrides: raw.modelOverrides ?? {} });
   });
 
-  app.put("/api/project/model-overrides", async (c) => {
+  app.put("/api/v1/project/model-overrides", async (c) => {
     const { overrides } = await c.req.json<{ overrides: Record<string, unknown> }>();
     const configPath = join(root, "inkos.json");
     const raw = JSON.parse(await readFile(configPath, "utf-8"));
@@ -1054,12 +1054,12 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // --- Notify channels ---
 
-  app.get("/api/project/notify", async (c) => {
+  app.get("/api/v1/project/notify", async (c) => {
     const raw = JSON.parse(await readFile(join(root, "inkos.json"), "utf-8"));
     return c.json({ channels: raw.notify ?? [] });
   });
 
-  app.put("/api/project/notify", async (c) => {
+  app.put("/api/v1/project/notify", async (c) => {
     const { channels } = await c.req.json<{ channels: unknown[] }>();
     const configPath = join(root, "inkos.json");
     const raw = JSON.parse(await readFile(configPath, "utf-8"));
@@ -1071,7 +1071,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // --- AIGC Detection ---
 
-  app.post("/api/books/:id/detect/:chapter", async (c) => {
+  app.post("/api/v1/books/:id/detect/:chapter", async (c) => {
     const id = c.req.param("id");
     const chapterNum = parseInt(c.req.param("chapter"), 10);
     const bookDir = state.bookDir(id);
@@ -1094,7 +1094,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // --- Truth file edit ---
 
-  app.put("/api/books/:id/truth/:file", async (c) => {
+  app.put("/api/v1/books/:id/truth/:file", async (c) => {
     const id = c.req.param("id");
     const file = c.req.param("file");
     if (!TRUTH_FILES.includes(file)) {
@@ -1114,7 +1114,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // --- Book Delete ---
 
-  app.delete("/api/books/:id", async (c) => {
+  app.delete("/api/v1/books/:id", async (c) => {
     const id = c.req.param("id");
     const bookDir = state.bookDir(id);
     try {
@@ -1129,7 +1129,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // --- Book Update ---
 
-  app.put("/api/books/:id", async (c) => {
+  app.put("/api/v1/books/:id", async (c) => {
     const id = c.req.param("id");
     const updates = await c.req.json<{
       chapterWordCount?: number;
@@ -1156,7 +1156,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // --- Write Rewrite (specific chapter) ---
 
-  app.post("/api/books/:id/rewrite/:chapter", async (c) => {
+  app.post("/api/v1/books/:id/rewrite/:chapter", async (c) => {
     const id = c.req.param("id");
     const chapterNum = parseInt(c.req.param("chapter"), 10);
     const body: { brief?: string } = await c.req
@@ -1181,7 +1181,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     }
   });
 
-  app.post("/api/books/:id/resync/:chapter", async (c) => {
+  app.post("/api/v1/books/:id/resync/:chapter", async (c) => {
     const id = c.req.param("id");
     const chapterNum = parseInt(c.req.param("chapter"), 10);
     const body: { brief?: string } = await c.req
@@ -1201,7 +1201,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // --- Detect All chapters ---
 
-  app.post("/api/books/:id/detect-all", async (c) => {
+  app.post("/api/v1/books/:id/detect-all", async (c) => {
     const id = c.req.param("id");
     const bookDir = state.bookDir(id);
 
@@ -1227,7 +1227,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // --- Detect Stats ---
 
-  app.get("/api/books/:id/detect/stats", async (c) => {
+  app.get("/api/v1/books/:id/detect/stats", async (c) => {
     const id = c.req.param("id");
     try {
       const { loadDetectionHistory, analyzeDetectionInsights } = await import("@actalk/inkos-core");
@@ -1242,7 +1242,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // --- Genre Create ---
 
-  app.post("/api/genres/create", async (c) => {
+  app.post("/api/v1/genres/create", async (c) => {
     const body = await c.req.json<{
       id: string; name: string; language?: string;
       chapterTypes?: string[]; fatigueWords?: string[];
@@ -1286,7 +1286,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // --- Genre Edit ---
 
-  app.put("/api/genres/:id", async (c) => {
+  app.put("/api/v1/genres/:id", async (c) => {
     const genreId = c.req.param("id");
     if (/[/\\\0]/.test(genreId) || genreId.includes("..")) {
       throw new ApiError(400, "INVALID_GENRE_ID", `Invalid genre ID: "${genreId}"`);
@@ -1322,7 +1322,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // --- Genre Delete (project-level only) ---
 
-  app.delete("/api/genres/:id", async (c) => {
+  app.delete("/api/v1/genres/:id", async (c) => {
     const genreId = c.req.param("id");
     if (/[/\\\0]/.test(genreId) || genreId.includes("..")) {
       throw new ApiError(400, "INVALID_GENRE_ID", `Invalid genre ID: "${genreId}"`);
@@ -1340,7 +1340,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // --- Style Analyze ---
 
-  app.post("/api/style/analyze", async (c) => {
+  app.post("/api/v1/style/analyze", async (c) => {
     const { text, sourceName } = await c.req.json<{ text: string; sourceName: string }>();
     if (!text?.trim()) return c.json({ error: "text is required" }, 400);
 
@@ -1355,7 +1355,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // --- Style Import to Book ---
 
-  app.post("/api/books/:id/style/import", async (c) => {
+  app.post("/api/v1/books/:id/style/import", async (c) => {
     const id = c.req.param("id");
     const { text, sourceName } = await c.req.json<{ text: string; sourceName: string }>();
 
@@ -1373,7 +1373,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // --- Import Chapters ---
 
-  app.post("/api/books/:id/import/chapters", async (c) => {
+  app.post("/api/v1/books/:id/import/chapters", async (c) => {
     const id = c.req.param("id");
     const { text, splitRegex } = await c.req.json<{ text: string; splitRegex?: string }>();
     if (!text?.trim()) return c.json({ error: "text is required" }, 400);
@@ -1395,7 +1395,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // --- Import Canon ---
 
-  app.post("/api/books/:id/import/canon", async (c) => {
+  app.post("/api/v1/books/:id/import/canon", async (c) => {
     const id = c.req.param("id");
     const { fromBookId } = await c.req.json<{ fromBookId: string }>();
     if (!fromBookId) return c.json({ error: "fromBookId is required" }, 400);
@@ -1414,7 +1414,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // --- Fanfic Init ---
 
-  app.post("/api/fanfic/init", async (c) => {
+  app.post("/api/v1/fanfic/init", async (c) => {
     const body = await c.req.json<{
       title: string; sourceText: string; sourceName?: string;
       mode?: string; genre?: string; platform?: string;
@@ -1455,7 +1455,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // --- Fanfic Show (read canon) ---
 
-  app.get("/api/books/:id/fanfic", async (c) => {
+  app.get("/api/v1/books/:id/fanfic", async (c) => {
     const id = c.req.param("id");
     const bookDir = state.bookDir(id);
     try {
@@ -1468,7 +1468,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // --- Fanfic Refresh ---
 
-  app.post("/api/books/:id/fanfic/refresh", async (c) => {
+  app.post("/api/v1/books/:id/fanfic/refresh", async (c) => {
     const id = c.req.param("id");
     const { sourceText, sourceName } = await c.req.json<{ sourceText: string; sourceName?: string }>();
     if (!sourceText?.trim()) return c.json({ error: "sourceText is required" }, 400);
@@ -1488,7 +1488,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // --- Radar Scan ---
 
-  app.post("/api/radar/scan", async (c) => {
+  app.post("/api/v1/radar/scan", async (c) => {
     broadcast("radar:start", {});
     try {
       const pipeline = new PipelineRunner(await buildPipelineConfig());
@@ -1503,7 +1503,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   // --- Doctor (environment health check) ---
 
-  app.get("/api/doctor", async (c) => {
+  app.get("/api/v1/doctor", async (c) => {
     const { existsSync } = await import("node:fs");
     const { GLOBAL_ENV_PATH } = await import("@actalk/inkos-core");
 
@@ -1579,7 +1579,7 @@ export async function startStudioServer(
     if (existsSync(indexPath)) {
       const indexHtml = await readFileFs(indexPath, "utf-8");
       app.get("*", (c) => {
-        if (c.req.path.startsWith("/api/")) return c.notFound();
+        if (c.req.path.startsWith("/api/v1/")) return c.notFound();
         return c.html(indexHtml);
       });
     }

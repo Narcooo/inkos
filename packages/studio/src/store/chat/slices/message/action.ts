@@ -81,7 +81,7 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
     set({ input: "", loading: true });
     get().addUserMessage(trimmed);
 
-    const streamEs = new EventSource("/api/events");
+    const streamEs = new EventSource("/api/v1/events");
     streamEs.addEventListener("draft:delta", (e: MessageEvent) => {
       try {
         const d = e.data ? JSON.parse(e.data) : null;

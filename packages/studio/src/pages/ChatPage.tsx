@@ -108,7 +108,7 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
       setCreateProgress("");
       return;
     }
-    const es = new EventSource("/api/events");
+    const es = new EventSource("/api/v1/events");
     es.addEventListener("log", (e: MessageEvent) => {
       try {
         const data = e.data ? JSON.parse(e.data) : null;

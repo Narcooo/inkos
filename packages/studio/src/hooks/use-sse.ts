@@ -54,7 +54,7 @@ export const STUDIO_SSE_EVENTS = [
   "ping",
 ] as const;
 
-export function useSSE(url = "/api/events") {
+export function useSSE(url = "/api/v1/events") {
   const [messages, setMessages] = useState<ReadonlyArray<SSEMessage>>([]);
   const [connected, setConnected] = useState(false);
   const esRef = useRef<EventSource | null>(null);

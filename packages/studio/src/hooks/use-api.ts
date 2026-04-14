@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 
-const BASE = "/api";
+const BASE = "/api/v1";
 const API_INVALIDATE_EVENT = "inkos:api-invalidate";
 
 interface ApiInvalidateDetail {
@@ -20,30 +20,30 @@ export function deriveInvalidationPaths(path: string): ReadonlyArray<string> {
   const normalized = buildApiUrl(path);
   if (!normalized) return [];
 
-  if (normalized === "/api/books/create") {
-    return ["/api/books"];
+  if (normalized === "/api/v1/books/create") {
+    return ["/api/v1/books"];
   }
 
-  if (normalized === "/api/project") {
-    return ["/api/project"];
+  if (normalized === "/api/v1/project") {
+    return ["/api/v1/project"];
   }
 
-  if (normalized.startsWith("/api/project/")) {
-    return ["/api/project", normalized];
+  if (normalized.startsWith("/api/v1/project/")) {
+    return ["/api/v1/project", normalized];
   }
 
-  const bookAction = normalized.match(/^\/api\/books\/([^/]+)\/(write-next|draft)$/);
+  const bookAction = normalized.match(/^\/api\/v1\/books\/([^/]+)\/(write-next|draft)$/);
   if (bookAction) {
-    return ["/api/books", `/api/books/${bookAction[1]}`];
+    return ["/api/v1/books", `/api/v1/books/${bookAction[1]}`];
   }
 
-  const chapterAction = normalized.match(/^\/api\/books\/([^/]+)\/chapters\/\d+\/(approve|reject)$/);
+  const chapterAction = normalized.match(/^\/api\/v1\/books\/([^/]+)\/chapters\/\d+\/(approve|reject)$/);
   if (chapterAction) {
-    return ["/api/books", `/api/books/${chapterAction[1]}`];
+    return ["/api/v1/books", `/api/v1/books/${chapterAction[1]}`];
   }
 
-  if (/^\/api\/daemon\/(start|stop)$/.test(normalized)) {
-    return ["/api/daemon"];
+  if (/^\/api\/v1\/daemon\/(start|stop)$/.test(normalized)) {
+    return ["/api/v1/daemon"];
   }
 
   return [];

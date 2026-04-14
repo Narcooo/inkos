@@ -83,7 +83,7 @@ export async function waitForStudioBookReady(
   const retryDelayMs = options.retryDelayMs ?? 150;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const response = await fetchImpl(`/api/books/${encodeURIComponent(bookId)}`);
+    const response = await fetchImpl(`/api/v1/books/${encodeURIComponent(bookId)}`);
     if (response.ok) {
       return await response.json() as StudioBookDetail;
     }
