@@ -40,7 +40,7 @@ const SERVICE_TO_PI_PROVIDER: Record<string, string> = {
   openai: "openai",
   anthropic: "anthropic",
   deepseek: "openai",         // OpenAI 兼容，pi-ai 无独立 provider
-  moonshot: "kimi-coding",    // pi-ai 有 kimi-coding provider
+  moonshot: "openai",         // Moonshot API (api.moonshot.cn) 是 OpenAI 兼容，不是 kimi-coding (api.kimi.com)
   minimax: "minimax",
   bailian: "openai",          // 百炼走 OpenAI 兼容
   zhipu: "zai",               // pi-ai 有 zai provider
@@ -58,11 +58,40 @@ export interface ModelInfo {
 }
 
 /**
- * 获取某个 service 下可用的模型列表。
- * 对于 pi-ai 有内置模型列表的 provider，返回已知模型；
- * 对于 OpenAI 兼容的自定义服务，返回空数组（用户需要手动输入模型名）。
+ * 动态获取某个 service 下可用的模型列表。
+ * 优先调用服务商的 GET /models API（OpenAI 兼容），回退到 pi-ai 内置模型列表。
+ *
+ * @param apiKey 用户配置的 API key，用于认证 /models 请求
  */
-export async function listModelsForService(service: string): Promise<ReadonlyArray<ModelInfo>> {
+export async function listModelsForService(service: string, apiKey?: string): Promise<ReadonlyArray<ModelInfo>> {
+  const preset = SERVICE_PRESETS[service];
+  if (!preset || service === "custom") return [];
+
+  // 1) 尝试动态获取：调用 GET {baseUrl}/models
+  if (apiKey && preset.baseUrl) {
+    try {
+      const modelsUrl = preset.baseUrl.replace(/\/$/, "") + "/models";
+      const res = await fetch(modelsUrl, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (res.ok) {
+        const json = await res.json() as { data?: Array<{ id: string; owned_by?: string }> };
+        if (json.data && json.data.length > 0) {
+          return json.data.map((m) => ({
+            id: m.id,
+            name: m.id,
+            reasoning: false,
+            contextWindow: 0,
+          }));
+        }
+      }
+    } catch {
+      // /models 不可用，回退
+    }
+  }
+
+  // 2) 回退到 pi-ai 内置模型列表
   const piProvider = SERVICE_TO_PI_PROVIDER[service];
   if (!piProvider) return [];
 
