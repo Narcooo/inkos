@@ -428,16 +428,58 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
   // --- Model discovery ---
 
   app.get("/api/v1/services", async (c) => {
-    const { listServicesWithModelCount } = await import("@actalk/inkos-core");
-    const [services, secrets] = await Promise.all([
-      listServicesWithModelCount(),
-      loadSecrets(root),
-    ]);
-    const servicesWithStatus = services.map((s) => ({
-      ...s,
-      connected: Boolean(secrets.services[s.service]?.apiKey),
-    }));
-    return c.json({ services: servicesWithStatus });
+    const { listModelsForService, resolveServicePreset } = await import("@actalk/inkos-core");
+    const secrets = await loadSecrets(root);
+
+    // All built-in services (except custom)
+    const SERVICE_KEYS = [
+      "openai", "anthropic", "deepseek", "moonshot", "minimax",
+      "bailian", "zhipu", "siliconflow", "ppio", "openrouter", "ollama",
+    ];
+
+    const services = await Promise.all(
+      SERVICE_KEYS.map(async (key) => {
+        const preset = resolveServicePreset(key);
+        const apiKey = secrets.services[key]?.apiKey;
+        const connected = Boolean(apiKey);
+        let modelCount = 0;
+        if (connected) {
+          try {
+            const models = await listModelsForService(key, apiKey);
+            modelCount = models.length;
+          } catch {
+            modelCount = 0;
+          }
+        }
+        return {
+          service: key,
+          label: preset?.label ?? key,
+          connected,
+          modelCount,
+        };
+      }),
+    );
+
+    // Add custom services from inkos.json
+    try {
+      const configPath = join(root, "inkos.json");
+      const raw = await readFile(configPath, "utf-8");
+      const config = JSON.parse(raw);
+      for (const svc of config.llm?.services ?? []) {
+        if (svc.service === "custom") {
+          const secretKey = `custom:${svc.name}`;
+          const apiKey = secrets.services[secretKey]?.apiKey;
+          services.push({
+            service: secretKey,
+            label: svc.name ?? "Custom",
+            connected: Boolean(apiKey),
+            modelCount: 0,
+          });
+        }
+      }
+    } catch { /* no config file */ }
+
+    return c.json({ services });
   });
 
   app.get("/api/v1/services/config", async (c) => {
@@ -714,7 +756,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
         .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
 
       // Resolve model — multi-service resolution
-      let resolvedModel: import("@mariozechner/pi-ai").Model<import("@mariozechner/pi-ai").Api>;
+      let resolvedModel: any;
       let resolvedApiKey: string | undefined;
       const rawConfig = config.llm as unknown as Record<string, unknown>;
       if (reqService && reqModel) {
