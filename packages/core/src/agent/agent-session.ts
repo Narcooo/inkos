@@ -193,7 +193,7 @@ export async function runAgentSession(
         model,
         systemPrompt: buildAgentSystemPrompt(bookId, language),
         tools: [
-          createSubAgentTool(pipeline),
+          createSubAgentTool(pipeline, bookId),
           createReadTool(projectRoot),
           createEditTool(projectRoot),
           createGrepTool(projectRoot),

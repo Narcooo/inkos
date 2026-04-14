@@ -2,38 +2,63 @@ import { describe, expect, it } from "vitest";
 import { buildAgentSystemPrompt } from "../agent/agent-system-prompt.js";
 
 describe("buildAgentSystemPrompt", () => {
-  it("builds Chinese new-book prompt when no bookId", () => {
-    const prompt = buildAgentSystemPrompt(null, "zh");
-    expect(prompt).toContain("建书助手");
-    expect(prompt).toContain("sub_agent");
-    expect(prompt).toContain("architect");
-    expect(prompt).not.toContain("read");
+  describe("no book (creation flow)", () => {
+    it("Chinese prompt includes info collection workflow", () => {
+      const prompt = buildAgentSystemPrompt(null, "zh");
+      expect(prompt).toContain("建书助手");
+      expect(prompt).toContain("收集信息");
+      expect(prompt).toContain("题材");
+      expect(prompt).toContain("世界观");
+      expect(prompt).toContain("主角");
+      expect(prompt).toContain("核心冲突");
+      expect(prompt).toContain("architect");
+      expect(prompt).toContain("sub_agent");
+    });
+
+    it("English prompt includes info collection workflow", () => {
+      const prompt = buildAgentSystemPrompt(null, "en");
+      expect(prompt).toContain("book creation");
+      expect(prompt).toContain("architect");
+      expect(prompt).toContain("Genre");
+      expect(prompt).toContain("Protagonist");
+      expect(prompt).toContain("Core conflict");
+    });
+
+    it("no-book prompt does NOT mention read/edit/grep/ls", () => {
+      const prompt = buildAgentSystemPrompt(null, "zh");
+      expect(prompt).not.toMatch(/\bread\b.*读取/);
+      expect(prompt).not.toContain("edit");
+    });
   });
 
-  it("builds Chinese book prompt with all tools", () => {
-    const prompt = buildAgentSystemPrompt("my-book", "zh");
-    expect(prompt).toContain("my-book");
-    expect(prompt).toContain("sub_agent");
-    expect(prompt).toContain("read");
-    expect(prompt).toContain("edit");
-    expect(prompt).toContain("grep");
-    expect(prompt).toContain("ls");
-    expect(prompt).toContain("writer");
-    expect(prompt).toContain("architect");
-    expect(prompt).toContain("auditor");
-    expect(prompt).toContain("reviser");
-  });
+  describe("with book (writing flow)", () => {
+    it("Chinese prompt includes all tools except architect", () => {
+      const prompt = buildAgentSystemPrompt("my-book", "zh");
+      expect(prompt).toContain("my-book");
+      expect(prompt).toContain("sub_agent");
+      expect(prompt).toContain("writer");
+      expect(prompt).toContain("auditor");
+      expect(prompt).toContain("reviser");
+      expect(prompt).toContain("read");
+      expect(prompt).toContain("edit");
+      expect(prompt).toContain("grep");
+      expect(prompt).toContain("ls");
+    });
 
-  it("builds English prompt when language is en", () => {
-    const prompt = buildAgentSystemPrompt("novel", "en");
-    expect(prompt).toContain("novel");
-    expect(prompt).toContain("sub_agent");
-    expect(prompt).toContain("writing assistant");
-  });
+    it("Chinese prompt warns NOT to call architect", () => {
+      const prompt = buildAgentSystemPrompt("my-book", "zh");
+      expect(prompt).toContain("不要调用 architect");
+    });
 
-  it("new-book English prompt mentions architect", () => {
-    const prompt = buildAgentSystemPrompt(null, "en");
-    expect(prompt).toContain("architect");
-    expect(prompt).toContain("book creation");
+    it("English prompt warns NOT to call architect", () => {
+      const prompt = buildAgentSystemPrompt("novel", "en");
+      expect(prompt).toContain("Do NOT call architect");
+    });
+
+    it("with-book prompt does NOT list architect as available", () => {
+      const prompt = buildAgentSystemPrompt("my-book", "zh");
+      // architect 不在可用工具列表里
+      expect(prompt).not.toMatch(/agent="architect"/);
+    });
   });
 });

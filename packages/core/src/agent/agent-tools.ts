@@ -41,7 +41,7 @@ const SubAgentParams = Type.Object({
   bookId: Type.Optional(Type.String({ description: "Book ID — required for all agents except architect" })),
 });
 
-export function createSubAgentTool(pipeline: PipelineRunner): AgentTool<typeof SubAgentParams> {
+export function createSubAgentTool(pipeline: PipelineRunner, activeBookId: string | null): AgentTool<typeof SubAgentParams> {
   return {
     name: "sub_agent",
     description:
@@ -65,9 +65,10 @@ export function createSubAgentTool(pipeline: PipelineRunner): AgentTool<typeof S
       try {
         switch (agent) {
           case "architect": {
-            // For architect, bookId is embedded in the instruction context.
-            // The pipeline.initBook needs a BookConfig — we pass a minimal one.
-            // The real architect agent derives everything from externalContext.
+            // architect 只在没有书的时候可用（建书流程）
+            if (activeBookId) {
+              return textResult("当前已有书籍，不需要建书。如果你想创建新书，请先回到首页。");
+            }
             const id = bookId || `book-${Date.now().toString(36)}`;
             progress(`Starting architect for book "${id}"...`);
             await pipeline.initBook(
