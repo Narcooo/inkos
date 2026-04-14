@@ -663,6 +663,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
         : { provider: config.llm.provider ?? "anthropic", modelId: config.llm.model };
 
       // Run pi-agent session
+      let activeWriterToolCallId: string | null = null;
       const result = await runAgentSession(
         {
           model,
@@ -678,12 +679,20 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
             }
             if (event.type === "tool_execution_start") {
               broadcast("tool:start", { tool: event.toolName, args: event.args });
+              if (event.toolName === "sub_agent" && (event.args as Record<string, unknown>)?.agent === "writer") {
+                activeWriterToolCallId = event.toolCallId;
+                broadcast("write:start", { bookId: activeBookId });
+              }
             }
             if (event.type === "tool_execution_update") {
               broadcast("tool:update", { tool: event.toolName, partialResult: event.partialResult });
             }
             if (event.type === "tool_execution_end") {
               broadcast("tool:end", { tool: event.toolName, result: event.result });
+              if (event.toolCallId === activeWriterToolCallId) {
+                activeWriterToolCallId = null;
+                broadcast("write:complete", { bookId: activeBookId });
+              }
             }
           },
         },
