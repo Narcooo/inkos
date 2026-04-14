@@ -1,18 +1,7 @@
-import { useState } from "react";
-import { useApi } from "../hooks/use-api";
+import { useState, useEffect } from "react";
 import { fetchJson } from "../hooks/use-api";
+import { useServiceStore } from "../store/service";
 import { Eye, EyeOff, Loader2, ArrowLeft } from "lucide-react";
-
-interface ServiceStatus {
-  readonly service: string;
-  readonly label: string;
-  readonly connected: boolean;
-  readonly modelCount: number;
-}
-
-interface ServicesResponse {
-  readonly services: ReadonlyArray<ServiceStatus>;
-}
 
 interface TestResult {
   readonly ok: boolean;
@@ -55,9 +44,17 @@ export function ServiceDetailPage({
   serviceId: string;
   nav: Nav;
 }) {
-  const { data, loading, error, refetch } = useApi<ServicesResponse>("/services");
+  const services = useServiceStore((s) => s.services);
+  const loading = useServiceStore((s) => s.servicesLoading);
+  const fetchServices = useServiceStore((s) => s.fetchServices);
+  const fetchModels = useServiceStore((s) => s.fetchModels);
+  const refreshServices = useServiceStore((s) => s.refreshServices);
+  const modelsEntry = useServiceStore((s) => s.modelsByService[serviceId]);
 
-  const svc = data?.services.find((s) => s.service === serviceId);
+  useEffect(() => { void fetchServices(); }, [fetchServices]);
+  useEffect(() => { void fetchModels(serviceId); }, [fetchModels, serviceId]);
+
+  const svc = services.find((s) => s.service === serviceId);
   const isCustom = serviceId === "custom";
 
   const [apiKey, setApiKey] = useState("");
@@ -76,12 +73,6 @@ export function ServiceDetailPage({
   const connected = !isCustom && (svc?.connected ?? false);
 
   if (loading) return <DetailSkeleton />;
-
-  if (error) {
-    return (
-      <div className="text-destructive py-20 text-center text-sm">加载失败：{error}</div>
-    );
-  }
 
   const handleTest = async () => {
     const trimmedKey = apiKey.trim();
@@ -136,7 +127,7 @@ export function ServiceDetailPage({
         }),
       });
       setSaveMsg("已保存");
-      refetch();
+      void refreshServices();
     } catch (e) {
       setSaveMsg(e instanceof Error ? e.message : "保存失败");
     } finally {
@@ -144,7 +135,10 @@ export function ServiceDetailPage({
     }
   };
 
-  const models = testResult?.ok ? (testResult.models ?? []) : [];
+  // Models: prefer test result (just fetched), fallback to store cache
+  const models = testResult?.ok
+    ? (testResult.models ?? [])
+    : (modelsEntry?.models ?? []);
 
   return (
     <div className="max-w-xl mx-auto space-y-6">

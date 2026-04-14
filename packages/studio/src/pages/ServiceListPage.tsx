@@ -1,21 +1,12 @@
-import { useApi } from "../hooks/use-api";
-
-interface ServiceInfo {
-  readonly service: string;
-  readonly label: string;
-  readonly connected: boolean;
-}
-
-interface ServicesResponse {
-  readonly services: ReadonlyArray<ServiceInfo>;
-}
+import { useEffect } from "react";
+import { useServiceStore } from "../store/service";
+import type { ServiceInfo } from "../store/service";
 
 interface Nav {
   toDashboard: () => void;
   toServiceDetail: (id: string) => void;
 }
 
-// Skeleton card for loading state
 function SkeletonCard() {
   return (
     <div className="rounded-xl border border-border/30 p-5 animate-pulse">
@@ -29,24 +20,16 @@ function SkeletonCard() {
 }
 
 export function ServiceListPage({ nav }: { nav: Nav }) {
-  const { data, loading, error } = useApi<ServicesResponse>("/services");
+  const services = useServiceStore((s) => s.services);
+  const loading = useServiceStore((s) => s.servicesLoading);
+  const fetchServices = useServiceStore((s) => s.fetchServices);
 
-  if (error) {
-    return (
-      <div className="text-destructive py-20 text-center text-sm">加载失败：{error}</div>
-    );
-  }
-
-  const services = data?.services ?? [];
+  useEffect(() => { void fetchServices(); }, [fetchServices]);
 
   return (
     <div className="max-w-2xl mx-auto space-y-8">
-      {/* Breadcrumb */}
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
-        <button
-          onClick={nav.toDashboard}
-          className="hover:text-foreground transition-colors"
-        >
+        <button onClick={nav.toDashboard} className="hover:text-foreground transition-colors">
           首页
         </button>
         <span className="text-border">/</span>
@@ -66,8 +49,6 @@ export function ServiceListPage({ nav }: { nav: Nav }) {
               />
             ))
         }
-
-        {/* Add custom service card */}
         {!loading && (
           <button
             onClick={() => nav.toServiceDetail("custom")}
@@ -82,36 +63,23 @@ export function ServiceListPage({ nav }: { nav: Nav }) {
   );
 }
 
-function ServiceCard({
-  svc,
-  onClick,
-}: {
-  svc: ServiceInfo;
-  onClick: () => void;
-}) {
-  const connected = svc.connected;
-
+function ServiceCard({ svc, onClick }: { svc: ServiceInfo; onClick: () => void }) {
   return (
     <button
       onClick={onClick}
       className={[
         "flex flex-col gap-2 rounded-xl border p-5 text-left transition-all hover:shadow-sm",
-        connected
+        svc.connected
           ? "border-emerald-500/30 bg-emerald-500/[0.03]"
           : "border-dashed border-border/40",
       ].join(" ")}
     >
       <div className="flex items-center justify-between">
         <span className="font-medium text-sm">{svc.label}</span>
-        <span
-          className={[
-            "w-1.5 h-1.5 rounded-full shrink-0",
-            connected ? "bg-emerald-500" : "bg-muted-foreground/30",
-          ].join(" ")}
-        />
+        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${svc.connected ? "bg-emerald-500" : "bg-muted-foreground/30"}`} />
       </div>
       <span className="text-xs text-muted-foreground/60">
-        {connected ? "已连接" : "未配置"}
+        {svc.connected ? "已连接" : "未配置"}
       </span>
     </button>
   );

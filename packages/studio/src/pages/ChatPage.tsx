@@ -1,9 +1,9 @@
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect } from "react";
 import type { Theme } from "../hooks/use-theme";
 import type { TFunction } from "../hooks/use-i18n";
 import type { SSEMessage } from "../hooks/use-sse";
 import { useChatStore } from "../store/chat";
-import { fetchJson } from "../hooks/use-api";
+import { useServiceStore } from "../store/service";
 import {
   PromptInputSelect,
   PromptInputSelectTrigger,
@@ -74,35 +74,33 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
   const isZh = t("nav.connected") === "\u5DF2\u8FDE\u63A5";
   const hasBook = Boolean(activeBookId);
 
-  // -- Available models grouped by service --
-  const [modelsLoading, setModelsLoading] = useState(true);
-  const [availableModels, setAvailableModels] = useState<Array<{
-    service: string;
-    label: string;
-    models: Array<{ id: string; name?: string }>;
-  }>>([]);
+  // -- Available models from service store --
+  const services = useServiceStore((s) => s.services);
+  const servicesLoading = useServiceStore((s) => s.servicesLoading);
+  const modelsByService = useServiceStore((s) => s.modelsByService);
+  const fetchServices = useServiceStore((s) => s.fetchServices);
+  const fetchModels = useServiceStore((s) => s.fetchModels);
 
+  useEffect(() => { void fetchServices(); }, [fetchServices]);
+
+  // Fetch models for connected services
+  const connectedServices = services.filter((s) => s.connected);
   useEffect(() => {
-    void fetchJson<{ services: Array<{ service: string; label: string; connected: boolean }> }>("/services")
-      .then(async (data) => {
-        const connected = data.services.filter((s) => s.connected);
-        const grouped = await Promise.all(
-          connected.map(async (svc) => {
-            try {
-              const res = await fetchJson<{ models: Array<{ id: string; name?: string }> }>(
-                `/services/${encodeURIComponent(svc.service)}/models`
-              );
-              return { service: svc.service, label: svc.label, models: res.models ?? [] };
-            } catch {
-              return { service: svc.service, label: svc.label, models: [] };
-            }
-          })
-        );
-        setAvailableModels(grouped.filter((g) => g.models.length > 0));
-      })
-      .catch(() => {})
-      .finally(() => setModelsLoading(false));
-  }, []);
+    for (const svc of connectedServices) {
+      void fetchModels(svc.service);
+    }
+  }, [connectedServices.map((s) => s.service).join(","), fetchModels]);
+
+  const modelsLoading = servicesLoading || connectedServices.some(
+    (s) => modelsByService[s.service]?.loading,
+  );
+  const availableModels = connectedServices
+    .map((svc) => ({
+      service: svc.service,
+      label: svc.label,
+      models: modelsByService[svc.service]?.models ?? [],
+    }))
+    .filter((g) => g.models.length > 0);
 
   // Auto-scroll on new messages or progress updates
   useEffect(() => {
