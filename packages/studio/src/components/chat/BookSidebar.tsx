@@ -155,8 +155,18 @@ function ArtifactView({ bookId }: { readonly bookId: string }) {
 function PanelView({ bookId, theme: _theme, t, sse }: BookSidebarProps) {
   const isZh = t("nav.connected") === "\u5DF2\u8FDE\u63A5";
 
+  const chatLoading = useChatStore((s) => s.loading);
+
   return (
     <div className="flex flex-col gap-2 p-3">
+      {chatLoading && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-primary/5 border border-primary/10">
+          <Loader2 size={12} className="text-primary animate-spin shrink-0" />
+          <span className="text-xs text-primary font-medium">
+            {isZh ? "正在写作中..." : "Writing..."}
+          </span>
+        </div>
+      )}
       <ProgressSection sse={sse} />
       <FoundationSection bookId={bookId} />
       <SummarySection bookId={bookId} />
