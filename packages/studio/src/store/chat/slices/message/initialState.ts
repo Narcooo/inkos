@@ -7,4 +7,5 @@ export const initialMessageState: MessageState = {
   currentSessionId: null,
   selectedModel: null,
   selectedService: null,
+  _activeStream: null,
 };

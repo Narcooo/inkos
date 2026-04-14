@@ -59,6 +59,8 @@ export interface MessageState {
   currentSessionId: string | null;
   selectedModel: string | null;
   selectedService: string | null;
+  /** Active EventSource ref — closed on session switch */
+  _activeStream: EventSource | null;
 }
 
 export interface CreateState {

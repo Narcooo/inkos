@@ -67,8 +67,9 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
         return;
       }
 
-      // Different session → stop any in-flight streaming and switch
-      set({ currentSessionId: session.sessionId, messages: [], loading: false });
+      // Different session → close stream, stop loading, switch
+      get()._activeStream?.close();
+      set({ currentSessionId: session.sessionId, messages: [], loading: false, _activeStream: null });
       if (session.messages && session.messages.length > 0) {
         get().loadSessionMessages(session.messages);
       }
@@ -95,7 +96,10 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
     set({ input: "", loading: true });
     get().addUserMessage(trimmed);
 
+    // Close any previous stream
+    get()._activeStream?.close();
     const streamEs = new EventSource("/api/v1/events");
+    set({ _activeStream: streamEs });
 
     streamEs.addEventListener("thinking:start", () => {
       // Create or update the streaming message with thinking state
@@ -206,7 +210,7 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
         get().addErrorMessage(errorMsg);
       }
     } finally {
-      set({ loading: false });
+      set({ loading: false, _activeStream: null });
     }
   },
 });
