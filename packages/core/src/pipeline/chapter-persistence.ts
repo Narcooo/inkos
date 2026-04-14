@@ -57,7 +57,11 @@ export async function persistChapterArtifacts(params: {
     lengthTelemetry: params.lengthTelemetry,
     tokenUsage: params.tokenUsage,
   };
-  await params.saveChapterIndex([...existingIndex, entry]);
+  const existingIdx = existingIndex.findIndex((e) => e.number === params.chapterNumber);
+  const updatedIndex = existingIdx >= 0
+    ? existingIndex.map((e, i) => i === existingIdx ? { ...entry, createdAt: e.createdAt } : e)
+    : [...existingIndex, entry];
+  await params.saveChapterIndex(updatedIndex);
   await params.markBookActiveIfNeeded();
 
   const driftIssues = params.auditResult.issues.filter(

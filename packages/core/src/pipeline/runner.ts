@@ -694,7 +694,11 @@ export class PipelineRunner {
         lengthTelemetry,
         ...(draftOutput.tokenUsage ? { tokenUsage: draftOutput.tokenUsage } : {}),
       };
-      await this.state.saveChapterIndex(bookId, [...existingIndex, newEntry]);
+      const existingIdx = existingIndex.findIndex((e) => e.number === chapterNumber);
+      const updatedIndex = existingIdx >= 0
+        ? existingIndex.map((e, i) => i === existingIdx ? newEntry : e)
+        : [...existingIndex, newEntry];
+      await this.state.saveChapterIndex(bookId, updatedIndex);
       await this.markBookActiveIfNeeded(bookId);
 
       // Snapshot
