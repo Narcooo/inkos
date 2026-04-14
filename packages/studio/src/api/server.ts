@@ -19,13 +19,15 @@ import {
   persistBookSession,
   appendBookSessionMessage,
   runAgentSession,
+  loadSecrets,
+  saveSecrets,
   type PipelineConfig,
   type ProjectConfig,
   type LogSink,
   type LogEntry,
   type BookSession,
 } from "@actalk/inkos-core";
-import { access, readFile, readdir } from "node:fs/promises";
+import { access, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { isSafeBookId } from "./safety.js";
 import { ApiError } from "./errors.js";
@@ -426,8 +428,58 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   app.get("/api/services", async (c) => {
     const { listServicesWithModelCount } = await import("@actalk/inkos-core");
-    const services = await listServicesWithModelCount();
-    return c.json({ services });
+    const [services, secrets] = await Promise.all([
+      listServicesWithModelCount(),
+      loadSecrets(root),
+    ]);
+    const servicesWithStatus = services.map((s) => ({
+      ...s,
+      connected: Boolean(secrets.services[s.service]?.apiKey),
+    }));
+    return c.json({ services: servicesWithStatus });
+  });
+
+  app.get("/api/services/config", async (c) => {
+    const configPath = join(root, "inkos.json");
+    const raw = await readFile(configPath, "utf-8");
+    const config = JSON.parse(raw);
+    const services = config.llm?.services ?? [];
+    return c.json({ services, defaultModel: config.llm?.defaultModel ?? null });
+  });
+
+  app.put("/api/services/config", async (c) => {
+    const body = await c.req.json<{ services: any[]; defaultModel?: string }>();
+    const configPath = join(root, "inkos.json");
+    const raw = await readFile(configPath, "utf-8");
+    const config = JSON.parse(raw);
+    config.llm = config.llm ?? {};
+    config.llm.services = body.services;
+    if (body.defaultModel !== undefined) {
+      config.llm.defaultModel = body.defaultModel;
+    }
+    await writeFile(configPath, JSON.stringify(config, null, 2), "utf-8");
+    return c.json({ ok: true });
+  });
+
+  app.post("/api/services/:service/test", async (c) => {
+    const { listModelsForService } = await import("@actalk/inkos-core");
+    const service = c.req.param("service");
+    const { apiKey } = await c.req.json<{ apiKey: string }>();
+    try {
+      const models = await listModelsForService(service, apiKey);
+      return c.json({ ok: true, modelCount: models.length, models: models.slice(0, 20) });
+    } catch (err: any) {
+      return c.json({ ok: false, error: err?.message ?? String(err) }, 400);
+    }
+  });
+
+  app.put("/api/services/:service/secret", async (c) => {
+    const service = c.req.param("service");
+    const { apiKey } = await c.req.json<{ apiKey: string }>();
+    const secrets = await loadSecrets(root);
+    secrets.services[service] = { apiKey };
+    await saveSecrets(root, secrets);
+    return c.json({ ok: true });
   });
 
   app.get("/api/services/:service/models", async (c) => {
