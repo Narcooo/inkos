@@ -159,6 +159,16 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     },
   };
 
+  // Logger sink that prints to server terminal
+  const consoleSink: LogSink = {
+    write(entry: LogEntry): void {
+      const prefix = `[${entry.tag}]`;
+      if (entry.level === "warn") console.warn(prefix, entry.message);
+      else if (entry.level === "error") console.error(prefix, entry.message);
+      else console.log(prefix, entry.message);
+    },
+  };
+
   async function loadCurrentProjectConfig(
     options?: { readonly requireApiKey?: boolean },
   ): Promise<ProjectConfig> {
@@ -171,7 +181,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     overrides?: Partial<Pick<PipelineConfig, "externalContext" | "client" | "model">>,
   ): Promise<PipelineConfig> {
     const currentConfig = await loadCurrentProjectConfig();
-    const logger = createLogger({ tag: "studio", sinks: [sseSink] });
+    const logger = createLogger({ tag: "studio", sinks: [sseSink, consoleSink] });
     return {
       client: overrides?.client ?? createLLMClient(currentConfig.llm),
       model: overrides?.model ?? currentConfig.llm.model,
@@ -933,13 +943,16 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       const agentApiKey = resolvedApiKey;
 
       // Create pipeline with resolved model (so sub_agent tools use the frontend-selected model)
+      // Don't spread config.llm — its baseUrl/provider belong to the old service.
+      // Let createLLMClient resolve baseUrl from the service preset.
       const pipelineClient = (reqService && reqModel && resolvedApiKey)
         ? createLLMClient({
             ...config.llm,
             service: reqService,
             model: reqModel,
             apiKey: resolvedApiKey,
-          })
+            baseUrl: "",  // let createLLMClient resolve from service preset
+          } as any)
         : client;
       const pipeline = new PipelineRunner(await buildPipelineConfig({
         client: pipelineClient,

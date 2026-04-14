@@ -126,6 +126,7 @@ export function createSubAgentTool(pipeline: PipelineRunner, activeBookId: strin
             return textResult(`Unknown agent: ${agent}`);
         }
       } catch (err: any) {
+        console.error(`[sub_agent] "${agent}" failed:`, err);
         return textResult(`Sub-agent "${agent}" failed: ${err?.message ?? String(err)}`);
       }
     },
