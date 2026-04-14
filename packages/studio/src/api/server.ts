@@ -22,6 +22,7 @@ import {
   resolveServiceModel,
   loadSecrets,
   saveSecrets,
+  type ResolvedModel,
   type PipelineConfig,
   type ProjectConfig,
   type LogSink,
@@ -756,7 +757,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
         .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
 
       // Resolve model — multi-service resolution
-      let resolvedModel: any;
+      let resolvedModel: ResolvedModel["model"];
       let resolvedApiKey: string | undefined;
       const rawConfig = config.llm as unknown as Record<string, unknown>;
       if (reqService && reqModel) {
