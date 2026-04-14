@@ -11,7 +11,7 @@ const FOUNDATION_FILES: ReadonlyArray<{ file: string; label: string }> = [
   { file: "current_state.md", label: "状态卡" },
   { file: "pending_hooks.md", label: "伏笔池" },
   { file: "subplot_board.md", label: "支线进度" },
-  { file: "emotional_arcs.md", label: "情感弧线" },
+  { file: "emotional_arcs.md", label: "感情线" },
   { file: "character_matrix.md", label: "角色矩阵" },
 ];
 
@@ -48,7 +48,7 @@ export function FoundationSection({ bookId }: FoundationSectionProps) {
           <li key={item.file}>
             <button
               onClick={() => openArtifact(item.file)}
-              className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors"
+              className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors font-['SimSun','Songti_SC','STSong',serif]"
             >
               <FileText size={14} className="shrink-0 text-muted-foreground/60" />
               <span className="truncate">{item.label}</span>

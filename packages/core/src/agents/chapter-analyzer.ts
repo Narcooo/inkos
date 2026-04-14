@@ -292,7 +292,21 @@ Updated subplot board (Markdown table)
 Updated emotional arcs (Markdown table)
 
 === UPDATED_CHARACTER_MATRIX ===
-Updated character interaction matrix (Markdown table)
+Updated character matrix (one ## section per character, bullet-list fields):
+
+## Character Name
+- **Role**: protagonist / antagonist / ally / minor / mentioned
+- **Tags**: core identity tags
+- **Contrast**: distinctive details that defy expectations
+- **Speech**: speaking style summary
+- **Personality**: core personality traits
+- **Motivation**: fundamental driving force
+- **Current**: immediate goal this chapter
+- **Relationships**: OtherChar(type/Ch#) | ...
+- **Known**: what this character knows (only witnessed or told)
+- **Unknown**: what this character does not know
+
+(Repeat for each character. Add new characters; keep existing ones updated.)
 
 ## Rules
 
@@ -385,14 +399,28 @@ ${bookRulesBody ? `## 本书规则\n\n${bookRulesBody}` : ""}
 更新后的情感弧线（Markdown表格）
 
 === UPDATED_CHARACTER_MATRIX ===
-更新后的角色交互矩阵（Markdown表格）
+更新后的角色矩阵（每个角色一个 ## 块，字段用 bullet list）：
+
+## 角色名
+- **定位**: 主角 / 反派 / 盟友 / 配角 / 提及
+- **标签**: 核心身份标签
+- **反差**: 打破刻板印象的独特细节
+- **说话**: 说话风格概述
+- **性格**: 性格底色
+- **动机**: 根本驱动力
+- **当前**: 本章即时目标
+- **关系**: 某角色(关系性质/Ch#) | ...
+- **已知**: 该角色已知的信息（仅限亲历或被告知）
+- **未知**: 该角色不知道的信息
+
+（每个角色重复以上格式。新角色追加新 ## 块，已有角色做增量更新。）
 
 ## 关键规则
 
 1. 状态卡和伏笔池必须基于"当前追踪文件"做增量更新，不是从零开始
 2. 正文中的每一个事实性变化都必须反映在对应的追踪文件中
 3. 不要遗漏细节：数值变化、位置变化、关系变化、信息变化都要记录
-4. 角色交互矩阵中的"信息边界"要准确——角色只知道他在场时发生的事`;
+4. 角色矩阵中的"已知/未知"要准确——角色只知道他在场时发生的事`;
   }
 
   private buildUserPrompt(params: {

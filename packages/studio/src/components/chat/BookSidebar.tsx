@@ -11,6 +11,7 @@ import { ProgressSection } from "../sidebar/ProgressSection";
 import { FoundationSection } from "../sidebar/FoundationSection";
 import { SummarySection } from "../sidebar/SummarySection";
 import { ChaptersSection } from "../sidebar/ChaptersSection";
+import { CharacterSection } from "../sidebar/CharacterSection";
 
 export interface BookSidebarProps {
   readonly bookId: string;
@@ -26,7 +27,7 @@ const FOUNDATION_LABELS: Record<string, string> = {
   "current_state.md": "状态卡",
   "pending_hooks.md": "伏笔池",
   "subplot_board.md": "支线进度",
-  "emotional_arcs.md": "情感弧线",
+  "emotional_arcs.md": "感情线",
   "character_matrix.md": "角色矩阵",
 };
 
@@ -192,9 +193,10 @@ function PanelView({ bookId, theme: _theme, t, sse }: BookSidebarProps) {
         </div>
       )}
       <ProgressSection sse={sse} />
+      <ChaptersSection bookId={bookId} isZh={isZh} />
+      <CharacterSection bookId={bookId} />
       <FoundationSection bookId={bookId} />
       <SummarySection bookId={bookId} />
-      <ChaptersSection bookId={bookId} isZh={isZh} />
     </div>
   );
 }
