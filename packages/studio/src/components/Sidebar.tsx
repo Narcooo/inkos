@@ -101,7 +101,7 @@ export function Sidebar({ nav, activePage, sse, t }: {
                 onClick={() => nav.toBook(book.id)}
                 className={`w-full group flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all duration-200 ${
                   activePage === `book:${book.id}`
-                    ? "bg-primary/10 text-primary font-semibold"
+                    ? "bg-primary/10 text-primary font-medium"
                     : "text-foreground font-medium hover:text-foreground hover:bg-secondary/50"
                 }`}
               >
@@ -222,7 +222,7 @@ function SidebarItem({ label, icon, active, onClick, badge, badgeColor }: {
       onClick={onClick}
       className={`w-full group flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all duration-200 ${
         active
-          ? "bg-secondary text-foreground font-semibold shadow-sm border border-border"
+          ? "bg-secondary text-foreground font-medium shadow-sm border border-border"
           : "text-foreground font-medium hover:text-foreground hover:bg-secondary/50"
       }`}
     >
