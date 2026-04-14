@@ -24,7 +24,8 @@ export function buildAgentSystemPrompt(bookId: string | null, language: string):
 - 每次只问一个问题，不要一次问太多
 - 用户回答模糊时，给出 2-3 个具体选项引导
 - 当信息基本齐了，主动提议建书，不要无限追问
-- 保持简短、自然`
+- 保持简短、自然
+- **不要在回复中添加表情符号**`
       : `You are the InkOS book creation assistant. Help the user create a new book from scratch.
 
 ## Workflow
@@ -46,7 +47,8 @@ export function buildAgentSystemPrompt(bookId: string | null, language: string):
 - Ask one question at a time
 - Offer 2-3 concrete options when the user is vague
 - Proactively suggest creating the book when enough info is collected
-- Keep responses brief and natural`;
+- Keep responses brief and natural
+- **Do NOT use emoji in your responses**`;
   }
 
   return isZh
@@ -70,7 +72,8 @@ export function buildAgentSystemPrompt(bookId: string | null, language: string):
 - 用户问设定相关问题 → 先用 read 读取对应文件再回答
 - 用户想做小修改（改名字、调设定）→ 用 edit 直接修改
 - 其他情况 → 直接对话回答
-- **注意：不要调用 architect，当前已有书籍，不需要建书**`
+- **注意：不要调用 architect，当前已有书籍，不需要建书**
+- **不要在回复中添加表情符号**`
     : `You are the InkOS writing assistant, working on book "${bookId}".
 
 ## Available Tools
@@ -90,5 +93,6 @@ export function buildAgentSystemPrompt(bookId: string | null, language: string):
 - Use sub_agent for heavy operations (writing, revision, auditing)
 - Use read/edit for settings inquiries and small changes
 - Chat directly for other questions
-- **Do NOT call architect — a book already exists**`;
+- **Do NOT call architect — a book already exists**
+- **Do NOT use emoji in your responses**`;
 }

@@ -24,6 +24,16 @@ describe("buildAgentSystemPrompt", () => {
       expect(prompt).toContain("Core conflict");
     });
 
+    it("Chinese prompt forbids emoji", () => {
+      const prompt = buildAgentSystemPrompt(null, "zh");
+      expect(prompt).toContain("不要在回复中添加表情符号");
+    });
+
+    it("English prompt forbids emoji", () => {
+      const prompt = buildAgentSystemPrompt(null, "en");
+      expect(prompt).toContain("Do NOT use emoji");
+    });
+
     it("no-book prompt does NOT mention read/edit/grep/ls", () => {
       const prompt = buildAgentSystemPrompt(null, "zh");
       expect(prompt).not.toMatch(/\bread\b.*读取/);
@@ -53,6 +63,16 @@ describe("buildAgentSystemPrompt", () => {
     it("English prompt warns NOT to call architect", () => {
       const prompt = buildAgentSystemPrompt("novel", "en");
       expect(prompt).toContain("Do NOT call architect");
+    });
+
+    it("Chinese with-book prompt forbids emoji", () => {
+      const prompt = buildAgentSystemPrompt("my-book", "zh");
+      expect(prompt).toContain("不要在回复中添加表情符号");
+    });
+
+    it("English with-book prompt forbids emoji", () => {
+      const prompt = buildAgentSystemPrompt("novel", "en");
+      expect(prompt).toContain("Do NOT use emoji");
     });
 
     it("with-book prompt does NOT list architect as available", () => {
