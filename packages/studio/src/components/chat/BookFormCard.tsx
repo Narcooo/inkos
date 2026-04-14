@@ -1,13 +1,6 @@
 import type { Theme } from "../../hooks/use-theme";
 import { cn } from "../../lib/utils";
 import { Tool, ToolHeader, ToolContent } from "../ai-elements/tool";
-import {
-  Confirmation,
-  ConfirmationTitle,
-  ConfirmationRequest,
-  ConfirmationActions,
-  ConfirmationAction,
-} from "../ai-elements/confirmation";
 import { Loader2 } from "lucide-react";
 
 export interface BookFormArgs {
@@ -29,14 +22,14 @@ export interface BookFormCardProps {
 }
 
 const PLATFORM_OPTIONS = [
-  { label: "\u756A\u8304\u5C0F\u8BF4", value: "tomato" },
-  { label: "\u8D77\u70B9\u4E2D\u6587\u7F51", value: "qidian" },
-  { label: "\u98DE\u5362", value: "feilu" },
-  { label: "\u5176\u4ED6", value: "other" },
+  { label: "番茄小说", value: "tomato" },
+  { label: "起点中文网", value: "qidian" },
+  { label: "飞卢", value: "feilu" },
+  { label: "其他", value: "other" },
 ] as const;
 
 const LANGUAGE_OPTIONS = [
-  { label: "\u4E2D\u6587", value: "zh" },
+  { label: "中文", value: "zh" },
   { label: "English", value: "en" },
 ] as const;
 
@@ -90,47 +83,46 @@ export function BookFormCard({ args, onArgsChange, onConfirm, confirming }: Book
   };
 
   const disabledInput = disabled ? "opacity-60 cursor-not-allowed" : "";
-
   const toolState = confirming ? "input-available" : "approval-requested";
 
   return (
     <Tool defaultOpen>
       <ToolHeader
-        title="\u521B\u5EFA\u65B0\u4E66"
+        title="创建新书"
         type="tool-invocation"
         state={toolState}
       />
       <ToolContent>
         <div className={cn("space-y-4", disabled && "pointer-events-none opacity-80")}>
-          {/* \u4E66\u540D */}
+          {/* 书名 */}
           <div className="space-y-1.5">
-            <label className={labelClass}>\u4E66\u540D</label>
+            <label className={labelClass}>书名</label>
             <input
               type="text"
               value={args.title ?? ""}
               onChange={(e) => update("title", e.target.value)}
-              placeholder="\u8F93\u5165\u4E66\u540D"
+              placeholder="输入书名"
               disabled={disabled}
               className={cn(inputClass, disabledInput)}
             />
           </div>
 
-          {/* \u9898\u6750 */}
+          {/* 题材 */}
           <div className="space-y-1.5">
-            <label className={labelClass}>\u9898\u6750</label>
+            <label className={labelClass}>题材</label>
             <input
               type="text"
               value={args.genre ?? ""}
               onChange={(e) => update("genre", e.target.value)}
-              placeholder="\u5982 xuanhuan\u3001urban\u3001romance"
+              placeholder="如 xuanhuan、urban、romance"
               disabled={disabled}
               className={cn(inputClass, disabledInput)}
             />
           </div>
 
-          {/* \u76EE\u6807\u5E73\u53F0 */}
+          {/* 目标平台 */}
           <div className="space-y-1.5">
-            <label className={labelClass}>\u76EE\u6807\u5E73\u53F0</label>
+            <label className={labelClass}>目标平台</label>
             <RadioGroup
               options={PLATFORM_OPTIONS}
               value={args.platform}
@@ -139,35 +131,35 @@ export function BookFormCard({ args, onArgsChange, onConfirm, confirming }: Book
             />
           </div>
 
-          {/* \u76EE\u6807\u7AE0\u6570 + \u6BCF\u7AE0\u5B57\u6570 */}
+          {/* 目标章数 + 每章字数 */}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <label className={labelClass}>\u76EE\u6807\u7AE0\u6570</label>
+              <label className={labelClass}>目标章数</label>
               <input
                 type="number"
                 value={args.targetChapters ?? ""}
                 onChange={(e) => update("targetChapters", e.target.value ? Number(e.target.value) : undefined)}
-                placeholder="\u5982 200"
+                placeholder="如 200"
                 disabled={disabled}
                 className={cn(inputClass, disabledInput)}
               />
             </div>
             <div className="space-y-1.5">
-              <label className={labelClass}>\u6BCF\u7AE0\u5B57\u6570</label>
+              <label className={labelClass}>每章字数</label>
               <input
                 type="number"
                 value={args.chapterWordCount ?? ""}
                 onChange={(e) => update("chapterWordCount", e.target.value ? Number(e.target.value) : undefined)}
-                placeholder="\u5982 2000"
+                placeholder="如 2000"
                 disabled={disabled}
                 className={cn(inputClass, disabledInput)}
               />
             </div>
           </div>
 
-          {/* \u5199\u4F5C\u8BED\u8A00 */}
+          {/* 写作语言 */}
           <div className="space-y-1.5">
-            <label className={labelClass}>\u5199\u4F5C\u8BED\u8A00</label>
+            <label className={labelClass}>写作语言</label>
             <RadioGroup
               options={LANGUAGE_OPTIONS}
               value={args.language}
@@ -176,33 +168,31 @@ export function BookFormCard({ args, onArgsChange, onConfirm, confirming }: Book
             />
           </div>
 
-          {/* \u521B\u610F\u7B80\u8FF0 */}
+          {/* 创意简述 */}
           <div className="space-y-1.5">
-            <label className={labelClass}>\u521B\u610F\u7B80\u8FF0</label>
+            <label className={labelClass}>创意简述</label>
             <div className={cn(
               "rounded-lg border border-border/60 bg-background/80 px-3 py-2 text-sm leading-7 whitespace-pre-wrap",
               disabled ? "opacity-60" : "",
             )}>
-              {args.brief || <span className="text-muted-foreground/40">AI \u4F1A\u6839\u636E\u4F60\u7684\u63CF\u8FF0\u81EA\u52A8\u751F\u6210</span>}
+              {args.brief || <span className="text-muted-foreground/40">AI 会根据你的描述自动生成</span>}
             </div>
           </div>
         </div>
 
-        {/* Confirmation area */}
-        <Confirmation
-          state={toolState}
-          approval={confirming ? undefined : { id: "create_book" }}
-        >
-          <ConfirmationTitle>\u786E\u8BA4\u521B\u5EFA\u8FD9\u672C\u4E66\uFF1F</ConfirmationTitle>
-          <ConfirmationRequest>
-            <ConfirmationActions>
-              <ConfirmationAction onClick={onConfirm}>
-                {confirming && <Loader2 size={14} className="animate-spin mr-1" />}
-                {confirming ? "\u521B\u5EFA\u4E2D\u2026" : "\u5F00\u59CB\u5199\u8FD9\u672C\u4E66"}
-              </ConfirmationAction>
-            </ConfirmationActions>
-          </ConfirmationRequest>
-        </Confirmation>
+        {/* 确认按钮 */}
+        <div className="flex items-center justify-between pt-4 border-t border-border/40 mt-4">
+          <p className="text-xs text-muted-foreground">确认后将由 Architect 生成完整 foundation</p>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={confirming}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {confirming && <Loader2 size={14} className="animate-spin" />}
+            {confirming ? "创建中…" : "开始写这本书"}
+          </button>
+        </div>
       </ToolContent>
     </Tool>
   );

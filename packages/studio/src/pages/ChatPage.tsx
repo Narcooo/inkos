@@ -6,14 +6,9 @@ import { fetchJson } from "../hooks/use-api";
 import { ChatMessage } from "../components/chat/ChatMessage";
 import { QuickActions } from "../components/chat/QuickActions";
 import {
-  PromptInput,
-  PromptInputTextarea,
-  PromptInputFooter,
-  PromptInputSubmit,
-} from "../components/ai-elements/prompt-input";
-import {
   Loader2,
   BotMessageSquare,
+  ArrowUp,
 } from "lucide-react";
 
 // -- Types --
@@ -99,6 +94,7 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
   const [bookCreating, setBookCreating] = useState(false);
   const [createProgress, setCreateProgress] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const isZh = t("nav.connected") === "\u5DF2\u8FDE\u63A5";
   const hasBook = Boolean(activeBookId);
@@ -270,9 +266,7 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
     }
   };
 
-  const handlePromptSubmit = useCallback(({ text }: { text: string }) => {
-    void sendMessage(text);
-  }, [sendMessage]);
+
 
   const emptyGuidance = isZh
     ? "\u544A\u8BC9\u6211\u4F60\u60F3\u5199\u4EC0\u4E48\u2014\u2014\u9898\u6750\u3001\u4E16\u754C\u89C2\u3001\u4E3B\u89D2\u3001\u6838\u5FC3\u51B2\u7A81"
@@ -364,23 +358,61 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
       {/* Input area */}
       <div className="shrink-0 border-t border-border/40 px-4 py-3">
         <div className="max-w-3xl mx-auto">
-          <PromptInput
-            onSubmit={handlePromptSubmit}
-          >
-            <PromptInputTextarea
-              placeholder={isZh ? "\u8F93\u5165\u6307\u4EE4..." : "Enter command..."}
-              disabled={loading}
-              value={input}
-              onChange={(e) => setInput(e.currentTarget.value)}
-            />
-            <PromptInputFooter>
-              <div />
-              <PromptInputSubmit
-                disabled={!input.trim() || loading}
-                status={loading ? "submitted" : "ready"}
+          {pendingBookArgs && !loading ? (
+            /* create_book tool call pending — show action buttons */
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => void handleCreateBook()}
+                disabled={bookCreating}
+                className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50"
+              >
+                {bookCreating && <Loader2 size={14} className="animate-spin" />}
+                {bookCreating ? "创建中…" : "开始写这本书"}
+              </button>
+              <div className="flex-1 flex items-center gap-2 rounded-xl border border-border/40 bg-secondary/30 px-3 py-2">
+                <input
+                  type="text"
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void sendMessage(input); } }}
+                  placeholder={isZh ? "或输入修改要求…" : "Or type changes..."}
+                  className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground/50"
+                />
+                {input.trim() && (
+                  <button
+                    type="button"
+                    onClick={() => void sendMessage(input)}
+                    className="w-7 h-7 rounded-lg bg-primary text-primary-foreground flex items-center justify-center shrink-0 hover:scale-105 active:scale-95 transition-all"
+                  >
+                    <ArrowUp size={12} strokeWidth={2.5} />
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : (
+            /* Normal input */
+            <div className="flex items-end gap-2 rounded-xl bg-secondary/30 border border-border/40 px-3 py-2 focus-within:border-primary/40 focus-within:ring-2 focus-within:ring-primary/10 transition-all">
+              <textarea
+                ref={textareaRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void sendMessage(input); } }}
+                placeholder={isZh ? "输入指令..." : "Enter command..."}
+                disabled={loading}
+                rows={1}
+                className="flex-1 bg-transparent text-sm leading-6 placeholder:text-muted-foreground/50 outline-none resize-none disabled:opacity-50 max-h-[200px]"
               />
-            </PromptInputFooter>
-          </PromptInput>
+              <button
+                type="button"
+                onClick={() => void sendMessage(input)}
+                disabled={!input.trim() || loading}
+                className="w-8 h-8 rounded-lg bg-primary text-primary-foreground flex items-center justify-center shrink-0 hover:scale-105 active:scale-95 transition-all disabled:opacity-20 disabled:scale-100 shadow-sm shadow-primary/20"
+              >
+                {loading ? <Loader2 size={14} className="animate-spin" /> : <ArrowUp size={14} strokeWidth={2.5} />}
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>
