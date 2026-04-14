@@ -759,8 +759,17 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
           sessionId: bookSession.sessionId,
           language: config.language ?? "zh",
           onEvent: (event) => {
-            if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
-              broadcast("draft:delta", { text: event.assistantMessageEvent.delta });
+            if (event.type === "message_update") {
+              const ame = event.assistantMessageEvent;
+              if (ame.type === "text_delta") {
+                broadcast("draft:delta", { text: ame.delta });
+              } else if (ame.type === "thinking_delta") {
+                broadcast("thinking:delta", { text: (ame as any).delta });
+              } else if (ame.type === "thinking_start") {
+                broadcast("thinking:start", {});
+              } else if (ame.type === "thinking_end") {
+                broadcast("thinking:end", {});
+              }
             }
             if (event.type === "tool_execution_start") {
               broadcast("tool:start", { tool: event.toolName, args: event.args });

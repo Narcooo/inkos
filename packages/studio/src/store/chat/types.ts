@@ -57,6 +57,8 @@ export interface MessageState {
   currentSessionId: string | null;
   selectedModel: string | null;
   selectedService: string | null;
+  thinkingText: string;
+  thinkingStreaming: boolean;
 }
 
 export interface CreateState {

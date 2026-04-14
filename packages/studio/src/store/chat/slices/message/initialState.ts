@@ -7,4 +7,6 @@ export const initialMessageState: MessageState = {
   currentSessionId: null,
   selectedModel: null,
   selectedService: null,
+  thinkingText: "",
+  thinkingStreaming: false,
 };

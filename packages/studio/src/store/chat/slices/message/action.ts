@@ -82,6 +82,24 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
     get().addUserMessage(trimmed);
 
     const streamEs = new EventSource("/api/v1/events");
+    // Reset thinking state at start
+    set({ thinkingText: "", thinkingStreaming: false });
+
+    streamEs.addEventListener("thinking:start", () => {
+      set({ thinkingText: "", thinkingStreaming: true });
+    });
+
+    streamEs.addEventListener("thinking:delta", (e: MessageEvent) => {
+      try {
+        const d = e.data ? JSON.parse(e.data) : null;
+        if (d?.text) set((s) => ({ thinkingText: s.thinkingText + d.text }));
+      } catch { /* ignore */ }
+    });
+
+    streamEs.addEventListener("thinking:end", () => {
+      set({ thinkingStreaming: false });
+    });
+
     streamEs.addEventListener("draft:delta", (e: MessageEvent) => {
       try {
         const d = e.data ? JSON.parse(e.data) : null;
@@ -156,7 +174,7 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
         get().addErrorMessage(errorMsg);
       }
     } finally {
-      set({ loading: false });
+      set({ loading: false, thinkingStreaming: false });
     }
   },
 });

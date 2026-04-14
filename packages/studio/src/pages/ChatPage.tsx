@@ -11,6 +11,11 @@ import {
   PromptInputSelectContent,
   PromptInputSelectItem,
 } from "../components/ai-elements/prompt-input";
+import {
+  Reasoning,
+  ReasoningTrigger,
+  ReasoningContent,
+} from "../components/ai-elements/reasoning";
 import { ChatMessage } from "../components/chat/ChatMessage";
 import { QuickActions } from "../components/chat/QuickActions";
 import {
@@ -52,6 +57,8 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
   const createProgress = useChatStore((s) => s.createProgress);
   const selectedModel = useChatStore((s) => s.selectedModel);
   const selectedService = useChatStore((s) => s.selectedService);
+  const thinkingText = useChatStore((s) => s.thinkingText);
+  const thinkingStreaming = useChatStore((s) => s.thinkingStreaming);
 
   // -- Store actions --
   const setInput = useChatStore((s) => s.setInput);
@@ -179,8 +186,18 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
               />
             ))}
 
-            {/* Thinking indicator */}
-            {loading && (
+            {/* Reasoning / Thinking */}
+            {(thinkingStreaming || thinkingText) && (
+              <div className="max-w-3xl mx-auto">
+                <Reasoning isStreaming={thinkingStreaming}>
+                  <ReasoningTrigger />
+                  <ReasoningContent>{thinkingText}</ReasoningContent>
+                </Reasoning>
+              </div>
+            )}
+
+            {/* Loading indicator (no thinking content) */}
+            {loading && !thinkingStreaming && !thinkingText && (
               <Message from="assistant">
                 <MessageContent>
                   <Shimmer className="text-sm" duration={1.5}>
