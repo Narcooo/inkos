@@ -133,7 +133,7 @@ function PipelineExecution({ exec }: { exec: ToolExecution }) {
                 const isError = log.startsWith("[error]") || /error/i.test(log);
                 const isWarn = log.startsWith("[warning]") || /warning|警告/i.test(log);
                 return (
-                  <li key={i} className={`text-xs font-mono truncate ${isError ? "text-destructive" : isWarn ? "text-yellow-600 dark:text-yellow-400" : "text-muted-foreground"}`}>
+                  <li key={i} className={`text-xs font-mono break-words ${isError ? "text-destructive" : isWarn ? "text-yellow-600 dark:text-yellow-400" : "text-muted-foreground"}`}>
                     {log}
                   </li>
                 );
