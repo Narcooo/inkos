@@ -144,7 +144,7 @@ function ArtifactView({ bookId }: { readonly bookId: string }) {
           />
         ) : (
           <div className="px-4 py-3 text-sm leading-7">
-            <Streamdown content={content} plugins={streamdownPlugins} />
+            <Streamdown plugins={streamdownPlugins} mode="static">{content}</Streamdown>
           </div>
         )}
       </div>
