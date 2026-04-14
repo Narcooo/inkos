@@ -24,13 +24,13 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
 
   finalizeStream: (streamTs, content, toolCall) => set((s) => ({
     messages: s.messages.map((m) =>
-      m.timestamp === streamTs ? { ...m, content, toolCall } : m,
+      m.timestamp === streamTs && m.role === "assistant" ? { ...m, content, toolCall } : m,
     ),
   })),
 
   replaceStreamWithError: (streamTs, errorMsg) => set((s) => ({
     messages: [
-      ...s.messages.filter((m) => m.timestamp !== streamTs),
+      ...s.messages.filter((m) => !(m.timestamp === streamTs && m.role === "assistant")),
       { role: "assistant" as const, content: `\u2717 ${errorMsg}`, timestamp: Date.now() },
     ],
   })),
