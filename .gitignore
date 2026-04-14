@@ -16,6 +16,8 @@ test-project/
 docs/*
 !docs/plans/
 !docs/plans/**
+!docs/infra/
+!docs/infra/**
 novel-to-comic-research.docx
 .pnpm-store/
 tmp/
