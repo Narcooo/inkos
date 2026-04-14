@@ -49,17 +49,13 @@ export function ChatMessage({
   return (
     <Message from={role}>
       <MessageContent>
-        {/* Status icon for special assistant messages */}
-        {!isUser && (isSuccess || isError || isStatus) && (
-          <div className="flex items-center gap-2 text-xs">
-            {isSuccess && <CheckCircle2 size={14} className="text-emerald-500" />}
-            {isError && <XCircle size={14} className="text-destructive" />}
-            {isStatus && <Loader2 size={14} className="text-primary animate-spin" />}
-          </div>
-        )}
-
         {isUser ? (
           <div className="text-sm leading-relaxed">{content}</div>
+        ) : isError ? (
+          <div className="flex items-center gap-2 text-sm text-destructive">
+            <XCircle size={14} className="shrink-0" />
+            <span>{content.replace(/^\u2717\s*/, "")}</span>
+          </div>
         ) : (
           <MessageResponse>{content}</MessageResponse>
         )}
