@@ -743,37 +743,59 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
         .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
 
       // Resolve model — multi-service resolution
-      let resolvedModel: ResolvedModel["model"];
+      let resolvedModel: ResolvedModel["model"] | undefined;
       let resolvedApiKey: string | undefined;
-      const rawConfig = config.llm as unknown as Record<string, unknown>;
+
       if (reqService && reqModel) {
-        // Explicit service + model from request body
+        // 1. Frontend explicitly selected a service+model
         const resolved = await resolveServiceModel(reqService, reqModel, root);
         resolvedModel = resolved.model;
         resolvedApiKey = resolved.apiKey;
-      } else if (Array.isArray(rawConfig.services) && rawConfig.defaultModel) {
-        // New multi-service config format: use services[0] + defaultModel
-        const firstService = (rawConfig.services as Array<{ service: string }>)[0];
-        const defaultModelId = rawConfig.defaultModel as string;
-        if (firstService?.service) {
-          const resolved = await resolveServiceModel(firstService.service, defaultModelId, root);
-          resolvedModel = resolved.model;
-          resolvedApiKey = resolved.apiKey;
-        } else {
-          // Fallback to legacy path
-          resolvedModel = client._piModel
-            ? client._piModel
-            : { provider: config.llm.provider ?? "anthropic", modelId: config.llm.model } as any;
-          resolvedApiKey = client._apiKey;
+      }
+
+      if (!resolvedModel) {
+        // 2. Try defaultModel from new config format
+        const rawConfig = config.llm as unknown as Record<string, unknown>;
+        const defaultModel = rawConfig.defaultModel as string | undefined;
+        const servicesArr = Array.isArray(rawConfig.services) ? rawConfig.services : [];
+        const firstService = (servicesArr as Array<{ service: string }>)[0];
+        if (firstService?.service && defaultModel) {
+          try {
+            const resolved = await resolveServiceModel(firstService.service, defaultModel, root);
+            resolvedModel = resolved.model;
+            resolvedApiKey = resolved.apiKey;
+          } catch { /* fall through */ }
         }
-      } else {
-        // Legacy fallback: use existing createLLMClient path
+      }
+
+      if (!resolvedModel) {
+        // 3. Try first connected service from secrets
+        const secrets = await loadSecrets(root);
+        for (const [svcName, svcData] of Object.entries(secrets.services)) {
+          if (svcData?.apiKey && !svcName.startsWith("custom:")) {
+            try {
+              const { listModelsForService: listModels } = await import("@actalk/inkos-core");
+              const models = await listModels(svcName, svcData.apiKey);
+              if (models.length > 0) {
+                const resolved = await resolveServiceModel(svcName, models[0].id, root);
+                resolvedModel = resolved.model;
+                resolvedApiKey = resolved.apiKey;
+                break;
+              }
+            } catch { /* try next */ }
+          }
+        }
+      }
+
+      if (!resolvedModel) {
+        // 4. Legacy fallback: use createLLMClient
         resolvedModel = client._piModel
           ? client._piModel
           : { provider: config.llm.provider ?? "anthropic", modelId: config.llm.model } as any;
         resolvedApiKey = client._apiKey;
       }
-      const model = resolvedModel;
+
+      const model = resolvedModel!;
       const agentApiKey = resolvedApiKey;
 
       // Run pi-agent session

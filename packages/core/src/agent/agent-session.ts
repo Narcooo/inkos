@@ -85,11 +85,17 @@ function ensureCleanupTimer(): void {
 // ---------------------------------------------------------------------------
 
 function resolveModel(spec: AgentSessionConfig["model"]): Model<Api> {
-  if ("id" in spec && "api" in spec) {
+  if (!spec) {
+    throw new Error("Model is required but was undefined. Check LLM configuration.");
+  }
+  if (typeof spec === "object" && "id" in spec && "api" in spec) {
     // Already a Model object.
     return spec as Model<Api>;
   }
   const { provider, modelId } = spec as { provider: string; modelId: string };
+  if (!provider || !modelId) {
+    throw new Error(`Invalid model spec: provider=${provider}, modelId=${modelId}`);
+  }
   return getModel(provider as any, modelId as any);
 }
 
