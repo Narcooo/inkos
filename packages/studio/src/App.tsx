@@ -112,9 +112,9 @@ export function App() {
         {/* Header Strip */}
         <header className="h-14 shrink-0 flex items-center justify-between px-8 border-b border-border/40">
           <div className="flex items-center gap-2">
-             <span className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground font-bold">
+             <button onClick={nav.toDashboard} className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground font-bold hover:text-foreground transition-colors">
                InkOS Studio
-             </span>
+             </button>
           </div>
 
           <div className="flex items-center gap-3">

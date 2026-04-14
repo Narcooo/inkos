@@ -275,7 +275,7 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
             </div>
           ) : (
             /* Normal input */
-            <div className="rounded-xl bg-secondary/30 border border-border/40 transition-all">
+            <div className="rounded-xl bg-secondary/30 transition-all">
               <div className="flex items-center gap-2 px-3 py-2">
                 <textarea
                   ref={textareaRef}
