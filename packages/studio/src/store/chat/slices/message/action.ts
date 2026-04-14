@@ -1,5 +1,5 @@
 import type { StateCreator } from "zustand";
-import type { ChatStore, MessageActions, AgentResponse, SessionMessage, Message } from "../../types";
+import type { ChatStore, MessageActions, AgentResponse, SessionMessage, Message, MessagePart, ToolExecution, PipelineStage } from "../../types";
 import { fetchJson } from "../../../../hooks/use-api";
 
 function extractErrorMessage(error: string | { code?: string; message?: string }): string {
@@ -7,7 +7,7 @@ function extractErrorMessage(error: string | { code?: string; message?: string }
   return error.message ?? "Unknown error";
 }
 
-// -- Tool execution helpers --
+// -- Tool label helpers --
 
 const AGENT_LABELS: Record<string, string> = {
   architect: "建书", writer: "写作", auditor: "审计",
@@ -44,18 +44,57 @@ function extractToolError(result: unknown): string {
   return String(result).slice(0, 500);
 }
 
-/** Mark all "processing" tool executions as "completed" on the streaming message. */
-function markProcessingCompleted(messages: ReadonlyArray<Message>, streamTs: number): ReadonlyArray<Message> {
+// -- Parts helpers --
+
+/** Get or create the streaming assistant message, returning [updatedMessages, streamMsg]. */
+function getOrCreateStream(messages: ReadonlyArray<Message>, streamTs: number): [ReadonlyArray<Message>, Message] {
   const last = messages[messages.length - 1];
-  if (!last || last.timestamp !== streamTs || last.role !== "assistant") return messages;
-  const hasProcessing = last.toolExecutions?.some(t => t.status === "processing");
-  if (!hasProcessing) return messages;
-  return [...messages.slice(0, -1), {
-    ...last,
-    toolExecutions: last.toolExecutions!.map(t =>
-      t.status === "processing" ? { ...t, status: "completed" as const } : t
-    ),
-  }];
+  if (last?.timestamp === streamTs && last.role === "assistant") {
+    return [messages, last];
+  }
+  const newMsg: Message = { role: "assistant", content: "", timestamp: streamTs, parts: [] };
+  return [[...messages, newMsg], newMsg];
+}
+
+/** Replace the last message with an updated version. */
+function replaceLast(messages: ReadonlyArray<Message>, updated: Message): ReadonlyArray<Message> {
+  return [...messages.slice(0, -1), updated];
+}
+
+/** Find the last tool part that is "running" in a parts array. */
+function findRunningToolPart(parts: MessagePart[]): (MessagePart & { type: "tool" }) | undefined {
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const p = parts[i];
+    if (p.type === "tool" && p.execution.status === "running") return p as MessagePart & { type: "tool" };
+  }
+  return undefined;
+}
+
+/** Derive flat fields (content, thinking, toolExecutions) from parts for persistence compatibility. */
+function deriveFlat(parts: MessagePart[]): { content: string; thinking?: string; thinkingStreaming?: boolean; toolExecutions?: ToolExecution[] } {
+  let content = "";
+  let thinking = "";
+  let thinkingStreaming = false;
+  const toolExecutions: ToolExecution[] = [];
+
+  for (const p of parts) {
+    if (p.type === "thinking") {
+      if (thinking) thinking += "\n\n---\n\n";
+      thinking += p.content;
+      if (p.streaming) thinkingStreaming = true;
+    } else if (p.type === "text") {
+      content += p.content;
+    } else if (p.type === "tool") {
+      toolExecutions.push(p.execution);
+    }
+  }
+
+  return {
+    content,
+    ...(thinking ? { thinking } : {}),
+    ...(thinkingStreaming ? { thinkingStreaming: true } : {}),
+    ...(toolExecutions.length > 0 ? { toolExecutions } : {}),
+  };
 }
 
 export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions> = (set, get) => ({
@@ -74,9 +113,17 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
   }),
 
   finalizeStream: (streamTs, content, toolCall) => set((s) => ({
-    messages: markProcessingCompleted(s.messages, streamTs).map((m) => {
+    messages: s.messages.map((m) => {
       if (m.timestamp !== streamTs || m.role !== "assistant") return m;
-      return { ...m, content, toolCall };
+      // Update the last text part in parts, or add one
+      const parts = [...(m.parts ?? [])];
+      const lastPart = parts[parts.length - 1];
+      if (lastPart?.type === "text") {
+        parts[parts.length - 1] = { ...lastPart, content };
+      } else if (content) {
+        parts.push({ type: "text", content });
+      }
+      return { ...m, content, toolCall, parts };
     }),
   })),
 
@@ -100,13 +147,24 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
     return {
       messages: msgs
         .filter((m) => m.role === "user" || m.role === "assistant")
-        .map((m) => ({
-          role: m.role as "user" | "assistant",
-          content: m.content,
-          thinking: m.thinking,
-          toolExecutions: (m as any).toolExecutions,
-          timestamp: m.timestamp,
-        })),
+        .map((m) => {
+          const toolExecs = (m as any).toolExecutions as ToolExecution[] | undefined;
+          // Rebuild parts from flat fields for historical messages
+          const parts: MessagePart[] = [];
+          if (m.thinking) parts.push({ type: "thinking", content: m.thinking, streaming: false });
+          if (toolExecs) {
+            for (const exec of toolExecs) parts.push({ type: "tool", execution: exec });
+          }
+          if (m.content) parts.push({ type: "text", content: m.content });
+          return {
+            role: m.role as "user" | "assistant",
+            content: m.content,
+            thinking: m.thinking,
+            toolExecutions: toolExecs,
+            timestamp: m.timestamp,
+            parts: parts.length > 0 ? parts : undefined,
+          };
+        }),
     };
   }),
 
@@ -151,23 +209,23 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
     set({ input: "", loading: true });
     get().addUserMessage(trimmed);
 
-    // Close any previous stream
     get()._activeStream?.close();
     const streamEs = new EventSource("/api/v1/events");
     set({ _activeStream: streamEs });
 
-    // -- thinking events (append mode, not overwrite) --
+    // ---------------------------------------------------------------
+    // SSE listeners — each event updates `parts` as source of truth,
+    // then derives flat fields (content/thinking/toolExecutions) for
+    // persistence compatibility.
+    // ---------------------------------------------------------------
 
     streamEs.addEventListener("thinking:start", () => {
       set((s) => {
-        const msgs = markProcessingCompleted(s.messages, streamTs);
-        const last = msgs[msgs.length - 1];
-        if (last?.timestamp === streamTs && last.role === "assistant") {
-          const prev = last.thinking ?? "";
-          const sep = prev ? "\n\n---\n\n" : "";
-          return { messages: [...msgs.slice(0, -1), { ...last, thinking: prev + sep, thinkingStreaming: true }] };
-        }
-        return { messages: [...msgs, { role: "assistant" as const, content: "", thinking: "", thinkingStreaming: true, timestamp: streamTs }] };
+        const [msgs, stream] = getOrCreateStream(s.messages, streamTs);
+        const parts = [...(stream.parts ?? [])];
+        parts.push({ type: "thinking", content: "", streaming: true });
+        const flat = deriveFlat(parts);
+        return { messages: replaceLast(msgs, { ...stream, ...flat, parts }) };
       });
     });
 
@@ -176,37 +234,49 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
         const d = e.data ? JSON.parse(e.data) : null;
         if (!d?.text) return;
         set((s) => {
-          const last = s.messages[s.messages.length - 1];
-          if (last?.timestamp === streamTs && last.role === "assistant") {
-            return { messages: [...s.messages.slice(0, -1), { ...last, thinking: (last.thinking ?? "") + d.text }] };
+          const [msgs, stream] = getOrCreateStream(s.messages, streamTs);
+          const parts = [...(stream.parts ?? [])];
+          const last = parts[parts.length - 1];
+          if (last?.type === "thinking") {
+            parts[parts.length - 1] = { ...last, content: last.content + d.text };
           }
-          return s;
+          const flat = deriveFlat(parts);
+          return { messages: replaceLast(msgs, { ...stream, ...flat, parts }) };
         });
       } catch { /* ignore */ }
     });
 
     streamEs.addEventListener("thinking:end", () => {
       set((s) => {
-        const last = s.messages[s.messages.length - 1];
-        if (last?.timestamp === streamTs && last.role === "assistant") {
-          return { messages: [...s.messages.slice(0, -1), { ...last, thinkingStreaming: false }] };
+        const [msgs, stream] = getOrCreateStream(s.messages, streamTs);
+        const parts = [...(stream.parts ?? [])];
+        const last = parts[parts.length - 1];
+        if (last?.type === "thinking") {
+          parts[parts.length - 1] = { ...last, streaming: false };
         }
-        return s;
+        const flat = deriveFlat(parts);
+        return { messages: replaceLast(msgs, { ...stream, ...flat, parts }) };
       });
     });
-
-    // -- draft text events --
 
     streamEs.addEventListener("draft:delta", (e: MessageEvent) => {
       try {
         const d = e.data ? JSON.parse(e.data) : null;
         if (!d?.text) return;
-        set((s) => ({ messages: markProcessingCompleted(s.messages, streamTs) }));
-        get().appendStreamChunk(d.text, streamTs);
+        set((s) => {
+          const [msgs, stream] = getOrCreateStream(s.messages, streamTs);
+          const parts = [...(stream.parts ?? [])];
+          const last = parts[parts.length - 1];
+          if (last?.type === "text") {
+            parts[parts.length - 1] = { ...last, content: last.content + d.text };
+          } else {
+            parts.push({ type: "text", content: d.text });
+          }
+          const flat = deriveFlat(parts);
+          return { messages: replaceLast(msgs, { ...stream, ...flat, parts }) };
+        });
       } catch { /* ignore */ }
     });
-
-    // -- tool execution events --
 
     streamEs.addEventListener("tool:start", (e: MessageEvent) => {
       try {
@@ -214,46 +284,42 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
         if (!d?.tool) return;
 
         set((s) => {
-          let msgs = markProcessingCompleted(s.messages, streamTs);
-          let current = msgs[msgs.length - 1];
+          const [msgs, stream] = getOrCreateStream(s.messages, streamTs);
+          const parts = [...(stream.parts ?? [])];
 
-          if (!current || current.timestamp !== streamTs || current.role !== "assistant") {
-            current = { role: "assistant" as const, content: "", timestamp: streamTs };
-            msgs = [...msgs, current];
+          // For pipeline ops (sub_agent), move trailing text to thinking
+          if (d.tool === "sub_agent") {
+            const last = parts[parts.length - 1];
+            if (last?.type === "text" && last.content) {
+              parts.pop();
+              const prev = parts[parts.length - 1];
+              if (prev?.type === "thinking") {
+                parts[parts.length - 1] = { ...prev, content: prev.content + (prev.content ? "\n\n" : "") + last.content };
+              } else {
+                parts.push({ type: "thinking", content: last.content, streaming: false });
+              }
+            }
           }
 
-          // Move pre-tool content to thinking
-          const prevThinking = current.thinking ?? "";
-          const movedContent = current.content
-            ? (prevThinking ? prevThinking + "\n\n" : "") + current.content
-            : prevThinking;
-
-          // Create ToolExecution
           const agent = d.tool === "sub_agent" ? (d.args?.agent as string | undefined) : undefined;
-          const stages = (d.stages as string[] | undefined)?.map((label: string) => ({
-            label,
-            status: "pending" as const,
-          }));
+          const stages: PipelineStage[] | undefined = (d.stages as string[] | undefined)?.length
+            ? (d.stages as string[]).map((label) => ({ label, status: "pending" as const }))
+            : undefined;
 
-          const newExec = {
+          const exec: ToolExecution = {
             id: d.id as string,
             tool: d.tool as string,
             agent,
             label: resolveToolLabel(d.tool, agent),
-            status: "running" as const,
+            status: "running",
             args: d.args as Record<string, unknown> | undefined,
-            stages: stages && stages.length > 0 ? stages : undefined,
+            stages,
             startedAt: Date.now(),
           };
 
-          return {
-            messages: [...msgs.slice(0, -1), {
-              ...current,
-              thinking: movedContent,
-              content: "",
-              toolExecutions: [...(current.toolExecutions ?? []), newExec],
-            }],
-          };
+          parts.push({ type: "tool", execution: exec });
+          const flat = deriveFlat(parts);
+          return { messages: replaceLast(msgs, { ...stream, ...flat, parts }) };
         });
       } catch { /* ignore */ }
     });
@@ -264,80 +330,57 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
         if (!d?.tool) return;
 
         set((s) => {
-          const last = s.messages[s.messages.length - 1];
-          if (!last || last.timestamp !== streamTs || last.role !== "assistant") return s;
-
-          const toolExecutions = (last.toolExecutions ?? []).map((t) => {
-            if (t.id !== d.id) return t;
-            const stages = t.stages?.map((stage) =>
-              stage.status !== "completed"
-                ? { ...stage, status: "completed" as const, progress: undefined }
-                : stage
+          const [msgs, stream] = getOrCreateStream(s.messages, streamTs);
+          const parts = (stream.parts ?? []).map((p) => {
+            if (p.type !== "tool" || p.execution.id !== d.id) return p;
+            const exec = { ...p.execution };
+            exec.status = d.isError ? "error" : "completed";
+            exec.completedAt = Date.now();
+            if (d.isError) exec.error = extractToolError(d.result);
+            else exec.result = summarizeResult(d.result);
+            exec.stages = exec.stages?.map((s) =>
+              s.status !== "completed" ? { ...s, status: "completed" as const, progress: undefined } : s
             );
-            return {
-              ...t,
-              status: (d.isError ? "error" : "processing") as "error" | "processing",
-              stages,
-              result: d.isError ? undefined : summarizeResult(d.result),
-              error: d.isError ? extractToolError(d.result) : undefined,
-              completedAt: Date.now(),
-            };
+            return { type: "tool" as const, execution: exec };
           });
-
-          return {
-            messages: [...s.messages.slice(0, -1), { ...last, toolExecutions }],
-          };
+          const flat = deriveFlat(parts);
+          return { messages: replaceLast(msgs, { ...stream, ...flat, parts }) };
         });
 
         get().bumpBookDataVersion();
       } catch { /* ignore */ }
     });
 
-    // -- pipeline stage events (from PipelineRunner.logStage) --
-
     streamEs.addEventListener("log", (e: MessageEvent) => {
       try {
         const d = e.data ? JSON.parse(e.data) : null;
         const msg = d?.message as string | undefined;
         if (!msg) return;
-
         const stageMatch = msg.match(/^(?:阶段：|Stage: )(.+)$/);
         if (!stageMatch) return;
         const stageName = stageMatch[1];
 
         set((s) => {
-          const last = s.messages[s.messages.length - 1];
-          if (!last || last.timestamp !== streamTs || last.role !== "assistant") return s;
+          const [msgs, stream] = getOrCreateStream(s.messages, streamTs);
+          const runningTool = findRunningToolPart([...(stream.parts ?? [])]);
+          if (!runningTool?.execution.stages) return s;
 
-          const execIdx = last.toolExecutions?.findIndex(t => t.status === "running" && t.stages) ?? -1;
-          if (execIdx === -1) return s;
-
-          const exec = last.toolExecutions![execIdx];
-          let found = false;
-          const stages = exec.stages!.map((stage) => {
-            if (stage.label === stageName) {
-              found = true;
-              return { ...stage, status: "active" as const };
-            }
-            if (!found && stage.status === "active") {
-              return { ...stage, status: "completed" as const, progress: undefined };
-            }
-            return stage;
+          const parts = (stream.parts ?? []).map((p) => {
+            if (p.type !== "tool" || p.execution.id !== runningTool.execution.id) return p;
+            let found = false;
+            const stages = p.execution.stages!.map((stage) => {
+              if (stage.label === stageName) { found = true; return { ...stage, status: "active" as const }; }
+              if (!found && stage.status === "active") return { ...stage, status: "completed" as const, progress: undefined };
+              return stage;
+            });
+            if (!found) return p;
+            return { type: "tool" as const, execution: { ...p.execution, stages } };
           });
-
-          if (!found) return s;
-
-          const updatedExecs = [...last.toolExecutions!];
-          updatedExecs[execIdx] = { ...exec, stages };
-
-          return {
-            messages: [...s.messages.slice(0, -1), { ...last, toolExecutions: updatedExecs }],
-          };
+          const flat = deriveFlat(parts);
+          return { messages: replaceLast(msgs, { ...stream, ...flat, parts }) };
         });
       } catch { /* ignore */ }
     });
-
-    // -- LLM streaming progress (all statuses: thinking, streaming, etc.) --
 
     streamEs.addEventListener("llm:progress", (e: MessageEvent) => {
       try {
@@ -345,25 +388,21 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
         if (!d) return;
 
         set((s) => {
-          const last = s.messages[s.messages.length - 1];
-          if (!last || last.timestamp !== streamTs || last.role !== "assistant") return s;
+          const [msgs, stream] = getOrCreateStream(s.messages, streamTs);
+          const runningTool = findRunningToolPart([...(stream.parts ?? [])]);
+          if (!runningTool?.execution.stages) return s;
 
-          const execIdx = last.toolExecutions?.findIndex(t => t.status === "running" && t.stages) ?? -1;
-          if (execIdx === -1) return s;
-
-          const exec = last.toolExecutions![execIdx];
-          const stages = exec.stages!.map((stage) =>
-            stage.status === "active"
-              ? { ...stage, progress: { status: d.status, elapsedMs: d.elapsedMs, totalChars: d.totalChars, chineseChars: d.chineseChars } }
-              : stage
-          );
-
-          const updatedExecs = [...last.toolExecutions!];
-          updatedExecs[execIdx] = { ...exec, stages };
-
-          return {
-            messages: [...s.messages.slice(0, -1), { ...last, toolExecutions: updatedExecs }],
-          };
+          const parts = (stream.parts ?? []).map((p) => {
+            if (p.type !== "tool" || p.execution.id !== runningTool.execution.id) return p;
+            const stages = p.execution.stages!.map((stage) =>
+              stage.status === "active"
+                ? { ...stage, progress: { status: d.status, elapsedMs: d.elapsedMs, totalChars: d.totalChars, chineseChars: d.chineseChars } }
+                : stage
+            );
+            return { type: "tool" as const, execution: { ...p.execution, stages } };
+          });
+          const flat = deriveFlat(parts);
+          return { messages: replaceLast(msgs, { ...stream, ...flat, parts }) };
         });
       } catch { /* ignore */ }
     });

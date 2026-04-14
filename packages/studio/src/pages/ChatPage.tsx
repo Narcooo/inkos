@@ -195,34 +195,68 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
           <div className="max-w-3xl mx-auto space-y-4">
             {messages.map((msg, i) => (
               <div key={`${msg.timestamp}-${i}`}>
-                {/* Thinking (rendered before text, follows stream order) */}
-                {msg.role === "assistant" && msg.thinking && (
-                  <div className="mb-2">
-                    <Reasoning isStreaming={msg.thinkingStreaming ?? false}>
-                      <ReasoningTrigger />
-                      <ReasoningContent>{msg.thinking}</ReasoningContent>
-                    </Reasoning>
-                  </div>
-                )}
-                <ChatMessage
-                  role={msg.role}
-                  content={msg.content}
-                  timestamp={msg.timestamp}
-                  theme={theme}
-                  toolCall={msg.toolCall?.name === "create_book" && pendingBookArgs
-                    ? { name: msg.toolCall.name, arguments: pendingBookArgs }
-                    : msg.toolCall}
-                  onArgsChange={msg.toolCall?.name === "create_book"
-                    ? (args) => setPendingBookArgs(args)
-                    : undefined}
-                  onConfirm={msg.toolCall?.name === "create_book"
-                    ? () => void onCreateBook()
-                    : undefined}
-                  confirming={msg.toolCall?.name === "create_book" ? bookCreating : undefined}
-                />
-                {/* Tool executions */}
-                {msg.role === "assistant" && msg.toolExecutions && msg.toolExecutions.length > 0 && (
-                  <ToolExecutionSteps executions={msg.toolExecutions} />
+                {msg.role === "user" ? (
+                  /* User message */
+                  <ChatMessage role="user" content={msg.content} timestamp={msg.timestamp} theme={theme} />
+                ) : msg.parts && msg.parts.length > 0 ? (
+                  /* Assistant message — parts-based rendering (chronological) */
+                  <>
+                    {msg.parts.map((part, pi) => {
+                      if (part.type === "thinking") {
+                        return (
+                          <div key={`t-${pi}`} className="mb-2">
+                            <Reasoning isStreaming={part.streaming}>
+                              <ReasoningTrigger />
+                              <ReasoningContent>{part.content}</ReasoningContent>
+                            </Reasoning>
+                          </div>
+                        );
+                      }
+                      if (part.type === "tool") {
+                        return <ToolExecutionSteps key={`x-${part.execution.id}`} executions={[part.execution]} />;
+                      }
+                      if (part.type === "text" && part.content) {
+                        return (
+                          <ChatMessage
+                            key={`c-${pi}`}
+                            role="assistant"
+                            content={part.content}
+                            timestamp={msg.timestamp}
+                            theme={theme}
+                            toolCall={msg.toolCall?.name === "create_book" && pendingBookArgs
+                              ? { name: msg.toolCall.name, arguments: pendingBookArgs }
+                              : msg.toolCall}
+                            onArgsChange={msg.toolCall?.name === "create_book"
+                              ? (args) => setPendingBookArgs(args)
+                              : undefined}
+                            onConfirm={msg.toolCall?.name === "create_book"
+                              ? () => void onCreateBook()
+                              : undefined}
+                            confirming={msg.toolCall?.name === "create_book" ? bookCreating : undefined}
+                          />
+                        );
+                      }
+                      return null;
+                    })}
+                  </>
+                ) : (
+                  /* Assistant message — fallback (no parts, e.g. error messages) */
+                  <ChatMessage
+                    role={msg.role}
+                    content={msg.content}
+                    timestamp={msg.timestamp}
+                    theme={theme}
+                    toolCall={msg.toolCall?.name === "create_book" && pendingBookArgs
+                      ? { name: msg.toolCall.name, arguments: pendingBookArgs }
+                      : msg.toolCall}
+                    onArgsChange={msg.toolCall?.name === "create_book"
+                      ? (args) => setPendingBookArgs(args)
+                      : undefined}
+                    onConfirm={msg.toolCall?.name === "create_book"
+                      ? () => void onCreateBook()
+                      : undefined}
+                    confirming={msg.toolCall?.name === "create_book" ? bookCreating : undefined}
+                  />
                 )}
               </div>
             ))}
