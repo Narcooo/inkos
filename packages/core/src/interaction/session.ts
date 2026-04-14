@@ -14,6 +14,7 @@ export type PendingDecision = z.infer<typeof PendingDecisionSchema>;
 export const InteractionMessageSchema = z.object({
   role: z.enum(["user", "assistant", "system"]),
   content: z.string().min(1),
+  thinking: z.string().optional(),
   timestamp: z.number().int().nonnegative(),
 });
 

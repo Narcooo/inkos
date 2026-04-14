@@ -48,7 +48,12 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
     return {
       messages: msgs
         .filter((m) => m.role === "user" || m.role === "assistant")
-        .map((m) => ({ role: m.role as "user" | "assistant", content: m.content, timestamp: m.timestamp })),
+        .map((m) => ({
+          role: m.role as "user" | "assistant",
+          content: m.content,
+          thinking: m.thinking,
+          timestamp: m.timestamp,
+        })),
     };
   }),
 

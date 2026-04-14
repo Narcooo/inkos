@@ -17,6 +17,7 @@ export interface Message {
 export interface SessionMessage {
   readonly role: "user" | "assistant" | "system";
   readonly content: string;
+  readonly thinking?: string;
   readonly timestamp: number;
 }
 

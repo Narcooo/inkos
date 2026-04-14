@@ -38,8 +38,8 @@ export interface AgentSessionConfig {
 export interface AgentSessionResult {
   /** Extracted text from the final assistant message. */
   responseText: string;
-  /** Full conversation history as plain { role, content } pairs for persistence. */
-  messages: Array<{ role: string; content: string }>;
+  /** Full conversation history for persistence. */
+  messages: Array<{ role: string; content: string; thinking?: string }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -101,12 +101,22 @@ function resolveModel(spec: AgentSessionConfig["model"]): Model<Api> {
 
 /**
  * Extract readable text from an AssistantMessage's content array.
- * Filters out thinking blocks and tool-call blocks; concatenates text blocks.
+ * Filters out tool-call blocks; concatenates text blocks.
  */
 function extractTextFromAssistant(msg: AssistantMessage): string {
   return msg.content
     .filter((c): c is { type: "text"; text: string } => c.type === "text")
     .map((c) => c.text)
+    .join("");
+}
+
+/**
+ * Extract thinking/reasoning text from an AssistantMessage's content array.
+ */
+function extractThinkingFromAssistant(msg: AssistantMessage): string {
+  return msg.content
+    .filter((c: any) => c.type === "thinking")
+    .map((c: any) => c.thinking ?? "")
     .join("");
 }
 
@@ -143,11 +153,9 @@ function plainToAgentMessages(
  */
 function agentMessagesToPlain(
   messages: AgentMessage[],
-): Array<{ role: string; content: string }> {
-  const out: Array<{ role: string; content: string }> = [];
+): Array<{ role: string; content: string; thinking?: string }> {
+  const out: Array<{ role: string; content: string; thinking?: string }> = [];
   for (const msg of messages) {
-    // AgentMessage is Message | CustomAgentMessages[...]
-    // We only persist user and assistant turns.
     if (!msg || typeof msg !== "object" || !("role" in msg)) continue;
 
     const m = msg as { role: string; [k: string]: any };
@@ -164,7 +172,12 @@ function agentMessagesToPlain(
       if (content) out.push({ role: "user", content });
     } else if (m.role === "assistant") {
       const text = extractTextFromAssistant(m as AssistantMessage);
-      if (text) out.push({ role: "assistant", content: text });
+      const thinking = extractThinkingFromAssistant(m as AssistantMessage);
+      if (text || thinking) {
+        const entry: { role: string; content: string; thinking?: string } = { role: "assistant", content: text };
+        if (thinking) entry.thinking = thinking;
+        out.push(entry);
+      }
     }
     // ToolResult messages are internal; skip them for persistence.
   }

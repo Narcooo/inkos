@@ -919,9 +919,13 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
         timestamp: Date.now(),
       });
       if (result.responseText) {
+        // Find thinking from the last assistant message in result
+        const lastAssistant = result.messages?.filter((m: any) => m.role === "assistant").pop();
+        const thinking = lastAssistant?.thinking;
         bookSession = appendBookSessionMessage(bookSession, {
           role: "assistant",
           content: result.responseText,
+          ...(thinking ? { thinking } : {}),
           timestamp: Date.now() + 1,
         });
       }
