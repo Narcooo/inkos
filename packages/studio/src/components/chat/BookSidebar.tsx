@@ -165,13 +165,17 @@ function PanelView({ bookId, theme: _theme, t, sse }: BookSidebarProps) {
   );
 }
 
+const SIDEBAR_RATIO = 0.4;
 const SIDEBAR_MIN = 280;
 const SIDEBAR_MAX = 700;
-const SIDEBAR_DEFAULT = 420;
+
+function defaultSidebarWidth(): number {
+  return Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, Math.round(window.innerWidth * SIDEBAR_RATIO)));
+}
 
 export function BookSidebar({ bookId, theme, t, sse }: BookSidebarProps) {
   const sidebarView = useChatStore((s) => s.sidebarView);
-  const [width, setWidth] = useState(SIDEBAR_DEFAULT);
+  const [width, setWidth] = useState(defaultSidebarWidth);
   const dragging = useRef(false);
 
   const onMouseDown = useCallback((e: React.MouseEvent) => {
