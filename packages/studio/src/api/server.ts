@@ -422,6 +422,20 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     });
   });
 
+  // --- Model discovery ---
+
+  app.get("/api/services", async (c) => {
+    const { listServicesWithModelCount } = await import("@actalk/inkos-core");
+    const services = await listServicesWithModelCount();
+    return c.json({ services });
+  });
+
+  app.get("/api/services/:service/models", async (c) => {
+    const { listModelsForService } = await import("@actalk/inkos-core");
+    const models = await listModelsForService(c.req.param("service"));
+    return c.json({ models });
+  });
+
   // --- Project info ---
 
   app.get("/api/project", async (c) => {
