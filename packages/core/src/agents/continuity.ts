@@ -536,7 +536,7 @@ ${chapterContent}`;
       { role: "system" as const, content: systemPrompt },
       { role: "user" as const, content: userPrompt },
     ];
-    const chatOptions = { temperature: options?.temperature ?? 0.3, maxTokens: 8192 };
+    const chatOptions = { temperature: options?.temperature ?? 0.3 };
 
     // Use web search for fact verification when eraResearch is enabled
     const response = gp.eraResearch

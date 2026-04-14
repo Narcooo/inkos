@@ -1808,7 +1808,7 @@ export class PipelineRunner {
         role: "user",
         content: `分析以下参考文本的写作风格：\n\n${referenceText.slice(0, 20000)}`,
       },
-    ], { temperature: 0.3, maxTokens: 4096 });
+    ], { temperature: 0.3 });
 
     await writeFile(join(storyDir, "style_guide.md"), response.content, "utf-8");
     return response.content;
@@ -1930,7 +1930,7 @@ ${emotions}
 ## 正传角色矩阵
 ${matrix}`,
       },
-    ], { temperature: 0.3, maxTokens: 16384 });
+    ], { temperature: 0.3 });
 
     // Append deterministic meta block (LLM may hallucinate timestamps)
     const metaBlock = [

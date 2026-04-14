@@ -2279,11 +2279,10 @@ describe("PipelineRunner", () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  it("does not persist chapter files or index entries when state validation errors before save", async () => {
+  it("degrades to state-degraded when state validation errors instead of aborting", async () => {
     const { root, runner, state, bookId } = await createRunnerFixture({
       inputGovernanceMode: "legacy",
     });
-    const chaptersDir = join(state.bookDir(bookId), "chapters");
 
     vi.spyOn(WriterAgent.prototype, "writeChapter").mockResolvedValue(
       createWriterOutput({
@@ -2302,9 +2301,13 @@ describe("PipelineRunner", () => {
       new Error("LLM returned empty response"),
     );
 
-    await expect(runner.writeNextChapter(bookId)).rejects.toThrow("LLM returned empty response");
-    await expect(readdir(chaptersDir)).resolves.toEqual([]);
-    await expect(state.loadChapterIndex(bookId)).resolves.toEqual([]);
+    const result = await runner.writeNextChapter(bookId);
+    expect(result.status).toBe("state-degraded");
+
+    // Chapter should be saved (content is fine, only truth files are degraded)
+    const index = await state.loadChapterIndex(bookId);
+    expect(index).toHaveLength(1);
+    expect(index[0]!.status).toBe("state-degraded");
 
     await rm(root, { recursive: true, force: true });
   });

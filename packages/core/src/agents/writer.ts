@@ -546,7 +546,7 @@ export class WriterAgent extends BaseAgent {
         { role: "system", content: observerSystem },
         { role: "user", content: observerUser },
       ],
-      { maxTokens: 4096, temperature: 0.5 },
+      { temperature: 0.5 },
     );
     const observations = observerResponse.content;
 

@@ -139,6 +139,98 @@ describe("chatCompletion stream fallback", () => {
   });
 });
 
+describe("chatCompletion empty-response diagnostics", () => {
+  it("includes finish_reason and reasoning stats when stream has only reasoning_content", async () => {
+    // Stream: only reasoning_content, no content → empty → falls back to sync → sync also empty
+    const create = vi.fn()
+      .mockResolvedValueOnce({
+        async *[Symbol.asyncIterator](): AsyncIterableIterator<unknown> {
+          yield {
+            choices: [{
+              delta: { reasoning_content: "Let me think about this..." },
+              finish_reason: null,
+            }],
+          };
+          yield {
+            choices: [{
+              delta: { reasoning_content: "The answer is clear." },
+              finish_reason: "stop",
+            }],
+            usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 },
+          };
+        },
+      })
+      // Sync fallback also returns empty
+      .mockResolvedValueOnce({
+        choices: [{
+          message: { content: "" },
+          finish_reason: "stop",
+        }],
+        usage: ZERO_USAGE,
+      });
+
+    const client: LLMClient = {
+      provider: "openai",
+      apiFormat: "chat",
+      stream: true,
+      _openai: {
+        chat: { completions: { create } },
+      } as unknown as OpenAI,
+      defaults: {
+        temperature: 0.7,
+        maxTokens: 2048,
+        thinkingBudget: 0,
+        maxTokensCap: null,
+        extra: {},
+      },
+    };
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const error = await captureError(
+      chatCompletion(client, "test-model", [{ role: "user", content: "validate" }]),
+    );
+    const warnMessages = warn.mock.calls.map((c) => String(c[0]));
+    warn.mockRestore();
+
+    // The stream path should have logged diagnostics via console.warn
+    expect(warnMessages.some((m) => m.includes("reasoning_content"))).toBe(true);
+    // The final error (from sync fallback) should contain finish_reason
+    expect(error.message).toContain("finish_reason");
+  });
+
+  it("includes finish_reason in sync empty-response error", async () => {
+    const create = vi.fn().mockResolvedValueOnce({
+      choices: [{
+        message: { content: "" },
+        finish_reason: "content_filter",
+      }],
+      usage: ZERO_USAGE,
+    });
+
+    const client: LLMClient = {
+      provider: "openai",
+      apiFormat: "chat",
+      stream: false,
+      _openai: {
+        chat: { completions: { create } },
+      } as unknown as OpenAI,
+      defaults: {
+        temperature: 0.7,
+        maxTokens: 2048,
+        thinkingBudget: 0,
+        maxTokensCap: null,
+        extra: {},
+      },
+    };
+
+    const error = await captureError(
+      chatCompletion(client, "test-model", [{ role: "user", content: "validate" }]),
+    );
+
+    expect(error.message).toContain("content_filter");
+  });
+});
+
 describe("chatCompletion fixed-temperature clamp (thinking models)", () => {
   beforeEach(() => {
     __resetFixedTemperatureWarnings();

@@ -453,15 +453,26 @@ async function chatCompletionOpenAIChat(
   const chunks: string[] = [];
   let inputTokens = 0;
   let outputTokens = 0;
+  let reasoningChars = 0;
+  let lastFinishReason: string | null = null;
   const monitor = createStreamMonitor(onStreamProgress);
 
   try {
     for await (const chunk of stream) {
-      const delta = chunk.choices[0]?.delta?.content;
+      const choice = chunk.choices[0];
+      const delta = choice?.delta?.content;
       if (delta) {
         chunks.push(delta);
         monitor.onChunk(delta);
         onTextDelta?.(delta);
+      }
+      // Track reasoning_content from thinking models (e.g. kimi-k2.5)
+      const reasoning = choice?.delta?.reasoning_content;
+      if (reasoning) {
+        reasoningChars += reasoning.length;
+      }
+      if (choice?.finish_reason) {
+        lastFinishReason = choice.finish_reason;
       }
       if (chunk.usage) {
         inputTokens = chunk.usage.prompt_tokens ?? 0;
@@ -480,7 +491,15 @@ async function chatCompletionOpenAIChat(
   }
 
   const content = chunks.join("");
-  if (!content) throw new Error("LLM returned empty response from stream");
+  if (!content) {
+    const diag = [
+      `finish_reason=${lastFinishReason ?? "unknown"}`,
+      `usage=${inputTokens}+${outputTokens}`,
+      ...(reasoningChars > 0 ? [`reasoning_content=${reasoningChars}chars`] : []),
+    ].join(", ");
+    console.warn(`[inkos] LLM 流式响应无文本内容 (${diag})`);
+    throw new Error(`LLM returned empty response from stream (${diag})`);
+  }
 
   return {
     content,
@@ -512,7 +531,16 @@ async function chatCompletionOpenAIChatSync(
   const response = await client.chat.completions.create(syncParams);
 
   const content = response.choices[0]?.message?.content ?? "";
-  if (!content) throw new Error("LLM returned empty response");
+  if (!content) {
+    const finishReason = response.choices[0]?.finish_reason ?? "unknown";
+    const usage = response.usage;
+    const diag = [
+      `finish_reason=${finishReason}`,
+      `usage=${usage?.prompt_tokens ?? 0}+${usage?.completion_tokens ?? 0}`,
+    ].join(", ");
+    console.warn(`[inkos] LLM 同步响应无文本内容 (${diag})`);
+    throw new Error(`LLM returned empty response (${diag})`);
+  }
   onTextDelta?.(content);
 
   return {
@@ -849,6 +877,8 @@ async function chatCompletionAnthropic(
   const chunks: string[] = [];
   let inputTokens = 0;
   let outputTokens = 0;
+  let hasThinkingBlocks = false;
+  let stopReason: string | null = null;
   const monitor = createStreamMonitor(onStreamProgress);
 
   try {
@@ -858,11 +888,15 @@ async function chatCompletionAnthropic(
         monitor.onChunk(event.delta.text);
         onTextDelta?.(event.delta.text);
       }
+      if (event.type === "content_block_delta" && event.delta.type === "thinking_delta") {
+        hasThinkingBlocks = true;
+      }
       if (event.type === "message_start") {
         inputTokens = event.message.usage?.input_tokens ?? 0;
       }
       if (event.type === "message_delta") {
         outputTokens = ((event as unknown as { usage?: { output_tokens?: number } }).usage?.output_tokens) ?? 0;
+        stopReason = ((event as unknown as { delta?: { stop_reason?: string } }).delta?.stop_reason) ?? null;
       }
     }
   } catch (streamError) {
@@ -877,7 +911,15 @@ async function chatCompletionAnthropic(
   }
 
   const content = chunks.join("");
-  if (!content) throw new Error("LLM returned empty response from stream");
+  if (!content) {
+    const diag = [
+      `stop_reason=${stopReason ?? "unknown"}`,
+      `usage=${inputTokens}+${outputTokens}`,
+      ...(hasThinkingBlocks ? ["has_thinking_blocks=true"] : []),
+    ].join(", ");
+    console.warn(`[inkos] Anthropic 流式响应无文本内容 (${diag})`);
+    throw new Error(`LLM returned empty response from stream (${diag})`);
+  }
 
   return {
     content,
@@ -921,7 +963,16 @@ async function chatCompletionAnthropicSync(
     .map((block) => block.text)
     .join("");
 
-  if (!content) throw new Error("LLM returned empty response");
+  if (!content) {
+    const hasThinking = response.content.some((block) => block.type === "thinking");
+    const diag = [
+      `stop_reason=${response.stop_reason ?? "unknown"}`,
+      `usage=${response.usage?.input_tokens ?? 0}+${response.usage?.output_tokens ?? 0}`,
+      ...(hasThinking ? ["has_thinking_blocks=true"] : []),
+    ].join(", ");
+    console.warn(`[inkos] Anthropic 同步响应无文本内容 (${diag})`);
+    throw new Error(`LLM returned empty response (${diag})`);
+  }
   onTextDelta?.(content);
 
   return {
