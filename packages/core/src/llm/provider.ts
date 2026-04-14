@@ -1,6 +1,20 @@
 import OpenAI from "openai";
 import Anthropic from "@anthropic-ai/sdk";
 import type { LLMConfig } from "../models/project.js";
+import {
+  streamSimple as piStreamSimple,
+  stream as piStream,
+} from "@mariozechner/pi-ai";
+import type {
+  Api as PiApi,
+  Model as PiModel,
+  Context as PiContext,
+  AssistantMessageEvent,
+  Tool as PiTool,
+  TextContent as PiTextContent,
+  ToolCall as PiToolCall,
+} from "@mariozechner/pi-ai";
+import { resolveServicePreset } from "./service-presets.js";
 
 // === Streaming Monitor Types ===
 
@@ -75,6 +89,8 @@ export interface LLMClient {
   readonly stream: boolean;
   readonly _openai?: OpenAI;
   readonly _anthropic?: Anthropic;
+  readonly _piModel?: PiModel<PiApi>;
+  readonly _apiKey?: string;
   readonly defaults: {
     readonly temperature: number;
     readonly maxTokens: number;
@@ -123,6 +139,28 @@ export function createLLMClient(config: LLMConfig): LLMClient {
   const apiFormat = config.apiFormat ?? "chat";
   const stream = config.stream ?? true;
 
+  // --- Build pi-ai Model object ---
+  const serviceName = config.service ?? "custom";
+  const preset = resolveServicePreset(serviceName);
+  const piApi = (preset?.api ?? "openai-completions") as PiApi;
+  const baseUrl = config.baseUrl || preset?.baseUrl || "";
+  const extraHeaders = config.headers ?? parseEnvHeaders();
+
+  const piModel: PiModel<PiApi> = {
+    id: config.model,
+    name: config.model,
+    api: piApi,
+    provider: serviceName,
+    baseUrl,
+    reasoning: (config.thinkingBudget ?? 0) > 0,
+    input: ["text"] as ("text" | "image")[],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 128_000,
+    maxTokens: config.maxTokens ?? 8192,
+    ...(extraHeaders ? { headers: extraHeaders } : {}),
+  };
+
+  // Still build old SDK clients (kept for backward compat until Task 5 cleanup)
   if (config.provider === "anthropic") {
     // Anthropic SDK appends /v1/ internally — strip if user included it
     const baseURL = config.baseUrl.replace(/\/v1\/?$/, "");
@@ -131,11 +169,12 @@ export function createLLMClient(config: LLMConfig): LLMClient {
       apiFormat,
       stream,
       _anthropic: new Anthropic({ apiKey: config.apiKey, baseURL }),
+      _piModel: piModel,
+      _apiKey: config.apiKey,
       defaults,
     };
   }
   // openai or custom — both use OpenAI SDK
-  const extraHeaders = config.headers ?? parseEnvHeaders();
   return {
     provider: "openai",
     apiFormat,
@@ -145,6 +184,8 @@ export function createLLMClient(config: LLMConfig): LLMClient {
       baseURL: config.baseUrl,
       ...(extraHeaders ? { defaultHeaders: extraHeaders } : {}),
     }),
+    _piModel: piModel,
+    _apiKey: config.apiKey,
     defaults,
   };
 }
@@ -316,22 +357,10 @@ export async function chatCompletion(
   };
   const onStreamProgress = options?.onStreamProgress;
   const onTextDelta = options?.onTextDelta;
-  const errorCtx = { baseUrl: client._openai?.baseURL ?? "(anthropic)", model };
+  const errorCtx = { baseUrl: client._piModel?.baseUrl ?? client._openai?.baseURL ?? "(anthropic)", model };
 
   try {
-    if (client.provider === "anthropic") {
-      return client.stream
-        ? await chatCompletionAnthropic(client._anthropic!, model, messages, resolved, client.defaults.thinkingBudget, onStreamProgress, onTextDelta)
-        : await chatCompletionAnthropicSync(client._anthropic!, model, messages, resolved, client.defaults.thinkingBudget, onTextDelta);
-    }
-    if (client.apiFormat === "responses") {
-      return client.stream
-        ? await chatCompletionOpenAIResponses(client._openai!, model, messages, resolved, options?.webSearch, onStreamProgress, onTextDelta)
-        : await chatCompletionOpenAIResponsesSync(client._openai!, model, messages, resolved, options?.webSearch, onTextDelta);
-    }
-    return client.stream
-      ? await chatCompletionOpenAIChat(client._openai!, model, messages, resolved, options?.webSearch, onStreamProgress, onTextDelta)
-      : await chatCompletionOpenAIChatSync(client._openai!, model, messages, resolved, options?.webSearch, onTextDelta);
+    return await chatCompletionViaPiAi(client, model, messages, resolved, onStreamProgress, onTextDelta);
   } catch (error) {
     // Stream interrupted but partial content is usable — return truncated response
     if (error instanceof PartialResponseError) {
@@ -340,28 +369,6 @@ export async function chatCompletion(
         usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
       };
     }
-
-    // Auto-fallback: if streaming failed, retry with sync (many proxies don't support SSE)
-    if (client.stream) {
-      const isStreamRelated = isLikelyStreamError(error);
-      if (isStreamRelated) {
-        try {
-          if (client.provider === "anthropic") {
-            return await chatCompletionAnthropicSync(client._anthropic!, model, messages, resolved, client.defaults.thinkingBudget);
-          }
-          if (client.apiFormat === "responses") {
-            return await chatCompletionOpenAIResponsesSync(client._openai!, model, messages, resolved, options?.webSearch);
-          }
-          return await chatCompletionOpenAIChatSync(client._openai!, model, messages, resolved, options?.webSearch);
-        } catch (syncError) {
-          if (isStreamRequiredError(syncError)) {
-            throw wrapStreamRequiredError(error, syncError, errorCtx);
-          }
-          throw wrapLLMError(syncError, errorCtx);
-        }
-      }
-    }
-
     throw wrapLLMError(error, errorCtx);
   }
 }
@@ -413,18 +420,225 @@ export async function chatWithTools(
       ),
       maxTokens: options?.maxTokens ?? client.defaults.maxTokens,
     };
-    // Tool-calling always uses streaming (only used by agent loop, not by writer/auditor)
-    if (client.provider === "anthropic") {
-      return await chatWithToolsAnthropic(client._anthropic!, model, messages, tools, resolved, client.defaults.thinkingBudget);
-    }
-    if (client.apiFormat === "responses") {
-      return await chatWithToolsOpenAIResponses(client._openai!, model, messages, tools, resolved);
-    }
-    return await chatWithToolsOpenAIChat(client._openai!, model, messages, tools, resolved);
+    return await chatWithToolsViaPiAi(client, model, messages, tools, resolved);
   } catch (error) {
     throw wrapLLMError(error);
   }
 }
+
+// === pi-ai Unified Implementation ===
+
+/**
+ * Build a pi-ai Model<Api> for a specific per-call model name.
+ * The base template comes from client._piModel (created in createLLMClient);
+ * we override .id / .name when the caller passes a different model string
+ * (e.g. agent overrides).
+ */
+function resolvePiModel(client: LLMClient, model: string): PiModel<PiApi> {
+  const base = client._piModel!;
+  if (base.id === model) return base;
+  return { ...base, id: model, name: model };
+}
+
+/** Convert inkos LLMMessage[] to pi-ai Context. */
+function toPiContext(messages: ReadonlyArray<LLMMessage>): PiContext {
+  const systemParts = messages.filter((m) => m.role === "system").map((m) => m.content);
+  const systemPrompt = systemParts.length > 0 ? systemParts.join("\n\n") : undefined;
+  const piMessages = messages
+    .filter((m) => m.role !== "system")
+    .map((m) => {
+      if (m.role === "user") {
+        return { role: "user" as const, content: m.content, timestamp: Date.now() };
+      }
+      // assistant
+      return {
+        role: "assistant" as const,
+        content: [{ type: "text" as const, text: m.content }],
+        api: "openai-completions" as PiApi,
+        provider: "openai",
+        model: "",
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+        stopReason: "stop" as const,
+        timestamp: Date.now(),
+      };
+    });
+  return { systemPrompt, messages: piMessages };
+}
+
+/** Convert inkos AgentMessage[] to pi-ai Context (with tool calls/results). */
+function agentMessagesToPiContext(messages: ReadonlyArray<AgentMessage>): PiContext {
+  const systemParts = messages.filter((m) => m.role === "system").map((m) => (m as { content: string }).content);
+  const systemPrompt = systemParts.length > 0 ? systemParts.join("\n\n") : undefined;
+  const piMessages: PiContext["messages"] = [];
+  for (const msg of messages) {
+    if (msg.role === "system") continue;
+    if (msg.role === "user") {
+      piMessages.push({ role: "user", content: msg.content, timestamp: Date.now() });
+      continue;
+    }
+    if (msg.role === "assistant") {
+      const content: (PiTextContent | PiToolCall)[] = [];
+      if (msg.content) content.push({ type: "text", text: msg.content });
+      if (msg.toolCalls) {
+        for (const tc of msg.toolCalls) {
+          content.push({
+            type: "toolCall",
+            id: tc.id,
+            name: tc.name,
+            arguments: JSON.parse(tc.arguments),
+          });
+        }
+      }
+      if (content.length === 0) content.push({ type: "text", text: "" });
+      piMessages.push({
+        role: "assistant",
+        content,
+        api: "openai-completions" as PiApi,
+        provider: "openai",
+        model: "",
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+        stopReason: "stop",
+        timestamp: Date.now(),
+      });
+      continue;
+    }
+    if (msg.role === "tool") {
+      piMessages.push({
+        role: "toolResult",
+        toolCallId: msg.toolCallId,
+        toolName: "",
+        content: [{ type: "text", text: msg.content }],
+        isError: false,
+        timestamp: Date.now(),
+      });
+    }
+  }
+  return { systemPrompt, messages: piMessages };
+}
+
+/** Convert inkos ToolDefinition[] to pi-ai Tool[]. */
+function toPiTools(tools: ReadonlyArray<ToolDefinition>): PiTool[] {
+  return tools.map((t) => ({
+    name: t.name,
+    description: t.description,
+    parameters: t.parameters as PiTool["parameters"],
+  }));
+}
+
+async function chatCompletionViaPiAi(
+  client: LLMClient,
+  model: string,
+  messages: ReadonlyArray<LLMMessage>,
+  resolved: { readonly temperature: number; readonly maxTokens: number; readonly extra: Record<string, unknown> },
+  onStreamProgress?: OnStreamProgress,
+  onTextDelta?: (text: string) => void,
+): Promise<LLMResponse> {
+  const piModel = resolvePiModel(client, model);
+  const context = toPiContext(messages);
+  const streamOpts = {
+    temperature: resolved.temperature,
+    maxTokens: resolved.maxTokens,
+    apiKey: client._apiKey,
+    headers: piModel.headers,
+  };
+
+  const eventStream = piStreamSimple(piModel, context, streamOpts);
+  const chunks: string[] = [];
+  const monitor = createStreamMonitor(onStreamProgress);
+  let inputTokens = 0;
+  let outputTokens = 0;
+
+  try {
+    for await (const event of eventStream) {
+      if (event.type === "text_delta") {
+        chunks.push(event.delta);
+        monitor.onChunk(event.delta);
+        onTextDelta?.(event.delta);
+      }
+      if (event.type === "done" || event.type === "error") {
+        const msg = event.type === "done" ? event.message : event.error;
+        inputTokens = msg.usage.input;
+        outputTokens = msg.usage.output;
+        if (event.type === "error" && msg.errorMessage) {
+          // Check if we have partial content worth salvaging
+          const partial = chunks.join("");
+          if (partial.length >= MIN_SALVAGEABLE_CHARS) {
+            throw new PartialResponseError(partial, new Error(msg.errorMessage));
+          }
+          throw new Error(msg.errorMessage);
+        }
+      }
+    }
+  } catch (streamError) {
+    monitor.stop();
+    if (streamError instanceof PartialResponseError) throw streamError;
+    const partial = chunks.join("");
+    if (partial.length >= MIN_SALVAGEABLE_CHARS) {
+      throw new PartialResponseError(partial, streamError);
+    }
+    throw streamError;
+  } finally {
+    monitor.stop();
+  }
+
+  const content = chunks.join("");
+  if (!content) {
+    const diag = `usage=${inputTokens}+${outputTokens}`;
+    console.warn(`[inkos] LLM 流式响应无文本内容 (${diag})`);
+    throw new Error(`LLM returned empty response from stream (${diag})`);
+  }
+
+  return {
+    content,
+    usage: {
+      promptTokens: inputTokens,
+      completionTokens: outputTokens,
+      totalTokens: inputTokens + outputTokens,
+    },
+  };
+}
+
+async function chatWithToolsViaPiAi(
+  client: LLMClient,
+  model: string,
+  messages: ReadonlyArray<AgentMessage>,
+  tools: ReadonlyArray<ToolDefinition>,
+  resolved: { readonly temperature: number; readonly maxTokens: number },
+): Promise<ChatWithToolsResult> {
+  const piModel = resolvePiModel(client, model);
+  const context = agentMessagesToPiContext(messages);
+  context.tools = toPiTools(tools);
+  const streamOpts = {
+    temperature: resolved.temperature,
+    maxTokens: resolved.maxTokens,
+    apiKey: client._apiKey,
+    headers: piModel.headers,
+  };
+
+  const eventStream = piStream(piModel, context, streamOpts);
+  let content = "";
+  const toolCalls: ToolCall[] = [];
+
+  for await (const event of eventStream) {
+    if (event.type === "text_delta") {
+      content += event.delta;
+    }
+    if (event.type === "toolcall_end") {
+      toolCalls.push({
+        id: event.toolCall.id,
+        name: event.toolCall.name,
+        arguments: JSON.stringify(event.toolCall.arguments),
+      });
+    }
+    if (event.type === "error" && event.error.errorMessage) {
+      throw new Error(event.error.errorMessage);
+    }
+  }
+
+  return { content, toolCalls };
+}
+
+// === Legacy Implementations (kept for backward compat, no longer called from main path) ===
 
 // === OpenAI Chat Completions API Implementation (default) ===
 
