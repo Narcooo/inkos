@@ -539,17 +539,39 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     const service = c.req.param("service");
     const { apiKey } = await c.req.json<{ apiKey: string }>();
     const secrets = await loadSecrets(root);
-    secrets.services[service] = { apiKey };
+    if (apiKey?.trim()) {
+      secrets.services[service] = { apiKey: apiKey.trim() };
+    } else {
+      delete secrets.services[service];
+    }
     await saveSecrets(root, secrets);
     return c.json({ ok: true });
   });
 
   app.get("/api/v1/services/:service/models", async (c) => {
-    const { listModelsForService, getServiceApiKey } = await import("@actalk/inkos-core");
+    const { resolveServicePreset, getServiceApiKey } = await import("@actalk/inkos-core");
     const service = c.req.param("service");
-    // Use query param if provided, otherwise look up from secrets
     const apiKey = c.req.query("apiKey") || await getServiceApiKey(root, service);
-    const models = await listModelsForService(service, apiKey ?? undefined);
+
+    // No key = no models (don't fallback to built-in list)
+    if (!apiKey) return c.json({ models: [] });
+
+    const preset = resolveServicePreset(service);
+    if (!preset?.baseUrl) return c.json({ models: [] });
+
+    // Call real API only
+    let models: Array<{ id: string; name: string }> = [];
+    try {
+      const modelsUrl = preset.baseUrl.replace(/\/$/, "") + "/models";
+      const res = await fetch(modelsUrl, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (res.ok) {
+        const json = await res.json() as { data?: Array<{ id: string }> };
+        models = (json.data ?? []).map((m) => ({ id: m.id, name: m.id }));
+      }
+    } catch { /* timeout or network error — return empty */ }
     return c.json({ models });
   });
 

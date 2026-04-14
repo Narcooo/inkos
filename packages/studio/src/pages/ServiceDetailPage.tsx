@@ -127,6 +127,7 @@ export function ServiceDetailPage({
         }),
       });
       setSaveMsg("已保存");
+      setTestResult(null); // Clear stale test result
       void refreshServices();
     } catch (e) {
       setSaveMsg(e instanceof Error ? e.message : "保存失败");
