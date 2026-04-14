@@ -490,14 +490,48 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
   });
 
   app.post("/api/v1/services/:service/test", async (c) => {
-    const { listModelsForService } = await import("@actalk/inkos-core");
+    const { resolveServicePreset } = await import("@actalk/inkos-core");
     const service = c.req.param("service");
     const { apiKey } = await c.req.json<{ apiKey: string }>();
+
+    if (!apiKey?.trim()) {
+      return c.json({ ok: false, error: "API Key 不能为空" }, 400);
+    }
+
+    const preset = resolveServicePreset(service);
+    if (!preset?.baseUrl) {
+      return c.json({ ok: false, error: `未知服务商: ${service}` }, 400);
+    }
+
+    // Call the real /models API — no fallback
+    const modelsUrl = preset.baseUrl.replace(/\/$/, "") + "/models";
     try {
-      const models = await listModelsForService(service, apiKey);
-      return c.json({ ok: true, modelCount: models.length, models: models.slice(0, 20) });
+      const res = await fetch(modelsUrl, {
+        headers: { Authorization: `Bearer ${apiKey.trim()}` },
+        signal: AbortSignal.timeout(10_000),
+      });
+
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        if (res.status === 401 || res.status === 403) {
+          return c.json({ ok: false, error: "API Key 无效，请检查后重试" }, 400);
+        }
+        return c.json({ ok: false, error: `服务商返回 ${res.status}: ${body.slice(0, 200)}` }, 400);
+      }
+
+      const json = await res.json() as { data?: Array<{ id: string; owned_by?: string }> };
+      const models = (json.data ?? []).map((m) => ({ id: m.id, name: m.id }));
+
+      if (models.length === 0) {
+        return c.json({ ok: false, error: "连接成功但未返回可用模型" }, 400);
+      }
+
+      return c.json({ ok: true, modelCount: models.length, models: models.slice(0, 50) });
     } catch (err: any) {
-      return c.json({ ok: false, error: err?.message ?? String(err) }, 400);
+      if (err?.name === "TimeoutError" || err?.name === "AbortError") {
+        return c.json({ ok: false, error: `连接超时：无法访问 ${modelsUrl}` }, 400);
+      }
+      return c.json({ ok: false, error: `连接失败: ${err?.message ?? String(err)}` }, 400);
     }
   });
 
