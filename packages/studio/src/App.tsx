@@ -1,4 +1,6 @@
 import { useState, useEffect } from "react";
+import { useHashRoute } from "./hooks/use-hash-route";
+import type { HashRoute } from "./hooks/use-hash-route";
 import { Sidebar } from "./components/Sidebar";
 import { Dashboard } from "./pages/Dashboard";
 import { ChatPage } from "./pages/ChatPage";
@@ -21,30 +23,15 @@ import { useI18n } from "./hooks/use-i18n";
 import { postApi, useApi } from "./hooks/use-api";
 import { Sun, Moon } from "lucide-react";
 
-export type Route =
-  | { page: "dashboard" }
-  | { page: "book"; bookId: string }
-  | { page: "book-create" }
-  | { page: "chapter"; bookId: string; chapterNumber: number }
-  | { page: "analytics"; bookId: string }
-  | { page: "config" }
-  | { page: "truth"; bookId: string }
-  | { page: "daemon" }
-  | { page: "logs" }
-  | { page: "genres" }
-  | { page: "style" }
-  | { page: "import" }
-  | { page: "radar" }
-  | { page: "doctor" };
+export type { HashRoute as Route } from "./hooks/use-hash-route";
 
-export function deriveActiveBookId(route: Route): string | undefined {
-  return route.page === "book" || route.page === "chapter" || route.page === "truth" || route.page === "analytics"
-    ? route.bookId
-    : undefined;
+export function deriveActiveBookId(route: HashRoute): string | undefined {
+  if ("bookId" in route) return route.bookId;
+  return undefined;
 }
 
 export function App() {
-  const [route, setRoute] = useState<Route>({ page: "dashboard" });
+  const { route, setRoute } = useHashRoute();
   const sse = useSSE();
   const { theme, setTheme } = useTheme();
   const { t } = useI18n();
