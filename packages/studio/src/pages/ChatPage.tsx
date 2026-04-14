@@ -1,4 +1,4 @@
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useMemo } from "react";
 import type { Theme } from "../hooks/use-theme";
 import type { TFunction } from "../hooks/use-i18n";
 import type { SSEMessage } from "../hooks/use-sse";
@@ -73,18 +73,34 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
   const isZh = t("nav.connected") === "\u5DF2\u8FDE\u63A5";
   const hasBook = Boolean(activeBookId);
 
-  // -- Available models from service store --
-  // -- Model picker (all state from Zustand store) --
-  const modelPickerStatus = useServiceStore((s) => s.getModelPickerStatus());
-  const groupedModels = useServiceStore((s) => s.getGroupedModels());
+  // -- Model picker: read raw state, derive with useMemo (stable refs) --
+  const services = useServiceStore((s) => s.services);
+  const servicesLoading = useServiceStore((s) => s.servicesLoading);
+  const modelsByService = useServiceStore((s) => s.modelsByService);
   const fetchServices = useServiceStore((s) => s.fetchServices);
   const fetchModels = useServiceStore((s) => s.fetchModels);
-  const connectedServices = useServiceStore((s) => s.services.filter((sv) => sv.connected));
 
   useEffect(() => { void fetchServices(); }, [fetchServices]);
   useEffect(() => {
-    for (const svc of connectedServices) void fetchModels(svc.service);
-  }, [connectedServices.length, fetchModels]);
+    for (const svc of services) {
+      if (svc.connected) void fetchModels(svc.service);
+    }
+  }, [services, fetchModels]);
+
+  const modelPickerStatus = useMemo(() => {
+    if (servicesLoading || services.length === 0) return "loading" as const;
+    const connected = services.filter((s) => s.connected);
+    if (connected.length === 0) return "no-models" as const;
+    if (connected.some((s) => modelsByService[s.service]?.loading)) return "loading" as const;
+    return connected.some((s) => (modelsByService[s.service]?.models.length ?? 0) > 0)
+      ? "ready" as const : "no-models" as const;
+  }, [services, servicesLoading, modelsByService]);
+
+  const groupedModels = useMemo(() => {
+    return services
+      .filter((s) => s.connected && (modelsByService[s.service]?.models.length ?? 0) > 0)
+      .map((s) => ({ service: s.service, label: s.label, models: modelsByService[s.service]!.models }));
+  }, [services, modelsByService]);
 
   // Auto-scroll on new messages or progress updates
   useEffect(() => {

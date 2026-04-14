@@ -42,5 +42,5 @@ pnpm --filter @actalk/inkos-core build     # 改了 core 后必须重建（或�
 - **状态管理**: Zustand store，LobeHub slice 约定
   - `studio/src/store/chat/` — 对话消息、创建流程、侧边栏状态
   - `studio/src/store/service/` — 服务商连接状态、模型列表缓存、model picker 三态（loading/no-models/ready）
-  - **原则**: 组件只读 store selector，不在组件内 useMemo/useState 派生跨页面共享的状态；派生逻辑放 store 的 selector（如 `getModelPickerStatus`、`getGroupedModels`）
+  - **原则**: Zustand selector 只返回 store 中已有的原始值（string/number/boolean/引用稳定的对象）。如果需要 `.filter()` / `.map()` 等产生新数组的派生，用组件内 `useMemo` 而不是 store selector — 否则会造成无限渲染循环
 - **SSE 事件**: `studio/src/hooks/use-sse.ts`（共享 buffer）+ 组件内直连 EventSource（流式渲染）

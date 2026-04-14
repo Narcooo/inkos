@@ -74,6 +74,13 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
     const trimmed = text.trim();
     if (!trimmed || get().loading) return;
 
+    // Check if model is selected
+    if (!get().selectedModel) {
+      get().addUserMessage(trimmed);
+      get().addErrorMessage("请先选择一个模型");
+      return;
+    }
+
     const hasBook = Boolean(activeBookId);
     const instruction = hasBook ? trimmed : `/new ${trimmed}`;
     const streamTs = Date.now() + 1;
