@@ -747,10 +747,21 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       let resolvedApiKey: string | undefined;
 
       if (reqService && reqModel) {
-        // 1. Frontend explicitly selected a service+model
-        const resolved = await resolveServiceModel(reqService, reqModel, root);
-        resolvedModel = resolved.model;
-        resolvedApiKey = resolved.apiKey;
+        // 1. Frontend explicitly selected a service+model — fail loudly if no key
+        try {
+          const resolved = await resolveServiceModel(reqService, reqModel, root);
+          resolvedModel = resolved.model;
+          resolvedApiKey = resolved.apiKey;
+        } catch (e: any) {
+          const msg = e?.message ?? String(e);
+          if (/API key/i.test(msg)) {
+            return c.json({
+              error: `请先为 ${reqService} 配置 API Key`,
+              response: `请先在模型配置中为 ${reqService} 填写 API Key，然后再试。`,
+            }, 400);
+          }
+          throw e;
+        }
       }
 
       if (!resolvedModel) {
