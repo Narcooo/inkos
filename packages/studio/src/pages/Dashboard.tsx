@@ -188,10 +188,10 @@ export function Dashboard({ nav, sse, theme, t }: { nav: Nav; sse: { messages: R
   return (
     <div className="space-y-12">
       {!hasServices && (
-        <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.04] px-5 py-4 mb-8 flex items-center justify-between">
+        <div className="rounded-xl border border-amber-400/30 dark:border-amber-500/20 bg-amber-50 dark:bg-amber-500/[0.04] px-5 py-4 mb-8 flex items-center justify-between">
           <div>
-            <div className="text-sm text-amber-600 dark:text-amber-400 font-medium">还没有配置 AI 模型</div>
-            <div className="text-xs text-amber-600/60 dark:text-amber-400/50 mt-0.5">配好一个服务商才能开始创作</div>
+            <div className="text-sm text-amber-700 dark:text-amber-400 font-medium">还没有配置 AI 模型</div>
+            <div className="text-xs text-amber-600/70 dark:text-amber-400/50 mt-0.5">配好一个服务商才能开始创作</div>
           </div>
           <button
             onClick={nav.toServices}
