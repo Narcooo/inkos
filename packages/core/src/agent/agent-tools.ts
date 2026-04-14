@@ -1,4 +1,4 @@
-import { Type, type Static, type TSchema } from "@mariozechner/pi-ai";
+import { Type, type Static } from "@mariozechner/pi-ai";
 import type { AgentTool, AgentToolResult, AgentToolUpdateCallback } from "@mariozechner/pi-agent-core";
 import type { PipelineRunner } from "../pipeline/runner.js";
 import type { ReviseMode } from "../agents/reviser.js";
