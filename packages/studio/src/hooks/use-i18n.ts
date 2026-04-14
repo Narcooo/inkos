@@ -6,7 +6,7 @@ const strings = {
   // Header
   "nav.books": { zh: "书籍", en: "Books" },
   "nav.newBook": { zh: "新建书籍", en: "New Book" },
-  "nav.config": { zh: "配置", en: "Config" },
+  "nav.config": { zh: "模型配置", en: "Model Config" },
   "nav.connected": { zh: "已连接", en: "Connected" },
   "nav.disconnected": { zh: "未连接", en: "Disconnected" },
 
