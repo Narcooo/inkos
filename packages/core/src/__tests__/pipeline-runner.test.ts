@@ -247,6 +247,7 @@ describe("PipelineRunner", () => {
         projectRoot: process.cwd(),
         defaultLLMConfig: {
           provider: "custom",
+          service: "custom",
           baseUrl: "https://base.example/v1",
           apiKey: "base-key",
           model: "base-model",
@@ -895,6 +896,7 @@ describe("PipelineRunner", () => {
       const result = await runner.writeDraft(bookId);
 
       expect(result.chapterNumber).toBe(1);
+      console.log("DEBUG warnings:", JSON.stringify(warnings, null, 2));
       expect(warnings).toContain(
         "当前 Node 运行时不支持 SQLite 记忆索引，继续使用 Markdown 回退方案。",
       );

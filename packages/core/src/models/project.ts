@@ -2,6 +2,7 @@ import { z } from "zod";
 
 export const LLMConfigSchema = z.object({
   provider: z.enum(["anthropic", "openai", "custom"]),
+  service: z.string().default("custom"),
   baseUrl: z.string().url(),
   apiKey: z.string().default(""),
   model: z.string().min(1),

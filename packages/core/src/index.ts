@@ -159,6 +159,7 @@ export {
 
 // LLM
 export { createLLMClient, chatCompletion, chatWithTools, createStreamMonitor, PartialResponseError, type LLMClient, type LLMResponse, type LLMMessage, type ToolDefinition, type ToolCall, type AgentMessage, type ChatWithToolsResult, type StreamProgress, type OnStreamProgress } from "./llm/provider.js";
+export { SERVICE_PRESETS, resolveServicePreset, guessServiceFromBaseUrl, type ServicePreset } from "./llm/service-presets.js";
 
 // Agents
 export { BaseAgent, type AgentContext } from "./agents/base.js";

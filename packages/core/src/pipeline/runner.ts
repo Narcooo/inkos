@@ -393,6 +393,7 @@ export class PipelineRunner {
         : base?.apiKey ?? "";
       client = createLLMClient({
         provider,
+        service: base?.service ?? "custom",
         baseUrl: override.baseUrl,
         apiKey,
         model: override.model,
