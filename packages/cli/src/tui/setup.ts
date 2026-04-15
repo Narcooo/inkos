@@ -9,6 +9,7 @@ import {
   brightCyan, brightGreen, brightWhite,
 } from "./ansi.js";
 import { resolveTuiLocale, type TuiLocale } from "./i18n.js";
+import { ensureProjectGitignore } from "../project-files.js";
 import { GLOBAL_ENV_PATH } from "../utils.js";
 
 const PROVIDERS = ["openai", "anthropic", "custom"] as const;
@@ -268,11 +269,7 @@ async function autoInit(cwd: string): Promise<void> {
     );
   }
 
-  await writeFile(
-    join(cwd, ".gitignore"),
-    [".env", "node_modules/", ".DS_Store"].join("\n"),
-    "utf-8",
-  );
+  await ensureProjectGitignore(cwd);
 
   console.log(`  ${c("✓", brightGreen, bold)} ${c(messages.initialized, dim)}`);
 }

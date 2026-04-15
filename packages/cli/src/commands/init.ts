@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { access, readFile, writeFile, mkdir } from "node:fs/promises";
 import { join, basename, resolve } from "node:path";
+import { ensureProjectGitignore } from "../project-files.js";
 import { log, logError, GLOBAL_ENV_PATH } from "../utils.js";
 
 async function hasGlobalConfig(): Promise<boolean> {
@@ -115,11 +116,7 @@ export const initCommand = new Command("init")
         );
       }
 
-      await writeFile(
-        join(projectDir, ".gitignore"),
-        [".env", "node_modules/", ".DS_Store"].join("\n"),
-        "utf-8",
-      );
+      await ensureProjectGitignore(projectDir);
 
       log(`Project initialized at ${projectDir}`);
       log("");

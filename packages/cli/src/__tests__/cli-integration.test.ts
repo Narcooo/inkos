@@ -119,6 +119,22 @@ describe("CLI integration", () => {
       expect(output).toContain("Project initialized");
     });
 
+    it("preserves existing .gitignore entries when initializing into an existing directory", async () => {
+      const existingDir = join(projectDir, "gitignore-preserve");
+      await mkdir(existingDir, { recursive: true });
+      await writeFile(join(existingDir, ".gitignore"), ["dist/", "custom.cache"].join("\n"), "utf-8");
+
+      const output = run(["init", "gitignore-preserve"]);
+      expect(output).toContain("Project initialized");
+
+      const gitignore = await readFile(join(existingDir, ".gitignore"), "utf-8");
+      expect(gitignore).toContain("dist/");
+      expect(gitignore).toContain("custom.cache");
+      expect(gitignore).toContain(".env");
+      expect(gitignore).toContain("node_modules/");
+      expect(gitignore).toContain(".DS_Store");
+    });
+
     it("creates inkos.json in subdirectory", async () => {
       const raw = await readFile(join(projectDir, "subproject", "inkos.json"), "utf-8");
       const config = JSON.parse(raw);
