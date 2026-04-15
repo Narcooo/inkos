@@ -75,3 +75,38 @@ describe("resolveServiceModel regression — preset baseUrl override", () => {
     expect(result.model.baseUrl).toBe("https://custom-proxy.example.com/v1");
   });
 });
+
+describe("resolveServiceModel regression — 百炼 Anthropic endpoint", () => {
+  let root: string;
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "inkos-resolver-bailian-"));
+    await mkdir(join(root, ".inkos"), { recursive: true });
+    await writeFile(
+      join(root, ".inkos", "secrets.json"),
+      JSON.stringify({ services: { bailian: { apiKey: "sk-bailian-test" } } }),
+    );
+  });
+
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it("uses Anthropic baseUrl from preset", async () => {
+    const result = await resolveServiceModel("bailian", "qwen-plus", root);
+
+    expect(result.model.baseUrl).toBe("https://dashscope.aliyuncs.com/apps/anthropic");
+  });
+
+  it("uses anthropic-messages api format", async () => {
+    const result = await resolveServiceModel("bailian", "qwen-plus", root);
+
+    expect(result.model.api).toBe("anthropic-messages");
+  });
+
+  it("uses anthropic as provider", async () => {
+    const result = await resolveServiceModel("bailian", "qwen-plus", root);
+
+    expect(result.model.provider).toBe("anthropic");
+  });
+});

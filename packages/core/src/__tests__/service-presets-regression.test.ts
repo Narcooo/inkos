@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveServicePreset, listModelsForService } from "../llm/service-presets.js";
+import { resolveServicePreset, listModelsForService, SERVICE_TO_PI_PROVIDER } from "../llm/service-presets.js";
 
 describe("service-presets regression", () => {
   describe("MiniMax preset", () => {
@@ -25,6 +25,25 @@ describe("service-presets regression", () => {
     });
   });
 
+  describe("百炼 preset", () => {
+    it("uses Anthropic-compatible endpoint for chat (tools+stream support)", () => {
+      const preset = resolveServicePreset("bailian");
+      expect(preset).toBeDefined();
+      expect(preset!.api).toBe("anthropic-messages");
+      expect(preset!.baseUrl).toBe("https://dashscope.aliyuncs.com/apps/anthropic");
+    });
+
+    it("has separate modelsBaseUrl for OpenAI-compatible /models endpoint", () => {
+      const preset = resolveServicePreset("bailian");
+      expect(preset!.modelsBaseUrl).toBe("https://dashscope.aliyuncs.com/compatible-mode/v1");
+    });
+
+    it("modelsBaseUrl differs from baseUrl", () => {
+      const preset = resolveServicePreset("bailian");
+      expect(preset!.modelsBaseUrl).not.toBe(preset!.baseUrl);
+    });
+  });
+
   describe("listModelsForService", () => {
     it("returns knownModels immediately for minimax without calling /models API", async () => {
       const models = await listModelsForService("minimax");
@@ -35,6 +54,16 @@ describe("service-presets regression", () => {
     it("returns empty for custom service", async () => {
       const models = await listModelsForService("custom");
       expect(models).toEqual([]);
+    });
+  });
+
+  describe("SERVICE_TO_PI_PROVIDER mapping", () => {
+    it("maps minimax to anthropic provider", () => {
+      expect(SERVICE_TO_PI_PROVIDER.minimax).toBe("anthropic");
+    });
+
+    it("maps bailian to anthropic provider", () => {
+      expect(SERVICE_TO_PI_PROVIDER.bailian).toBe("anthropic");
     });
   });
 });
