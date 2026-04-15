@@ -1309,41 +1309,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
         });
       }
       if (!result.responseText) {
-        try {
-          const fallbackClient = createLLMClient({
-            ...config.llm,
-            service: configuredEntry?.service ?? reqService ?? config.llm.service,
-            model: reqModel ?? config.llm.model,
-            apiKey: agentApiKey ?? config.llm.apiKey,
-            baseUrl: configuredEntry?.baseUrl ?? "",
-            ...(configuredEntry?.apiFormat ? { apiFormat: configuredEntry.apiFormat } : {}),
-            ...(configuredEntry?.stream !== undefined ? { stream: configuredEntry.stream } : {}),
-          } as ProjectConfig["llm"]);
-          const fallback = await chatCompletion(
-            fallbackClient,
-            reqModel ?? config.llm.model,
-            [
-              { role: "system", content: buildAgentSystemPrompt(activeBookId ?? null, config.language ?? "zh") },
-              { role: "user", content: instruction },
-            ],
-            { maxTokens: 256 },
-          );
-          if (fallback.content?.trim()) {
-            bookSession = appendBookSessionMessage(bookSession, {
-              role: "assistant",
-              content: fallback.content,
-              timestamp: Date.now() + 1,
-            });
-            await persistBookSession(root, bookSession);
-            return c.json({
-              response: fallback.content,
-              session: { sessionId: bookSession.sessionId },
-            });
-          }
-        } catch {
-          // fall through to probe-based diagnosis below
-        }
-
+        // Agent returned empty text — probe to check if the API key / model is working
         try {
           const probeClient = createLLMClient({
             ...config.llm,
