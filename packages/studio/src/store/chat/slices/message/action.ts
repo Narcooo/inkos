@@ -347,7 +347,11 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
           return { messages: replaceLast(msgs, { ...stream, ...flat, parts }) };
         });
 
-        get().bumpBookDataVersion();
+        // Only refresh sidebar for tools that may modify book data
+        const READ_ONLY_TOOLS = new Set(["read", "grep", "ls"]);
+        if (!READ_ONLY_TOOLS.has(d.tool)) {
+          get().bumpBookDataVersion();
+        }
       } catch { /* ignore */ }
     });
 
