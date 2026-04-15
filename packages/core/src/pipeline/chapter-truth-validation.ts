@@ -57,7 +57,33 @@ export async function validateChapterTruthPersistence(params: {
       params.language,
     );
   } catch (error) {
-    throw new Error(`State validation failed for chapter ${params.chapterNumber}: ${String(error)}`);
+    params.logger?.warn(`State validation error for chapter ${params.chapterNumber}: ${String(error)}`);
+    const errorDescription = params.language === "en"
+      ? `State validation unavailable: ${String(error)}`
+      : `状态校验不可用：${String(error)}`;
+    const errorIssue: AuditIssue = {
+      severity: "warning",
+      category: "state-validation",
+      description: errorDescription,
+      suggestion: params.language === "en"
+        ? "Repair chapter state from the persisted body before continuing."
+        : "请先基于已保存正文修复本章 state，再继续后续章节。",
+    };
+    return {
+      validation: { passed: true, warnings: [] },
+      chapterStatus: "state-degraded",
+      degradedIssues: [errorIssue],
+      persistenceOutput: buildStateDegradedPersistenceOutput({
+        output: persistenceOutput,
+        oldState: params.previousTruth.oldState,
+        oldHooks: params.previousTruth.oldHooks,
+        oldLedger: params.previousTruth.oldLedger,
+      }),
+      auditResult: {
+        ...params.auditResult,
+        issues: [...params.auditResult.issues, errorIssue],
+      },
+    };
   }
 
   if (validation.warnings.length > 0) {

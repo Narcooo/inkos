@@ -678,6 +678,22 @@ describe("StateManager", () => {
       expect(String(rejected[0]?.reason)).toMatch(/is locked/);
     });
 
+    it("reclaims same-process stale lock when no active write is in progress", async () => {
+      await mkdir(manager.bookDir("lock-book-self"), { recursive: true });
+      const lockPath = join(manager.bookDir("lock-book-self"), ".write.lock");
+      // Simulate a stale lock left by our own process (e.g. after a failed pipeline)
+      await writeFile(lockPath, `pid:${process.pid} ts:${Date.now() - 60000}`, "utf-8");
+
+      // Should auto-reclaim since our process knows it's not actively writing this book
+      const release = await manager.acquireBookLock("lock-book-self");
+      expect(typeof release).toBe("function");
+
+      const lockData = await readFile(lockPath, "utf-8");
+      expect(lockData).toContain(`pid:${process.pid}`);
+
+      await release();
+    });
+
     it("reclaims a stale lock when the recorded pid is no longer alive", async () => {
       await mkdir(manager.bookDir("lock-book-5"), { recursive: true });
       const lockPath = join(manager.bookDir("lock-book-5"), ".write.lock");

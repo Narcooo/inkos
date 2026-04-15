@@ -55,6 +55,36 @@ describe("StateValidatorAgent", () => {
     });
   });
 
+  it("passes maxTokens large enough for thinking models to chat()", async () => {
+    const agent = new StateValidatorAgent({
+      client: {
+        provider: "openai",
+        apiFormat: "chat",
+        stream: false,
+        defaults: {
+          temperature: 0.7,
+          maxTokens: 8192,
+          thinkingBudget: 0,
+          maxTokensCap: null,
+          extra: {},
+        },
+      },
+      model: "test-model",
+      projectRoot: process.cwd(),
+    });
+
+    const chatSpy = vi.spyOn(
+      agent as unknown as { chat: (...args: unknown[]) => Promise<unknown> },
+      "chat",
+    ).mockResolvedValue({ content: "PASS", usage: ZERO_USAGE });
+
+    await agent.validate("Body.", 1, "old", "new state", "old hooks", "new hooks", "zh");
+
+    const options = chatSpy.mock.calls[0]?.[1] as { maxTokens?: number } | undefined;
+    // Must not hardcode a small value like 2048 that starves thinking models
+    expect(options?.maxTokens).toBeUndefined();
+  });
+
   it("throws when the validator model returns an empty response", async () => {
     const agent = new StateValidatorAgent({
       client: {
