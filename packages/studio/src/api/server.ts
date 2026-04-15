@@ -828,6 +828,8 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     }
 
     // /models unavailable (404 etc.) — fallback to pi-ai built-in model list
+    // But key has NOT been validated yet — need a probe.
+    let keyValidated = models.length > 0; // /models succeeded = key is valid
     if (models.length === 0) {
       const builtIn = await listModelsForService(service);
       models = builtIn.map((m) => ({ id: m.id, name: m.name }));
@@ -835,6 +837,37 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
     if (models.length === 0) {
       return c.json({ ok: false, error: "未找到可用模型" }, 400);
+    }
+
+    // If key was not validated via /models, do a lightweight chat probe
+    if (!keyValidated && models[0]) {
+      try {
+        const probeClient = createLLMClient({
+          provider: service === "anthropic" ? "anthropic" : "openai",
+          service: isCustomServiceId(service) ? "custom" : service,
+          configSource: "studio",
+          baseUrl: resolvedBaseUrl,
+          apiKey: apiKey.trim(),
+          model: models[0].id,
+          temperature: 0.7,
+          maxTokens: 8,
+          thinkingBudget: 0,
+          apiFormat: apiFormat ?? "chat",
+          stream: false,
+        } as ProjectConfig["llm"]);
+        await chatCompletion(
+          probeClient,
+          models[0].id,
+          [{ role: "user", content: "hi" }],
+          { maxTokens: 1 },
+        );
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        if (/401|403|unauthorized|invalid.*key/i.test(msg)) {
+          return c.json({ ok: false, error: "API Key 无效，请检查后重试" }, 400);
+        }
+        return c.json({ ok: false, error: `连接失败：${msg}` }, 400);
+      }
     }
 
     return c.json({ ok: true, modelCount: models.length, models: models.slice(0, 50) });
