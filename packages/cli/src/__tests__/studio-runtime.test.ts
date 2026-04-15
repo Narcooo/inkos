@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const accessMock = vi.fn();
 const testDir = dirname(fileURLToPath(import.meta.url));
@@ -52,7 +52,7 @@ describe("studio runtime resolution", () => {
     expect(launch).toEqual({
       studioEntry: tsSourceEntry,
       command: "node",
-      args: ["--import", tsxLoader, tsSourceEntry, "/repo/test-project"],
+      args: ["--import", pathToFileURL(tsxLoader).href, tsSourceEntry, "/repo/test-project"],
     });
   });
 
