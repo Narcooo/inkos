@@ -110,6 +110,22 @@ describe("studio runtime resolution", () => {
     });
   });
 
+  it("emits a file:// URL for --import to prevent Windows ERR_UNSUPPORTED_ESM_URL_SCHEME", async () => {
+    accessMock.mockImplementation(async (path: string) => {
+      if (path === tsSourceEntry || path === tsxLoader) {
+        return;
+      }
+      throw new Error(`missing: ${path}`);
+    });
+
+    const { resolveStudioLaunch } = await import("../commands/studio.js");
+    const launch = await resolveStudioLaunch("/repo/test-project");
+
+    const importArg = launch!.args[1]!;
+    expect(importArg).toMatch(/^file:\/\//);
+    expect(importArg).toBe(pathToFileURL(tsxLoader).href);
+  });
+
   it("returns a browser launch spec for macOS", async () => {
     const { resolveBrowserLaunch } = await import("../commands/studio.js");
     expect(resolveBrowserLaunch("darwin", "http://localhost:4567")).toEqual({
