@@ -33,10 +33,9 @@ export function SummarySection({ bookId }: SummarySectionProps) {
   const bookDataVersion = useChatStore((s) => s.bookDataVersion);
 
   useEffect(() => {
-    setBookSummary(null);
     fetchJson<{ content: string | null }>(`/books/${bookId}/truth/story_bible.md`)
       .then((data) => {
-        if (data.content) setBookSummary(parseStoryBible(data.content));
+        setBookSummary(data.content ? parseStoryBible(data.content) : null);
       })
       .catch(() => {});
   }, [bookId, bookDataVersion, setBookSummary]);

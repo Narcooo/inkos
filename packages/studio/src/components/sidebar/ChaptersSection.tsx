@@ -31,7 +31,7 @@ export function ChaptersSection({ bookId, isZh }: ChaptersSectionProps) {
   useEffect(() => {
     fetchJson<{ chapters: ChapterMeta[] }>(`/books/${bookId}`)
       .then((data) => setChapters(data.chapters))
-      .catch(() => setChapters([]));
+      .catch(() => {});  // keep old data on error
   }, [bookId, bookDataVersion]);
 
   return (

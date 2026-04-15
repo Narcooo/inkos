@@ -112,7 +112,7 @@ export function CharacterSection({ bookId }: CharacterSectionProps) {
           setCharacters([]);
         }
       })
-      .catch(() => setCharacters([]));
+      .catch(() => {});  // keep old data on error
   }, [bookId, bookDataVersion]);
 
   if (characters.length === 0) return null;
