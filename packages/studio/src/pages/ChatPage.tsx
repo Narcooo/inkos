@@ -467,7 +467,7 @@ function ModelPickerContent({
       <div className="overflow-y-auto flex-1">
         {filtered.map((group) => (
           <div key={group.service}>
-            <div className="px-2 py-1.5 text-[10px] font-medium text-muted-foreground uppercase tracking-wider sticky top-0 bg-popover">
+            <div className="px-2 py-1.5 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
               {group.label}
             </div>
             {group.models.map((m) => {
