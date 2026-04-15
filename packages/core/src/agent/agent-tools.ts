@@ -41,7 +41,7 @@ const SubAgentParams = Type.Object({
   bookId: Type.Optional(Type.String({ description: "Book ID — required for all agents except architect" })),
 });
 
-export function createSubAgentTool(pipeline: PipelineRunner, activeBookId: string | null): AgentTool<typeof SubAgentParams> {
+export function createSubAgentTool(pipeline: PipelineRunner, activeBookId: string | null, projectRoot?: string): AgentTool<typeof SubAgentParams> {
   return {
     name: "sub_agent",
     description:
@@ -75,6 +75,23 @@ export function createSubAgentTool(pipeline: PipelineRunner, activeBookId: strin
               { id, genre: "general", title: "", language: "zh" } as any,
               { externalContext: instruction },
             );
+            // Extract title from story_bible.md and backfill into book.json
+            try {
+              if (!projectRoot) throw new Error("no projectRoot");
+              const booksRoot = join(projectRoot, "books");
+              const biblePath = join(booksRoot, id, "story", "story_bible.md");
+              const bible = await readFile(biblePath, "utf-8");
+              const titleMatch = bible.match(/(?:书名|Title)\s*[:：]\s*[《「]?(.+?)[》」]?\s*(?:\n|$)/i)
+                ?? bible.match(/^#\s+(.+)/m);
+              if (titleMatch?.[1]) {
+                const bookJsonPath = join(booksRoot, id, "book.json");
+                const config = JSON.parse(await readFile(bookJsonPath, "utf-8"));
+                if (!config.title) {
+                  config.title = titleMatch[1].trim();
+                  await writeFile(bookJsonPath, JSON.stringify(config, null, 2), "utf-8");
+                }
+              }
+            } catch { /* best-effort */ }
             progress(`Architect finished — book "${id}" foundation created.`);
             return textResult(`Book "${id}" initialised successfully. Foundation files are ready.`);
           }
