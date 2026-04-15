@@ -153,10 +153,29 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
     return () => { es.close(); };
   }, [bookCreating, setCreateProgress]);
 
-  // Load session messages on mount or when activeBookId changes
+  // Load session messages on mount or when activeBookId changes.
+  // For book-create (no activeBookId), always start a fresh session.
   useEffect(() => {
-    useChatStore.getState().loadSession(activeBookId);
+    if (!activeBookId) {
+      useChatStore.setState({ currentSessionId: null, messages: [], input: "", _activeStream: null });
+    } else {
+      useChatStore.getState().loadSession(activeBookId);
+    }
   }, [activeBookId]);
+
+  // Auto-navigate to new book after agent-driven creation
+  useEffect(() => {
+    if (activeBookId) return; // only in book-create mode
+    const es = new EventSource("/api/v1/events");
+    const handler = (e: MessageEvent) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (data?.bookId) nav.toBook(data.bookId);
+      } catch { /* ignore */ }
+    };
+    es.addEventListener("book:created", handler);
+    return () => { es.close(); };
+  }, [activeBookId, nav]);
 
   const onSend = (text: string) => {
     void sendMessage(text, activeBookId);
