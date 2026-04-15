@@ -801,7 +801,10 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     }
 
     // Try /models API — validates key + discovers models in one call
-    const modelsUrl = resolvedBaseUrl.replace(/\/$/, "") + "/models";
+    // Use modelsBaseUrl when the chat endpoint differs from the models endpoint (e.g. Anthropic endpoint)
+    const preset = resolveServicePreset(isCustomServiceId(service) ? "custom" : service);
+    const modelsBase = preset?.modelsBaseUrl ?? resolvedBaseUrl;
+    const modelsUrl = modelsBase.replace(/\/$/, "") + "/models";
     let models: Array<{ id: string; name: string }> = [];
     try {
       const res = await fetch(modelsUrl, {
@@ -869,9 +872,11 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     if (!resolvedBaseUrl) return c.json({ models: [] });
 
     // Call real /models API, fallback to pi-ai built-in list
+    const modelsPreset = resolveServicePreset(isCustomServiceId(service) ? "custom" : service);
+    const modelsBase = modelsPreset?.modelsBaseUrl ?? resolvedBaseUrl;
     let models: Array<{ id: string; name: string }> = [];
     try {
-      const modelsUrl = resolvedBaseUrl.replace(/\/$/, "") + "/models";
+      const modelsUrl = modelsBase.replace(/\/$/, "") + "/models";
       const res = await fetch(modelsUrl, {
         headers: { Authorization: `Bearer ${apiKey}` },
         signal: AbortSignal.timeout(10_000),
