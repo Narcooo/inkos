@@ -47,15 +47,15 @@ describe("resolveServiceModel regression — preset baseUrl override", () => {
   it("uses preset baseUrl, not pi-ai built-in baseUrl", async () => {
     const result = await resolveServiceModel("minimax", "MiniMax-M2.7", root);
 
-    // Must use our preset (api.minimaxi.com), NOT pi-ai's (api.minimax.io/anthropic)
-    expect(result.model.baseUrl).toBe("https://api.minimaxi.com/v1");
+    // Must use our preset (domestic Anthropic endpoint), NOT pi-ai's (international)
+    expect(result.model.baseUrl).toBe("https://api.minimaxi.com/anthropic");
   });
 
   it("uses preset api format, not pi-ai built-in api format", async () => {
     const result = await resolveServiceModel("minimax", "MiniMax-M2.7", root);
 
-    // Must use openai-completions (our preset), NOT anthropic-messages (pi-ai)
-    expect(result.model.api).toBe("openai-completions");
+    // Must use anthropic-messages (our preset)
+    expect(result.model.api).toBe("anthropic-messages");
   });
 
   it("inherits metadata from pi-ai (reasoning, cost, contextWindow)", async () => {

@@ -3,15 +3,15 @@ import { resolveServicePreset, listModelsForService } from "../llm/service-prese
 
 describe("service-presets regression", () => {
   describe("MiniMax preset", () => {
-    it("has correct OpenAI-compatible baseUrl (api.minimaxi.com, not api.minimax.chat)", () => {
+    it("has correct Anthropic-compatible baseUrl", () => {
       const preset = resolveServicePreset("minimax");
       expect(preset).toBeDefined();
-      expect(preset!.baseUrl).toBe("https://api.minimaxi.com/v1");
+      expect(preset!.baseUrl).toBe("https://api.minimaxi.com/anthropic");
     });
 
-    it("uses openai-completions api format", () => {
+    it("uses anthropic-messages api format", () => {
       const preset = resolveServicePreset("minimax");
-      expect(preset!.api).toBe("openai-completions");
+      expect(preset!.api).toBe("anthropic-messages");
     });
 
     it("has knownModels with all 7 MiniMax models", () => {
