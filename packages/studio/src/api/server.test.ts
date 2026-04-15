@@ -128,6 +128,18 @@ vi.mock("@actalk/inkos-core", () => {
     persistBookSession: persistBookSessionMock,
     appendBookSessionMessage: appendBookSessionMessageMock,
     resolveServiceModel: resolveServiceModelMock,
+    resolveServicePreset: vi.fn((service: string) => {
+      const presets: Record<string, { api: string; baseUrl: string; label: string; modelsBaseUrl?: string; knownModels?: string[] }> = {
+        openai: { api: "openai-responses", baseUrl: "https://api.openai.com/v1", label: "OpenAI" },
+        moonshot: { api: "openai-completions", baseUrl: "https://api.moonshot.cn/v1", label: "Moonshot" },
+        minimax: { api: "anthropic-messages", baseUrl: "https://api.minimaxi.com/anthropic", label: "MiniMax", knownModels: ["MiniMax-M2.7"] },
+        bailian: { api: "anthropic-messages", baseUrl: "https://dashscope.aliyuncs.com/apps/anthropic", label: "百炼", modelsBaseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1" },
+        custom: { api: "openai-completions", baseUrl: "", label: "自定义" },
+      };
+      return presets[service];
+    }),
+    listModelsForService: vi.fn(async () => []),
+    listBookSessions: vi.fn(async () => []),
     loadSecrets: loadSecretsMock,
     saveSecrets: saveSecretsMock,
     getServiceApiKey: getServiceApiKeyMock,
@@ -1026,13 +1038,14 @@ describe("createStudioServer daemon lifecycle", () => {
     });
   });
 
-  it("falls back to plain chat when the tool-agent returns empty text", async () => {
+  it("probes upstream when the tool-agent returns empty text (no fallback to plain chat)", async () => {
     runAgentSessionMock.mockResolvedValueOnce({
       responseText: "",
       messages: [{ role: "user", content: "nihao" }],
     });
+    // Probe chatCompletion succeeds — means API works, but agent returned empty
     chatCompletionMock.mockResolvedValueOnce({
-      content: "你好！",
+      content: "pong",
       usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
     });
 
@@ -1045,11 +1058,10 @@ describe("createStudioServer daemon lifecycle", () => {
       body: JSON.stringify({ instruction: "nihao", activeBookId: "demo-book" }),
     });
 
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({
-      response: "你好！",
-      session: { sessionId: "agent-session-1" },
-    });
+    // Probe succeeds → returns generic empty response error (not the probe content)
+    expect(response.status).toBe(502);
+    const body = await response.json() as { error: { code: string } };
+    expect(body.error.code).toBe("AGENT_EMPTY_RESPONSE");
   });
 
   it("returns the shared interaction session state", async () => {

@@ -66,4 +66,27 @@ describe("service-presets regression", () => {
       expect(SERVICE_TO_PI_PROVIDER.bailian).toBe("anthropic");
     });
   });
+
+  describe("modelsBaseUrl", () => {
+    it("百炼 uses modelsBaseUrl (OpenAI) for model listing, not baseUrl (Anthropic)", () => {
+      const preset = resolveServicePreset("bailian");
+      // modelsBaseUrl is the OpenAI-compatible endpoint that supports GET /models
+      expect(preset!.modelsBaseUrl).toContain("compatible-mode");
+      // baseUrl is the Anthropic endpoint for chat
+      expect(preset!.baseUrl).toContain("anthropic");
+      // They must differ
+      expect(preset!.modelsBaseUrl).not.toBe(preset!.baseUrl);
+    });
+
+    it("minimax has no modelsBaseUrl (uses knownModels instead)", () => {
+      const preset = resolveServicePreset("minimax");
+      expect(preset!.modelsBaseUrl).toBeUndefined();
+      expect(preset!.knownModels!.length).toBeGreaterThan(0);
+    });
+
+    it("openai has no modelsBaseUrl (baseUrl serves both)", () => {
+      const preset = resolveServicePreset("openai");
+      expect(preset!.modelsBaseUrl).toBeUndefined();
+    });
+  });
 });
