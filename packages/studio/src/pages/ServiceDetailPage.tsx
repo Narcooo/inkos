@@ -199,12 +199,24 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
         }),
       });
       if (trimmedKey) {
+        // Validate key via test endpoint (same as "测试连接" button)
         try {
-          const data = await fetchJson<{ models: ModelInfo[] }>(`/services/${encodeURIComponent(effectiveServiceId)}/models`);
-          const m = data.models ?? [];
-          if (m.length > 0) {
-            setStoreModels(effectiveServiceId, m);
-            setStatus({ state: "connected", models: m });
+          const result = await fetchJson<{ ok: boolean; models?: ModelInfo[]; error?: string }>(
+            `/services/${encodeURIComponent(effectiveServiceId)}/test`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                apiKey: trimmedKey,
+                apiFormat,
+                stream,
+                ...(isCustom ? { baseUrl: baseUrl.trim() } : {}),
+              }),
+            },
+          );
+          if (result.ok && result.models) {
+            setStoreModels(effectiveServiceId, result.models);
+            setStatus({ state: "connected", models: result.models });
           } else {
             setStatus({ state: "saved" });
           }
