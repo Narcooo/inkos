@@ -16,7 +16,7 @@ export const SERVICE_PRESETS: Record<string, ServicePreset> = {
   deepseek:    { api: "openai-completions",  baseUrl: "https://api.deepseek.com",                          label: "DeepSeek",        temperatureRange: [0, 2], defaultTemperature: 1.0, writingTemperature: 1.5, temperatureHint: "创意写作推荐 1.5" },
   moonshot:    { api: "openai-completions",  baseUrl: "https://api.moonshot.cn/v1",                        label: "Moonshot (Kimi)", temperatureRange: [0, 1], defaultTemperature: 0.3, writingTemperature: 1.0, temperatureHint: "kimi-k2.5 推荐 temperature=1.0" },
   minimax:     { api: "anthropic-messages",  baseUrl: "https://api.minimaxi.com/anthropic",                label: "MiniMax",         temperatureRange: [0, 2], defaultTemperature: 0.9, writingTemperature: 0.9, knownModels: ["MiniMax-M2.7", "MiniMax-M2.7-highspeed", "MiniMax-M2.5", "MiniMax-M2.5-highspeed", "MiniMax-M2.1", "MiniMax-M2.1-highspeed", "MiniMax-M2"] },
-  bailian:     { api: "openai-completions",  baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", label: "百炼 (通义千问)", temperatureRange: [0, 2], defaultTemperature: 0.7, writingTemperature: 1.0 },
+  bailian:     { api: "anthropic-messages",  baseUrl: "https://dashscope.aliyuncs.com/apps/anthropic",     label: "百炼 (通义千问)", temperatureRange: [0, 2], defaultTemperature: 0.7, writingTemperature: 1.0 },
   zhipu:       { api: "openai-completions",  baseUrl: "https://open.bigmodel.cn/api/paas/v4",              label: "智谱 GLM",        temperatureRange: [0, 1], defaultTemperature: 0.95, writingTemperature: 0.95 },
   siliconflow: { api: "openai-completions",  baseUrl: "https://api.siliconflow.cn/v1",                     label: "硅基流动" },
   ppio:        { api: "openai-completions",  baseUrl: "https://api.ppinfra.com/v3/openai",                 label: "PPIO" },
@@ -61,7 +61,7 @@ export const SERVICE_TO_PI_PROVIDER: Record<string, string> = {
   deepseek: "openai",         // OpenAI 兼容，pi-ai 无独立 provider
   moonshot: "openai",         // Moonshot API (api.moonshot.cn) 是 OpenAI 兼容，不是 kimi-coding (api.kimi.com)
   minimax: "anthropic",        // MiniMax 走 Anthropic 兼容端点，流式 tool calling 更稳定
-  bailian: "openai",          // 百炼走 OpenAI 兼容
+  bailian: "anthropic",        // 百炼走 Anthropic 兼容端点，OpenAI 兼容不支持 tools+stream
   zhipu: "zai",               // pi-ai 有 zai provider
   siliconflow: "openai",      // OpenAI 兼容
   ppio: "openai",             // OpenAI 兼容
