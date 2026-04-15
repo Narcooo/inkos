@@ -104,6 +104,12 @@ export {
   updateCreationDraft,
   appendInteractionMessage,
   appendInteractionEvent,
+  BookSessionSchema,
+  GlobalSessionSchema,
+  type BookSession,
+  type GlobalSession,
+  createBookSession,
+  appendBookSessionMessage,
 } from "./interaction/session.js";
 export {
   resolveProjectSessionPath,
@@ -111,7 +117,10 @@ export {
   loadProjectSession,
   persistProjectSession,
   resolveSessionActiveBook,
+  loadGlobalSession,
+  persistGlobalSession,
 } from "./interaction/project-session-store.js";
+export { loadBookSession, persistBookSession, listBookSessions, findOrCreateBookSession } from "./interaction/book-session-store.js";
 export { routeInteractionRequest } from "./interaction/request-router.js";
 export {
   routeNaturalLanguageIntent,

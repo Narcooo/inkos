@@ -44,12 +44,24 @@ export const BookCreationDraftSchema = z.object({
 
 export type BookCreationDraft = z.infer<typeof BookCreationDraftSchema>;
 
+export const DraftRoundSchema = z.object({
+  roundId: z.number().int().min(1),
+  userMessage: z.string(),
+  assistantRaw: z.string(),
+  fieldsUpdated: z.array(z.string()).default([]),
+  summary: z.string().default(""),
+  timestamp: z.number().int().nonnegative(),
+});
+
+export type DraftRound = z.infer<typeof DraftRoundSchema>;
+
 export const InteractionSessionSchema = z.object({
   sessionId: z.string().min(1),
   projectRoot: z.string().min(1),
   activeBookId: z.string().min(1).optional(),
   activeChapterNumber: z.number().int().min(1).optional(),
   creationDraft: BookCreationDraftSchema.optional(),
+  draftRounds: z.array(DraftRoundSchema).default([]),
   automationMode: AutomationModeSchema.default("semi"),
   messages: z.array(InteractionMessageSchema).default([]),
   events: z.array(InteractionEventSchema).default([]),
@@ -58,6 +70,55 @@ export const InteractionSessionSchema = z.object({
 });
 
 export type InteractionSession = z.infer<typeof InteractionSessionSchema>;
+
+// -- Per-book session --
+
+export const BookSessionSchema = z.object({
+  sessionId: z.string().min(1),
+  bookId: z.string().nullable(),
+  messages: z.array(InteractionMessageSchema).default([]),
+  creationDraft: BookCreationDraftSchema.optional(),
+  draftRounds: z.array(DraftRoundSchema).default([]),
+  events: z.array(InteractionEventSchema).default([]),
+  currentExecution: ExecutionStateSchema.optional(),
+  createdAt: z.number().int().nonnegative(),
+  updatedAt: z.number().int().nonnegative(),
+});
+
+export type BookSession = z.infer<typeof BookSessionSchema>;
+
+// -- Global session (simplified) --
+
+export const GlobalSessionSchema = z.object({
+  activeBookId: z.string().min(1).optional(),
+  automationMode: AutomationModeSchema.default("semi"),
+});
+
+export type GlobalSession = z.infer<typeof GlobalSessionSchema>;
+
+export function createBookSession(bookId: string | null): BookSession {
+  const now = Date.now();
+  return {
+    sessionId: `${now}-${Math.random().toString(36).slice(2, 8)}`,
+    bookId,
+    messages: [],
+    draftRounds: [],
+    events: [],
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+export function appendBookSessionMessage(
+  session: BookSession,
+  message: InteractionMessage,
+): BookSession {
+  return {
+    ...session,
+    messages: [...session.messages, message].sort((a, b) => a.timestamp - b.timestamp),
+    updatedAt: Date.now(),
+  };
+}
 
 export function bindActiveBook(
   session: InteractionSession,
@@ -100,6 +161,7 @@ export function clearCreationDraft(session: InteractionSession): InteractionSess
   return {
     ...session,
     creationDraft: undefined,
+    draftRounds: [],
   };
 }
 
