@@ -107,7 +107,6 @@ export const initCommand = new Command("init")
             "",
             "# Anthropic example:",
             "# INKOS_LLM_PROVIDER=anthropic",
-            "# INKOS_LLM_PROVIDER=anthropic",
             "# INKOS_LLM_BASE_URL=",
             "# INKOS_LLM_MODEL=",
           ].join("\n"),
