@@ -155,6 +155,13 @@ function ArtifactView({ bookId }: { readonly bookId: string }) {
 
 function PanelView({ bookId, theme: _theme, t, sse }: BookSidebarProps) {
   const isZh = t("nav.connected") === "\u5DF2\u8FDE\u63A5";
+  const [bookTitle, setBookTitle] = useState<string>("");
+
+  useEffect(() => {
+    fetchJson<{ book: { title?: string } }>(`/books/${bookId}`)
+      .then((data) => setBookTitle(data.book?.title ?? bookId))
+      .catch(() => setBookTitle(bookId));
+  }, [bookId]);
 
   // Show writing indicator only during pipeline operations (write/audit/revise)
   const [activeOp, setActiveOp] = useState<string | null>(null);
@@ -184,6 +191,9 @@ function PanelView({ bookId, theme: _theme, t, sse }: BookSidebarProps) {
 
   return (
     <div className="flex flex-col gap-2 p-3">
+      <div className="px-1 pb-1">
+        <h2 className="font-serif text-base font-medium truncate">{bookTitle}</h2>
+      </div>
       {activeOp && (
         <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-primary/5 border border-primary/10">
           <Loader2 size={12} className="text-primary animate-spin shrink-0" />
