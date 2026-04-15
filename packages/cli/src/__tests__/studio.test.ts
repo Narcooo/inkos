@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const accessMock = vi.fn();
 const spawnMock = vi.fn(() => ({
@@ -43,6 +44,30 @@ describe("studio command", () => {
     expect(spawnMock).toHaveBeenCalledWith(
       "npx",
       ["tsx", tsEntry, "/project"],
+      expect.objectContaining({
+        cwd: "/project",
+        stdio: "inherit",
+        env: expect.objectContaining({ INKOS_STUDIO_PORT: "9001" }),
+      }),
+    );
+  });
+
+  it("launches TypeScript sources through node --import when the local tsx loader is available", async () => {
+    const tsEntry = join("/project", "packages", "studio", "src", "api", "index.ts");
+    const tsxLoader = join("/project", "packages", "studio", "node_modules", "tsx", "dist", "loader.mjs");
+    accessMock.mockImplementation(async (path: string) => {
+      if (path === tsEntry || path === tsxLoader) {
+        return;
+      }
+      throw new Error(`missing: ${path}`);
+    });
+
+    const { createStudioCommand } = await import("../commands/studio.js");
+    await createStudioCommand().parseAsync(["node", "studio", "--port", "9001"]);
+
+    expect(spawnMock).toHaveBeenCalledWith(
+      "node",
+      ["--import", pathToFileURL(tsxLoader).href, tsEntry, "/project"],
       expect.objectContaining({
         cwd: "/project",
         stdio: "inherit",

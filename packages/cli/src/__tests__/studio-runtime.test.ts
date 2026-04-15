@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const accessMock = vi.fn();
 const testDir = dirname(fileURLToPath(import.meta.url));
@@ -52,7 +52,29 @@ describe("studio runtime resolution", () => {
     expect(launch).toEqual({
       studioEntry: tsSourceEntry,
       command: "node",
-      args: ["--import", tsxLoader, tsSourceEntry, "/repo/test-project"],
+      args: ["--import", pathToFileURL(tsxLoader).href, tsSourceEntry, "/repo/test-project"],
+    });
+  });
+
+  it("converts Windows tsx loader paths into file URLs", async () => {
+    const windowsRoot = "C:\\repo\\test-project";
+    const windowsSourceEntry = "C:\\repo\\packages\\studio\\src\\api\\index.ts";
+    const windowsTsxLoader = "C:\\repo\\packages\\studio\\node_modules\\tsx\\dist\\loader.mjs";
+
+    accessMock.mockImplementation(async (path: string) => {
+      if (path === windowsSourceEntry || path === windowsTsxLoader) {
+        return;
+      }
+      throw new Error(`missing: ${path}`);
+    });
+
+    const { resolveStudioLaunch } = await import("../commands/studio.js");
+    const launch = await resolveStudioLaunch(windowsRoot);
+
+    expect(launch).toEqual({
+      studioEntry: windowsSourceEntry,
+      command: "node",
+      args: ["--import", pathToFileURL(windowsTsxLoader).href, windowsSourceEntry, windowsRoot],
     });
   });
 

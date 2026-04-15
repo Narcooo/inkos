@@ -3,7 +3,7 @@ import { findProjectRoot, log, logError } from "../utils.js";
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { access } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 export interface StudioLaunchSpec {
   readonly studioEntry: string;
@@ -34,6 +34,10 @@ async function firstAccessiblePath(paths: readonly string[]): Promise<string | u
 
 const cliPackageRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
+function toNodeImportSpecifier(modulePath: string): string {
+  return pathToFileURL(modulePath).href;
+}
+
 export function resolveBrowserLaunch(
   platform: NodeJS.Platform,
   url: string,
@@ -62,7 +66,7 @@ export async function resolveStudioLaunch(root: string): Promise<StudioLaunchSpe
       return {
         studioEntry: sourceEntry,
         command: "node",
-        args: ["--import", localTsxLoader, sourceEntry, root],
+        args: ["--import", toNodeImportSpecifier(localTsxLoader), sourceEntry, root],
       };
     }
 
