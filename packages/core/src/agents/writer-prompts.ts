@@ -1,9 +1,10 @@
 import type { BookConfig, FanficMode } from "../models/book.js";
 import type { GenreProfile } from "../models/genre-profile.js";
 import type { BookRules } from "../models/book-rules.js";
+import type { LengthSpec } from "../models/length-governance.js";
 import { buildFanficCanonSection, buildCharacterVoiceProfiles, buildFanficModeInstructions } from "./fanfic-prompt-sections.js";
 import { buildEnglishCoreRules, buildEnglishAntiAIRules, buildEnglishCharacterMethod, buildEnglishPreWriteChecklist, buildEnglishGenreIntro } from "./en-prompt-sections.js";
-import { getChapterLengthTarget, formatChapterLengthTarget, type ChapterLengthTarget } from "../utils/chapter-length.js";
+import { buildLengthSpec } from "../utils/length-metrics.js";
 
 export interface FanficContext {
   readonly fanficCanon: string;
@@ -27,21 +28,25 @@ export function buildWriterSystemPrompt(
   mode: "full" | "creative" = "full",
   fanficContext?: FanficContext,
   languageOverride?: "zh" | "en",
-  targetWordCount?: number,
+  inputProfile: "legacy" | "governed" = "legacy",
+  lengthSpec?: LengthSpec,
 ): string {
   const isEnglish = (languageOverride ?? genreProfile.language) === "en";
-  const chapterLengthTarget = getChapterLengthTarget(targetWordCount ?? book.chapterWordCount);
+  const governed = inputProfile === "governed";
+  const resolvedLengthSpec = lengthSpec ?? buildLengthSpec(book.chapterWordCount, isEnglish ? "en" : "zh");
 
   const outputSection = mode === "creative"
-    ? buildCreativeOutputFormat(book, genreProfile, chapterLengthTarget)
-    : buildOutputFormat(book, genreProfile, chapterLengthTarget);
+    ? buildCreativeOutputFormat(book, genreProfile, resolvedLengthSpec)
+    : buildOutputFormat(book, genreProfile, resolvedLengthSpec);
 
   const sections = isEnglish
     ? [
-        buildEnglishGenreIntro(book, genreProfile, chapterLengthTarget),
-        buildEnglishCoreRules(chapterLengthTarget),
-        buildEnglishAntiAIRules(),
-        buildEnglishCharacterMethod(),
+        buildEnglishGenreIntro(book, genreProfile),
+        buildEnglishCoreRules(book),
+        buildGovernedInputContract("en", governed),
+        buildLengthGuidance(resolvedLengthSpec, "en"),
+        !governed ? buildEnglishAntiAIRules() : "",
+        !governed ? buildEnglishCharacterMethod() : "",
         buildGenreRules(genreProfile, genreBody),
         buildProtagonistRules(bookRules),
         buildBookRulesBody(bookRulesBody),
@@ -50,19 +55,21 @@ export function buildWriterSystemPrompt(
         fanficContext ? buildFanficCanonSection(fanficContext.fanficCanon, fanficContext.fanficMode) : "",
         fanficContext ? buildCharacterVoiceProfiles(fanficContext.fanficCanon) : "",
         fanficContext ? buildFanficModeInstructions(fanficContext.fanficMode, fanficContext.allowedDeviations) : "",
-        buildEnglishPreWriteChecklist(genreProfile, chapterLengthTarget),
+        !governed ? buildEnglishPreWriteChecklist(book, genreProfile) : "",
         outputSection,
       ]
     : [
         buildGenreIntro(book, genreProfile),
-        buildCoreRules(chapterLengthTarget),
-        buildAntiAIExamples(),
-        buildCharacterPsychologyMethod(),
-        buildSupportingCharacterMethod(),
-        buildReaderPsychologyMethod(),
-        buildEmotionalPacingMethod(),
-        buildImmersionTechniques(),
-        buildGoldenChaptersRules(chapterNumber),
+        buildCoreRules(resolvedLengthSpec),
+        buildGovernedInputContract("zh", governed),
+        buildLengthGuidance(resolvedLengthSpec, "zh"),
+        !governed ? buildAntiAIExamples() : "",
+        !governed ? buildCharacterPsychologyMethod() : "",
+        !governed ? buildSupportingCharacterMethod() : "",
+        !governed ? buildReaderPsychologyMethod() : "",
+        !governed ? buildEmotionalPacingMethod() : "",
+        !governed ? buildImmersionTechniques() : "",
+        !governed ? buildGoldenChaptersRules(chapterNumber) : "",
         bookRules?.enableFullCastTracking ? buildFullCastTracking() : "",
         buildGenreRules(genreProfile, genreBody),
         buildProtagonistRules(bookRules),
@@ -72,7 +79,7 @@ export function buildWriterSystemPrompt(
         fanficContext ? buildFanficCanonSection(fanficContext.fanficCanon, fanficContext.fanficMode) : "",
         fanficContext ? buildCharacterVoiceProfiles(fanficContext.fanficCanon) : "",
         fanficContext ? buildFanficModeInstructions(fanficContext.fanficMode, fanficContext.allowedDeviations) : "",
-        buildPreWriteChecklist(book, genreProfile),
+        !governed ? buildPreWriteChecklist(book, genreProfile) : "",
         outputSection,
       ];
 
@@ -87,15 +94,61 @@ function buildGenreIntro(book: BookConfig, gp: GenreProfile): string {
   return `你是一位专业的${gp.name}网络小说作家。你为${book.platform}平台写作。`;
 }
 
+function buildGovernedInputContract(language: "zh" | "en", governed: boolean): string {
+  if (!governed) return "";
+
+  if (language === "en") {
+    return `## Input Governance Contract
+
+- Chapter-specific steering comes from the provided chapter intent and composed context package.
+- The outline is the default plan, not unconditional global supremacy.
+- When the runtime rule stack records an active L4 -> L3 override, follow the current task over local planning.
+- Keep hard guardrails compact: canon, continuity facts, and explicit prohibitions still win.
+- If an English Variance Brief is provided, obey it: avoid the listed phrase/opening/ending patterns and satisfy the scene obligation.
+- If Hook Debt Briefs are provided, they contain the ORIGINAL SEED TEXT from the chapter where each hook was planted. Use this text to write a continuation or payoff that feels connected to what the reader already saw — not a vague mention, but a scene that builds on the specific promise.
+- When the explicit hook agenda names an eligible resolve target, land a concrete payoff beat that answers the reader's original question from the seed chapter.
+- When stale debt is present, do not open sibling hooks casually; clear pressure from old promises before minting fresh debt.
+- In multi-character scenes, include at least one resistance-bearing exchange instead of reducing the beat to summary or explanation.`;
+  }
+
+  return `## 输入治理契约
+
+- 本章具体写什么，以提供给你的 chapter intent 和 composed context package 为准。
+- 卷纲是默认规划，不是全局最高规则。
+- 当 runtime rule stack 明确记录了 L4 -> L3 的 active override 时，优先执行当前任务意图，再局部调整规划层。
+- 真正不能突破的只有硬护栏：世界设定、连续性事实、显式禁令。
+- 如果提供了 English Variance Brief，必须主动避开其中列出的高频短语、重复开头和重复结尾模式，并完成 scene obligation。
+- 如果提供了 Hook Debt 简报，里面包含每个伏笔种下时的**原始文本片段**。用这些原文来写延续或兑现场景——不是模糊地提一嘴，而是接着读者已经看到的具体承诺来写。
+- 如果显式 hook agenda 里出现了可回收目标，本章必须写出具体兑现片段，回答种子章节中读者的原始疑问。
+- 如果存在 stale debt，先消化旧承诺的压力，再决定是否开新坑；同类 sibling hook 不得随手再开。
+- 多角色场景里，至少给出一轮带阻力的直接交锋，不要把人物关系写成纯解释或纯总结。`;
+}
+
+function buildLengthGuidance(lengthSpec: LengthSpec, language: "zh" | "en"): string {
+  if (language === "en") {
+    return `## Length Guidance
+
+- Target length: ${lengthSpec.target} words
+- Acceptable range: ${lengthSpec.softMin}-${lengthSpec.softMax} words
+- Hard range: ${lengthSpec.hardMin}-${lengthSpec.hardMax} words`;
+  }
+
+  return `## 字数治理
+
+- 目标字数：${lengthSpec.target}字
+- 允许区间：${lengthSpec.softMin}-${lengthSpec.softMax}字
+- 硬区间：${lengthSpec.hardMin}-${lengthSpec.hardMax}字`;
+}
+
 // ---------------------------------------------------------------------------
 // Core rules (~25 universal rules)
 // ---------------------------------------------------------------------------
 
-function buildCoreRules(target: ChapterLengthTarget): string {
+function buildCoreRules(lengthSpec: LengthSpec): string {
   return `## 核心规则
 
 1. 以简体中文工作，句子长短交替，段落适合手机阅读（3-5行/段）
-2. 每章${formatChapterLengthTarget(target, "zh")}
+2. 目标字数：${lengthSpec.target}字，允许区间：${lengthSpec.softMin}-${lengthSpec.softMax}字
 3. 伏笔前后呼应，不留悬空线；所有埋下的伏笔都必须在后续收回
 4. 只读必要上下文，不机械重复已有内容
 
@@ -112,6 +165,7 @@ function buildCoreRules(target: ChapterLengthTarget): string {
 - Show, don't tell：用细节堆砌真实，用行动证明强大；角色的野心和价值观内化于行为，不通过口号喊出来
 - 五感代入法：场景描写中加入1-2种五感细节（视觉、听觉、嗅觉、触觉），增强画面感
 - 钩子设计：每章结尾设置悬念/伏笔/钩子，勾住读者继续阅读
+- 对话驱动：有角色互动的场景中，优先用对话传递冲突和信息，不要用大段叙述替代角色交锋。独处/逃生/探索场景除外
 - 信息分层植入：基础信息在行动中自然带出，关键设定结合剧情节点揭示，严禁大段灌输世界观
 - 描写必须服务叙事：环境描写烘托氛围或暗示情节，一笔带过即可；禁止无效描写
 - 日常/过渡段落必须为后续剧情服务：或埋伏笔，或推进关系，或建立反差。纯填充式日常是流水账的温床
@@ -465,7 +519,7 @@ function buildPreWriteChecklist(book: BookConfig, gp: GenreProfile): string {
 // Creative-only output format (no settlement blocks)
 // ---------------------------------------------------------------------------
 
-function buildCreativeOutputFormat(book: BookConfig, gp: GenreProfile, target: ChapterLengthTarget): string {
+function buildCreativeOutputFormat(book: BookConfig, gp: GenreProfile, lengthSpec: LengthSpec): string {
   const resourceRow = gp.numericalSystem
     ? "| 当前资源总量 | X | 与账本一致 |\n| 本章预计增量 | +X（来源） | 无增量写+0 |"
     : "";
@@ -477,7 +531,7 @@ function buildCreativeOutputFormat(book: BookConfig, gp: GenreProfile, target: C
 | 大纲锚定 | 当前卷名/阶段 + 本章应推进的具体节点 | 严禁跳过节点或提前消耗后续剧情 |
 | 上下文范围 | 第X章至第Y章 / 状态卡 / 设定文件 | |
 | 当前锚点 | 地点 / 对手 / 收益目标 | 锚点必须具体 |
-${resourceRow}| 待回收伏笔 | Hook-A / Hook-B | 与伏笔池一致 |
+${resourceRow}| 待回收伏笔 | 用真实 hook_id 填写（无则写 none） | 与伏笔池一致 |
 | 本章冲突 | 一句话概括 | |
 | 章节类型 | ${gp.chapterTypes.join("/")} | |
 | 风险扫描 | OOC/信息越界/设定冲突${gp.powerScaling ? "/战力崩坏" : ""}/节奏/词汇疲劳 | |`;
@@ -487,10 +541,10 @@ ${resourceRow}| 待回收伏笔 | Hook-A / Hook-B | 与伏笔池一致 |
 ${preWriteTable}
 
 === CHAPTER_TITLE ===
-(章节标题，不含"第X章")
+(章节标题，不含"第X章"。标题必须与已有章节标题不同，不要重复使用相同或相似的标题；若提供了 recent title history 或高频标题词，必须主动避开重复词根和高频意象)
 
 === CHAPTER_CONTENT ===
-(正文内容，${formatChapterLengthTarget(target, "zh")})
+(正文内容，目标${lengthSpec.target}字，允许区间${lengthSpec.softMin}-${lengthSpec.softMax}字)
 
 【重要】本次只需输出以上三个区块（PRE_WRITE_CHECK、CHAPTER_TITLE、CHAPTER_CONTENT）。
 状态卡、伏笔池、摘要等追踪文件将由后续结算阶段处理，请勿输出。`;
@@ -500,7 +554,7 @@ ${preWriteTable}
 // Output format
 // ---------------------------------------------------------------------------
 
-function buildOutputFormat(book: BookConfig, gp: GenreProfile, target: ChapterLengthTarget): string {
+function buildOutputFormat(book: BookConfig, gp: GenreProfile, lengthSpec: LengthSpec): string {
   const resourceRow = gp.numericalSystem
     ? "| 当前资源总量 | X | 与账本一致 |\n| 本章预计增量 | +X（来源） | 无增量写+0 |"
     : "";
@@ -512,7 +566,7 @@ function buildOutputFormat(book: BookConfig, gp: GenreProfile, target: ChapterLe
 | 大纲锚定 | 当前卷名/阶段 + 本章应推进的具体节点 | 严禁跳过节点或提前消耗后续剧情 |
 | 上下文范围 | 第X章至第Y章 / 状态卡 / 设定文件 | |
 | 当前锚点 | 地点 / 对手 / 收益目标 | 锚点必须具体 |
-${resourceRow}| 待回收伏笔 | Hook-A / Hook-B | 与伏笔池一致 |
+${resourceRow}| 待回收伏笔 | 用真实 hook_id 填写（无则写 none） | 与伏笔池一致 |
 | 本章冲突 | 一句话概括 | |
 | 章节类型 | ${gp.chapterTypes.join("/")} | |
 | 风险扫描 | OOC/信息越界/设定冲突${gp.powerScaling ? "/战力崩坏" : ""}/节奏/词汇疲劳 | |`;
@@ -540,10 +594,10 @@ ${resourceRow}| 待回收伏笔 | Hook-A / Hook-B | 与伏笔池一致 |
 ${preWriteTable}
 
 === CHAPTER_TITLE ===
-(章节标题，不含"第X章")
+(章节标题，不含"第X章"。标题必须与已有章节标题不同，不要重复使用相同或相似的标题；若提供了 recent title history 或高频标题词，必须主动避开重复词根和高频意象)
 
 === CHAPTER_CONTENT ===
-(正文内容，${formatChapterLengthTarget(target, "zh")})
+(正文内容，目标${lengthSpec.target}字，允许区间${lengthSpec.softMin}-${lengthSpec.softMax}字)
 
 ${postSettlement}
 
@@ -570,17 +624,17 @@ ${updatedLedger}
 |------|------|----------|----------|------------|----------|
 
 === UPDATED_CHARACTER_MATRIX ===
-(更新后的角色交互矩阵，分三个子表)
+(更新后的角色矩阵，每个角色一个 ## 块)
 
-### 角色档案
-| 角色 | 核心标签 | 反差细节 | 说话风格 | 性格底色 | 与主角关系 | 核心动机 | 当前目标 |
-|------|----------|----------|----------|----------|------------|----------|----------|
-
-### 相遇记录
-| 角色A | 角色B | 首次相遇章 | 最近交互章 | 关系性质 | 关系变化 |
-|-------|-------|------------|------------|----------|----------|
-
-### 信息边界
-| 角色 | 已知信息 | 未知信息 | 信息来源章 |
-|------|----------|----------|------------|`;
+## 角色名
+- **定位**: 主角 / 反派 / 盟友 / 配角 / 提及
+- **标签**: 核心身份标签
+- **反差**: 打破刻板印象的独特细节
+- **说话**: 说话风格概述
+- **性格**: 性格底色
+- **动机**: 根本驱动力
+- **当前**: 本章即时目标
+- **关系**: 某角色(关系性质/Ch#) | ...
+- **已知**: 该角色已知的信息（仅限亲历或被告知）
+- **未知**: 该角色不知道的信息`;
 }

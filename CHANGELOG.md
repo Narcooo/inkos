@@ -1,5 +1,337 @@
 # Changelog
 
+## v1.3.5
+
+### Improvements
+
+- **Session / Sidebar 体验重构**：Studio 引入 per-session runtime，`pendingBookArgs` 下沉到 session 级，session SSE 监听从 `App.tsx` 抽离；sidebar 支持按书折叠、草稿会话延迟展示、会话列表不再点击重排
+- **会话标题简化**：不再走 LLM 生成标题；第一条用户消息直接成为 session title，并对历史 session 做 lazy migration
+- **Draft Session 工作流**：新建会话延迟到第一条消息才持久化，未发送消息的草稿会话不会落盘，也不会在侧边栏出现
+- **Session 列表性能提升**：`listBookSessions` 改为并发读取并返回轻量 summary，避免侧边栏一次读取大量完整 session 文件
+
+### Bug Fixes
+
+- **模型列表缓存修复**：`/services/:service/models` 的缓存 key 现在包含 `resolvedBaseUrl`，custom 服务切换端点后不再错误复用旧模型列表
+- **会话删除确认弹窗定位**：`ConfirmDialog` 改走 portal，避免被 sidebar 的 containing block 锁在侧栏内
+- **测试清理**：移除 `server.test.ts` 里已废弃的 `updateSessionTitle` mock 残留
+
+## v1.3.4
+
+### Bug Fixes
+
+- **依赖版本钉死**：固定 `@mariozechner/pi-ai` / `pi-agent-core` 到 `0.67.1`，降低 npm 镜像滞后导致全局安装失败的概率
+- **服务探测与模型列表提速**：`GET /models` 回到快路径，`knownModels` 服务不再走慢 probe；`/models` 不可用时会返回服务自己的 `knownModels`
+- **服务验证更可靠**：`/models` 返回 `401/403` 时直接短路；服务详情页保存前先走 `/test` 验 key，页面加载时也会用 `/test` 校验真实连接状态
+- **完整模型列表返回**：服务测试接口不再默认裁成 50 个模型
+
+### Improvements
+
+- **agent 通用文件工具面恢复**：`edit` 回归正常工具面，并新增 `write` 工具用于创建/覆盖写文件，路径仍限制在 `books/` 下
+- **`sub_agent` 最小控制面扩展**：新增 `writer.chapterWordCount`、`reviser.mode`、`exporter.format`、`exporter.approvedOnly`
+- **修订入口统一**：book-mode 下整章修订收敛到 `sub_agent(reviser)`，减少模型在 `revise_chapter` 与 `sub_agent` 之间摇摆
+
+## v1.3.3
+
+### Bug Fixes
+
+- **聊天建书标题显式化**：agent 建书现在要求显式传入 `title`，`initBook` / `book.json` 直接吃结构化标题，不再允许空标题初始化
+- **真实 EPUB 导出统一**：CLI、Studio 下载、共享交互层与 agent exporter 统一复用同一套真实 EPUB 实现，不再出现一条真 EPUB、一条假 HTML、一条未实现的分裂状态
+- **高风险写作动作收口**：book-mode agent 对改设定、改名、局部修文、章节重写/精修优先使用 deterministic 工具，不再默认退回脆弱的通用 `edit`
+
+### Improvements
+
+- **TUI 普通聊天对齐 agent/session**：TUI 的普通输入改走本地 agent session 形式，保留少量本地控制命令 fast-path，进一步向 Studio 的交互模型靠拢
+- **写作控制面更清晰**：agent prompt 明确区分重操作子代理与高风险 deterministic 写作工具，减少“模型理解了，但工具接不住”这类断层
+
+## v1.3.2
+
+### Bug Fixes
+
+- **恢复 `architect` foundation 输出预算**：重新固定 `maxTokens: 16384`，降低本地模型与 LM Studio 在建书阶段因输出截断导致 foundation 缺段的概率
+- **恢复旧的 OpenAI-compatible 兼容路径**：`provider=openai + 自定义兼容 baseUrl` 不再被错误送入更激进的 `custom fetch` 路径，Google/Gemma 一类旧兼容场景回归
+- **自定义 Anthropic-compatible 原生 transport**：`service=custom` 且 `provider=anthropic` 也改走原生请求链，不再强绑 SDK
+- **Windows Studio 启动修复**：`inkos studio` 在 Windows 下不再因绝对路径 loader 被当成非法 ESM URL 而崩溃
+- **Bootstrap 项目回退到 env 配置**：空目录 auto-init 后的 Studio 项目，在未配置服务时会回退到全局 `.inkos/.env`，`book create` 不再先死在缺 key
+- **统一服务路由真相**：`config-loader`、`service-resolver`、Studio 服务探测、`doctor` 统一从同一份 `service-presets` 读取 provider/api/chatBaseUrl/modelsBaseUrl，减少同一服务在不同链路上各猜一遍的问题
+
+### 改进
+
+- **空目录直接启动**：`inkos` / `inkos studio` 现在会自动初始化最小项目骨架并启动 Studio，不再要求显式先跑 `init`
+- **Studio 自动探测 transport**：服务测试会自动尝试候选模型、`chat/responses` 与流式开关组合，尽量自动匹配可用配置
+- **`doctor` 增强**：不再只死盯当前单一模型/单一组合，支持多 model、多协议、多流式探测
+- **建书聊天 fresh session**：再次进入“创建书籍”时会清空旧对话，不再沿用上一次建书聊天记录
+- **聊天模型选择器搜索**：Studio model picker 支持搜索过滤
+- **侧栏刷新更克制**：读操作不再触发无意义 sidebar 刷新，只在写操作后刷新
+- **服务保存流程更真实**：保存 API Key 后会走真实 `/test` 探测，而不是只靠 `/models`
+
+## v1.3.1
+
+### Bug Fixes
+
+- **MiniMax baseUrl 修正**：从 `api.minimax.chat` 更正为 `api.minimaxi.com`（当前 OpenAI 兼容端点）
+- **多服务 baseUrl 隔离**：agent 对话中选择非默认服务时，不再泄漏默认服务的 baseUrl（如 moonshot URL 被错误用于 minimax 请求）
+- **resolveServiceModel 始终使用 preset**：不再直接使用 pi-ai 内置 model 对象（可能指向国际端点或错误的 API 格式），始终用 preset 的 baseUrl 和 api 格式构造 model
+- **agent 建书后侧边栏刷新**：通过 agent 对话建书后，侧边栏书籍列表自动刷新（之前只有 POST /books/create 才广播 `book:created`）
+- **`pnpm dev` 并行启动**：加 `--parallel`，解决 core tsc --watch 阻塞 studio 启动的问题
+
+### 改进
+
+- **MiniMax knownModels**：MiniMax 不支持 `GET /models`，改为硬编码 7 个模型（M2.7/M2.5/M2.1 及其 highspeed 版本 + M2）
+- **测试连接不再发消息**：移除 chat completion 测试，只通过 `/models` + fallback 验证，秒回
+- **custom 服务 URL 自动补 /v1**：`https://example.com`、`https://example.com/`、`https://example.com/v1` 三种写法等价
+- **agent 系统提示词**：禁止 emoji、结构化内容用列表/表格、章节索引管理指引
+
+### 测试
+
+- 新增回归测试：service-presets（MiniMax baseUrl + knownModels）、service-resolver（preset 覆盖 pi-ai）、normalizeBaseUrl
+
+## v1.3.0
+
+### Release Focus
+
+Studio 2.0 正式发布。`inkos` 现在默认直接启动 Studio，本地 Web 工作台成为主入口；TUI 保留为 `inkos tui`。
+
+### 新功能
+
+- **Studio 2.0 默认入口**：`inkos` 直接启动 Studio，首页、服务商管理、写作工作台统一为新的主交互入口
+- **自定义 OpenAI-compatible 服务**：Studio 现支持自定义 `baseUrl`、协议类型（`chat` / `responses`）与流式开关，兼容更多中转站和聚合网关
+- **配置来源切换**：Studio 新增 `.env` 与 Studio 配置的显式切换，不再只能被目录里的 `INKOS_LLM_*` 被动覆盖
+- **原生 custom transport**：对 `custom` 服务新增原生 fetch 请求链，减少对 SDK 路径的单点依赖，提升兼容性
+
+### 改进
+
+- **服务测试更真实**：服务页测试不再只测 `/models`，还会执行最小生成探测，避免“测试连接通过但聊天失败”的假阳性
+- **服务保存流程优化**：保存成功后自动返回服务商管理页，顶部首页和返回入口更醒目
+- **密钥回填**：服务详情页会重新加载已保存的 key，避免重新打开后误以为 key 丢失
+- **错误可见性增强**：Studio 聊天不再用 `Acknowledged.` 掩盖空回复，会直接显示真实上游错误
+
+### Bug Fixes
+
+- 修复 `llm.services + defaultModel + secrets` 与运行时加载契约不一致的问题
+- 修复 `custom:*` 服务在测试连接、模型列表与 `/api/v1/agent` 之间链路不一致的问题
+- 修复 `inkos` 启动 Studio 时因未设置默认模型而直接抛出 `llm.model` 校验错误
+- 修复自定义服务非流式 / SSE 返回被误当作普通 JSON 解析的问题
+
+## v1.2.0
+
+### Release Focus
+
+统一交互内核——TUI、Studio、`inkos interact`、OpenClaw Skill 共享同一套自然语言理解和执行运行时。
+
+### 新功能
+
+- **共享交互运行时**（`packages/core/src/interaction/`）：自然语言路由器（15+ intent）、会话管理、编辑事务控制器、事件追踪、阶段遥测
+- **Ink TUI 仪表盘**：`inkos` 直接进入全屏 Ink + React 仪表盘，对话式创作，slash 命令 Tab 补全，主题动效（writing/auditing/revising/planning 各有独立动画），i18n 中英双语
+- **Studio 助手面板**：右侧 AI 助手接入共享交互内核，自然语言操作书籍（写章、改名、审计、导出），SSE 实时状态推送，执行阶段图标
+- **对话式建书**：通过 Studio 助手自然语言对话逐步构思书籍概念、设定、目标章数，草稿就绪后一键创建
+- **全书实体改名**：`把林烬改成张三` / `/rename 林烬 => 张三`，全量扫描章节 + 真相文件一次替换
+- **单章文本替换**：`/replace 5 旧文本 => 新文本`，精确修补指定章节
+- **`inkos interact --json`**：共享交互 JSON 入口，返回 request / response / session / events，供 OpenClaw 和外部 Agent 直接调用
+- **Thinking 模型温度夹制**（PR #174）：kimi-k2.5 等 thinking 模型自动 temperature=1，兼容 per-call 温度调参，每模型只 warn 一次
+
+### 改进
+
+- Studio ChatBar 去重：`executeCommand()` 提取公共逻辑，消除 handleSubmit/handleQuickCommand 80 行重复
+- Studio ChatBar SSE effect 用 `loadingRef` 替代 stale closure
+- Studio 下拉菜单 z-index 修复：移除 paper-sheet 的 transform（消除 stacking context），菜单打开时 card 提升 z-50
+- Studio agent 响应修复：使用 `result.responseText` 而非 `session.messages.at(-1)`
+- TUI 主题扩展：语义色（成功/错误/活跃/空闲）+ 角色色（用户/助手/系统）
+- TUI 状态徽标：✓ 完成 / ✗ 失败 / ✎ 写作 / ◇ 规划 / ◈ 等待决策
+- TUI i18n 修复：`stageLabels` 移入 TuiCopy，消除 hardcoded 状态字符串
+- Studio 死代码清理（PR #176）：移除未使用的 shadcn 组件、`dotenv`、`shadcn`、`tw-animate-css`、`class-variance-authority`，-2800 行
+
+### Bug Fixes
+
+- Studio ChatBar 助手回复丢失：session 历史覆盖导致 response 被静默丢弃
+- Studio BookMenu 下拉被下层 card 遮挡：fadeIn 动画的 transform 创建 stacking context
+- Studio GenreManager 用 `window.confirm` 替换为 `ConfirmDialog`
+- Studio BookDetail Nav `toTruth` 类型断言 hack 修复
+- Studio ChapterReader/Dashboard approve/reject 缺失错误处理
+- ChatBar curly quote 编码导致 esbuild 解析失败
+
+---
+
+## v1.1.1
+
+### Release Focus
+
+- 回退到稳定的 `v6 + bugfix` 主线，替换掉不稳定的 `v8` 最新版本
+
+### Bug Fixes
+
+- **#151** — Architect section 解析支持 `book-rules` / `Book Rules` / 全角冒号等标题漂移，不再因 `book_rules` 区块轻微变形而创建失败
+- **#152** — State validator 改为 fail-closed：空响应直接报错，并恢复多行 JSON 平衡提取，避免 `passed` 字段丢失时被误判
+- **#154** — 后写规则增加正文章节号指称检测，拦截 `第33章` / `Chapter 33` 一类叙述
+- **#155** — `repair-state` 支持对最新 `state-degraded` 章节进行同章重算，不再报 `delta chapter N goes backwards`
+
+### Improvements
+
+- `ai-tells` / `sensitive-words` 增加中英双语规则路径，英文书修订链不再混入中文 issue
+- import / continuation / series 的 prompt 与语言传递补齐，foundation reviewer 结果能更稳定回灌
+- reviser 修订链重新接入 `hookDebtBlock`，局部修订时能看到 hook 债务证据
+
+---
+
+## v1.1.0
+
+写作管线全面升级。通过 Meta-Harness 方法论驱动的多轮 autoresearch 实验，从零模式质量从 75 分提升至 92 分，同人模式从 39 分提升至 82+ 分。
+
+### 新功能
+
+- **Foundation Reviewer**：建书时新增独立审核 Agent，5 维度百分制打分（原作 DNA 保留、新叙事空间、核心冲突、开篇节奏、节奏可行性），不达 80 分自动驳回并将审核意见反馈给 Architect 重新生成
+- **新时空要求**：同人模式（canon/au/ooc/cp）必须设计原创分岔点，不允许复述原作剧情
+- **Hook Seed Excerpt**：伏笔回收时，Composer 从 chapter_summaries 提取原始种子场景的原文片段注入 Writer 上下文，替代了复杂的 lifecycle pressure 系统
+- **Review Reject 回滚**：`inkos review reject` 回滚 state 到被拒章节之前的快照，丢弃下游章节和记忆索引
+- **State Validation Recovery**：state 校验失败自动重试 settler，仍失败则降级保存，支持 `inkos write repair-state` 手动修复
+- **Audit Drift 隔离**：审计纠偏写入独立的 `audit_drift.md`，不再追加到 `current_state.md`
+- **标题坍缩修复**：检测近期标题主题聚集，从正文提取新关键词重生标题
+- **Hook 预算提示**：活跃伏笔 ≥10 时显示预算警告，引导优先回收旧债
+- **章节结尾摘要**：提取最近 3 章结尾句注入上下文，防止结构性重复
+- **情绪/节奏检测**：mood 单调和标题聚集检测，序列级 warning 不计入修订 blockingCount
+- **同人风格提取**：`fanfic init` 和 `import chapters` 自动生成 style_guide.md + style_profile.json
+- **Governed 路径补全**：续写/同人的 parent_canon.md 和 fanfic_canon.md 通过 Governed 路径注入 Writer
+- **自定义 HTTP Headers**：`INKOS_LLM_HEADERS` 环境变量注入自定义 HTTP 头
+
+### Bug Fixes
+
+- 章节号污染修复：叙事文本中的数字不再被误解析为章节进度
+- hook 排序修复：mustAdvance 从降序修正为升序（选最久未推进的）
+- Outline 匹配修复：支持章节范围格式，防止 Chapter 1 误匹配 Chapter 10
+- approve 不覆盖快照、style 提取 graceful degrade、Studio 热加载 LLM 配置、主题持久化
+
+---
+
+## v1.0.2
+
+### Bug Fixes
+
+- **#127** — 修复 Studio Web 创建书籍时的误报失败：后台仍在异步创建时，前端延长等待窗口，不再过早提示 `Book not found`
+- 段落碎片检测忽略纯对话行，减少误报
+
+---
+
+## v1.0.0
+
+InkOS Studio + 稳定性加固。从 CLI 工具升级为 CLI + Web 工作台。
+
+### InkOS Studio
+
+- `inkos studio` 启动本地 Web 工作台（Vite + React + Hono，默认端口 4567）
+- 书籍管理：创建、删除、导出（TXT/MD/EPUB）、配置
+- 章节审阅与编辑：批准/拒绝、行内编辑、多模式修订（polish/spot-fix/rewrite/anti-detect）
+- 实时写作进度：SSE 推送生成状态
+- 市场雷达：AI 驱动的平台/题材趋势分析
+- 数据分析：字数统计、审计通过率、章节排名、token 用量
+- AI 检测：扫描章节 AI 生成痕迹
+- 文风分析与导入：分析参考文本、注入写作风格
+- 题材管理：创建/自定义题材（疲劳词、节奏规则、审计维度）
+- 守护进程控制：启停后台写作、查看事件日志
+- 真相文件编辑器：按书查看和编辑知识库
+- 配置编辑器：LLM 提供商、模型路由、通知
+
+### Bug Fixes
+
+- unknown hook 在 resolve/defer 时不再抛异常，改为跳过
+- Studio 创建书后等待完成再路由跳转
+- Studio 异步创建失败时错误暴露给用户
+- validator false positive：只在硬矛盾时 fail，减少误报
+
+### Chore
+
+- 清理 studio 合并带入的无关文件（.playwright-cli/、.superpowers/、推广文档）
+- untrack docs/ 和 autoresearch/，加入 .gitignore
+- SKILL.md 升级到 v2.2.0，新增 Studio workflow section
+- 三语 README 更新 Studio 发布公告和路线图
+
+---
+
+## v0.6.3
+
+### Bug Fixes
+
+- **#113/#109** — StateValidator JSON 解析从贪婪正则改为平衡括号解析器，LLM 追加 markdown 不再导致解析失败
+- **#114** — status 命令章节数改为数实际文件，不再受 poisoned runtime state 影响
+- **#110** — book creation 改为原子操作（临时目录 → rename），失败不留半成品
+- **#92/#93** — agent 执行层硬限制：write_draft 校验顺序写入、revise_chapter 校验目标章存在、write_truth_file 拦截进度篡改、import_chapters 要求 ≥2 章
+- **#90** — 段落形态检测移到落盘前（覆盖 normalize + auto revise 后的最终内容）
+- **#94** — 标题去重：writer prompt 加约束 + post-write validator 检测 + 自动改名
+
+### Improvements
+
+- **#111** — SKILL.md 补齐 13 个缺失命令（eval, consolidate, write rewrite, book update/delete, plan/compose, studio, fanfic show/refresh, genre create/copy）
+- **#95** — doctor 命令新增版本迁移检测（识别 pre-v0.6 旧格式书籍）
+- **#103** — 补充 rewrite 端到端回归测试（rewrite 2 → next 应为 3）
+- 新增 `inkos eval` 命令 — 结构化质量评估报告
+- SKILL.md 版本升级到 2.1.0
+
+## v0.6.2
+
+### Bug Fixes
+
+- **伏笔崩溃** (#99/#101/#104) — duplicate active hook family 不再崩溃，改为自动吸收合并；新增 hook 仲裁机制降低重复频率
+- **本地 LLM** (#100) — 本地/self-hosted OpenAI-compatible 端点（Ollama 等）不再要求 API key
+- **0 字章节** (#105) — truth rebuild 不再覆盖最终章节内容
+- **章号错误** (#108/#98) — poisoned manifest 在 bootstrap 时自动归一化到真实进度
+- **坏章节写入** (#88) — state validator 空响应直接报错，章节文件保存移到校验通过之后
+- **Provider 400** (#91) — streaming provider fallback 错误提示优化
+
+### Improvements
+
+- **段落质量** (#90) — 新增短段落检测和段落密度漂移 warning
+- **Agent 工具约束** (#92/#93) — agent 工具描述加强边界约束，system prompt 新增禁止性规则
+- Windows 兼容：tar 命令加 --force-local
+- README 描述更新，OpenClaw 链接指向 skill 页面
+
+## v0.6.1
+
+- 修复 emphasized hook id 标准化
+- 修复 poisoned runtime state 恢复
+
+## v0.6
+
+结构化状态 + 伏笔治理 + 字数治理。
+
+重点解决三个长篇写作的系统性问题：**20+ 章后上下文膨胀导致写作变慢甚至 400 报错**、**伏笔只加不收、回收率接近 0%**、**字数偏差 50%+ 且 normalizer 可能毁章**。
+
+### 架构
+
+- 管线升级为 10-agent：新增 Planner、Composer、Observer、Reflector、Normalizer
+- 真相文件迁移到 `story/state/*.json`（Zod 校验），Settler 输出 JSON delta 而非全量 markdown，旧书自动迁移
+- Node 22+ 启用 SQLite 时序记忆数据库（`story/memory.db`），按相关性检索历史事实
+- `createRequire` 修复 ESM 下 node:sqlite 加载
+
+### 伏笔治理
+
+- Planner 生成 `hookAgenda`（mustAdvance / eligibleResolve / staleDebt），排班伏笔推进与回收
+- Settler working set 扩展为 `selected ∪ recent ∪ agenda ∪ dormant debt`，堵住检索盲区
+- hookOps 新增 `mention` 语义——"只是被提到"不再更新 `lastAdvancedChapter`，防止假推进
+- `analyzeHookHealth`：active 超上限 / 连续无推进 / stale 未处置 / 新开不回收 → 审计 warning
+- `evaluateHookAdmission`：重复 hook 家族自动拦截，防止伏笔膨胀
+
+### 字数治理
+
+- `LengthSpec`（target / softMin-softMax / hardMin-hardMax）+ `countingMode`（zh_chars / en_words）
+- 审计前 + 修订后各一次归一化机会，不暴力截断
+- 安全网：归一化结果 <25% 原文直接拒绝，`stripCommonWrappers` 删超 50% 回退原文
+
+### 质量
+
+- 跨章重复检测（中文 6 字 ngram / 英文 3 词短语）
+- 对话驱动引导（互动场景优先对话交锋）
+- English variance brief（反重复短语/开头/结尾注入）
+- 多角色场景阻力要求（至少一轮带阻力的直接交锋）
+
+### Bug 修复
+
+- 用户 `INKOS_LLM_MAX_TOKENS` 作为全局上限生效（#87）
+- `stripReservedKeys` 防止 `llm.extra` 覆盖 max_tokens / temperature
+- 章节摘要去重：append 前去重 + bootstrap 加载时去重 + JSON 自动修复
+- `consolidate` 正则支持全角括号卷边界格式
+- 双语 CLI 输出和日志
+- Runtime state 中毒恢复
+
+---
+
 ## v0.5.0
 
 英文原生写作 + 系统稳定性修复。

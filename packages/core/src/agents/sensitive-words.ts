@@ -18,6 +18,8 @@ export interface SensitiveWordResult {
   readonly found: ReadonlyArray<SensitiveWordMatch>;
 }
 
+type SensitiveWordLanguage = "zh" | "en";
+
 // Political terms — severity "block"
 const POLITICAL_WORDS: ReadonlyArray<string> = [
   "习近平", "习主席", "习总书记", "共产党", "中国共产党", "共青团",
@@ -51,12 +53,13 @@ interface WordListEntry {
   readonly words: ReadonlyArray<string>;
   readonly severity: "block" | "warn";
   readonly label: string;
+  readonly englishLabel: string;
 }
 
 const WORD_LISTS: ReadonlyArray<WordListEntry> = [
-  { words: POLITICAL_WORDS, severity: "block", label: "政治敏感词" },
-  { words: SEXUAL_WORDS, severity: "warn", label: "色情敏感词" },
-  { words: VIOLENCE_EXTREME, severity: "warn", label: "极端暴力词" },
+  { words: POLITICAL_WORDS, severity: "block", label: "政治敏感词", englishLabel: "political sensitive terms" },
+  { words: SEXUAL_WORDS, severity: "warn", label: "色情敏感词", englishLabel: "sexual sensitive terms" },
+  { words: VIOLENCE_EXTREME, severity: "warn", label: "极端暴力词", englishLabel: "extreme violence terms" },
 ];
 
 /**
@@ -66,23 +69,32 @@ const WORD_LISTS: ReadonlyArray<WordListEntry> = [
 export function analyzeSensitiveWords(
   content: string,
   customWords?: ReadonlyArray<string>,
+  language: SensitiveWordLanguage = "zh",
 ): SensitiveWordResult {
   const found: SensitiveWordMatch[] = [];
   const issues: AuditIssue[] = [];
+  const isEnglish = language === "en";
+  const joiner = isEnglish ? ", " : "、";
 
   // Check built-in word lists
   for (const list of WORD_LISTS) {
     const matches = scanWords(content, list.words, list.severity);
     if (matches.length > 0) {
       found.push(...matches);
-      const wordSummary = matches.map((m) => `"${m.word}"×${m.count}`).join("、");
+      const wordSummary = matches.map((m) => `"${m.word}"×${m.count}`).join(joiner);
       issues.push({
         severity: list.severity === "block" ? "critical" : "warning",
-        category: "敏感词",
-        description: `检测到${list.label}：${wordSummary}`,
-        suggestion: list.severity === "block"
-          ? "必须删除或替换政治敏感词，否则无法发布"
-          : `建议替换或弱化${list.label}，避免平台审核问题`,
+        category: isEnglish ? "Sensitive terms" : "敏感词",
+        description: isEnglish
+          ? `Detected ${list.englishLabel}: ${wordSummary}`
+          : `检测到${list.label}：${wordSummary}`,
+        suggestion: isEnglish
+          ? (list.severity === "block"
+              ? "You must remove or replace these blocked terms before publication"
+              : `Replace or soften these ${list.englishLabel} to reduce moderation risk`)
+          : (list.severity === "block"
+              ? "必须删除或替换政治敏感词，否则无法发布"
+              : `建议替换或弱化${list.label}，避免平台审核问题`),
       });
     }
   }
@@ -92,12 +104,16 @@ export function analyzeSensitiveWords(
     const customMatches = scanWords(content, customWords, "warn");
     if (customMatches.length > 0) {
       found.push(...customMatches);
-      const wordSummary = customMatches.map((m) => `"${m.word}"×${m.count}`).join("、");
+      const wordSummary = customMatches.map((m) => `"${m.word}"×${m.count}`).join(joiner);
       issues.push({
         severity: "warning",
-        category: "敏感词",
-        description: `检测到自定义敏感词：${wordSummary}`,
-        suggestion: "根据项目规则替换或删除这些词语",
+        category: isEnglish ? "Sensitive terms" : "敏感词",
+        description: isEnglish
+          ? `Detected custom sensitive term(s): ${wordSummary}`
+          : `检测到自定义敏感词：${wordSummary}`,
+        suggestion: isEnglish
+          ? "Replace or remove these terms according to project rules"
+          : "根据项目规则替换或删除这些词语",
       });
     }
   }

@@ -3,8 +3,17 @@
 
 -
 
+## Type of change
+
+- [ ] Bug fix
+- [ ] New feature
+- [ ] Refactor (no behavior change)
+- [ ] Docs / SKILL.md
+- [ ] Test
+- [ ] Performance
+
 ## Motivation (optional)
-<!-- Why this change is needed. Link issues if applicable. -->
+<!-- Why this change is needed. Link issues if applicable. Closes #xxx -->
 
 ## Changes
 <!-- File-level change list: what each file does -->

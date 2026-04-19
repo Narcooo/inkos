@@ -19,18 +19,26 @@ export interface AITellResult {
   readonly issues: ReadonlyArray<AITellIssue>;
 }
 
-// Hedge/filler words common in AI Chinese text
-const HEDGE_WORDS = ["似乎", "可能", "或许", "大概", "某种程度上", "一定程度上", "在某种意义上"];
+type AITellLanguage = "zh" | "en";
 
-// Formulaic transition words
-const TRANSITION_WORDS = ["然而", "不过", "与此同时", "另一方面", "尽管如此", "话虽如此", "但值得注意的是"];
+const HEDGE_WORDS: Record<AITellLanguage, ReadonlyArray<string>> = {
+  zh: ["似乎", "可能", "或许", "大概", "某种程度上", "一定程度上", "在某种意义上"],
+  en: ["seems", "seemed", "perhaps", "maybe", "apparently", "in some ways", "to some extent"],
+};
+
+const TRANSITION_WORDS: Record<AITellLanguage, ReadonlyArray<string>> = {
+  zh: ["然而", "不过", "与此同时", "另一方面", "尽管如此", "话虽如此", "但值得注意的是"],
+  en: ["however", "meanwhile", "on the other hand", "nevertheless", "even so", "still"],
+};
 
 /**
  * Analyze text content for structural AI-tell patterns.
  * Returns issues that can be merged into audit results.
  */
-export function analyzeAITells(content: string): AITellResult {
+export function analyzeAITells(content: string, language: AITellLanguage = "zh"): AITellResult {
   const issues: AITellIssue[] = [];
+  const isEnglish = language === "en";
+  const joiner = isEnglish ? ", " : "、";
 
   const paragraphs = content
     .split(/\n\s*\n/)
@@ -48,9 +56,13 @@ export function analyzeAITells(content: string): AITellResult {
       if (cv < 0.15) {
         issues.push({
           severity: "warning",
-          category: "段落等长",
-          description: `段落长度变异系数仅${cv.toFixed(3)}（阈值<0.15），段落长度过于均匀，呈现AI生成特征`,
-          suggestion: "增加段落长度差异：短段落用于节奏加速或冲击，长段落用于沉浸描写",
+          category: isEnglish ? "Paragraph uniformity" : "段落等长",
+          description: isEnglish
+            ? `Paragraph-length coefficient of variation is only ${cv.toFixed(3)} (threshold <0.15), which suggests unnaturally uniform paragraph sizing`
+            : `段落长度变异系数仅${cv.toFixed(3)}（阈值<0.15），段落长度过于均匀，呈现AI生成特征`,
+          suggestion: isEnglish
+            ? "Increase paragraph-length contrast: use shorter beats for impact and longer blocks for immersive detail"
+            : "增加段落长度差异：短段落用于节奏加速或冲击，长段落用于沉浸描写",
         });
       }
     }
@@ -60,8 +72,8 @@ export function analyzeAITells(content: string): AITellResult {
   const totalChars = content.length;
   if (totalChars > 0) {
     let hedgeCount = 0;
-    for (const word of HEDGE_WORDS) {
-      const regex = new RegExp(word, "g");
+    for (const word of HEDGE_WORDS[language]) {
+      const regex = new RegExp(word, isEnglish ? "gi" : "g");
       const matches = content.match(regex);
       hedgeCount += matches?.length ?? 0;
     }
@@ -69,21 +81,25 @@ export function analyzeAITells(content: string): AITellResult {
     if (hedgeDensity > 3) {
       issues.push({
         severity: "warning",
-        category: "套话密度",
-        description: `套话词（似乎/可能/或许等）密度为${hedgeDensity.toFixed(1)}次/千字（阈值>3），语气过于模糊犹豫`,
-        suggestion: "用确定性叙述替代模糊表达：去掉「似乎」直接描述状态，用具体细节替代「可能」",
+        category: isEnglish ? "Hedge density" : "套话密度",
+        description: isEnglish
+          ? `Hedge-word density is ${hedgeDensity.toFixed(1)} per 1k characters (threshold >3), making the prose sound overly tentative`
+          : `套话词（似乎/可能/或许等）密度为${hedgeDensity.toFixed(1)}次/千字（阈值>3），语气过于模糊犹豫`,
+        suggestion: isEnglish
+          ? "Replace hedges with firmer narration: remove vague qualifiers and use concrete detail instead"
+          : "用确定性叙述替代模糊表达：去掉「似乎」直接描述状态，用具体细节替代「可能」",
       });
     }
   }
 
   // dim 22: Formulaic transition repetition
   const transitionCounts: Record<string, number> = {};
-  for (const word of TRANSITION_WORDS) {
-    const regex = new RegExp(word, "g");
+  for (const word of TRANSITION_WORDS[language]) {
+    const regex = new RegExp(word, isEnglish ? "gi" : "g");
     const matches = content.match(regex);
     const count = matches?.length ?? 0;
     if (count > 0) {
-      transitionCounts[word] = count;
+      transitionCounts[isEnglish ? word.toLowerCase() : word] = count;
     }
   }
   const repeatedTransitions = Object.entries(transitionCounts)
@@ -91,18 +107,22 @@ export function analyzeAITells(content: string): AITellResult {
   if (repeatedTransitions.length > 0) {
     const detail = repeatedTransitions
       .map(([word, count]) => `"${word}"×${count}`)
-      .join("、");
+      .join(joiner);
     issues.push({
       severity: "warning",
-      category: "公式化转折",
-      description: `转折词重复使用：${detail}。同一转折模式≥3次暴露AI生成痕迹`,
-      suggestion: "用情节自然转折替代转折词，或换用不同的过渡手法（动作切入、时间跳跃、视角切换）",
+      category: isEnglish ? "Formulaic transitions" : "公式化转折",
+      description: isEnglish
+        ? `Transition words repeat too often: ${detail}. Reusing the same transition pattern 3+ times creates a formulaic AI texture`
+        : `转折词重复使用：${detail}。同一转折模式≥3次暴露AI生成痕迹`,
+      suggestion: isEnglish
+        ? "Let scenes pivot through action, timing, or viewpoint shifts instead of repeating the same transitions"
+        : "用情节自然转折替代转折词，或换用不同的过渡手法（动作切入、时间跳跃、视角切换）",
     });
   }
 
   // dim 23: List-like structure (consecutive sentences with same prefix pattern)
   const sentences = content
-    .split(/[。！？\n]/)
+    .split(isEnglish ? /[.!?\n]/ : /[。！？\n]/)
     .map((s) => s.trim())
     .filter((s) => s.length > 2);
 
@@ -110,8 +130,12 @@ export function analyzeAITells(content: string): AITellResult {
     let consecutiveSamePrefix = 1;
     let maxConsecutive = 1;
     for (let i = 1; i < sentences.length; i++) {
-      const prevPrefix = sentences[i - 1]!.slice(0, 2);
-      const currPrefix = sentences[i]!.slice(0, 2);
+      const prevPrefix = isEnglish
+        ? sentences[i - 1]!.split(/\s+/)[0]?.toLowerCase() ?? ""
+        : sentences[i - 1]!.slice(0, 2);
+      const currPrefix = isEnglish
+        ? sentences[i]!.split(/\s+/)[0]?.toLowerCase() ?? ""
+        : sentences[i]!.slice(0, 2);
       if (prevPrefix === currPrefix) {
         consecutiveSamePrefix++;
         maxConsecutive = Math.max(maxConsecutive, consecutiveSamePrefix);
@@ -122,9 +146,13 @@ export function analyzeAITells(content: string): AITellResult {
     if (maxConsecutive >= 3) {
       issues.push({
         severity: "info",
-        category: "列表式结构",
-        description: `检测到${maxConsecutive}句连续以相同开头的句子，呈现列表式AI生成结构`,
-        suggestion: "变换句式开头：用不同主语、时间词、动作词开头，打破列表感",
+        category: isEnglish ? "List-like structure" : "列表式结构",
+        description: isEnglish
+          ? `Detected ${maxConsecutive} consecutive sentences with the same opening pattern, creating a list-like generated cadence`
+          : `检测到${maxConsecutive}句连续以相同开头的句子，呈现列表式AI生成结构`,
+        suggestion: isEnglish
+          ? "Vary how sentences open: change subject, timing, or action entry to break the list effect"
+          : "变换句式开头：用不同主语、时间词、动作词开头，打破列表感",
       });
     }
   }

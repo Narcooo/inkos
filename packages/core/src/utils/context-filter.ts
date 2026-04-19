@@ -5,6 +5,8 @@
  * Every filter falls back to the full input if filtering would empty it.
  */
 
+import { DEFAULT_CHAPTER_CADENCE_WINDOW } from "./chapter-cadence.js";
+
 /** Filter pending_hooks: remove resolved/closed hooks. */
 export function filterHooks(hooks: string): string {
   if (!hooks || hooks === "(文件尚未创建)") return hooks;
@@ -15,7 +17,11 @@ export function filterHooks(hooks: string): string {
 }
 
 /** Filter chapter_summaries: keep only the most recent N chapters. */
-export function filterSummaries(summaries: string, currentChapter: number, keepRecent = 5): string {
+export function filterSummaries(
+  summaries: string,
+  currentChapter: number,
+  keepRecent = DEFAULT_CHAPTER_CADENCE_WINDOW,
+): string {
   if (!summaries || summaries === "(文件尚未创建)") return summaries;
   return filterTableRows(summaries, (row) => {
     const match = row.match(/\|\s*(\d+)\s*\|/);
@@ -34,7 +40,11 @@ export function filterSubplots(board: string): string {
 }
 
 /** Filter emotional_arcs: keep only the most recent N chapters. */
-export function filterEmotionalArcs(arcs: string, currentChapter: number, keepRecent = 5): string {
+export function filterEmotionalArcs(
+  arcs: string,
+  currentChapter: number,
+  keepRecent = DEFAULT_CHAPTER_CADENCE_WINDOW,
+): string {
   if (!arcs || arcs === "(文件尚未创建)") return arcs;
   return filterTableRows(arcs, (row) => {
     const match = row.match(/\|\s*(\d+)\s*\|/);
@@ -108,7 +118,7 @@ function extractNames(text: string): Set<string> {
 
 function isHeaderRow(line: string): boolean {
   // First data-like row in a table (contains column names)
-  return /\|\s*(章节|角色|支线|hook_id|Chapter|Character|Subplot)/i.test(line);
+  return /^\|\s*(章节|角色|支线|hook_id|Chapter|Character|Subplot)/i.test(line);
 }
 
 /**

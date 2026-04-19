@@ -1,18 +1,42 @@
 import { chatWithTools, type AgentMessage, type ToolDefinition } from "../llm/provider.js";
 import { PipelineRunner, type PipelineConfig } from "./runner.js";
 import type { Platform, Genre } from "../models/book.js";
-import type { ReviseMode } from "../agents/reviser.js";
+import { DEFAULT_REVISE_MODE, type ReviseMode } from "../agents/reviser.js";
 
 /** Tool definitions for the agent loop. */
 const TOOLS: ReadonlyArray<ToolDefinition> = [
   {
     name: "write_draft",
-    description: "写一章草稿。生成正文、更新状态卡/账本/伏笔池、保存章节文件。",
+    description: "写【下一章】草稿。只能续写最新章之后的下一章，不能指定章节号，不能补历史空章。生成正文、更新状态卡/账本/伏笔池、保存章节文件。",
     parameters: {
       type: "object",
       properties: {
         bookId: { type: "string", description: "书籍ID" },
         guidance: { type: "string", description: "本章创作指导（可选，自然语言）" },
+      },
+      required: ["bookId"],
+    },
+  },
+  {
+    name: "plan_chapter",
+    description: "为下一章生成 chapter intent（章节目标、必须保留、冲突说明）。适合在正式写作前检查当前控制输入是否正确。",
+    parameters: {
+      type: "object",
+      properties: {
+        bookId: { type: "string", description: "书籍ID" },
+        guidance: { type: "string", description: "本章额外指导（可选，自然语言）" },
+      },
+      required: ["bookId"],
+    },
+  },
+  {
+    name: "compose_chapter",
+    description: "为下一章生成 context/rule-stack/trace 运行时产物。适合在写作前确认系统实际会带哪些上下文和优先级。",
+    parameters: {
+      type: "object",
+      properties: {
+        bookId: { type: "string", description: "书籍ID" },
+        guidance: { type: "string", description: "本章额外指导（可选，自然语言）" },
       },
       required: ["bookId"],
     },
@@ -31,13 +55,13 @@ const TOOLS: ReadonlyArray<ToolDefinition> = [
   },
   {
     name: "revise_chapter",
-    description: "修订指定章节。根据审计问题修正。支持三种模式：polish(润色)、rewrite(改写)、rework(重写)。",
+    description: "修订指定章节的文字质量。根据审计问题做局部修正，不改变剧情走向。默认 spot-fix（定点修复最小改动）；也支持 polish(润色)、rewrite(改写)、rework(重写)、anti-detect。注意：不能用来补缺失章节、不能改章节号、不能替代 write_draft。",
     parameters: {
       type: "object",
       properties: {
         bookId: { type: "string", description: "书籍ID" },
         chapterNumber: { type: "number", description: "章节号（不填则修订最新章）" },
-        mode: { type: "string", enum: ["polish", "rewrite", "rework", "spot-fix", "anti-detect"], description: "修订模式（默认rewrite）" },
+        mode: { type: "string", enum: ["polish", "rewrite", "rework", "spot-fix", "anti-detect"], description: `修订模式（默认${DEFAULT_REVISE_MODE}）` },
       },
       required: ["bookId"],
     },
@@ -62,6 +86,30 @@ const TOOLS: ReadonlyArray<ToolDefinition> = [
         brief: { type: "string", description: "创作简述/需求（自然语言）" },
       },
       required: ["title", "genre", "platform"],
+    },
+  },
+  {
+    name: "update_author_intent",
+    description: "更新书级长期意图文档 author_intent.md。用于修改这本书长期想成为什么。",
+    parameters: {
+      type: "object",
+      properties: {
+        bookId: { type: "string", description: "书籍ID" },
+        content: { type: "string", description: "author_intent.md 的完整新内容" },
+      },
+      required: ["bookId", "content"],
+    },
+  },
+  {
+    name: "update_current_focus",
+    description: "更新当前关注点文档 current_focus.md。用于把最近几章的注意力拉回某条主线或冲突。",
+    parameters: {
+      type: "object",
+      properties: {
+        bookId: { type: "string", description: "书籍ID" },
+        content: { type: "string", description: "current_focus.md 的完整新内容" },
+      },
+      required: ["bookId", "content"],
     },
   },
   {
@@ -144,7 +192,7 @@ const TOOLS: ReadonlyArray<ToolDefinition> = [
   },
   {
     name: "import_chapters",
-    description: "导入已有章节。从文本中分割章节并逐章分析，反推所有真相文件。导入后可用 write_draft 续写。",
+    description: "【整书重导】导入已有章节。从完整文本中自动分割所有章节，逐章分析并重建全部真相文件。这是整书级操作，不是补某一章的工具。导入后可用 write_draft 续写。",
     parameters: {
       type: "object",
       properties: {
@@ -157,7 +205,7 @@ const TOOLS: ReadonlyArray<ToolDefinition> = [
   },
   {
     name: "write_truth_file",
-    description: "直接修改书的真相文件（如 volume_outline.md、story_bible.md、book_rules.md、current_state.md 等）。用于扩展大纲、修改世界观、调整规则等操作。",
+    description: "【整文件覆盖】直接替换书的真相文件内容。用于扩展大纲、修改世界观、调整规则。注意：这是整文件覆盖写入，不是追加；不要用来改 current_state.md 的章节进度指针或 hack 章节号；不要用来补空章节。",
     parameters: {
       type: "object",
       properties: {
@@ -199,20 +247,28 @@ export async function runAgentLoop(
 | get_book_status | 查看书的章数、字数、审计状态 |
 | read_truth_files | 读取长期记忆（状态卡、资源账本、伏笔池）和设定（世界观、卷纲、本书规则） |
 | create_book | 建书，生成世界观、卷纲、本书规则（自动加载题材 genre profile） |
-| write_draft | 写一章草稿（自动加载 genre profile + book_rules） |
+| plan_chapter | 先生成 chapter intent，确认本章目标/冲突/优先级 |
+| compose_chapter | 再生成 runtime context/rule stack，确认实际输入 |
+| write_draft | 写【下一章】草稿（只能续写最新章之后，不能补历史章） |
 | audit_chapter | 审计章节（32维度，按题材条件启用，含AI痕迹+敏感词检测） |
-| revise_chapter | 修订章节（支持 polish/rewrite/rework/spot-fix/anti-detect 五种模式） |
+| revise_chapter | 修订章节文字质量（不能补空章/改章号，五种模式） |
+| update_author_intent | 更新书级长期意图 author_intent.md |
+| update_current_focus | 更新当前关注点 current_focus.md |
 | write_full_pipeline | 完整管线：写 → 审 → 改（如需要） |
 | scan_market | 扫描平台排行榜，分析市场趋势 |
 | web_fetch | 抓取指定URL的文本内容 |
 | import_style | 从参考文本生成文风指南（统计+LLM分析） |
 | import_canon | 从正传导入正典参照，启用番外模式 |
-| import_chapters | 导入已有章节，反推所有真相文件，支持续写 |
-| write_truth_file | 直接修改真相文件（大纲、世界观、规则、状态等），用于扩展/调整设定 |
+| import_chapters | 【整书重导】导入全部已有章节并重建真相文件 |
+| write_truth_file | 【整文件覆盖】替换真相文件内容，不能用来改章节进度 |
 
 ## 长期记忆
 
-每本书有七个长期记忆文件，是 Agent 写作和审计的事实依据：
+每本书有两层控制面：
+- **author_intent.md** — 这本书长期想成为什么
+- **current_focus.md** — 最近 1-3 章要把注意力拉回哪里
+
+以及七个长期记忆文件，是 Agent 写作和审计的事实依据：
 - **current_state.md** — 角色位置、关系、已知信息、当前冲突
 - **particle_ledger.md** — 物品/资源账本，每笔增减有据可查
 - **pending_hooks.md** — 已埋伏笔、推进状态、预期回收时机
@@ -232,9 +288,19 @@ export async function runAgentLoop(
 - 用户提供了题材/创意但没说要扫描市场 → 跳过 scan_market，直接 create_book
 - 用户说了书名/bookId → 直接操作，不需要先 list_books
 - 每完成一步，简要汇报进展
+- 当用户要求“先把注意力拉回某条线”时，优先 update_current_focus，然后 plan_chapter / compose_chapter，再决定是否 write_draft 或 write_full_pipeline
 - 仿写流程：用户提供参考文本 → import_style → 生成 style_guide.md，后续写作自动参照
 - 番外流程：先 create_book 建番外书 → import_canon 导入正传正典 → 然后正常 write_draft
-- 续写流程：用户提供已有章节 → import_chapters → 然后 write_draft 续写`,
+- 续写流程：用户提供已有章节 → import_chapters → 然后 write_draft 续写
+
+## 禁止事项（严格遵守）
+
+- 不要用 write_draft 补历史中间章节。write_draft 只能写【当前最新章之后的下一章】
+- 不要用 import_chapters 修补某一个空章。import_chapters 是整书级重导工具
+- 不要用 write_truth_file 修改 current_state.md 的章节进度来"骗"系统跳到某一章
+- 不要用 revise_chapter 补缺失章节或改章节号。revise 只做文字质量修订
+- 用户说"补第 N 章"或"第 N 章是空的"时，先用 get_book_status 和 read_truth_files 判断真实状态，再决定用哪个工具
+- 不要在没有确认书籍状态的情况下直接调用写作工具`,
     },
     { role: "user", content: instruction },
   ];
@@ -279,7 +345,7 @@ export async function runAgentLoop(
   return lastAssistantMessage;
 }
 
-async function executeTool(
+export async function executeAgentTool(
   pipeline: PipelineRunner,
   state: import("../state/manager.js").StateManager,
   config: PipelineConfig,
@@ -287,9 +353,30 @@ async function executeTool(
   args: Record<string, unknown>,
 ): Promise<string> {
   switch (name) {
-    case "write_draft": {
-      const result = await pipeline.writeDraft(
+    case "plan_chapter": {
+      const result = await pipeline.planChapter(
         args.bookId as string,
+        args.guidance as string | undefined,
+      );
+      return JSON.stringify(result);
+    }
+
+    case "compose_chapter": {
+      const result = await pipeline.composeChapter(
+        args.bookId as string,
+        args.guidance as string | undefined,
+      );
+      return JSON.stringify(result);
+    }
+
+    case "write_draft": {
+      const bookId = args.bookId as string;
+      const writeGuardError = await getSequentialWriteGuardError(state, bookId, "write_draft");
+      if (writeGuardError) {
+        return JSON.stringify({ error: writeGuardError });
+      }
+      const result = await pipeline.writeDraft(
+        bookId,
         args.guidance as string | undefined,
       );
       return JSON.stringify(result);
@@ -304,10 +391,23 @@ async function executeTool(
     }
 
     case "revise_chapter": {
+      // Guard: target chapter must exist and have content
+      const bookId = args.bookId as string;
+      const chapterNum = args.chapterNumber as number | undefined;
+      if (chapterNum !== undefined) {
+        const index = await state.loadChapterIndex(bookId);
+        const chapter = index.find((ch) => ch.number === chapterNum);
+        if (!chapter) {
+          return JSON.stringify({ error: `第${chapterNum}章不存在。revise_chapter 只能修订已有章节，不能用来补写缺失章节。请用 get_book_status 确认。` });
+        }
+        if (chapter.wordCount === 0) {
+          return JSON.stringify({ error: `第${chapterNum}章内容为空（0字）。revise_chapter 不能修订空章节。` });
+        }
+      }
       const result = await pipeline.reviseDraft(
-        args.bookId as string,
-        args.chapterNumber as number | undefined,
-        (args.mode as ReviseMode) ?? "rewrite",
+        bookId,
+        chapterNum,
+        (args.mode as ReviseMode) ?? DEFAULT_REVISE_MODE,
       );
       return JSON.stringify(result);
     }
@@ -354,6 +454,24 @@ async function executeTool(
       return JSON.stringify(result);
     }
 
+    case "update_author_intent": {
+      await state.ensureControlDocuments(args.bookId as string);
+      const { writeFile } = await import("node:fs/promises");
+      const { join } = await import("node:path");
+      const storyDir = join(state.bookDir(args.bookId as string), "story");
+      await writeFile(join(storyDir, "author_intent.md"), args.content as string, "utf-8");
+      return JSON.stringify({ bookId: args.bookId, file: "story/author_intent.md", written: true });
+    }
+
+    case "update_current_focus": {
+      await state.ensureControlDocuments(args.bookId as string);
+      const { writeFile } = await import("node:fs/promises");
+      const { join } = await import("node:path");
+      const storyDir = join(state.bookDir(args.bookId as string), "story");
+      await writeFile(join(storyDir, "current_focus.md"), args.content as string, "utf-8");
+      return JSON.stringify({ bookId: args.bookId, file: "story/current_focus.md", written: true });
+    }
+
     case "read_truth_files": {
       const result = await pipeline.readTruthFiles(args.bookId as string);
       return JSON.stringify(result);
@@ -374,10 +492,15 @@ async function executeTool(
     }
 
     case "write_full_pipeline": {
+      const bookId = args.bookId as string;
+      const writeGuardError = await getSequentialWriteGuardError(state, bookId, "write_full_pipeline");
+      if (writeGuardError) {
+        return JSON.stringify({ error: writeGuardError });
+      }
       const count = (args.count as number) ?? 1;
       const results = [];
       for (let i = 0; i < count; i++) {
-        const result = await pipeline.writeNextChapter(args.bookId as string);
+        const result = await pipeline.writeNextChapter(bookId);
         results.push(result);
       }
       return JSON.stringify(results);
@@ -424,6 +547,10 @@ async function executeTool(
       if (chapters.length === 0) {
         return JSON.stringify({ error: "No chapters found. Check text format or provide a splitPattern." });
       }
+      // Guard: import_chapters is a whole-book reimport, not a single-chapter patch
+      if (chapters.length === 1) {
+        return JSON.stringify({ error: "import_chapters 是整书重导工具，需要至少 2 个章节。如果只想补一章，请用 write_draft 续写或 revise_chapter 修订。" });
+      }
       const result = await pipeline.importChapters({
         bookId: args.bookId as string,
         chapters: [...chapters],
@@ -448,6 +575,11 @@ async function executeTool(
         return JSON.stringify({ error: `不允许修改文件 "${fileName}"。允许的文件：${ALLOWED_FILES.join(", ")}` });
       }
 
+      // Guard: block chapter progress manipulation via current_state.md
+      if (fileName === "current_state.md" && containsProgressManipulation(content)) {
+        return JSON.stringify({ error: "不允许通过 write_truth_file 修改 current_state.md 中的章节进度。章节进度由系统自动管理。" });
+      }
+
       const { writeFile, mkdir } = await import("node:fs/promises");
       const { join } = await import("node:path");
       const bookDir = new (await import("../state/manager.js")).StateManager(config.projectRoot).bookDir(bookId);
@@ -466,6 +598,42 @@ async function executeTool(
     default:
       return JSON.stringify({ error: `Unknown tool: ${name}` });
   }
+}
+
+async function executeTool(
+  pipeline: PipelineRunner,
+  state: import("../state/manager.js").StateManager,
+  config: PipelineConfig,
+  name: string,
+  args: Record<string, unknown>,
+): Promise<string> {
+  return executeAgentTool(pipeline, state, config, name, args);
+}
+
+async function getSequentialWriteGuardError(
+  state: import("../state/manager.js").StateManager,
+  bookId: string,
+  toolName: "write_draft" | "write_full_pipeline",
+): Promise<string | null> {
+  const nextNum = await state.getNextChapterNumber(bookId);
+  const index = await state.loadChapterIndex(bookId);
+  if (index.length === 0) return null;
+  const lastIndexedChapter = index[index.length - 1]!.number;
+  if (lastIndexedChapter === nextNum - 1) return null;
+  return `${toolName} 只能续写下一章（当前应写第${nextNum}章）。检测到章节索引与运行时进度不一致，请先用 get_book_status 确认状态。`;
+}
+
+function containsProgressManipulation(content: string): boolean {
+  const patterns = [
+    /\blastAppliedChapter\b/i,
+    /\|\s*Current Chapter\s*\|\s*\d+\s*\|/i,
+    /\|\s*当前章(?:节)?\s*\|\s*\d+\s*\|/,
+    /\bCurrent Chapter\b\s*[:：]\s*\d+/i,
+    /当前章(?:节)?\s*[:：]\s*\d+/,
+    /\bprogress\b\s*[:：]\s*\d+/i,
+    /进度\s*[:：]\s*\d+/,
+  ];
+  return patterns.some((pattern) => pattern.test(content));
 }
 
 /** Export tool definitions so external systems can reference them. */

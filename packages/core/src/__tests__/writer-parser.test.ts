@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { parseWriterOutput, parseCreativeOutput, type ParsedWriterOutput } from "../agents/writer-parser.js";
 import type { GenreProfile } from "../models/genre-profile.js";
+import { countChapterLength } from "../utils/length-metrics.js";
 
 const defaultGenreProfile: GenreProfile = {
   name: "测试",
@@ -20,8 +21,9 @@ function callParseOutput(
   chapterNumber: number,
   content: string,
   genreProfile: GenreProfile = defaultGenreProfile,
+  countingMode: "zh_chars" | "en_words" = "zh_chars",
 ): ParsedWriterOutput {
-  return parseWriterOutput(chapterNumber, content, genreProfile);
+  return parseWriterOutput(chapterNumber, content, genreProfile, countingMode);
 }
 
 // ---------------------------------------------------------------------------
@@ -80,11 +82,11 @@ describe("WriterAgent parseOutput", () => {
     expect(result.updatedHooks).toContain("H001");
   });
 
-  it("calculates wordCount as the length of chapter content", () => {
+  it("calculates wordCount with the shared counting helper", () => {
     const result = callParseOutput(1, fullOutput);
     const expectedContent =
       "陈风站在悬崖边，俯视着脚下的万丈深渊。\n一股强烈的吸力从深渊中传来，仿佛有什么东西在召唤他。";
-    expect(result.wordCount).toBe(expectedContent.length);
+    expect(result.wordCount).toBe(countChapterLength(expectedContent, "zh_chars"));
   });
 
   // -------------------------------------------------------------------------
@@ -99,6 +101,16 @@ describe("WriterAgent parseOutput", () => {
 
     const result = callParseOutput(42, output);
     expect(result.title).toBe("第42章");
+  });
+
+  it("returns an English default title when CHAPTER_TITLE is missing in English mode", () => {
+    const output = [
+      "=== CHAPTER_CONTENT ===",
+      "Some content here.",
+    ].join("\n");
+
+    const result = callParseOutput(42, output, defaultGenreProfile, "en_words");
+    expect(result.title).toBe("Chapter 42");
   });
 
   it("returns empty content when CHAPTER_CONTENT is missing", () => {
@@ -125,6 +137,21 @@ describe("WriterAgent parseOutput", () => {
     expect(result.updatedState).toBe("(状态卡未更新)");
     expect(result.updatedLedger).toBe("(账本未更新)");
     expect(result.updatedHooks).toBe("(伏笔池未更新)");
+  });
+
+  it("returns English fallback strings for missing state sections in English mode", () => {
+    const output = [
+      "=== CHAPTER_TITLE ===",
+      "Title",
+      "",
+      "=== CHAPTER_CONTENT ===",
+      "Content.",
+    ].join("\n");
+
+    const result = callParseOutput(1, output, defaultGenreProfile, "en_words");
+    expect(result.updatedState).toBe("(state card not updated)");
+    expect(result.updatedLedger).toBe("(ledger not updated)");
+    expect(result.updatedHooks).toBe("(hooks pool not updated)");
   });
 
   it("returns empty string for missing PRE_WRITE_CHECK", () => {
@@ -219,6 +246,17 @@ describe("WriterAgent parseOutput", () => {
     // wordCount is content.length which counts each character (including punctuation)
     expect(result.wordCount).toBe(chineseContent.length);
   });
+
+  it("counts English content with the shared counting helper when requested", () => {
+    const englishContent = "He looked at the sky.";
+    const output = [
+      "=== CHAPTER_CONTENT ===",
+      englishContent,
+    ].join("\n");
+
+    const result = callParseOutput(1, output, defaultGenreProfile, "en_words");
+    expect(result.wordCount).toBe(countChapterLength(englishContent, "en_words"));
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -235,6 +273,17 @@ describe("parseCreativeOutput fallback", () => {
     expect(result.title).toBe("觉醒之日");
     expect(result.content.length).toBeGreaterThan(100);
     expect(result.content).toContain("林风");
+  });
+
+  it("extracts English content from markdown headings when tags are missing", () => {
+    const raw = `# Chapter 1: Awakening Day
+
+He woke to the sound of distant bells and the taste of salt in the air. ${"Long English prose follows. ".repeat(15)}`;
+
+    const result = parseCreativeOutput(1, raw, "en_words");
+    expect(result.title).toBe("Awakening Day");
+    expect(result.content.length).toBeGreaterThan(100);
+    expect(result.content).toContain("distant bells");
   });
 
   it("extracts content from 正文 label when tags are missing", () => {
@@ -265,6 +314,12 @@ ${prose}`;
     expect(result.title).toBe("第1章");
   });
 
+  it("returns an English fallback title when short English output has no structure", () => {
+    const result = parseCreativeOutput(1, "too short", "en_words");
+    expect(result.content).toBe("");
+    expect(result.title).toBe("Chapter 1");
+  });
+
   it("still works with proper === TAG === format", () => {
     const raw = `=== PRE_WRITE_CHECK ===
 自检完成
@@ -278,5 +333,16 @@ ${prose}`;
     const result = parseCreativeOutput(1, raw);
     expect(result.title).toBe("正常标题");
     expect(result.content).toBe("正常的章节内容，这里是完整的正文。");
+  });
+
+  it("counts creative output with the shared helper when a counting mode is supplied", () => {
+    const raw = `=== CHAPTER_TITLE ===
+English Chapter
+
+=== CHAPTER_CONTENT ===
+He looked at the sky.`;
+
+    const result = parseCreativeOutput(1, raw, "en_words");
+    expect(result.wordCount).toBe(countChapterLength("He looked at the sky.", "en_words"));
   });
 });

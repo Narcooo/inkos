@@ -3,24 +3,38 @@
   <img src="assets/inkos-text.svg" width="240" height="65" alt="InkOS">
 </p>
 
-<h1 align="center">Autonomous Novel Writing Cli AI Agent<br><sub>自动化小说写作 Cli AI Agent</sub></h1>
+<h1 align="center">Autonomous Novel Writing AI Agent<br><sub>自动化小说写作 AI Agent</sub></h1>
 
 <p align="center">
   <a href="https://www.npmjs.com/package/@actalk/inkos"><img src="https://img.shields.io/npm/v/@actalk/inkos.svg?color=cb3837&logo=npm" alt="npm version"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
-  <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen.svg" alt="Node.js"></a>
-  <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-5.x-3178C6.svg?logo=typescript&logoColor=white" alt="TypeScript"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL%20v3-blue.svg" alt="License: AGPL-3.0"></a>
+  <a href="https://github.com/Narcooo/inkos/stargazers"><img src="https://img.shields.io/github/stars/Narcooo/inkos?style=flat&logo=github&color=yellow" alt="GitHub stars"></a>
+  <a href="https://www.npmjs.com/package/@actalk/inkos"><img src="https://img.shields.io/npm/dm/@actalk/inkos?color=cb3837&logo=npm&label=downloads" alt="npm downloads"></a>
+  <a href="https://clawhub.ai/narcooo/inkos"><img src="https://img.shields.io/badge/🦞%20ClawHub-Skill-FF6B35?labelColor=1a1a1a" alt="ClawHub Skill"></a>
 </p>
 
 <p align="center">
-  <a href="README.en.md">English</a> | 中文
+  <a href="README.en.md">English</a> | 中文 | <a href="README.ja.md">日本語</a>
 </p>
 
 ---
 
-Agent 写小说。写、审、改，全程接管。覆盖玄幻、仙侠、都市、科幻等多种风格，支持续写、番外、同人、仿写等创作形式。
+AI Agent 自主写小说——写、审、改，全程接管。覆盖玄幻、仙侠、都市、科幻等多种风格，支持续写、番外、同人、仿写等创作形式。人工审核门控确保你始终掌控全局。已发布为 [OpenClaw](https://clawhub.ai/narcooo/inkos) skill。
+
+**InkOS Studio 2.0 正式发布！** — 直接运行 `inkos` 启动本地 Web 工作台。书籍管理、章节审阅编辑、实时写作进度、市场雷达、数据分析、AI 检测、文风分析、题材管理、守护进程控制、真相文件编辑——CLI 能做的，Studio 全部可视化。
+
+**InkOS TUI 正式发布！** — 运行 `inkos tui` 进入全屏交互仪表盘。对话式创作、自然语言操作书籍、slash 命令补全、主题动效——TUI、Studio、OpenClaw 共享同一套交互内核。
 
 **Native English novel writing now supported！** Set `--lang en` to write in English. See [English README](README.en.md) for details.
+
+## 欢迎交流
+
+> 当前更新相对频繁，后续会持续新增功能与优化写作效果。
+> 欢迎加群反馈问题、提出需求，也欢迎关注项目动态 — 我们的目标是做最强的基于小说的内容生态创作 AI Agent。
+
+<p align="center">
+  <img src="assets/wechat-group-v7.jpg" width="300" alt="微信交流群">
+</p>
 
 ## 快速开始
 
@@ -32,7 +46,7 @@ npm i -g @actalk/inkos
 
 ### 通过 OpenClaw 使用 🦞
 
-InkOS 已发布为 [OpenClaw](https://clawhub.ai) Skill，可被任何兼容 Agent（Claude Code、OpenClaw 等）直接调用：
+InkOS 已发布为 [OpenClaw](https://clawhub.ai/narcooo/inkos) Skill，可被任何兼容 Agent（Claude Code、OpenClaw 等）直接调用：
 
 ```bash
 clawhub install inkos          # 从 ClawHub 安装 InkOS Skill
@@ -40,7 +54,21 @@ clawhub install inkos          # 从 ClawHub 安装 InkOS Skill
 
 通过 npm 安装或克隆本项目时，`skills/SKILL.md` 已包含在内，🦞 可直接读取——无需额外从 ClawHub 安装。
 
-安装后，Claw 可通过 `exec` 调用 InkOS 的所有原子命令（`draft`/`audit`/`revise`/`write next`），`--json` 输出结构化数据供 Claw 解析决策。也可以在 [ClawHub](https://clawhub.ai) 搜索 `inkos` 在线查看。
+安装后，Claw 应优先通过共享交互入口调用 InkOS：
+
+```bash
+inkos interact --json --message "继续当前书，但把节奏再收紧一点"
+```
+
+这条入口直接走和项目 TUI 相同的交互执行内核，因此 OpenClaw、TUI、Studio 共用同一套控制脑。返回的 JSON 包含：
+- 解析后的 request
+- assistant 文本回复
+- 更新后的 interaction session
+- execution state
+- pending decision
+- recent events
+
+`plan chapter` / `compose chapter` / `draft` / `audit` / `revise` / `write next` 这些原子命令仍然保留，但更适合作为底层工具，而不是 OpenClaw 的首选入口。也可以在 [ClawHub](https://clawhub.ai) 搜索 `inkos` 在线查看。
 
 ### 配置
 
@@ -96,6 +124,19 @@ inkos config show-models        # 查看当前路由
 
 未单独配置的 Agent 自动使用全局模型。
 
+### v1.2 更新
+
+**统一交互内核 + TUI 仪表盘 + Studio 助手**
+
+- **共享交互运行时**：TUI、Studio、`inkos interact`、OpenClaw Skill 共用同一套自然语言理解 + 执行内核，支持 15+ 种意图（写作、修订、重写、改名、导出、切换书籍等）
+- **Ink TUI 仪表盘**：`inkos` 直接进入全屏交互式仪表盘（Ink + React），对话式创作体验，slash 命令自动补全，主题动效，i18n 双语
+- **Studio 助手面板**：右侧 AI 助手面板接入共享交互内核，支持自然语言操作书籍——改名、写章、审计、导出等，实时显示执行状态
+- **对话式建书**：通过自然语言对话逐步构思书籍设定，草稿就绪后一键创建
+- **全书实体改名**：`把林烬改成张三` 或 `/rename 林烬 => 张三`，全量扫描章节 + 真相文件，一次替换
+- **`inkos interact`**：共享交互 JSON 入口，OpenClaw / 外部 Agent 可直接调用
+- **Thinking 模型温度夹制**：kimi-k2.5 等 thinking 模型自动强制 temperature=1，兼容 per-call 温度调参
+- **Studio 死代码清理**：移除未使用的 shadcn 组件和依赖，-2800 行
+
 ### 写第一本书
 
 ```bash
@@ -128,7 +169,32 @@ inkos export 吞天魔帝 --format epub  # 导出 EPUB（手机/Kindle 阅读）
 
 ### 创作简报
 
-`inkos book create --brief my-ideas.md` 传入你的脑洞、世界观设定、人设文档。建筑师 agent 会基于简报生成故事设定（story_bible.md）和创作规则（book_rules.md），而非凭空创作。
+`inkos book create --brief my-ideas.md` 传入你的脑洞、世界观设定、人设文档。建筑师 agent 会基于简报生成故事设定（`story_bible.md`）和创作规则（`book_rules.md`），而非凭空创作；同时把简报落盘到 `story/author_intent.md`，让这本书的长期创作意图不会只在建书时生效一次。
+
+### 输入治理控制面
+
+每本书现在都有两份长期可编辑的 Markdown 控制文档：
+
+- `story/author_intent.md`：这本书长期想成为什么
+- `story/current_focus.md`：最近 1-3 章要把注意力拉回哪里
+
+写作前可以先跑：
+
+```bash
+inkos plan chapter 吞天魔帝 --context "本章先把注意力拉回师徒矛盾"
+inkos compose chapter 吞天魔帝
+```
+
+这会生成 `story/runtime/chapter-XXXX.intent.md`、`context.json`、`rule-stack.yaml`、`trace.json`。其中 `intent.md` 给人看，其他文件给系统执行和调试。`plan` / `compose` 只编译本地文档和状态，不依赖在线 LLM，可在没配好 API Key 前先验证控制输入。
+
+### 字数治理
+
+`draft`、`write next`、`revise` 现在共享同一套保守型字数治理：
+
+- `--words` 指定的是目标字数，系统会自动推导一个允许区间，不承诺逐字精确命中
+- 中文默认按 `zh_chars` 计数，英文默认按 `en_words` 计数
+- 如果正文超出允许区间，InkOS 最多只会追加 1 次纠偏归一化（压缩或补足），不会直接硬截断正文
+- 如果 1 次纠偏后仍然超出 hard range，章节照常保存，但会在结果和 chapter index 里留下长度 warning / telemetry
 
 ### 续写已有作品
 
@@ -152,13 +218,17 @@ inkos export 吞天魔帝 --format epub  # 导出 EPUB（手机/Kindle 阅读）
 
 ### 可靠性保障
 
-每章自动创建状态快照，`inkos write rewrite` 可回滚任意章节。写手动笔前输出自检表（上下文、资源、伏笔、风险），写完输出结算表，审计员交叉验证。文件锁防止并发写入。写后验证器 11 条硬规则自动 spot-fix。
+每章自动创建状态快照，`inkos write rewrite` 可回滚任意章节。写手动笔前输出自检表（上下文、资源、伏笔、风险），写完输出结算表，审计员交叉验证。文件锁防止并发写入。写后验证器含跨章重复检测和 11 条硬规则自动 spot-fix。
+
+伏笔系统使用 Zod schema 校验——`lastAdvancedChapter` 必须是整数，`status` 只能是 open/progressing/deferred/resolved。LLM 输出的 JSON delta 在写入前经过 `applyRuntimeStateDelta` 做 immutable 更新 + `validateRuntimeState` 结构校验。坏数据直接拒绝，不会滚雪球。
+
+用户设置的 `INKOS_LLM_MAX_TOKENS` 作为全局上限生效，`llm.extra` 中的保留键（max_tokens、temperature 等）被自动过滤，防止意外覆盖。
 
 ---
 
 ## 工作原理
 
-每一章由五个 Agent 接力完成：
+每一章由多个 Agent 接力完成，全程零人工干预：
 
 <p align="center">
   <img src="assets/screenshot-pipeline.png" width="800" alt="管线流程图">
@@ -167,8 +237,13 @@ inkos export 吞天魔帝 --format epub  # 导出 EPUB（手机/Kindle 阅读）
 | Agent | 职责 |
 |-------|------|
 | **雷达 Radar** | 扫描平台趋势和读者偏好，指导故事方向（可插拔，可跳过） |
+| **规划师 Planner** | 读取作者意图 + 当前焦点 + 记忆检索结果，产出本章意图（must-keep / must-avoid） |
+| **编排师 Composer** | 从全量真相文件中按相关性选择上下文，编译规则栈和运行时产物 |
 | **建筑师 Architect** | 规划章节结构：大纲、场景节拍、节奏控制 |
-| **写手 Writer** | 根据大纲 + 当前世界状态生成正文（两阶段：创意写作 → 状态结算） |
+| **写手 Writer** | 基于编排后的精简上下文生成正文（字数治理 + 对话引导） |
+| **观察者 Observer** | 从正文中过度提取 9 类事实（角色、位置、资源、关系、情感、信息、伏笔、时间、物理状态） |
+| **反射器 Reflector** | 输出 JSON delta（而非全量 markdown），由代码层做 Zod schema 校验后 immutable 写入 |
+| **归一化器 Normalizer** | 单 pass 压缩/扩展，将章节字数拉入允许区间 |
 | **连续性审计员 Auditor** | 对照 7 个真相文件验证草稿，33 维度检查 |
 | **修订者 Reviser** | 修复审计发现的问题 — 关键问题自动修复，其他标记给人工审核 |
 
@@ -190,15 +265,32 @@ inkos export 吞天魔帝 --format epub  # 导出 EPUB（手机/Kindle 阅读）
 
 连续性审计员对照这些文件检查每一章草稿。如果角色"记起"了从未亲眼见过的事，或者拿出了两章前已经丢失的武器，审计员会捕捉到。
 
+从 0.6.0 起，真相文件的权威来源从 markdown 迁移到 `story/state/*.json`（Zod schema 校验）。Settler 不再输出完整 markdown 文件，而是输出 JSON delta，由代码层做 immutable apply + 结构校验后写入。markdown 文件仍然保留作为人类可读的投影。旧书首次运行时自动从 markdown 迁移到结构化 JSON，零人工操作。
+
+Node 22+ 环境下自动启用 SQLite 时序记忆数据库（`story/memory.db`），支持按相关性检索历史事实、伏笔和章节摘要，避免全量注入导致的上下文膨胀。
+
 <p align="center">
   <img src="assets/screenshot-state.png" width="800" alt="长期记忆快照">
 </p>
+
+### 控制面与运行时产物
+
+除了 7 个真相文件，InkOS 还把“护栏”和“自定义”拆成可审阅的控制层：
+
+- `story/author_intent.md`：长期作者意图
+- `story/current_focus.md`：当前阶段的关注点
+- `story/runtime/chapter-XXXX.intent.md`：本章目标、保留项、避免项、冲突处理
+- `story/runtime/chapter-XXXX.context.json`：本章实际选入的上下文
+- `story/runtime/chapter-XXXX.rule-stack.yaml`：本章的优先级层和覆盖关系
+- `story/runtime/chapter-XXXX.trace.json`：本章输入编译轨迹
+
+这样 `brief`、卷纲、书级规则、当前任务不再混成一坨 prompt，而是先编译，再写作。
 
 ### 创作规则体系
 
 写手 agent 内置 ~25 条通用创作规则（人物塑造、叙事技法、逻辑自洽、语言约束、去 AI 味），适用于所有题材。
 
-在此基础上，每个题材有专属规则（禁忌、语言约束、节奏、审计维度），每本书有独立的 `book_rules.md`（主角人设、数值上限、自定义禁令）和 `story_bible.md`（世界观设定），由建筑师 agent 创建书籍时自动生成。
+在此基础上，每个题材有专属规则（禁忌、语言约束、节奏、审计维度），每本书有独立的 `book_rules.md`（主角人设、数值上限、自定义禁令）、`story_bible.md`（世界观设定）、`author_intent.md`（长期方向）和 `current_focus.md`（近期关注点）。`volume_outline.md` 仍然是默认规划，但在 v2 输入治理模式下不再天然压过当前任务意图。
 
 ## 使用模式
 
@@ -211,15 +303,27 @@ inkos write next 吞天魔帝          # 写草稿 → 审计 → 自动修订�
 inkos write next 吞天魔帝 --count 5 # 连续写 5 章
 ```
 
+`write next` 现在默认走 `plan -> compose -> write` 的输入治理链路。若你需要回退到旧的 prompt 拼装路径，可在 `inkos.json` 中显式设置：
+
+```json
+{
+  "inputGovernanceMode": "legacy"
+}
+```
+
+默认值为 `v2`。`legacy` 仅作为显式 fallback 保留。
+
 ### 2. 原子命令（可组合，适合外部 Agent 调用）
 
 ```bash
+inkos plan chapter 吞天魔帝 --context "本章重点写师徒矛盾" --json
+inkos compose chapter 吞天魔帝 --json
 inkos draft 吞天魔帝 --context "本章重点写师徒矛盾" --json
 inkos audit 吞天魔帝 31 --json
 inkos revise 吞天魔帝 31 --json
 ```
 
-每个命令独立执行单一操作，`--json` 输出结构化数据。可被外部 AI Agent 通过 `exec` 调用，也可用于脚本编排。
+每个命令独立执行单一操作，`--json` 输出结构化数据。`plan` / `compose` 负责控制输入，`draft` / `audit` / `revise` 负责正文与质量链路。可被外部 AI Agent 通过 `exec` 调用，也可用于脚本编排。
 
 ### 3. 自然语言 Agent 模式
 
@@ -229,7 +333,7 @@ inkos agent "写下一章，重点写师徒矛盾"
 inkos agent "先扫描市场趋势，然后根据结果创建一本新书"
 ```
 
-内置 13 个工具（write_draft、audit_chapter、revise_chapter、scan_market、create_book、get_book_status、read_truth_files、list_books、write_full_pipeline、web_fetch、import_style、import_canon、import_chapters），LLM 通过 tool-use 决定调用顺序。
+内置 18 个工具（write_draft、plan_chapter、compose_chapter、audit_chapter、revise_chapter、scan_market、create_book、update_author_intent、update_current_focus、get_book_status、read_truth_files、list_books、write_full_pipeline、web_fetch、import_style、import_canon、import_chapters、write_truth_file），LLM 通过 tool-use 决定调用顺序。推荐的 Agent 工作流是：先调整控制面，再 `plan` / `compose`，最后决定写草稿还是跑完整管线。
 
 ## 实测数据
 
@@ -259,6 +363,8 @@ inkos agent "先扫描市场趋势，然后根据结果创建一本新书"
 | `inkos book list` | 列出所有书籍 |
 | `inkos book delete <id>` | 删除书籍及全部数据（`--force` 跳过确认） |
 | `inkos genre list/show/copy/create` | 查看、复制、创建题材 |
+| `inkos plan chapter [id]` | 生成下一章的 `intent.md`（`--context` / `--context-file` 传入当前指令） |
+| `inkos compose chapter [id]` | 生成下一章的 `context.json`、`rule-stack.yaml`、`trace.json` |
 | `inkos write next [id]` | 完整管线写下一章（`--words` 覆盖字数，`--count` 连写，`-q` 静默模式） |
 | `inkos write rewrite [id] <n>` | 重写第 N 章（恢复状态快照，`--force` 跳过确认，`--words` 覆盖字数） |
 | `inkos draft [id]` | 只写草稿（`--words` 覆盖字数，`-q` 静默模式） |
@@ -285,13 +391,15 @@ inkos agent "先扫描市场趋势，然后根据结果创建一本新书"
 | `inkos import chapters [id] --from <path>` | 导入已有章节续写（`--split`、`--resume-from`） |
 | `inkos analytics [id]` / `inkos stats [id]` | 书籍数据分析（审计通过率、高频问题、章节排名、token 用量） |
 | `inkos update` | 更新到最新版本 |
+| `inkos studio` | 启动 Web 工作台（`-p` 指定端口，默认 4567） |
 | `inkos up / down` | 启动/停止守护进程（`-q` 静默模式，自动写入 `inkos.log`） |
 
-`[id]` 参数在项目只有一本书时可省略，自动检测。所有命令支持 `--json` 输出结构化数据。`draft`/`write next` 支持 `--context` 传入创作指导，`--words` 覆盖每章字数。`book create` 支持 `--brief <file>` 传入创作简报（你的脑洞/设定文档），Architect 会基于此生成设定而非凭空创作。
+`[id]` 参数在项目只有一本书时可省略，自动检测。所有命令支持 `--json` 输出结构化数据。`draft` / `write next` / `plan chapter` / `compose chapter` 支持 `--context` 传入创作指导，`--words` 覆盖每章目标字数。`book create` 支持 `--brief <file>` 传入创作简报（你的脑洞/设定文档），Architect 会基于此生成设定而非凭空创作。`plan chapter` / `compose chapter` 不要求在线 LLM，可在配置 API Key 之前先检查输入治理结果。
 
 ## 路线图
 
-- [ ] `packages/studio` Web UI 审阅编辑界面（Vite + React + Hono）
+- [x] ~~`packages/studio` Web UI 工作台（Vite + React + Hono）~~ — 已发布，`inkos studio` 启动
+- [ ] 互动小说（分支叙事 + 读者选择）
 - [ ] 局部干预（重写半章 + 级联更新后续 truth 文件）
 - [ ] 自定义 agent 插件系统
 - [ ] 平台格式导出（起点、番茄等）
@@ -307,6 +415,26 @@ pnpm test         # 运行测试
 pnpm typecheck    # 类型检查
 ```
 
+## Star History
+
+<a href="https://www.star-history.com/#Narcooo/inkos&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Narcooo/inkos&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Narcooo/inkos&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=Narcooo/inkos&type=date&legend=top-left" />
+ </picture>
+</a>
+
+## Repobeats
+
+![Alt](https://repobeats.axiom.co/api/embed/024114415c1505a8c27fb121e3b392524e48f583.svg "Repobeats analytics image")
+
+## Contributors
+
+<a href="https://github.com/Narcooo/inkos/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=Narcooo/inkos" />
+</a>
+
 ## 许可证
 
-[MIT](LICENSE)
+[AGPL-3.0](LICENSE)

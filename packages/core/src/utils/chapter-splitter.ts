@@ -8,7 +8,9 @@ export interface SplitChapter {
  *
  * Default pattern matches:
  * - "第一章 xxxx" / "第1章 xxxx"
+ * - "第一回 xxxx" / "第1回 xxxx"
  * - "# 第1章 xxxx" / "## 第23章 xxxx"
+ * - "CHAPTER I." / "CHAPTER II."
  *
  * Each match marks the start of a new chapter. Content between matches
  * belongs to the preceding chapter.
@@ -17,7 +19,7 @@ export function splitChapters(
   text: string,
   pattern?: string,
 ): ReadonlyArray<SplitChapter> {
-  const defaultPattern = /^#{0,2}\s*第[零一二三四五六七八九十百千万\d]+章\s*(.*)/;
+  const defaultPattern = /^#{0,2}\s*(?:第[零〇○Ｏ０一二三四五六七八九十百千万\d]+(?:章|回)(?:[:：]|\s+)?\s*(.*)|Chapter\s+(?:\d+|[IVXLCDM]+)(?:\.|:|\s+)?\s*(.*))/i;
   const regex = pattern ? new RegExp(pattern, "m") : defaultPattern;
 
   const lines = text.split("\n");
@@ -27,7 +29,7 @@ export function splitChapters(
     const match = lines[i]!.match(regex);
     if (match) {
       chapters.push({
-        title: (match[1] ?? "").trim(),
+        title: (match[1] ?? match[2] ?? "").trim(),
         startLine: i,
       });
     }
@@ -45,13 +47,34 @@ export function splitChapters(
 
     // Content starts after the title line
     const contentLines = lines.slice(chapter.startLine + 1, nextStart);
-    const content = contentLines.join("\n").trim();
+    const content = stripTrailingLicense(contentLines.join("\n")).trim();
 
     result.push({
-      title: chapter.title || `第${i + 1}章`,
+      title: chapter.title || inferFallbackTitle(lines[chapter.startLine] ?? "", i + 1),
       content,
     });
   }
 
   return result;
+}
+
+function stripTrailingLicense(content: string): string {
+  const trailerMatch = content.match(/^\s*Project Gutenberg(?:™|\(TM\))?.*$/im);
+  if (!trailerMatch || trailerMatch.index === undefined) {
+    return content;
+  }
+
+  return content.slice(0, trailerMatch.index).trimEnd();
+}
+
+function inferFallbackTitle(headingLine: string, chapterNumber: number): string {
+  if (/chapter\s+(?:\d+|[ivxlcdm]+)/i.test(headingLine)) {
+    return `Chapter ${chapterNumber}`;
+  }
+
+  if (/第[零一二三四五六七八九十百千万\d]+回/.test(headingLine)) {
+    return `第${chapterNumber}回`;
+  }
+
+  return `第${chapterNumber}章`;
 }

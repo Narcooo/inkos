@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { StateManager } from "@actalk/inkos-core";
+import { StateManager, formatLengthCount, readGenreProfile, resolveLengthCountingMode } from "@actalk/inkos-core";
 import { findProjectRoot, resolveBookId, log, logError } from "../utils.js";
 
 export const reviewCommand = new Command("review")
@@ -36,6 +36,8 @@ reviewCommand
         if (pending.length === 0) continue;
 
         const book = await state.loadBookConfig(id);
+        const { profile: genreProfile } = await readGenreProfile(root, book.genre);
+        const countingMode = resolveLengthCountingMode(book.language ?? genreProfile.language);
 
         if (!opts.json) {
           log(`\n${book.title} (${id}):`);
@@ -52,7 +54,7 @@ reviewCommand
           });
           if (!opts.json) {
             log(
-              `  Ch.${ch.number} "${ch.title}" | ${ch.wordCount}字 | ${ch.status}`,
+              `  Ch.${ch.number} "${ch.title}" | ${formatLengthCount(ch.wordCount, countingMode)} | ${ch.status}`,
             );
             if (ch.auditIssues.length > 0) {
               for (const issue of ch.auditIssues) {
@@ -104,7 +106,7 @@ function parseBookAndChapter(
 
 reviewCommand
   .command("approve")
-  .description("Approve a chapter: approve [book-id] <chapter>")
+  .description("Approve a chapter and commit its state: approve [book-id] <chapter>")
   .argument("<args...>", "Book ID (optional) and chapter number")
   .option("--json", "Output JSON")
   .action(async (args: ReadonlyArray<string>, opts) => {
@@ -130,7 +132,7 @@ reviewCommand
       if (opts.json) {
         log(JSON.stringify({ bookId, chapter: chapterNum, status: "approved" }));
       } else {
-        log(`Chapter ${chapterNum} approved.`);
+        log(`Chapter ${chapterNum} approved (state committed).`);
       }
     } catch (e) {
       if (opts.json) {
@@ -184,9 +186,10 @@ reviewCommand
 
 reviewCommand
   .command("reject")
-  .description("Reject a chapter: reject [book-id] <chapter>")
+  .description("Reject a chapter and roll back state: reject [book-id] <chapter>")
   .argument("<args...>", "Book ID (optional) and chapter number")
   .option("--reason <reason>", "Rejection reason")
+  .option("--keep-subsequent", "Only reject this chapter, do not discard subsequent chapters")
   .option("--json", "Output JSON")
   .action(async (args: ReadonlyArray<string>, opts) => {
     try {
@@ -195,24 +198,49 @@ reviewCommand
       const bookId = await resolveBookId(bookIdArg, root);
 
       const state = new StateManager(root);
-      const index = [...(await state.loadChapterIndex(bookId))];
+      const index = await state.loadChapterIndex(bookId);
       const idx = index.findIndex((ch) => ch.number === chapterNum);
       if (idx === -1) {
         throw new Error(`Chapter ${chapterNum} not found in "${bookId}"`);
       }
 
-      index[idx] = {
-        ...index[idx]!,
-        status: "rejected",
-        reviewNote: opts.reason ?? "Rejected without reason",
-        updatedAt: new Date().toISOString(),
-      };
-      await state.saveChapterIndex(bookId, index);
+      if (opts.keepSubsequent) {
+        // Legacy behavior: only mark as rejected, no state rollback
+        const updated = [...index];
+        updated[idx] = {
+          ...updated[idx]!,
+          status: "rejected",
+          reviewNote: opts.reason ?? "Rejected without reason",
+          updatedAt: new Date().toISOString(),
+        };
+        await state.saveChapterIndex(bookId, updated);
+
+        if (opts.json) {
+          log(JSON.stringify({ bookId, chapter: chapterNum, status: "rejected", discarded: [] }));
+        } else {
+          log(`Chapter ${chapterNum} rejected (state not rolled back).`);
+        }
+        return;
+      }
+
+      // Default: roll back state to before the rejected chapter and discard
+      // it along with all subsequent chapters that depend on its state.
+      const rollbackTarget = chapterNum - 1;
+      const discarded = await state.rollbackToChapter(bookId, rollbackTarget);
 
       if (opts.json) {
-        log(JSON.stringify({ bookId, chapter: chapterNum, status: "rejected" }));
+        log(JSON.stringify({
+          bookId,
+          chapter: chapterNum,
+          status: "rejected",
+          rolledBackTo: rollbackTarget,
+          discarded,
+        }));
       } else {
-        log(`Chapter ${chapterNum} rejected.`);
+        log(`Chapter ${chapterNum} rejected. State rolled back to chapter ${rollbackTarget}.`);
+        if (discarded.length > 1) {
+          log(`  Also discarded ${discarded.length - 1} subsequent chapter(s): ${discarded.filter((n) => n !== chapterNum).join(", ")}`);
+        }
       }
     } catch (e) {
       if (opts.json) {

@@ -1,24 +1,42 @@
 {
   "name": "inkos",
-  "version": "0.5.1",
+  "version": "1.3.5",
   "private": true,
-  "description": "Multi-agent novel production system",
-  "license": "MIT",
+  "description": "Autonomous AI novel writing CLI agent — 10-agent pipeline that writes, audits, and revises novels with continuity tracking",
+  "keywords": [
+    "ai-novel-writing",
+    "ai-writing-agent",
+    "novel-generator",
+    "autonomous-writing",
+    "litrpg",
+    "progression-fantasy",
+    "multi-agent",
+    "creative-writing-ai",
+    "openclaw-skill",
+    "cli"
+  ],
+  "license": "AGPL-3.0-only",
   "repository": {
     "type": "git",
     "url": "https://github.com/Narcooo/inkos"
   },
   "scripts": {
     "build": "pnpm -r build",
-    "dev": "pnpm -r dev",
+    "dev": "pnpm -r --parallel dev",
     "test": "pnpm -r test",
     "lint": "pnpm -r lint",
     "typecheck": "pnpm -r typecheck",
-    "verify:publish-manifests": "node scripts/verify-no-workspace-protocol.mjs packages/core packages/cli",
+    "verify:publish-manifests": "node scripts/verify-no-workspace-protocol.mjs packages/core packages/cli packages/studio",
     "release": "pnpm build && pnpm test"
   },
   "engines": {
     "node": ">=20.0.0",
     "pnpm": ">=9.0.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "@mariozechner/pi-ai": "0.67.1",
+      "@mariozechner/pi-agent-core": "0.67.1"
+    }
   }
 }

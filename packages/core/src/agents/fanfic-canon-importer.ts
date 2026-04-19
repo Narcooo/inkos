@@ -6,6 +6,7 @@ export interface FanficCanonOutput {
   readonly characterProfiles: string;
   readonly keyEvents: string;
   readonly powerSystem: string;
+  readonly writingStyle: string;
   readonly fullDocument: string;
 }
 
@@ -68,10 +69,24 @@ export class FanficCanonImporter extends BaseAgent {
 力量/能力体系（如果适用）。包括等级划分、核心规则、已知限制。
 如果原作没有明确的力量体系，输出"（原作无明确力量体系）"。
 
+=== SECTION: writing_style ===
+原作写作风格特征（供同人写作模仿）：
+
+1. 叙事人称与视角（第一人称/第三人称有限/全知，是否频繁切换）
+2. 句式节奏（长短句交替模式、段落平均长度感受、对话占比）
+3. 场景描写手法（五感偏好、意象选择、环境描写密度）
+4. 对话标记习惯（说/道/笑道 等用法，对话前后是否有动作/表情补充）
+5. 情绪表达方式（直白内心独白 vs 动作外化 vs 环境映射）
+6. 比喻/修辞倾向（常用比喻类型、修辞频率）
+7. 节奏转换（紧张→舒缓的过渡方式、章节结尾习惯）
+
+每项用1-2个原文例句佐证。只提取原文实际存在的特征，不要泛泛描述。
+
 提取原则：
 - 忠实于原作素材，不捏造原作中没有的信息
 - 信息不足时标注"（素材未提及）"而非编造
 - 角色语癖是最重要的字段——同人读者最在意角色"像不像"
+- 写作风格提取必须基于实际文本特征，附原文例句
 ${truncated ? "\n注意：原作素材过长，已截断。请基于已有部分提取。" : ""}`;
 
     const response = await this.chat(
@@ -79,7 +94,7 @@ ${truncated ? "\n注意：原作素材过长，已截断。请基于已有部分
         { role: "system", content: systemPrompt },
         { role: "user", content: `以下是原作《${sourceName}》的素材：\n\n${text}` },
       ],
-      { maxTokens: 8192, temperature: 0.3 },
+      { temperature: 0.3 },
     );
 
     const content = response.content;
@@ -95,6 +110,7 @@ ${truncated ? "\n注意：原作素材过长，已截断。请基于已有部分
     const characterProfiles = extract("character_profiles");
     const keyEvents = extract("key_events");
     const powerSystem = extract("power_system");
+    const writingStyle = extract("writing_style");
 
     const meta = [
       "---",
@@ -119,9 +135,12 @@ ${truncated ? "\n注意：原作素材过长，已截断。请基于已有部分
       "## 力量体系",
       powerSystem || "（原作无明确力量体系）",
       "",
+      "## 原作写作风格",
+      writingStyle || "（素材不足以提取风格特征）",
+      "",
       meta,
     ].join("\n");
 
-    return { worldRules, characterProfiles, keyEvents, powerSystem, fullDocument };
+    return { worldRules, characterProfiles, keyEvents, powerSystem, writingStyle, fullDocument };
   }
 }

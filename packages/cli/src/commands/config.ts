@@ -24,6 +24,7 @@ configCommand
       const KNOWN_KEYS = new Set([
         "llm.provider", "llm.baseUrl", "llm.model", "llm.temperature",
         "llm.maxTokens", "llm.thinkingBudget", "llm.apiFormat", "llm.stream",
+        "inputGovernanceMode",
         "daemon.schedule.radarCron", "daemon.schedule.writeCron",
         "daemon.maxConcurrentBooks", "daemon.chaptersPerCycle",
         "daemon.retryDelayMs", "daemon.cooldownAfterChapterMs",
@@ -160,6 +161,15 @@ configCommand
   });
 
 const KNOWN_AGENTS = ["writer", "auditor", "reviser", "architect", "radar", "chapter-analyzer"] as const;
+const ENV_VAR_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+function validateApiKeyEnvName(value: string): string | undefined {
+  if (ENV_VAR_NAME_PATTERN.test(value)) return undefined;
+  if (/^(sk-|sess-|rk-|pk-)/i.test(value) || value.includes("://")) {
+    return "--api-key-env expects an environment variable name like PACKY_API_KEY, not a raw API key or URL.";
+  }
+  return `--api-key-env expects an environment variable name like PACKY_API_KEY. "${value}" is not a valid env var name.`;
+}
 
 configCommand
   .command("set-model")
@@ -175,6 +185,14 @@ configCommand
     if (!KNOWN_AGENTS.includes(agent as typeof KNOWN_AGENTS[number])) {
       logError(`Unknown agent "${agent}". Valid agents: ${KNOWN_AGENTS.join(", ")}`);
       process.exit(1);
+    }
+
+    if (opts.apiKeyEnv) {
+      const validationError = validateApiKeyEnvName(opts.apiKeyEnv);
+      if (validationError) {
+        logError(validationError);
+        process.exit(1);
+      }
     }
 
     const root = findProjectRoot();

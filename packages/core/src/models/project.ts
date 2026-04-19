@@ -1,7 +1,19 @@
 import { z } from "zod";
 
+const LLMServiceEntrySchema = z.object({
+  service: z.string().min(1),
+  name: z.string().min(1).optional(),
+  baseUrl: z.string().url().optional(),
+  temperature: z.number().min(0).max(2).optional(),
+  maxTokens: z.number().int().min(1).optional(),
+  apiFormat: z.enum(["chat", "responses"]).optional(),
+  stream: z.boolean().optional(),
+});
+
 export const LLMConfigSchema = z.object({
   provider: z.enum(["anthropic", "openai", "custom"]),
+  service: z.string().default("custom"),
+  configSource: z.enum(["env", "studio"]).default("env"),
   baseUrl: z.string().url(),
   apiKey: z.string().default(""),
   model: z.string().min(1),
@@ -9,8 +21,11 @@ export const LLMConfigSchema = z.object({
   maxTokens: z.number().int().min(1).default(8192),
   thinkingBudget: z.number().int().min(0).default(0),
   extra: z.record(z.unknown()).optional(),
+  headers: z.record(z.string()).optional(),
   apiFormat: z.enum(["chat", "responses"]).default("chat"),
   stream: z.boolean().default(true),
+  services: z.array(LLMServiceEntrySchema).optional(),
+  defaultModel: z.string().min(1).optional(),
 });
 
 export type LLMConfig = z.infer<typeof LLMConfigSchema>;
@@ -69,6 +84,9 @@ export const AgentLLMOverrideSchema = z.object({
 
 export type AgentLLMOverride = z.infer<typeof AgentLLMOverrideSchema>;
 
+export const InputGovernanceModeSchema = z.enum(["legacy", "v2"]);
+export type InputGovernanceMode = z.infer<typeof InputGovernanceModeSchema>;
+
 const ModelOverrideValueSchema = z.union([z.string(), AgentLLMOverrideSchema]);
 
 export const ProjectConfigSchema = z.object({
@@ -79,6 +97,7 @@ export const ProjectConfigSchema = z.object({
   notify: z.array(NotifyChannelSchema).default([]),
   detection: DetectionConfigSchema.optional(),
   modelOverrides: z.record(z.string(), ModelOverrideValueSchema).optional(),
+  inputGovernanceMode: InputGovernanceModeSchema.default("v2"),
   daemon: z.object({
     schedule: z.object({
       radarCron: z.string().default("0 */6 * * *"),

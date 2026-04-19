@@ -1,15 +1,20 @@
 ---
 name: inkos
-description: Autonomous novel writing CLI agent - use for creative fiction writing, novel generation, style imitation, chapter continuation/import, EPUB export, AIGC detection, and fan fiction. Native English support with 10 built-in English genre profiles (LitRPG, Progression Fantasy, Isekai, Cultivation, System Apocalypse, Dungeon Core, Romantasy, Sci-Fi, Tower Climber, Cozy Fantasy). Also supports Chinese web novel genres (xuanhuan, xianxia, urban, horror, other). Multi-agent pipeline, two-phase writer (creative + settlement), 33-dimension auditing, token usage analytics, creative brief input, structured logging (JSON Lines), multi-model routing, and custom OpenAI-compatible provider support.
-version: 1.5.0
-metadata: { "openclaw": { "emoji": "📖", "requires": { "bins": ["inkos", "node"], "env": [] }, "primaryEnv": "", "homepage": "https://github.com/Narcooo/inkos", "install": [{ "id": "npm", "kind": "node", "package": "@actalk/inkos", "label": "Install InkOS (npm)" }] } }
+description: Autonomous novel writing CLI agent with web workbench (InkOS Studio) - use for creative fiction writing, novel generation, style imitation, chapter continuation/import, EPUB export, AIGC detection, and fan fiction. Native English support with 10 built-in English genre profiles (LitRPG, Progression Fantasy, Isekai, Cultivation, System Apocalypse, Dungeon Core, Romantasy, Sci-Fi, Tower Climber, Cozy Fantasy). Also supports Chinese web novel genres (xuanhuan, xianxia, urban, horror, other). Multi-agent pipeline, two-phase writer (creative + settlement), 33-dimension auditing, token usage analytics, creative brief input, structured logging (JSON Lines), multi-model routing, custom OpenAI-compatible provider support, and InkOS Studio web UI for visual book management, chapter review, real-time writing progress, market radar, and analytics.
+version: 2.3.2
+metadata: { "openclaw": { "emoji": "📖", "requires": { "bins": ["inkos", "node"], "env": ["OPENAI_API_KEY"] }, "primaryEnv": "OPENAI_API_KEY", "homepage": "https://github.com/Narcooo/inkos", "install": [{ "id": "npm", "kind": "node", "package": "@actalk/inkos", "label": "Install InkOS (npm)" }] } }
 ---
 
 # InkOS - Autonomous Novel Writing Agent
 
-InkOS is a CLI tool for autonomous fiction writing powered by LLM agents. It orchestrates a 5-agent pipeline (Radar → Architect → Writer → Auditor → Reviser) to generate, audit, and revise novel content with style consistency and quality control.
+InkOS is a CLI tool for autonomous fiction writing powered by LLM agents. It orchestrates a multi-agent pipeline (Radar → Planner → Composer → Architect → Writer → Observer → Reflector → Normalizer → Auditor → Reviser) to generate, audit, and revise novel content with zero human intervention per chapter.
 
-The Writer uses a two-phase architecture: Phase 1 (creative writing, temp 0.7) produces the chapter text, then Phase 2 (state settlement, temp 0.3) updates all truth files for long-term consistency.
+The pipeline operates in three phases:
+- **Phase 1 (Creative Writing, temp 0.7)**: Planner generates chapter intent with hook agenda, Composer selects relevant context, Writer produces prose with length governance and dialogue-driven guidance.
+- **Phase 2 (State Settlement, temp 0.3)**: Observer over-extracts 9 categories of facts, Reflector outputs a JSON delta (not full markdown), code-layer applies Zod schema validation and immutable state update. Hook operations use upsert/mention/resolve/defer semantics.
+- **Phase 3 (Quality Loop)**: Normalizer adjusts chapter length, Auditor runs 33-dimension check including hook health analysis, Reviser auto-fixes critical issues. Self-correction loop runs until all critical issues clear.
+
+Truth files are persisted as schema-validated JSON (`story/state/*.json`) with markdown projections for human readability. SQLite temporal memory database (`story/memory.db`) enables relevance-based retrieval on Node 22+.
 
 ## When to Use InkOS
 
@@ -32,9 +37,11 @@ The Writer uses a two-phase architecture: Phase 1 (creative writing, temp 0.7) p
 inkos init my-writing-project
 
 # Configure your LLM provider (OpenAI, Anthropic, or any OpenAI-compatible API)
-inkos config set-global --provider openai --base-url https://api.openai.com/v1 --api-key sk-xxx --model gpt-4o
-# For compatible/proxy endpoints, use --provider custom:
-# inkos config set-global --provider custom --base-url https://your-proxy.com/v1 --api-key sk-xxx --model gpt-4o
+# Prefer --api-key-env so the key never appears in shell history:
+export OPENAI_API_KEY=sk-xxx
+inkos config set-global --provider openai --base-url https://api.openai.com/v1 --api-key-env OPENAI_API_KEY --model gpt-4o
+# For compatible/proxy endpoints, use --provider custom and point ONLY to trusted endpoints:
+# inkos config set-global --provider custom --base-url https://your-trusted-proxy.com/v1 --api-key-env OPENAI_API_KEY --model gpt-4o
 ```
 
 ### Multi-Model Routing (Optional)
@@ -106,6 +113,61 @@ inkos status
    ```bash
    inkos review approve-all
    ```
+
+### Workflow 2.5: Shared Natural-Language Control (Recommended For OpenClaw)
+
+When InkOS is being driven by OpenClaw or another external agent, prefer the shared interaction executor instead of stitching together many ad-hoc CLI calls:
+
+```bash
+inkos interact --json --message "continue the current book, but keep the pacing tighter"
+inkos interact --json --message "rewrite chapter 3"
+inkos interact --json --book my-book --message "switch to auto mode"
+```
+
+This returns a structured payload containing:
+- the routed request
+- assistant response text
+- updated interaction session
+- execution state
+- pending decision
+- recent interaction events
+
+Use this as the primary OpenClaw entry because it shares the same control layer as the project TUI.
+
+### Workflow 2.6: Steering Chapter Focus Before Writing
+
+Use this when the user says things like "pull focus back to the mentor conflict", "pause the merchant guild subplot", or "change what the next chapter should prioritize".
+
+1. **Update the book-level control docs when needed**:
+   - Use `update_author_intent` to change the long-horizon identity of the book
+   - Use `update_current_focus` to change the next 1-3 chapters' focus
+
+2. **Compile the next chapter intent**:
+   ```text
+   plan_chapter(bookId, guidance?)
+   ```
+   - Generates `story/runtime/chapter-XXXX.intent.md`
+   - Use this to verify what the system thinks the next chapter should do
+
+3. **Compose the actual runtime input package**:
+   ```text
+   compose_chapter(bookId, guidance?)
+   ```
+   - Generates `story/runtime/chapter-XXXX.context.json`
+   - Generates `story/runtime/chapter-XXXX.rule-stack.yaml`
+   - Generates `story/runtime/chapter-XXXX.trace.json`
+
+4. **Only then write**:
+   - `write_draft` if the user wants intermediate review
+   - `write_full_pipeline` if they want the usual write → audit → revise flow
+
+Recommended orchestration:
+- user asks to redirect focus
+- `update_current_focus`
+- `plan_chapter`
+- `compose_chapter`
+- inspect the resulting intent/paths
+- `write_draft` or `write_full_pipeline`
 
 ### Workflow 3: Import Existing Chapters & Continue
 
@@ -248,6 +310,62 @@ inkos fanfic init --title "What If" --from source.txt --mode au --genre other
 - Fanfic-specific audit dimensions and information boundary controls
 - Ensures new content stays consistent with source canon (or deliberately diverges in au/ooc modes)
 
+### Workflow 12: Rename Characters or Entities Across Entire Book
+
+```bash
+# Via interact
+inkos interact --json --message "把林烬改成张三"
+inkos interact --json --message "rename Lin Jin to Zhang San"
+
+# Via slash command
+inkos interact --json --message "/rename 林烬 => 张三"
+```
+- Scans all chapters + all truth files (story_bible, current_state, character_matrix, etc.)
+- Replaces every occurrence in one pass
+- Returns count of files touched
+
+### Workflow 13: Patch Specific Text in a Chapter
+
+```bash
+inkos interact --json --message "/replace 5 旧文本 => 新文本"
+```
+- Precisely replaces text in chapter 5 only
+- Marks chapter for review after patching
+
+### Workflow 14: Interactive TUI Dashboard
+
+```bash
+inkos
+```
+- Launches a full-screen Ink + React dashboard with conversational creation
+- Slash command autocomplete (Tab), input history (arrow keys)
+- Themed activity animations per operation (writing, auditing, revising, planning)
+- Bilingual i18n (Chinese / English)
+- Shares the same interaction kernel as `inkos interact` and Studio
+
+## InkOS Studio (Web Workbench)
+
+`inkos studio` launches a local web UI (default port 4567) that provides a visual interface for all InkOS operations:
+
+- **Book management** — create, delete, export (TXT/MD/EPUB), configure per-book settings
+- **Chapter review & editing** — approve/reject drafts, edit content inline, multi-mode revision (polish/spot-fix/rewrite/anti-detect)
+- **Real-time writing progress** — SSE-based live updates during chapter generation
+- **Market radar** — AI-powered trend analysis with platform/genre recommendations
+- **Analytics** — word count, audit pass rate, chapter ranking, token usage
+- **AI detection** — scan chapters for AI-generated content
+- **Style analysis** — analyze reference texts and import writing styles
+- **Genre management** — create/customize genre profiles with fatigue words, pacing rules, audit dimensions
+- **Daemon control** — start/stop background writing with event log
+- **Truth file editor** — view and edit canonical knowledge base per book
+- **Config editor** — LLM provider, model routing, notifications
+
+```bash
+inkos studio              # Start on default port 4567
+inkos studio -p 8080      # Start on custom port
+```
+
+The right-side **AI Assistant panel** in Studio shares the same interaction kernel as TUI and `inkos interact`. You can type natural language commands (rename entities, write chapters, audit, export) directly in the assistant panel.
+
 ## Advanced: Natural Language Agent Mode
 
 For flexible, conversational requests:
@@ -257,6 +375,28 @@ inkos agent "写一部都市题材的小说，主角是一个年轻律师，第�
 ```
 - Agent interprets natural language and invokes appropriate commands
 - Useful for complex multi-step requests
+
+## Input Governance Tools
+
+These tools are the preferred control surface for chapter steering:
+
+- `plan_chapter(bookId, guidance?)`
+  - Generates chapter intent for the next chapter
+  - Use before writing when the user wants to change focus
+
+- `compose_chapter(bookId, guidance?)`
+  - Generates runtime context/rule-stack/trace artifacts
+  - Use after planning and before writing
+
+- `update_author_intent(bookId, content)`
+  - Rewrites `story/author_intent.md`
+  - Use for long-horizon changes to the book's identity
+
+- `update_current_focus(bookId, content)`
+  - Rewrites `story/current_focus.md`
+  - Use for local steering over the next 1-3 chapters
+
+`write_truth_file` remains available for broad file edits, but prefer the dedicated control tools above for input-governance changes.
 
 ## Key Concepts
 
@@ -286,14 +426,20 @@ InkOS maintains 7 files per book for coherence:
 - **Emotional Arcs**: Character emotional progression
 - **Pending Hooks**: Unresolved cliffhangers and promises to reader
 
-All agents reference these to maintain long-term consistency. During `import chapters`, these files are reverse-engineered from existing content via the ChapterAnalyzerAgent.
+All agents reference these to maintain long-term consistency. Since 0.6.0, truth files are backed by schema-validated JSON in `story/state/` with automatic bootstrap from markdown for legacy books. During `import chapters`, these files are reverse-engineered from existing content via the ChapterAnalyzerAgent.
 
-### Two-Phase Writer Architecture
-The Writer agent operates in two phases:
-- **Phase 1 (Creative)**: Generates the chapter text at temperature 0.7 for creative expression. Only outputs chapter title and content.
-- **Phase 2 (Settlement)**: Updates all truth files at temperature 0.3 for precise state tracking. Ensures world state, character arcs, and plot hooks stay consistent.
+### Multi-Phase Writer Architecture
+The Writer operates across multiple phases with specialized agents:
+- **Planner**: Generates chapter intent with structured hook agenda (mustAdvance, eligibleResolve, staleDebt) based on memory retrieval.
+- **Composer**: Selects relevant context from truth files by relevance scoring, compiles rule stack and runtime artifacts.
+- **Phase 1 (Creative, temp 0.7)**: Generates prose with length governance, English variance brief (anti-repetition), and dialogue-driven guidance.
+- **Phase 2a (Observer, temp 0.5)**: Over-extracts 9 categories of facts from the chapter text.
+- **Phase 2b (Reflector, temp 0.3)**: Outputs a JSON delta with hookOps (upsert/mention/resolve/defer), currentStatePatch, and chapterSummary. Code-layer validates via Zod schema and applies immutably.
+- **Normalizer**: Single-pass compress/expand to bring chapter length into the target band. Safety net rejects destructive normalization (>75% content loss).
+- **Auditor**: 33-dimension check including hook health analysis (stale debt, burst detection, no-advance warnings).
+- **Reviser**: Auto-fixes critical issues, self-correction loop until clean.
 
-This separation allows creative freedom in writing while maintaining rigorous continuity tracking.
+Truth files use structured JSON (`story/state/*.json`) as the authoritative source, with markdown projections for human readability. Hook admission control prevents duplicate/family hooks from inflating the hook table.
 
 ### Context Guidance
 The `--context` parameter provides directional hints to the Writer and Architect:
@@ -313,12 +459,15 @@ inkos genre show xuanhuan
 
 ### Create Custom Genre
 ```bash
-inkos genre create --name "my-genre" --rules "rule1,rule2,rule3"
+inkos genre create my-genre --name "My Genre"
+# Options: --numerical, --power, --era
+inkos genre create dark-xuanhuan --name "Dark Xuanhuan" --numerical --power
 ```
 
-### Copy and Modify Existing Genre
+### Copy Built-in Genre for Customization
 ```bash
-inkos genre copy xuanhuan --name "dark-xuanhuan" --rules "darker tone, more violence"
+inkos genre copy xuanhuan
+# Copies to project genres/ directory for editing
 ```
 
 ## Command Reference Summary
@@ -350,6 +499,20 @@ inkos genre copy xuanhuan --name "dark-xuanhuan" --rules "darker tone, more viol
 | `inkos review list/approve-all` | Manage chapter approvals | Quality gate |
 | `inkos fanfic init` | Create fanfic from source material | `--from <file>`, `--mode canon/au/ooc/cp` |
 | `inkos genre list` | List all available genres | Shows English and Chinese genres with default language |
+| `inkos genre create <id>` | Create custom genre profile | `--name`, `--numerical`, `--power`, `--era` |
+| `inkos genre copy <id>` | Copy built-in genre to project | For customization |
+| `inkos write rewrite <book> <ch>` | Rewrite a specific chapter | Deletes chapter and later, rewrites from that point |
+| `inkos book update [book-id]` | Update book settings | `--chapter-words`, `--target-chapters`, `--status`, `--lang` |
+| `inkos book delete <book-id>` | Delete book and all chapters | `--force` to skip confirmation |
+| `inkos plan chapter [book-id]` | Generate chapter intent | Preview what next chapter will do before writing |
+| `inkos compose chapter [book-id]` | Generate runtime artifacts | Context, rule-stack, trace for next chapter |
+| `inkos consolidate [book-id]` | Consolidate chapter summaries | Reduces context for long books (volume-level summaries) |
+| `inkos eval [book-id]` | Quality evaluation report | `--json`, `--chapters <range>`. Composite quality score |
+| `inkos studio` | Start web workbench | `-p` for port. Local web UI for book management |
+| `inkos fanfic show [book-id]` | Display parsed fanfic canon | Shows imported source material analysis |
+| `inkos fanfic refresh [book-id]` | Re-import and regenerate fanfic canon | `--from <file>` for updated source material |
+| `inkos interact` | Shared interaction endpoint | `--json`, `--message`, `--book`. Primary entry for OpenClaw |
+| `inkos` (no args) | Launch TUI dashboard | Full-screen Ink + React interactive dashboard |
 
 ## Error Handling
 
@@ -401,9 +564,19 @@ inkos down
 8. **Check analytics**: Use `inkos analytics` to track quality trends over time
 9. **Export frequently**: Keep backups with `inkos export`
 
+## Security & Trust
+
+- **License**: the ClawHub skill descriptor is MIT-0 per platform policy, but the underlying `@actalk/inkos`, `@actalk/inkos-core`, and `@actalk/inkos-studio` npm packages are **AGPL-3.0-only**. Running InkOS and distributing modified versions are governed by AGPL. Full source on GitHub for auditability.
+- **No install hooks**: npm package has no `preinstall`/`postinstall`/`install` scripts. Install is inert.
+- **Local-only file I/O**: all read/write stays inside the project directory (`books/*`, `inkos.json`, `inkos.log`). No writes outside the working directory.
+- **No telemetry**: InkOS does not phone home, collect usage stats, or ship any data to InkOS-controlled servers. The only outbound traffic is to the LLM provider endpoint you explicitly configure.
+- **Credential handling**: always prefer `--api-key-env <VAR_NAME>` over `--api-key <literal>` so keys never hit shell history. Keys are stored in `inkos.json` under your project directory — treat it like a secret and add it to `.gitignore` if you commit the project.
+- **Custom provider base-URL**: `--provider custom` forwards your API key to whatever URL you specify. Only point it at endpoints you trust (your own proxy or an audited reverse-proxy). Never paste an untrusted `--base-url`.
+- **No elevated privileges**: InkOS requires no sudo, no global state mutation, no network listening port (Studio binds `localhost:4567` only).
+
 ## Support & Resources
 
 - **Homepage**: https://github.com/Narcooo/inkos
 - **Configuration**: Stored in project root after `inkos init`
-- **Truth files**: Located in `.inkos/` directory per book
+- **Truth files**: Located in `books/<id>/story/` per book, with structured JSON in `story/state/`
 - **Logs**: Check output of `inkos doctor` for troubleshooting

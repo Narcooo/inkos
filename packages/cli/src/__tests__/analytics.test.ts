@@ -40,6 +40,21 @@ describe("computeAnalytics", () => {
     expect(result.auditPassRate).toBe(67);
   });
 
+  it("counts state-degraded chapters as audited but not passed", () => {
+    const chapters = [
+      { number: 1, status: "approved", wordCount: 3000, auditIssues: [] },
+      { number: 2, status: "state-degraded", wordCount: 2800, auditIssues: ["[warning] state validation drift"] },
+      { number: 3, status: "drafted", wordCount: 2600, auditIssues: [] },
+    ];
+    const result = computeAnalytics("book-state-degraded", chapters);
+    expect(result.auditPassRate).toBe(50);
+    expect(result.statusDistribution).toEqual({
+      approved: 1,
+      "state-degraded": 1,
+      drafted: 1,
+    });
+  });
+
   it("extracts issue categories from formatted strings", () => {
     const chapters = [
       {

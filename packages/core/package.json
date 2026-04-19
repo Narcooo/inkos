@@ -1,7 +1,19 @@
 {
   "name": "@actalk/inkos-core",
-  "version": "0.5.1",
-  "description": "InkOS core: models, agents, pipeline, LLM integration",
+  "version": "1.3.5",
+  "description": "InkOS core engine — multi-agent novel writing pipeline with 33-dimension continuity audit, style cloning, and de-AI-ification",
+  "keywords": [
+    "ai-novel-writing",
+    "ai-writing-agent",
+    "novel-generator",
+    "multi-agent-pipeline",
+    "continuity-audit",
+    "style-cloning",
+    "ai-fiction",
+    "creative-writing-ai",
+    "llm-agent",
+    "zod-validation"
+  ],
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -16,7 +28,7 @@
     "!dist/__tests__",
     "genres"
   ],
-  "license": "MIT",
+  "license": "AGPL-3.0-only",
   "repository": {
     "type": "git",
     "url": "https://github.com/Narcooo/inkos.git",
@@ -32,10 +44,12 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.78.0",
+    "@mariozechner/pi-agent-core": "^0.67.1",
+    "@mariozechner/pi-ai": "^0.67.1",
+    "@sinclair/typebox": "^0.34.49",
     "dotenv": "^16.4.0",
+    "epub-gen-memory": "^1.0.10",
     "js-yaml": "^4.1.1",
-    "openai": "^4.80.0",
     "zod": "^3.24.0"
   },
   "devDependencies": {

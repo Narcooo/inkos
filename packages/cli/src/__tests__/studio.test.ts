@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { join } from "node:path";
 
 const accessMock = vi.fn();
 const spawnMock = vi.fn(() => ({
@@ -9,6 +10,9 @@ const logErrorMock = vi.fn();
 
 vi.mock("node:fs/promises", () => ({
   access: accessMock,
+  mkdir: vi.fn(),
+  readFile: vi.fn(async () => ""),
+  writeFile: vi.fn(),
 }));
 
 vi.mock("node:child_process", () => ({
@@ -28,19 +32,20 @@ describe("studio command", () => {
   });
 
   it("launches TypeScript sources through tsx in monorepo mode", async () => {
+    const tsEntry = join("/project", "packages", "studio", "src", "api", "index.ts");
     accessMock.mockImplementation(async (path: string) => {
-      if (path === "/studio/src/api/index.ts") {
+      if (path === tsEntry) {
         return;
       }
       throw new Error(`missing: ${path}`);
     });
 
-    const { studioCommand } = await import("../commands/studio.js");
-    await studioCommand.parseAsync(["node", "studio", "--port", "9001"]);
+    const { createStudioCommand } = await import("../commands/studio.js");
+    await createStudioCommand().parseAsync(["node", "studio", "--port", "9001"]);
 
     expect(spawnMock).toHaveBeenCalledWith(
       "npx",
-      ["tsx", "/studio/src/api/index.ts"],
+      ["tsx", tsEntry, "/project"],
       expect.objectContaining({
         cwd: "/project",
         stdio: "inherit",
@@ -50,19 +55,28 @@ describe("studio command", () => {
   });
 
   it("launches built JavaScript entries through node", async () => {
+    const jsEntry = join(
+      "/project",
+      "node_modules",
+      "@actalk",
+      "inkos-studio",
+      "dist",
+      "api",
+      "index.js",
+    );
     accessMock.mockImplementation(async (path: string) => {
-      if (path === "/project/node_modules/@actalk/inkos-studio/dist/api/index.js") {
+      if (path === jsEntry) {
         return;
       }
       throw new Error(`missing: ${path}`);
     });
 
-    const { studioCommand } = await import("../commands/studio.js");
-    await studioCommand.parseAsync(["node", "studio", "--port", "4567"]);
+    const { createStudioCommand } = await import("../commands/studio.js");
+    await createStudioCommand().parseAsync(["node", "studio", "--port", "4567"]);
 
     expect(spawnMock).toHaveBeenCalledWith(
       "node",
-      ["/project/node_modules/@actalk/inkos-studio/dist/api/index.js"],
+      [jsEntry, "/project"],
       expect.objectContaining({
         cwd: "/project",
         stdio: "inherit",

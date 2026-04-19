@@ -4,7 +4,8 @@
   "llm": {
     "provider": "openai",
     "baseUrl": "https://api.openai.com/v1",
-    "model": "gpt-4o"
+    "model": "gpt-4o",
+    "stream": false
   },
   "notify": [],
   "daemon": {
@@ -13,5 +14,6 @@
       "writeCron": "*/15 * * * *"
     },
     "maxConcurrentBooks": 3
-  }
+  },
+  "language": "zh"
 }

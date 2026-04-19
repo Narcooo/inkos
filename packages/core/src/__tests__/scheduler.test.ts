@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Scheduler, type SchedulerConfig } from "../pipeline/scheduler.js";
+import type { BookConfig } from "../models/book.js";
 
 function createConfig(): SchedulerConfig {
   return {
@@ -10,7 +11,7 @@ function createConfig(): SchedulerConfig {
       defaults: {
         temperature: 0.7,
         maxTokens: 1024,
-        thinkingBudget: 0,
+        thinkingBudget: 0, maxTokensCap: null,
       },
     } as SchedulerConfig["client"],
     model: "test-model",
@@ -64,5 +65,59 @@ describe("Scheduler", () => {
     releaseCycle?.();
     await blockedCycle;
     scheduler.stop();
+  });
+
+  it("treats state-degraded chapter results as handled failures", async () => {
+    const onChapterComplete = vi.fn();
+    const scheduler = new Scheduler({
+      ...createConfig(),
+      onChapterComplete,
+    });
+    const bookConfig: BookConfig = {
+      id: "book-1",
+      title: "Book 1",
+      platform: "other",
+      genre: "other",
+      status: "active",
+      targetChapters: 10,
+      chapterWordCount: 2200,
+      createdAt: "2026-04-01T00:00:00.000Z",
+      updatedAt: "2026-04-01T00:00:00.000Z",
+    };
+
+    vi.spyOn(
+      (scheduler as unknown as { pipeline: { writeNextChapter: (bookId: string, words?: number, temp?: number) => Promise<unknown> } }).pipeline,
+      "writeNextChapter",
+    ).mockResolvedValue({
+        chapterNumber: 3,
+        title: "Broken State",
+        wordCount: 2100,
+        revised: false,
+        status: "state-degraded",
+        auditResult: {
+          passed: true,
+          issues: [{
+            severity: "warning",
+            category: "state-validation",
+            description: "state validation still failed after retry",
+            suggestion: "repair state before continuing",
+          }],
+          summary: "clean",
+        },
+    });
+    const handleAuditFailure = vi.spyOn(
+      scheduler as unknown as { handleAuditFailure: (bookId: string, chapterNumber: number, issueCategories?: string[]) => Promise<void> },
+      "handleAuditFailure",
+    ).mockResolvedValue(undefined);
+
+    const success = await (
+      scheduler as unknown as {
+        writeOneChapter: (bookId: string, bookConfig: BookConfig) => Promise<boolean>;
+      }
+    ).writeOneChapter("book-1", bookConfig);
+
+    expect(success).toBe(false);
+    expect(handleAuditFailure).toHaveBeenCalledWith("book-1", 3, ["state-validation"]);
+    expect(onChapterComplete).toHaveBeenCalledWith("book-1", 3, "state-degraded");
   });
 });

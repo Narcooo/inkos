@@ -12,5 +12,19 @@ _tmp_*
 test-project/
 .venv*/
 .gstack/
-docs/
+.worktrees/
+docs/*
 novel-to-comic-research.docx
+.pnpm-store/
+tmp/
+autoresearch/
+.playwright-cli/
+.superpowers/
+_*.md
+
+# 用户运行时数据（会话记录、书籍内容、项目密钥、提示词模板不属于项目代码）
+.inkos/
+books/
+inkos.json
+prompt/
+CLAUDE.md

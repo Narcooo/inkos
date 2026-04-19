@@ -5,9 +5,9 @@
  * Catches violations that prompt-only rules cannot guarantee.
  */
 
+import { analyzeChapterCadence } from "../utils/chapter-cadence.js";
 import type { BookRules } from "../models/book-rules.js";
 import type { GenreProfile } from "../models/genre-profile.js";
-import { getChapterLengthTarget } from "../utils/chapter-length.js";
 
 export interface PostWriteViolation {
   readonly rule: string;
@@ -16,8 +16,13 @@ export interface PostWriteViolation {
   readonly suggestion: string;
 }
 
-export interface PostWriteValidationOptions {
-  readonly targetWordCount?: number;
+interface ParagraphShape {
+  readonly paragraphs: ReadonlyArray<string>;
+  readonly shortThreshold: number;
+  readonly shortParagraphs: ReadonlyArray<string>;
+  readonly shortRatio: number;
+  readonly averageLength: number;
+  readonly maxConsecutiveShort: number;
 }
 
 // --- Marker word lists ---
@@ -57,19 +62,15 @@ export function validatePostWrite(
   content: string,
   genreProfile: GenreProfile,
   bookRules: BookRules | null,
-  options: PostWriteValidationOptions = {},
+  languageOverride?: "zh" | "en",
 ): ReadonlyArray<PostWriteViolation> {
   const violations: PostWriteViolation[] = [];
 
-  if (options.targetWordCount !== undefined) {
-    violations.push(...validateChapterLength(content, options.targetWordCount));
-  }
-
   // Skip Chinese-specific rules for English content
-  const isEnglish = genreProfile.language === "en";
+  const isEnglish = (languageOverride ?? genreProfile.language) === "en";
   if (isEnglish) {
     // For English, only run book-specific prohibitions and paragraph length check
-    return [...violations, ...validatePostWriteEnglish(content, genreProfile, bookRules)];
+    return validatePostWriteEnglish(content, genreProfile, bookRules);
   }
 
   // 1. 硬性禁令: "不是…而是…" 句式
@@ -164,7 +165,24 @@ export function validatePostWrite(
     });
   }
 
-  // 7. 作者说教词
+  // 7. 正文中的章节号指称（如"第33章"、"chapter 33"）
+  const chapterRefPattern = /(?:第\s*\d+\s*章|[Cc]hapter\s+\d+)/g;
+  const chapterRefs = content.match(chapterRefPattern);
+  if (chapterRefs && chapterRefs.length > 0) {
+    const unique = [...new Set(chapterRefs)];
+    violations.push({
+      rule: isEnglish ? "chapter-number-reference" : "章节号指称",
+      severity: "error",
+      description: isEnglish
+        ? `Chapter text contains explicit chapter number references: ${unique.map(r => `"${r}"`).join(", ")}. Characters do not know they are in a numbered chapter.`
+        : `正文中出现了章节号指称：${unique.map(r => `"${r}"`).join("、")}。角色不知道自己在第几章。`,
+      suggestion: isEnglish
+        ? "Replace with natural references: 'that night', 'when the warehouse burned', 'the incident at the dock'"
+        : '改成自然表达："那天晚上"、"仓库出事那次"、"码头上的事"',
+    });
+  }
+
+  // 8. 作者说教词
   const foundSermons: string[] = [];
   for (const word of SERMON_WORDS) {
     if (content.includes(word)) {
@@ -235,6 +253,8 @@ export function validatePostWrite(
     });
   }
 
+  violations.push(...detectParagraphShapeWarnings(content, "zh"));
+
   // 11. Book-level prohibitions
   // Short prohibitions (2-30 chars): exact substring match
   // Long prohibitions (>30 chars): skip — these are conceptual rules for prompt-level enforcement only
@@ -254,33 +274,111 @@ export function validatePostWrite(
   return violations;
 }
 
-function validateChapterLength(content: string, targetWordCount: number): ReadonlyArray<PostWriteViolation> {
-  const lengthTarget = getChapterLengthTarget(targetWordCount);
-  const actualLength = content.length;
+/**
+ * Cross-chapter repetition check.
+ * Detects phrases from the current chapter that also appeared in recent chapters.
+ */
+export function detectCrossChapterRepetition(
+  currentContent: string,
+  recentChaptersContent: string,
+  language: "zh" | "en" = "zh",
+): ReadonlyArray<PostWriteViolation> {
+  if (!recentChaptersContent || recentChaptersContent.length < 100) return [];
 
-  if (actualLength < lengthTarget.min) {
-    return [
-      {
-        rule: "章节长度",
-        severity: "error",
-        description: `正文长度${actualLength}字，低于目标${lengthTarget.target}字的允许下限${lengthTarget.min}字`,
-        suggestion: `补足必要的剧情推进、冲突兑现或章末钩子，将篇幅补到${lengthTarget.min}-${lengthTarget.max}字区间`,
-      },
-    ];
+  const violations: PostWriteViolation[] = [];
+  const isEnglish = language === "en";
+
+  if (isEnglish) {
+    // Extract 3-word phrases from current chapter
+    const words = currentContent.toLowerCase().replace(/[^\w\s']/g, "").split(/\s+/).filter(w => w.length > 2);
+    const phraseCounts = new Map<string, number>();
+    for (let i = 0; i < words.length - 2; i++) {
+      const phrase = `${words[i]} ${words[i + 1]} ${words[i + 2]}`;
+      phraseCounts.set(phrase, (phraseCounts.get(phrase) ?? 0) + 1);
+    }
+    // Check which repeated phrases (2+ in current) also appear in recent chapters
+    const recentLower = recentChaptersContent.toLowerCase();
+    const crossRepeats: string[] = [];
+    for (const [phrase, count] of phraseCounts) {
+      if (count >= 2 && recentLower.includes(phrase)) {
+        crossRepeats.push(`"${phrase}" (×${count})`);
+      }
+    }
+    if (crossRepeats.length >= 3) {
+      violations.push({
+        rule: "Cross-chapter repetition",
+        severity: "warning",
+        description: `${crossRepeats.length} repeated phrases also found in recent chapters: ${crossRepeats.slice(0, 5).join(", ")}`,
+        suggestion: "Vary action verbs and descriptive phrases to avoid cross-chapter repetition",
+      });
+    }
+  } else {
+    // Chinese: 6-char ngrams
+    const chars = currentContent.replace(/[\s\n\r]/g, "");
+    const phraseCounts = new Map<string, number>();
+    for (let i = 0; i < chars.length - 5; i++) {
+      const phrase = chars.slice(i, i + 6);
+      if (/^[\u4e00-\u9fff]{6}$/.test(phrase)) {
+        phraseCounts.set(phrase, (phraseCounts.get(phrase) ?? 0) + 1);
+      }
+    }
+    const recentClean = recentChaptersContent.replace(/[\s\n\r]/g, "");
+    const crossRepeats: string[] = [];
+    for (const [phrase, count] of phraseCounts) {
+      if (count >= 2 && recentClean.includes(phrase)) {
+        crossRepeats.push(`"${phrase}"(×${count})`);
+      }
+    }
+    if (crossRepeats.length >= 3) {
+      violations.push({
+        rule: "跨章重复",
+        severity: "warning",
+        description: `${crossRepeats.length}个重复短语在近期章节中也出现过：${crossRepeats.slice(0, 5).join("、")}`,
+        suggestion: "变换动作描写和场景用语，避免跨章节机械重复",
+      });
+    }
   }
 
-  if (actualLength > lengthTarget.max) {
-    return [
-      {
-        rule: "章节长度",
-        severity: "error",
-        description: `正文长度${actualLength}字，超出目标${lengthTarget.target}字的允许上限${lengthTarget.max}字`,
-        suggestion: `压缩重复描写、解释性句子和过渡段，把篇幅收束到${lengthTarget.min}-${lengthTarget.max}字区间`,
-      },
-    ];
+  return violations;
+}
+
+export function detectParagraphLengthDrift(
+  currentContent: string,
+  recentChaptersContent: string,
+  language: "zh" | "en" = "zh",
+): ReadonlyArray<PostWriteViolation> {
+  if (!recentChaptersContent || recentChaptersContent.trim().length === 0) return [];
+
+  const current = analyzeParagraphShape(currentContent, language);
+  const recent = analyzeParagraphShape(recentChaptersContent, language);
+
+  if (current.paragraphs.length < 4 || recent.paragraphs.length < 4) return [];
+  if (recent.averageLength <= 0 || current.averageLength <= 0) return [];
+
+  const shrinkRatio = current.averageLength / recent.averageLength;
+  const shortRatioDelta = current.shortRatio - recent.shortRatio;
+
+  if (shrinkRatio >= 0.6 || current.shortRatio < 0.5 || shortRatioDelta < 0.25) {
+    return [];
   }
 
-  return [];
+  const dropPercent = Math.round((1 - shrinkRatio) * 100);
+
+  return [
+    language === "en"
+      ? {
+          rule: "Paragraph density drift",
+          severity: "warning",
+          description: `Average paragraph length dropped from ${Math.round(recent.averageLength)} to ${Math.round(current.averageLength)} characters (${dropPercent}% shorter) compared with recent chapters.`,
+          suggestion: "Let action, observation, and reaction share paragraphs more often instead of cutting every beat into a single short line.",
+        }
+      : {
+          rule: "段落密度漂移",
+          severity: "warning",
+          description: `当前章平均段长从近期章节的${Math.round(recent.averageLength)}字降到${Math.round(current.averageLength)}字，缩短了${dropPercent}%。`,
+          suggestion: "不要把每个动作都切成单独短句；适当把动作、观察和反应并入同一段，恢复段落层次。",
+        },
+  ];
 }
 
 /** English-specific post-write validation rules. */
@@ -318,6 +416,23 @@ function validatePostWriteEnglish(
     });
   }
 
+  violations.push(...detectParagraphShapeWarnings(content, "en"));
+
+  // 2.5. Multi-character scene with almost no direct exchange
+  const quotedLines = content.match(/"[^"]+"/g) ?? [];
+  const englishNames = [...new Set(
+    (content.match(/\b[A-Z][a-z]{2,}\b/g) ?? [])
+      .filter((name) => !ENGLISH_NAME_STOP_WORDS.has(name)),
+  )];
+  if (englishNames.length >= 2 && quotedLines.length < 2 && content.length >= 120) {
+    violations.push({
+      rule: "Dialogue pressure",
+      severity: "warning",
+      description: `Multi-character scene appears to rely on narration with almost no direct exchange (${englishNames.slice(0, 3).join(", ")}).`,
+      suggestion: "Add at least one resistance-bearing exchange so characters push back, withhold, or pressure each other directly.",
+    });
+  }
+
   // 3. Book-specific prohibitions
   if (bookRules?.prohibitions) {
     for (const prohibition of bookRules.prohibitions) {
@@ -350,4 +465,389 @@ function validatePostWriteEnglish(
   }
 
   return violations;
+}
+
+function appendParagraphShapeWarnings(
+  violations: PostWriteViolation[],
+  content: string,
+  language: "zh" | "en",
+): void {
+  const shape = analyzeParagraphShape(content, language);
+  if (shape.paragraphs.length < 4) return;
+
+  if (shape.shortParagraphs.length >= 4 && shape.shortRatio >= 0.6) {
+    violations.push(
+      language === "en"
+        ? {
+            rule: "Paragraph fragmentation",
+            severity: "warning",
+            description: `${shape.shortParagraphs.length} of ${shape.paragraphs.length} paragraphs are shorter than ${shape.shortThreshold} characters.`,
+            suggestion: "Merge adjacent action, observation, and reaction beats so the chapter does not collapse into one-line paragraphs.",
+          }
+        : {
+            rule: "段落过碎",
+            severity: "warning",
+            description: `${shape.paragraphs.length}个段落里有${shape.shortParagraphs.length}个不足${shape.shortThreshold}字，段落被切得过碎。`,
+            suggestion: "把相邻的动作、观察、反应适当并段，不要每句话都单独起段。",
+          },
+    );
+  }
+
+  if (shape.maxConsecutiveShort >= 3) {
+    violations.push(
+      language === "en"
+        ? {
+            rule: "Consecutive short paragraphs",
+            severity: "warning",
+            description: `${shape.maxConsecutiveShort} short paragraphs appear back to back.`,
+            suggestion: "Break the one-beat-per-paragraph rhythm by folding connected beats into fuller paragraphs.",
+          }
+        : {
+            rule: "连续短段",
+            severity: "warning",
+            description: `连续出现${shape.maxConsecutiveShort}个不足${shape.shortThreshold}字的短段，容易形成短句堆砌。`,
+            suggestion: "把连续的碎动作重新编组，至少让一个段落承载完整的动作链或情绪推进。",
+          },
+    );
+  }
+}
+
+export function detectParagraphShapeWarnings(
+  content: string,
+  language: "zh" | "en" = "zh",
+): ReadonlyArray<PostWriteViolation> {
+  const violations: PostWriteViolation[] = [];
+  appendParagraphShapeWarnings(violations, content, language);
+  return violations;
+}
+
+function isDialogueParagraph(paragraph: string): boolean {
+  const trimmed = paragraph.trim();
+  return /^[""「『'《]/.test(trimmed) || /^[""]/.test(trimmed) || /^——/.test(trimmed);
+}
+
+function analyzeParagraphShape(content: string, language: "zh" | "en"): ParagraphShape {
+  const paragraphs = extractParagraphs(content);
+  // Exclude dialogue lines from short paragraph counting — dialogue is naturally short
+  const narrativeParagraphs = paragraphs.filter((p) => !isDialogueParagraph(p));
+  const shortThreshold = language === "en" ? 120 : 35;
+  const shortParagraphs = narrativeParagraphs.filter((paragraph) => paragraph.length < shortThreshold);
+  const averageLength = paragraphs.length > 0
+    ? paragraphs.reduce((sum, paragraph) => sum + paragraph.length, 0) / paragraphs.length
+    : 0;
+
+  let maxConsecutiveShort = 0;
+  let currentConsecutive = 0;
+  for (const paragraph of narrativeParagraphs) {
+    if (paragraph.length < shortThreshold) {
+      currentConsecutive++;
+      maxConsecutiveShort = Math.max(maxConsecutiveShort, currentConsecutive);
+    } else {
+      currentConsecutive = 0;
+    }
+  }
+
+  return {
+    paragraphs,
+    shortThreshold,
+    shortParagraphs,
+    shortRatio: narrativeParagraphs.length > 0 ? shortParagraphs.length / narrativeParagraphs.length : 0,
+    averageLength,
+    maxConsecutiveShort,
+  };
+}
+
+function extractParagraphs(content: string): string[] {
+  return content
+    .split(/\n\s*\n/)
+    .map((paragraph) => paragraph.trim())
+    .filter((paragraph) => paragraph.length > 0)
+    .filter((paragraph) => paragraph !== "---")
+    .filter((paragraph) => !paragraph.startsWith("#"));
+}
+
+const ENGLISH_NAME_STOP_WORDS = new Set([
+  "The",
+  "And",
+  "But",
+  "When",
+  "While",
+  "After",
+  "Before",
+  "Even",
+  "Then",
+  "They",
+]);
+
+const CHINESE_TITLE_STOP_WORDS = new Set([
+  "这次",
+  "正文",
+  "标题",
+  "重复",
+  "不同",
+  "完全",
+  "只是",
+  "碰巧",
+  "没有",
+  "回头",
+]);
+
+const CHINESE_TITLE_STOP_CHARS = new Set(["的", "了", "着", "一", "只", "从", "在", "和", "与", "把", "被", "有", "没", "里", "又", "才"]);
+
+/**
+ * Detect duplicate or near-duplicate chapter titles.
+ * Compares the new title against existing chapter titles from index.
+ */
+export function detectDuplicateTitle(
+  newTitle: string,
+  existingTitles: ReadonlyArray<string>,
+): ReadonlyArray<PostWriteViolation> {
+  if (!newTitle.trim()) return [];
+
+  const normalized = newTitle.trim().toLowerCase();
+  const violations: PostWriteViolation[] = [];
+
+  for (const existing of existingTitles) {
+    const existingNorm = existing.trim().toLowerCase();
+    if (!existingNorm) continue;
+
+    // Exact match
+    if (normalized === existingNorm) {
+      violations.push({
+        rule: "duplicate-title",
+        severity: "warning",
+        description: `章节标题"${newTitle}"与已有章节标题完全相同`,
+        suggestion: "更换一个不同的章节标题",
+      });
+      break;
+    }
+
+    // Near-duplicate: one is substring of the other, or only differs by punctuation/numbers
+    const stripPunct = (s: string) => s.replace(/[^\p{L}\p{N}]/gu, "");
+    if (stripPunct(normalized) === stripPunct(existingNorm)) {
+      violations.push({
+        rule: "near-duplicate-title",
+        severity: "warning",
+        description: `章节标题"${newTitle}"与已有标题"${existing}"高度相似`,
+        suggestion: "避免使用相似的章节标题",
+      });
+      break;
+    }
+  }
+
+  return violations;
+}
+
+export function resolveDuplicateTitle(
+  newTitle: string,
+  existingTitles: ReadonlyArray<string>,
+  language: "zh" | "en" = "zh",
+  options?: {
+    readonly content?: string;
+  },
+): {
+  readonly title: string;
+  readonly issues: ReadonlyArray<PostWriteViolation>;
+} {
+  const trimmed = newTitle.trim();
+  if (!trimmed) {
+    return { title: newTitle, issues: [] };
+  }
+
+  const duplicateIssues = detectDuplicateTitle(trimmed, existingTitles);
+  if (duplicateIssues.length > 0) {
+    const regenerated = regenerateDuplicateTitle(trimmed, existingTitles, language, options?.content);
+    if (regenerated && detectDuplicateTitle(regenerated, existingTitles).length === 0) {
+      return { title: regenerated, issues: duplicateIssues };
+    }
+
+    let counter = 2;
+    while (counter < 100) {
+      const candidate = language === "en"
+        ? `${trimmed} (${counter})`
+        : `${trimmed}（${counter}）`;
+      if (detectDuplicateTitle(candidate, existingTitles).length === 0) {
+        return { title: candidate, issues: duplicateIssues };
+      }
+      counter++;
+    }
+
+    return { title: trimmed, issues: duplicateIssues };
+  }
+
+  const collapseIssues = detectTitleCollapse(trimmed, existingTitles, language);
+  if (collapseIssues.length === 0) {
+    return { title: trimmed, issues: [] };
+  }
+
+  const regenerated = regenerateCollapsedTitle(trimmed, existingTitles, language, options?.content);
+  if (
+    regenerated
+    && detectDuplicateTitle(regenerated, existingTitles).length === 0
+    && detectTitleCollapse(regenerated, existingTitles, language).length === 0
+  ) {
+    return { title: regenerated, issues: collapseIssues };
+  }
+
+  return { title: trimmed, issues: collapseIssues };
+}
+
+function detectTitleCollapse(
+  newTitle: string,
+  existingTitles: ReadonlyArray<string>,
+  language: "zh" | "en",
+): ReadonlyArray<PostWriteViolation> {
+  const recentTitles = existingTitles
+    .map((title) => title.trim())
+    .filter(Boolean)
+    .slice(-3);
+  if (recentTitles.length < 3) {
+    return [];
+  }
+
+  const cadence = analyzeChapterCadence({
+    language,
+    rows: [...recentTitles, newTitle].map((title, index) => ({
+      chapter: index + 1,
+      title,
+      mood: "",
+      chapterType: "",
+    })),
+  });
+  const titlePressure = cadence.titlePressure;
+  if (!titlePressure || titlePressure.pressure !== "high") {
+    return [];
+  }
+  if (!newTitle.includes(titlePressure.repeatedToken)) {
+    return [];
+  }
+
+  return [
+    language === "en"
+      ? {
+          rule: "title-collapse",
+          severity: "warning",
+          description: `Chapter title "${newTitle}" keeps leaning on the recent "${titlePressure.repeatedToken}" title shell.`,
+          suggestion: "Rename the chapter around a new image, action, consequence, or character focus.",
+        }
+      : {
+          rule: "title-collapse",
+          severity: "warning",
+          description: `章节标题"${newTitle}"仍在沿用近期围绕“${titlePressure.repeatedToken}”的命名壳。`,
+          suggestion: "换一个新的意象、动作、后果或人物焦点来命名。",
+        },
+  ];
+}
+
+function regenerateDuplicateTitle(
+  baseTitle: string,
+  existingTitles: ReadonlyArray<string>,
+  language: "zh" | "en",
+  content?: string,
+): string | undefined {
+  if (!content || !content.trim()) {
+    return undefined;
+  }
+
+  const qualifier = language === "en"
+    ? extractEnglishTitleQualifier(baseTitle, existingTitles, content)
+    : extractChineseTitleQualifier(baseTitle, existingTitles, content);
+  if (!qualifier) {
+    return undefined;
+  }
+
+  return language === "en"
+    ? `${baseTitle}: ${qualifier}`
+    : `${baseTitle}：${qualifier}`;
+}
+
+function regenerateCollapsedTitle(
+  baseTitle: string,
+  existingTitles: ReadonlyArray<string>,
+  language: "zh" | "en",
+  content?: string,
+): string | undefined {
+  if (!content || !content.trim()) {
+    return undefined;
+  }
+
+  const fresh = language === "en"
+    ? extractEnglishTitleQualifier(baseTitle, existingTitles, content)
+    : extractChineseTitleQualifier(baseTitle, existingTitles, content);
+  if (!fresh) {
+    return undefined;
+  }
+
+  return fresh === baseTitle ? undefined : fresh;
+}
+
+function extractEnglishTitleQualifier(
+  baseTitle: string,
+  existingTitles: ReadonlyArray<string>,
+  content: string,
+): string | undefined {
+  const blocked = new Set(extractEnglishTitleTerms([baseTitle, ...existingTitles].join(" ")));
+  const words = (content.match(/[A-Za-z]{4,}/g) ?? [])
+    .map((word) => word.toLowerCase())
+    .filter((word) => !ENGLISH_NAME_STOP_WORDS.has(capitalize(word)))
+    .filter((word) => !blocked.has(word));
+  const first = words[0];
+  if (!first) {
+    return undefined;
+  }
+
+  const second = words.find((word) => word !== first && !blocked.has(word));
+  return second
+    ? `${capitalize(first)} ${capitalize(second)}`
+    : capitalize(first);
+}
+
+function extractChineseTitleQualifier(
+  baseTitle: string,
+  existingTitles: ReadonlyArray<string>,
+  content: string,
+): string | undefined {
+  const blocked = new Set(extractChineseTitleTerms([baseTitle, ...existingTitles].join("")));
+  const segments = content.match(/[\u4e00-\u9fff]+/g) ?? [];
+
+  for (const segment of segments) {
+    for (let start = 0; start < segment.length; start += 1) {
+      for (let size = 2; size <= 4; size += 1) {
+        const candidate = segment.slice(start, start + size).trim();
+        if (candidate.length < 2) continue;
+        if (CHINESE_TITLE_STOP_WORDS.has(candidate)) continue;
+        if ([...candidate].some((char) => CHINESE_TITLE_STOP_CHARS.has(char))) continue;
+        if (blocked.has(candidate)) continue;
+        return candidate;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function extractEnglishTitleTerms(text: string): string[] {
+  return [...new Set((text.match(/[A-Za-z]{4,}/g) ?? []).map((word) => word.toLowerCase()))];
+}
+
+function extractChineseTitleTerms(text: string): string[] {
+  const terms = new Set<string>();
+  const segments = text.match(/[\u4e00-\u9fff]+/g) ?? [];
+
+  for (const segment of segments) {
+    for (let start = 0; start < segment.length; start += 1) {
+      for (let size = 2; size <= 4; size += 1) {
+        const candidate = segment.slice(start, start + size).trim();
+        if (candidate.length < 2) continue;
+        if ([...candidate].some((char) => CHINESE_TITLE_STOP_CHARS.has(char))) continue;
+        terms.add(candidate);
+      }
+    }
+  }
+
+  return [...terms];
+}
+
+function capitalize(word: string): string {
+  return word.length === 0 ? word : `${word[0]!.toUpperCase()}${word.slice(1)}`;
 }

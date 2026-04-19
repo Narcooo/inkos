@@ -3,6 +3,14 @@ import { access, readFile, rm } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { join, resolve } from "node:path";
 import { PipelineRunner, StateManager, type BookConfig } from "@actalk/inkos-core";
+import {
+  formatBookCreateCreated,
+  formatBookCreateCreating,
+  formatBookCreateFoundationReady,
+  formatBookCreateLocation,
+  formatBookCreateNextStep,
+  resolveCliLanguage,
+} from "../localization.js";
 import { loadConfig, buildPipelineConfig, findProjectRoot, resolveBookId, log, logError } from "../utils.js";
 
 export const bookCommand = new Command("book")
@@ -21,7 +29,6 @@ bookCommand
   .option("--json", "Output JSON")
   .action(async (opts) => {
     try {
-      const config = await loadConfig();
       const root = findProjectRoot();
 
       const bookId = opts.title
@@ -30,6 +37,20 @@ bookCommand
         .replace(/-+/g, "-")
         .slice(0, 30);
 
+      const bookDir = join(root, "books", bookId);
+      try {
+        await access(bookDir);
+        const state = new StateManager(root);
+        if (await state.isCompleteBookDirectory(bookDir)) {
+          throw new Error(`Book "${bookId}" already exists at books/${bookId}/. Use a different title or delete the existing book first.`);
+        }
+        await rm(bookDir, { recursive: true, force: true });
+      } catch (e) {
+        if (e instanceof Error && e.message.includes("already exists")) throw e;
+        // Directory doesn't exist, good
+      }
+
+      const config = await loadConfig();
       const now = new Date().toISOString();
       const book: BookConfig = {
         id: bookId,
@@ -43,25 +64,9 @@ bookCommand
         createdAt: now,
         updatedAt: now,
       };
+      const language = resolveCliLanguage(book.language);
 
-      const bookDir = join(root, "books", bookId);
-      try {
-        await access(bookDir);
-        // Directory exists — check if it's a complete book or an interrupted init
-        try {
-          await access(join(bookDir, "story", "story_bible.md"));
-          throw new Error(`Book "${bookId}" already exists at books/${bookId}/. Use a different title or delete the existing book first.`);
-        } catch (inner) {
-          if (inner instanceof Error && inner.message.includes("already exists")) throw inner;
-          // story_bible.md missing → incomplete init, allow re-run
-          if (!opts.json) log(`Resuming incomplete book creation for "${bookId}"...`);
-        }
-      } catch (e) {
-        if (e instanceof Error && e.message.includes("already exists")) throw e;
-        // Directory doesn't exist, good
-      }
-
-      if (!opts.json) log(`Creating book "${book.title}" (${book.genre} / ${book.platform})...`);
+      if (!opts.json) log(formatBookCreateCreating(language, book.title, book.genre, book.platform));
 
       const brief = opts.brief
         ? await readFile(resolve(opts.brief), "utf-8")
@@ -81,11 +86,11 @@ bookCommand
           nextStep: `inkos write next ${bookId}`,
         }, null, 2));
       } else {
-        log(`Book created: ${bookId}`);
-        log(`  Location: books/${bookId}/`);
-        log(`  Story bible, outline, book rules generated.`);
+        log(formatBookCreateCreated(language, bookId));
+        log(formatBookCreateLocation(language, bookId));
+        log(formatBookCreateFoundationReady(language));
         log("");
-        log(`Next: inkos write next ${bookId}`);
+        log(formatBookCreateNextStep(language, bookId));
       }
     } catch (e) {
       if (opts.json) {

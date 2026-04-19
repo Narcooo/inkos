@@ -9,7 +9,20 @@
  * persistence layer. MemoryDB is an acceleration index built alongside them.
  */
 
+import { createRequire } from "node:module";
 import { join } from "node:path";
+
+const require = createRequire(import.meta.url);
+
+const FACT_SELECT_COLUMNS = `
+  id,
+  subject,
+  predicate,
+  object,
+  valid_from_chapter AS validFromChapter,
+  valid_until_chapter AS validUntilChapter,
+  source_chapter AS sourceChapter
+`;
 
 export interface Fact {
   readonly id?: number;
@@ -32,13 +45,23 @@ export interface StoredSummary {
   readonly chapterType: string;
 }
 
+export interface StoredHook {
+  readonly hookId: string;
+  readonly startChapter: number;
+  readonly type: string;
+  readonly status: string;
+  readonly lastAdvancedChapter: number;
+  readonly expectedPayoff: string;
+  readonly payoffTiming?: string;
+  readonly notes: string;
+}
+
 export class MemoryDB {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private db: any;
 
   constructor(bookDir: string) {
-    // Dynamic import to avoid crashing on Node 20 (node:sqlite requires Node 22+)
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    // node:sqlite requires Node 22+; require() via createRequire for ESM compat
     const { DatabaseSync } = require("node:sqlite");
     const dbPath = join(bookDir, "story", "memory.db");
     this.db = new DatabaseSync(dbPath);
@@ -70,10 +93,33 @@ export class MemoryDB {
         chapter_type TEXT NOT NULL DEFAULT ''
       );
 
+      CREATE TABLE IF NOT EXISTS hooks (
+        hook_id TEXT PRIMARY KEY,
+        start_chapter INTEGER NOT NULL DEFAULT 0,
+        type TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'open',
+        last_advanced_chapter INTEGER NOT NULL DEFAULT 0,
+        expected_payoff TEXT NOT NULL DEFAULT '',
+        payoff_timing TEXT NOT NULL DEFAULT '',
+        notes TEXT NOT NULL DEFAULT ''
+      );
+
       CREATE INDEX IF NOT EXISTS idx_facts_subject ON facts(subject);
       CREATE INDEX IF NOT EXISTS idx_facts_valid ON facts(valid_from_chapter, valid_until_chapter);
       CREATE INDEX IF NOT EXISTS idx_facts_source ON facts(source_chapter);
+      CREATE INDEX IF NOT EXISTS idx_hooks_status ON hooks(status);
+      CREATE INDEX IF NOT EXISTS idx_hooks_last_advanced ON hooks(last_advanced_chapter);
     `);
+
+    this.ensureColumn("hooks", "payoff_timing", "TEXT NOT NULL DEFAULT ''");
+  }
+
+  private ensureColumn(table: string, column: string, definition: string): void {
+    try {
+      this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    } catch {
+      // Column already exists on existing databases.
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -103,14 +149,18 @@ export class MemoryDB {
   /** Get all currently valid facts (valid_until is null). */
   getCurrentFacts(): ReadonlyArray<Fact> {
     return this.db.prepare(
-      "SELECT * FROM facts WHERE valid_until_chapter IS NULL ORDER BY subject, predicate",
+      `SELECT ${FACT_SELECT_COLUMNS}
+       FROM facts
+       WHERE valid_until_chapter IS NULL
+       ORDER BY subject, predicate`,
     ).all() as unknown as Fact[];
   }
 
   /** Get facts about a specific subject that are valid at a given chapter. */
   getFactsAt(subject: string, chapter: number): ReadonlyArray<Fact> {
     return this.db.prepare(
-      `SELECT * FROM facts
+      `SELECT ${FACT_SELECT_COLUMNS}
+       FROM facts
        WHERE subject = ? AND valid_from_chapter <= ?
        AND (valid_until_chapter IS NULL OR valid_until_chapter > ?)
        ORDER BY predicate`,
@@ -120,14 +170,20 @@ export class MemoryDB {
   /** Get all facts about a subject (including historical). */
   getFactHistory(subject: string): ReadonlyArray<Fact> {
     return this.db.prepare(
-      "SELECT * FROM facts WHERE subject = ? ORDER BY valid_from_chapter",
+      `SELECT ${FACT_SELECT_COLUMNS}
+       FROM facts
+       WHERE subject = ?
+       ORDER BY valid_from_chapter`,
     ).all(subject) as unknown as Fact[];
   }
 
   /** Search facts by predicate (e.g., all "location" facts). */
   getFactsByPredicate(predicate: string): ReadonlyArray<Fact> {
     return this.db.prepare(
-      "SELECT * FROM facts WHERE predicate = ? AND valid_until_chapter IS NULL ORDER BY subject",
+      `SELECT ${FACT_SELECT_COLUMNS}
+       FROM facts
+       WHERE predicate = ? AND valid_until_chapter IS NULL
+       ORDER BY subject`,
     ).all(predicate) as unknown as Fact[];
   }
 
@@ -136,8 +192,22 @@ export class MemoryDB {
     if (names.length === 0) return [];
     const placeholders = names.map(() => "?").join(",");
     return this.db.prepare(
-      `SELECT * FROM facts WHERE subject IN (${placeholders}) AND valid_until_chapter IS NULL ORDER BY subject, predicate`,
+      `SELECT ${FACT_SELECT_COLUMNS}
+       FROM facts
+       WHERE subject IN (${placeholders}) AND valid_until_chapter IS NULL
+       ORDER BY subject, predicate`,
     ).all(...names) as unknown as Fact[];
+  }
+
+  replaceCurrentFacts(facts: ReadonlyArray<Omit<Fact, "id">>): void {
+    this.db.exec("DELETE FROM facts WHERE valid_until_chapter IS NULL");
+    for (const fact of facts) {
+      this.addFact(fact);
+    }
+  }
+
+  resetFacts(): void {
+    this.db.exec("DELETE FROM facts");
   }
 
   // ---------------------------------------------------------------------------
@@ -155,10 +225,28 @@ export class MemoryDB {
     );
   }
 
+  replaceSummaries(summaries: ReadonlyArray<StoredSummary>): void {
+    this.db.exec("DELETE FROM chapter_summaries");
+    for (const summary of summaries) {
+      this.upsertSummary(summary);
+    }
+  }
+
   /** Get summaries for a range of chapters. */
   getSummaries(fromChapter: number, toChapter: number): ReadonlyArray<StoredSummary> {
     return this.db.prepare(
-      "SELECT * FROM chapter_summaries WHERE chapter >= ? AND chapter <= ? ORDER BY chapter",
+      `SELECT
+         chapter,
+         title,
+         characters,
+         events,
+         state_changes AS stateChanges,
+         hook_activity AS hookActivity,
+         mood,
+         chapter_type AS chapterType
+       FROM chapter_summaries
+       WHERE chapter >= ? AND chapter <= ?
+       ORDER BY chapter`,
     ).all(fromChapter, toChapter) as unknown as StoredSummary[];
   }
 
@@ -168,7 +256,18 @@ export class MemoryDB {
     const conditions = names.map(() => "characters LIKE ?").join(" OR ");
     const params = names.map((n) => `%${n}%`);
     return this.db.prepare(
-      `SELECT * FROM chapter_summaries WHERE ${conditions} ORDER BY chapter`,
+      `SELECT
+         chapter,
+         title,
+         characters,
+         events,
+         state_changes AS stateChanges,
+         hook_activity AS hookActivity,
+         mood,
+         chapter_type AS chapterType
+       FROM chapter_summaries
+       WHERE ${conditions}
+       ORDER BY chapter`,
     ).all(...params) as unknown as StoredSummary[];
   }
 
@@ -181,8 +280,63 @@ export class MemoryDB {
   /** Get the most recent N summaries. */
   getRecentSummaries(count: number): ReadonlyArray<StoredSummary> {
     return this.db.prepare(
-      "SELECT * FROM chapter_summaries ORDER BY chapter DESC LIMIT ?",
+      `SELECT
+         chapter,
+         title,
+         characters,
+         events,
+         state_changes AS stateChanges,
+         hook_activity AS hookActivity,
+         mood,
+         chapter_type AS chapterType
+       FROM chapter_summaries
+       ORDER BY chapter DESC
+       LIMIT ?`,
     ).all(count) as unknown as ReadonlyArray<StoredSummary>;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Hooks
+  // ---------------------------------------------------------------------------
+
+  upsertHook(hook: StoredHook): void {
+    this.db.prepare(
+      `INSERT OR REPLACE INTO hooks (hook_id, start_chapter, type, status, last_advanced_chapter, expected_payoff, payoff_timing, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      hook.hookId,
+      hook.startChapter,
+      hook.type,
+      hook.status,
+      hook.lastAdvancedChapter,
+      hook.expectedPayoff,
+      hook.payoffTiming ?? "",
+      hook.notes,
+    );
+  }
+
+  replaceHooks(hooks: ReadonlyArray<StoredHook>): void {
+    this.db.exec("DELETE FROM hooks");
+    for (const hook of hooks) {
+      this.upsertHook(hook);
+    }
+  }
+
+  getActiveHooks(): ReadonlyArray<StoredHook> {
+    return this.db.prepare(
+      `SELECT
+         hook_id AS hookId,
+         start_chapter AS startChapter,
+         type,
+         status,
+         last_advanced_chapter AS lastAdvancedChapter,
+         expected_payoff AS expectedPayoff,
+         payoff_timing AS payoffTiming,
+         notes
+       FROM hooks
+       WHERE lower(status) NOT IN ('resolved', 'closed', '已回收', '已解决')
+       ORDER BY last_advanced_chapter DESC, start_chapter DESC, hook_id ASC`,
+    ).all() as unknown as ReadonlyArray<StoredHook>;
   }
 
   // ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 import { Command } from "commander";
-import { StateManager } from "@actalk/inkos-core";
-import { findProjectRoot, log, logError } from "../utils.js";
+import { StateManager, formatLengthCount, readGenreProfile, resolveLengthCountingMode } from "@actalk/inkos-core";
+import { findProjectRoot, getLegacyMigrationHint, log, logError } from "../utils.js";
 
 export const statusCommand = new Command("status")
   .description("Show project status")
@@ -32,7 +32,10 @@ export const statusCommand = new Command("status")
       for (const id of bookIds) {
         const book = await state.loadBookConfig(id);
         const index = await state.loadChapterIndex(id);
-        const nextChapter = await state.getNextChapterNumber(id);
+        const migrationHint = await getLegacyMigrationHint(root, id);
+        const persistedChapterCount = await state.getPersistedChapterCount(id);
+        const { profile: genreProfile } = await readGenreProfile(root, book.genre);
+        const countingMode = resolveLengthCountingMode(book.language ?? genreProfile.language);
 
         const approved = index.filter((ch) => ch.status === "approved").length;
         const pending = index.filter(
@@ -40,6 +43,9 @@ export const statusCommand = new Command("status")
         ).length;
         const failed = index.filter(
           (ch) => ch.status === "audit-failed",
+        ).length;
+        const degraded = index.filter(
+          (ch) => ch.status === "state-degraded",
         ).length;
         const totalWords = index.reduce((sum, ch) => sum + ch.wordCount, 0);
         const avgWords = index.length > 0 ? Math.round(totalWords / index.length) : 0;
@@ -50,20 +56,24 @@ export const statusCommand = new Command("status")
           status: book.status,
           genre: book.genre,
           platform: book.platform,
-          chapters: nextChapter - 1,
+          chapters: persistedChapterCount,
           targetChapters: book.targetChapters,
           totalWords,
           avgWordsPerChapter: avgWords,
           approved,
           pending,
           failed,
+          degraded,
+          ...(migrationHint ? { migrationHint } : {}),
           ...(opts.chapters ? {
             chapterList: index.map((ch) => ({
               number: ch.number,
               title: ch.title,
               status: ch.status,
               wordCount: ch.wordCount,
-              ...(ch.status === "audit-failed" ? { issues: ch.auditIssues } : {}),
+              ...(ch.status === "audit-failed" || ch.status === "state-degraded"
+                ? { issues: ch.auditIssues }
+                : {}),
             })),
           } : {}),
         });
@@ -72,16 +82,25 @@ export const statusCommand = new Command("status")
           log(`  ${book.title} (${id})`);
           log(`    Status: ${book.status}`);
           log(`    Platform: ${book.platform} | Genre: ${book.genre}`);
-          log(`    Chapters: ${nextChapter - 1} / ${book.targetChapters}`);
+          log(`    Chapters: ${persistedChapterCount} / ${book.targetChapters}`);
           log(`    Words: ${totalWords.toLocaleString()} (avg ${avgWords}/ch)`);
-          log(`    Approved: ${approved} | Pending: ${pending} | Failed: ${failed}`);
+          log(`    Approved: ${approved} | Pending: ${pending} | Failed: ${failed} | Degraded: ${degraded}`);
+          if (migrationHint) {
+            log(`    Migration: ${migrationHint}`);
+          }
 
           if (opts.chapters && index.length > 0) {
             log("");
             for (const ch of index) {
-              const icon = ch.status === "approved" ? "+" : ch.status === "audit-failed" ? "!" : "~";
-              log(`    [${icon}] Ch.${ch.number} "${ch.title}" | ${ch.wordCount}字 | ${ch.status}`);
-              if (ch.status === "audit-failed" && ch.auditIssues.length > 0) {
+              const icon = ch.status === "approved"
+                ? "+"
+                : ch.status === "audit-failed"
+                  ? "!"
+                  : ch.status === "state-degraded"
+                    ? "x"
+                    : "~";
+              log(`    [${icon}] Ch.${ch.number} "${ch.title}" | ${formatLengthCount(ch.wordCount, countingMode)} | ${ch.status}`);
+              if ((ch.status === "audit-failed" || ch.status === "state-degraded") && ch.auditIssues.length > 0) {
                 const criticals = ch.auditIssues.filter((i: string) => i.startsWith("[critical]"));
                 const warnings = ch.auditIssues.filter((i: string) => i.startsWith("[warning]"));
                 if (criticals.length > 0) {
@@ -90,7 +109,13 @@ export const statusCommand = new Command("status")
                   }
                 }
                 if (warnings.length > 0) {
-                  log(`        + ${warnings.length} warning(s)`);
+                  if (ch.status === "state-degraded") {
+                    for (const issue of warnings) {
+                      log(`        ${issue}`);
+                    }
+                  } else {
+                    log(`        + ${warnings.length} warning(s)`);
+                  }
                 }
               }
             }
