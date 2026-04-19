@@ -53,6 +53,7 @@ export interface AgentSessionResult {
 
 interface CachedAgent {
   agent: Agent;
+  bookId: string | null;
   lastActive: number;
 }
 
@@ -211,12 +212,19 @@ export async function runAgentSession(
   let cached = agentCache.get(sessionId);
 
   if (cached) {
-    // Check if model changed — evict and rebuild if so
+    // Evict and rebuild if model OR bookId changed. Both are captured into the
+    // Agent at construction time (model via initialState, bookId via closures
+    // in systemPrompt / tools / transformContext), so a mismatch means the
+    // cached Agent would keep using stale context — including reading truth
+    // files from the wrong book's story/ directory.
     const currentModelId = (cached.agent.state.model as any)?.id;
     const newModelId = typeof config.model === 'object' && 'id' in config.model
       ? (config.model as any).id
       : undefined;
-    if (currentModelId && newModelId && currentModelId !== newModelId) {
+    const modelChanged = !!(currentModelId && newModelId && currentModelId !== newModelId);
+    const bookChanged = cached.bookId !== bookId;
+
+    if (modelChanged || bookChanged) {
       // Preserve conversation messages for re-injection
       const preservedMessages = agentMessagesToPlain(cached.agent.state.messages);
       agentCache.delete(sessionId);
@@ -259,7 +267,7 @@ export async function runAgentSession(
       agent.state.messages = plainToAgentMessages(initialMessages);
     }
 
-    cached = { agent, lastActive: Date.now() };
+    cached = { agent, bookId, lastActive: Date.now() };
     agentCache.set(sessionId, cached);
     ensureCleanupTimer();
   }
