@@ -95,13 +95,13 @@ describe("runAgentSession cache — bookId switch", () => {
 
     await runAgentSession(
       { sessionId: "s1", bookId: "book-a", language: "zh", pipeline, projectRoot, model },
-      "hi",
+      "earlier question about book A",
     );
     expect(agentInstances).toHaveLength(1);
 
     await runAgentSession(
       { sessionId: "s1", bookId: "book-b", language: "zh", pipeline, projectRoot, model },
-      "hi",
+      "new question",
     );
 
     expect(agentInstances).toHaveLength(2);
@@ -110,6 +110,13 @@ describe("runAgentSession cache — bookId switch", () => {
     const body = JSON.stringify(injected);
     expect(body).toContain("书B 的真相");
     expect(body).not.toContain("书A 的真相");
+
+    // Prior conversation must be replayed into the rebuilt Agent via initialMessages,
+    // not silently dropped — this is the whole reason eviction preserves messages.
+    const preservedUser = agentInstances[1].state.messages.find(
+      (m: any) => m.role === "user" && typeof m.content === "string" && m.content.includes("earlier question about book A"),
+    );
+    expect(preservedUser).toBeDefined();
   });
 
   it("rebuilds Agent when bookId goes from null to a real book", async () => {
@@ -130,6 +137,26 @@ describe("runAgentSession cache — bookId switch", () => {
     expect(agentInstances).toHaveLength(2);
     const injected = await agentInstances[1].transformContext([]);
     expect(JSON.stringify(injected)).toContain("书A 的真相");
+  });
+
+  it("treats undefined bookId as null (no spurious rebuild)", async () => {
+    const model = { provider: "x", id: "y", api: "anthropic-messages" } as any;
+    const pipeline = {} as any;
+
+    await runAgentSession(
+      { sessionId: "s1", bookId: null, language: "zh", pipeline, projectRoot, model },
+      "hi",
+    );
+    expect(agentInstances).toHaveLength(1);
+
+    // A caller passing `undefined` (e.g., `activeBookId` not set and no `?? null`
+    // guard) must not cause an eviction when the cached agent already holds null.
+    await runAgentSession(
+      { sessionId: "s1", bookId: undefined as any, language: "zh", pipeline, projectRoot, model },
+      "hi",
+    );
+
+    expect(agentInstances).toHaveLength(1);
   });
 
   it("reuses Agent when bookId unchanged on same sessionId", async () => {

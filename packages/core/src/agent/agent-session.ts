@@ -51,6 +51,11 @@ export interface AgentSessionResult {
 // Cache
 // ---------------------------------------------------------------------------
 
+// We only record fields that can realistically change between turns on the
+// same sessionId and are captured into the Agent at construction time.
+// `projectRoot`, `language`, and `pipeline` are also closure-captured by the
+// Agent (into systemPrompt / tools / transformContext), but within a single
+// server process they're treated as stable — we don't re-check them.
 interface CachedAgent {
   agent: Agent;
   bookId: string | null;
@@ -206,7 +211,13 @@ export async function runAgentSession(
   userMessage: string,
   initialMessages?: Array<{ role: string; content: string }>,
 ): Promise<AgentSessionResult> {
-  const { sessionId, bookId, language, pipeline, projectRoot, onEvent } = config;
+  const { sessionId, language, pipeline, projectRoot, onEvent } = config;
+  // Normalize at the entry point so downstream comparisons, closures, and
+  // fs paths never see `undefined`. The type is already `string | null`, but
+  // some callers may bypass the type system (e.g. `activeBookId ?? null` gets
+  // skipped) and we don't want that to (a) throw in path.join or (b) trigger
+  // a spurious cache eviction because `null !== undefined`.
+  const bookId: string | null = config.bookId ?? null;
 
   // ----- Resolve or create Agent -----
   let cached = agentCache.get(sessionId);
