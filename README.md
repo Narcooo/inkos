@@ -438,3 +438,7 @@ pnpm typecheck    # 类型检查
 ## 许可证
 
 [AGPL-3.0](LICENSE)
+
+## Download History
+
+[![Download History](https://skill-history.com/chart/narcooo/inkos.svg)](https://skill-history.com/narcooo/inkos)
