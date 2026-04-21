@@ -194,8 +194,19 @@ export async function interactiveLlmSetup(
     const scope = await rl.question(`     ${c("❯", cyan)} ${c(copy.defaults.scope, dim)} `);
     const useGlobal = scope.trim().toLowerCase() !== "project";
 
+    // Auto-detect provider based on baseUrl for special cases
+    let finalProvider = provider;
+    const normalizedUrl = baseUrl.trim().toLowerCase();
+
+    // Kimi Code uses Anthropic protocol, not OpenAI
+    if (provider === "custom" && normalizedUrl.includes("api.kimi.com/coding")) {
+      finalProvider = "anthropic";
+      console.log();
+      console.log(`  ${c("ℹ", cyan)} ${c("Detected Kimi Code API - switching to Anthropic protocol", dim)}`);
+    }
+
     const envContent = [
-      `INKOS_LLM_PROVIDER=${provider}`,
+      `INKOS_LLM_PROVIDER=${finalProvider}`,
       `INKOS_LLM_BASE_URL=${baseUrl.trim()}`,
       `INKOS_LLM_API_KEY=${apiKey.trim()}`,
       `INKOS_LLM_MODEL=${model.trim()}`,

@@ -921,7 +921,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     const secrets = await loadSecrets(root);
 
     const SERVICE_KEYS = [
-      "openai", "anthropic", "deepseek", "moonshot", "minimax",
+      "openai", "anthropic", "deepseek", "moonshot", "kimicode", "minimax",
       "bailian", "zhipu", "siliconflow", "ppio", "openrouter", "ollama",
     ];
 

@@ -17,6 +17,18 @@ export const SERVICE_PRESETS: Record<string, ServicePreset> = {
   anthropic:   { providerFamily: "anthropic", api: "anthropic-messages", baseUrl: "https://api.anthropic.com",                          label: "Anthropic",       temperatureRange: [0, 1], defaultTemperature: 1.0, writingTemperature: 1.0, temperatureHint: "不要同时改 temperature 和 top_p" },
   deepseek:    { providerFamily: "openai",    api: "openai-completions", baseUrl: "https://api.deepseek.com",                           label: "DeepSeek",        temperatureRange: [0, 2], defaultTemperature: 1.0, writingTemperature: 1.5, temperatureHint: "创意写作推荐 1.5" },
   moonshot:    { providerFamily: "openai",    api: "openai-completions", baseUrl: "https://api.moonshot.cn/v1",                         label: "Moonshot (Kimi)", temperatureRange: [0, 1], defaultTemperature: 0.3, writingTemperature: 1.0, temperatureHint: "kimi-k2.5 推荐 temperature=1.0" },
+  kimicode:    {
+    providerFamily: "anthropic",
+    api: "anthropic-messages",
+    baseUrl: "https://api.kimi.com/coding",
+    modelsBaseUrl: "https://api.kimi.com/coding/v1",
+    label: "Kimi Code",
+    temperatureRange: [0, 2],
+    defaultTemperature: 1.0,
+    writingTemperature: 1.0,
+    knownModels: ["kimi-for-coding"],
+    piProvider: "anthropic",
+  },
   minimax:     {
     providerFamily: "anthropic",
     api: "anthropic-messages",
