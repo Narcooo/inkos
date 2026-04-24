@@ -35,6 +35,47 @@ function buildDoctorProbePlans(
   return plans;
 }
 
+export function buildDoctorProbeConfigSources(params: {
+  provider: string | undefined;
+  service: string | undefined;
+  configSource: "env" | "studio" | undefined;
+  baseUrl: string;
+  presetBaseUrl?: string | undefined;
+}): Array<"env" | "studio"> {
+  const sources: Array<"env" | "studio"> = [];
+  const seen = new Set<"env" | "studio">();
+  const push = (value: "env" | "studio") => {
+    if (seen.has(value)) return;
+    seen.add(value);
+    sources.push(value);
+  };
+
+  const current = params.configSource === "studio" ? "studio" : "env";
+  push(current);
+
+  const provider = params.provider;
+  const supportsNativeCustomTransport = provider === "openai" || provider === "anthropic" || provider === "custom";
+  if (!supportsNativeCustomTransport || current === "studio") {
+    return sources;
+  }
+
+  const service = params.service;
+  const serviceLooksCustom = !service || service === "custom" || service.startsWith("custom:");
+  const normalizedBaseUrl = params.baseUrl.replace(/\/$/, "");
+  const normalizedPresetBaseUrl = params.presetBaseUrl?.replace(/\/$/, "");
+  const baseUrlOverridesPreset = Boolean(
+    normalizedPresetBaseUrl
+    && normalizedBaseUrl.length > 0
+    && normalizedBaseUrl !== normalizedPresetBaseUrl,
+  );
+
+  if (serviceLooksCustom || baseUrlOverridesPreset) {
+    push("studio");
+  }
+
+  return sources;
+}
+
 export function buildDoctorModelCandidates(
   preferredModel: string | undefined,
   discoveredModels: Array<{ id: string; name: string }>,
@@ -230,7 +271,7 @@ export const doctorCommand = new Command("doctor")
 
     // 6. API connectivity test
     try {
-      const { createLLMClient, chatCompletion, LLMConfigSchema, isApiKeyOptionalForEndpoint, resolveServiceModelsBaseUrl } = await import("@actalk/inkos-core");
+      const { createLLMClient, chatCompletion, LLMConfigSchema, isApiKeyOptionalForEndpoint, resolveServiceModelsBaseUrl, resolveServicePreset } = await import("@actalk/inkos-core");
       const { loadConfig } = await import("../utils.js");
 
       let llmConfig;
@@ -274,6 +315,7 @@ export const doctorCommand = new Command("doctor")
         let connected = false;
         let detectedDetail = "";
         let lastError = "Unknown error";
+        let detectedConfigSource: "env" | "studio" = llmConfig.configSource ?? "env";
         const modelsBaseUrl = resolveDoctorModelsBaseUrl(
           typeof llmConfig.service === "string" ? llmConfig.service : undefined,
           llmConfig.baseUrl,
@@ -288,25 +330,41 @@ export const doctorCommand = new Command("doctor")
         const plans = llmConfig.provider === "openai"
           ? buildDoctorProbePlans(llmConfig.apiFormat, llmConfig.stream)
           : [{ apiFormat: (llmConfig.apiFormat ?? "chat") as "chat" | "responses", stream: llmConfig.stream ?? true }];
+        const probeConfigSources = buildDoctorProbeConfigSources({
+          provider: llmConfig.provider,
+          service: typeof llmConfig.service === "string" ? llmConfig.service : undefined,
+          configSource: llmConfig.configSource,
+          baseUrl: llmConfig.baseUrl,
+          presetBaseUrl: typeof llmConfig.service === "string"
+            ? resolveServicePreset(llmConfig.service)?.baseUrl
+            : undefined,
+        });
 
         for (const model of modelCandidates) {
           for (const plan of plans) {
-            try {
-              const client = createLLMClient({
-                ...llmConfig,
-                model,
-                apiFormat: plan.apiFormat,
-                stream: plan.stream,
-              });
-              const response = await chatCompletion(client, model, [
-                { role: "user", content: "Say OK" },
-              ], { maxTokens: 16 });
+            for (const probeConfigSource of probeConfigSources) {
+              try {
+                const client = createLLMClient({
+                  ...llmConfig,
+                  model,
+                  configSource: probeConfigSource,
+                  apiFormat: plan.apiFormat,
+                  stream: plan.stream,
+                });
+                const response = await chatCompletion(client, model, [
+                  { role: "user", content: "Say OK" },
+                ], { maxTokens: 16 });
 
-              connected = true;
-              detectedDetail = `OK (model: ${model}, apiFormat=${plan.apiFormat}, stream=${plan.stream}, tokens: ${response.usage.totalTokens})`;
+                connected = true;
+                detectedConfigSource = probeConfigSource;
+                detectedDetail = `OK (model: ${model}, apiFormat=${plan.apiFormat}, stream=${plan.stream}, tokens: ${response.usage.totalTokens}${probeConfigSource !== (llmConfig.configSource ?? "env") ? `, probeConfigSource=${probeConfigSource}` : ""})`;
+                break;
+              } catch (error) {
+                lastError = error instanceof Error ? error.message : String(error);
+              }
+            }
+            if (connected) {
               break;
-            } catch (error) {
-              lastError = error instanceof Error ? error.message : String(error);
             }
           }
           if (connected) {
@@ -319,6 +377,14 @@ export const doctorCommand = new Command("doctor")
           ok: connected,
           detail: connected ? detectedDetail : lastError.split("\n")[0]!,
         });
+
+        if (connected && detectedConfigSource !== (llmConfig.configSource ?? "env")) {
+          checks.push({
+            name: "API Transport",
+            ok: true,
+            detail: `doctor 通过 ${detectedConfigSource} custom transport 探测成功；如果实际运行仍失败，优先在 Studio 里配置 custom 服务并固定 apiFormat=chat。`,
+          });
+        }
 
         if (!connected && llmConfig.provider === "openai") {
           checks.push({
