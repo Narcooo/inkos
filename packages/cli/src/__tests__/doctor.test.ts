@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildDoctorModelCandidates, resolveDoctorModelsBaseUrl } from "../commands/doctor.js";
+import {
+  buildDoctorModelCandidates,
+  buildDoctorProbeConfigSources,
+  resolveDoctorModelsBaseUrl,
+} from "../commands/doctor.js";
 
 describe("doctor model candidate probing", () => {
   it("keeps the configured model first, then tries discovered models without duplicates", () => {
@@ -21,6 +25,41 @@ describe("doctor model candidate probing", () => {
     expect(candidates).toContain("gpt-5.4");
     expect(candidates).toContain("MiniMax-M2.7");
     expect(candidates).toContain("gemini-2.5-flash");
+  });
+
+  it("adds a studio-native probe fallback for env custom endpoints", () => {
+    const sources = buildDoctorProbeConfigSources({
+      provider: "openai",
+      service: "custom",
+      configSource: "env",
+      baseUrl: "https://api.moonshot.ai/v1",
+    });
+
+    expect(sources).toEqual(["env", "studio"]);
+  });
+
+  it("adds a studio-native probe fallback when env overrides a preset baseUrl", () => {
+    const sources = buildDoctorProbeConfigSources({
+      provider: "openai",
+      service: "moonshot",
+      configSource: "env",
+      baseUrl: "https://api.moonshot.ai/v1",
+      presetBaseUrl: "https://api.moonshot.cn/v1",
+    });
+
+    expect(sources).toEqual(["env", "studio"]);
+  });
+
+  it("keeps preset services on their current probe path when baseUrl matches", () => {
+    const sources = buildDoctorProbeConfigSources({
+      provider: "openai",
+      service: "moonshot",
+      configSource: "env",
+      baseUrl: "https://api.moonshot.cn/v1",
+      presetBaseUrl: "https://api.moonshot.cn/v1",
+    });
+
+    expect(sources).toEqual(["env"]);
   });
 
   it("uses the service-specific models endpoint when the preset defines one", () => {

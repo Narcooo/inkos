@@ -254,6 +254,63 @@ function parseEnvHeaders(): Record<string, string> | undefined {
   return undefined;
 }
 
+type OpenAIChatTokenParam = "max_tokens" | "max_completion_tokens";
+
+function prefersMaxCompletionTokens(model: string): boolean {
+  return /^(gpt-5(?:\b|[-.])|o\d(?:\b|[-.]))/i.test(model);
+}
+
+function getOpenAIChatTokenParam(rawError: string): string | undefined {
+  try {
+    const parsed = JSON.parse(rawError) as {
+      param?: unknown;
+      error?: {
+        param?: unknown;
+      };
+    };
+    if (typeof parsed.param === "string") return parsed.param;
+    if (typeof parsed.error?.param === "string") return parsed.error.param;
+  } catch {
+    // fall through
+  }
+  return undefined;
+}
+
+function getOpenAIChatErrorMessage(rawError: string): string {
+  try {
+    const parsed = JSON.parse(rawError) as {
+      message?: unknown;
+      error?: {
+        message?: unknown;
+      } | string;
+      detail?: unknown;
+    };
+    if (typeof parsed.message === "string" && parsed.message) return parsed.message;
+    if (typeof parsed.error === "string" && parsed.error) return parsed.error;
+    if (parsed.error && typeof parsed.error === "object" && typeof parsed.error.message === "string") {
+      return parsed.error.message;
+    }
+    if (typeof parsed.detail === "string" && parsed.detail) return parsed.detail;
+  } catch {
+    // fall through
+  }
+  return rawError;
+}
+
+function isUnsupportedOpenAIChatTokenParamError(
+  rawError: string,
+  tokenParam: OpenAIChatTokenParam,
+): boolean {
+  const param = getOpenAIChatTokenParam(rawError)?.toLowerCase();
+  if (param === tokenParam) return true;
+
+  const message = getOpenAIChatErrorMessage(rawError).toLowerCase();
+  return (
+    (message.includes("unsupported parameter") || message.includes("unknown parameter"))
+    && message.includes(tokenParam)
+  );
+}
+
 // === Partial Response (stream interrupted but usable content received) ===
 
 export class PartialResponseError extends Error {
@@ -269,7 +326,7 @@ export class PartialResponseError extends Error {
 const MIN_SALVAGEABLE_CHARS = 500;
 
 /** Keys managed by the provider layer — prevent extra from overriding them. */
-const RESERVED_KEYS = new Set(["max_tokens", "temperature", "model", "messages", "stream"]);
+const RESERVED_KEYS = new Set(["max_tokens", "max_completion_tokens", "temperature", "model", "messages", "stream"]);
 
 function stripReservedKeys(extra: Record<string, unknown>): Record<string, unknown> {
   const result: Record<string, unknown> = {};
@@ -446,6 +503,10 @@ function buildResponsesInput(messages: ReadonlyArray<LLMMessage>): Array<{ role:
 
 async function readErrorResponse(res: Response): Promise<string> {
   const text = await res.text().catch(() => "");
+  return formatErrorResponse(res, text);
+}
+
+function formatErrorResponse(res: Pick<Response, "status" | "statusText">, text: string): string {
   try {
     const json = JSON.parse(text) as { error?: { message?: string } | string; detail?: string };
     if (typeof json.error === "string" && json.error) return `${res.status} ${json.error}`;
@@ -457,6 +518,50 @@ async function readErrorResponse(res: Response): Promise<string> {
     // fall through
   }
   return `${res.status} ${text || res.statusText}`.trim();
+}
+
+async function requestCustomOpenAICompatibleChatCompletion(params: {
+  readonly baseUrl: string;
+  readonly headers: Record<string, string>;
+  readonly model: string;
+  readonly maxTokens: number;
+  readonly payload: Record<string, unknown>;
+}): Promise<Response> {
+  const primaryTokenParam: OpenAIChatTokenParam = prefersMaxCompletionTokens(params.model)
+    ? "max_completion_tokens"
+    : "max_tokens";
+  const fallbackTokenParam: OpenAIChatTokenParam = primaryTokenParam === "max_tokens"
+    ? "max_completion_tokens"
+    : "max_tokens";
+  const requestInit = {
+    method: "POST",
+    headers: params.headers,
+  };
+  const url = `${params.baseUrl.replace(/\/$/, "")}/chat/completions`;
+
+  const primaryResponse = await fetch(url, {
+    ...requestInit,
+    body: JSON.stringify({ ...params.payload, [primaryTokenParam]: params.maxTokens }),
+  });
+  if (primaryResponse.ok) {
+    return primaryResponse;
+  }
+
+  const primaryError = await primaryResponse.text().catch(() => "");
+  if (!isUnsupportedOpenAIChatTokenParamError(primaryError, primaryTokenParam)) {
+    throw new Error(formatErrorResponse(primaryResponse, primaryError));
+  }
+
+  const fallbackResponse = await fetch(url, {
+    ...requestInit,
+    body: JSON.stringify({ ...params.payload, [fallbackTokenParam]: params.maxTokens }),
+  });
+  if (fallbackResponse.ok) {
+    return fallbackResponse;
+  }
+
+  const fallbackError = await fallbackResponse.text().catch(() => "");
+  throw new Error(formatErrorResponse(fallbackResponse, fallbackError));
 }
 
 type ParsedSseEvent = {
@@ -733,20 +838,23 @@ async function chatCompletionViaCustomOpenAICompatible(
     ],
     stream: client.stream,
     temperature: resolved.temperature,
-    max_tokens: resolved.maxTokens,
     ...extra,
   };
   if (client.stream) {
     payload.stream_options = { include_usage: true };
   }
 
-  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(payload),
-  });
-  if (!response.ok) {
-    throw wrapLLMError(new Error(await readErrorResponse(response)), errorCtx);
+  let response: Response;
+  try {
+    response = await requestCustomOpenAICompatibleChatCompletion({
+      baseUrl,
+      headers,
+      model,
+      maxTokens: resolved.maxTokens,
+      payload,
+    });
+  } catch (error) {
+    throw wrapLLMError(error, errorCtx);
   }
 
   if (!client.stream) {

@@ -282,8 +282,58 @@ describe("chatCompletion via pi-ai", () => {
 
     expect(result.content).toBe("你好！");
     expect(fetchMock).toHaveBeenCalledOnce();
+    const payload = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as Record<string, unknown>;
+    expect(payload.max_completion_tokens).toBe(512);
+    expect(payload).not.toHaveProperty("max_tokens");
     expect(mockCompleteSimple).not.toHaveBeenCalled();
     expect(mockStreamSimple).not.toHaveBeenCalled();
+
+    vi.unstubAllGlobals();
+  });
+
+  it("falls back to max_tokens when a custom gateway rejects max_completion_tokens", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        statusText: "Bad Request",
+        text: async () => JSON.stringify({
+          error: {
+            param: "max_completion_tokens",
+            message: "Unsupported parameter: 'max_completion_tokens'",
+          },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: "fallback ok" } }],
+          usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 },
+        }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = makeClient(0.7, {
+      service: "custom",
+      stream: false,
+      _piModel: {
+        ...MOCK_PI_MODEL,
+        provider: "openai",
+        baseUrl: "https://gateway.example/v1",
+      },
+    });
+    const result = await chatCompletion(client, "gpt-5.4-mini", [{ role: "user", content: "nihao" }], {
+      maxTokens: 16,
+    });
+
+    expect(result.content).toBe("fallback ok");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const firstPayload = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as Record<string, unknown>;
+    const secondPayload = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body)) as Record<string, unknown>;
+    expect(firstPayload.max_completion_tokens).toBe(16);
+    expect(firstPayload).not.toHaveProperty("max_tokens");
+    expect(secondPayload.max_tokens).toBe(16);
+    expect(secondPayload).not.toHaveProperty("max_completion_tokens");
 
     vi.unstubAllGlobals();
   });
