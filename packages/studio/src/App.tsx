@@ -4,6 +4,7 @@ import type { HashRoute } from "./hooks/use-hash-route";
 import { Sidebar } from "./components/Sidebar";
 import { Dashboard } from "./pages/Dashboard";
 import { ChatPage } from "./pages/ChatPage";
+import { BookCreate } from "./pages/BookCreate";
 import { ChapterReader } from "./pages/ChapterReader";
 import { Analytics } from "./pages/Analytics";
 import { ServiceListPage } from "./pages/ServiceListPage";
@@ -165,21 +166,22 @@ export function App() {
               <Dashboard nav={nav} sse={sse} theme={theme} t={t} />
             </div>
           )}
-          {(route.page === "book" || route.page === "book-create") && (
+          {route.page === "book-create" && (
+            <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
+              <BookCreate nav={nav} theme={theme} t={t} />
+            </div>
+          )}
+          {route.page === "book" && (
             <div className="absolute inset-0 flex min-w-0">
               <ChatPage
-                activeBookId={route.page === "book" ? route.bookId : undefined}
+                activeBookId={route.bookId}
                 nav={nav}
                 theme={theme}
                 t={t}
                 sse={sse}
               />
-              {route.page === "book" && (
-                <>
-                  <BookSidebar bookId={route.bookId} theme={theme} t={t} sse={sse} />
-                  <BookSidebarToggle bookId={route.bookId} theme={theme} t={t} sse={sse} />
-                </>
-              )}
+              <BookSidebar bookId={route.bookId} theme={theme} t={t} sse={sse} />
+              <BookSidebarToggle bookId={route.bookId} theme={theme} t={t} sse={sse} />
             </div>
           )}
           {route.page === "chapter" && (
