@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import type { BookCreationDraft } from "@actalk/inkos-core";
 import { fetchJson, useApi } from "../hooks/use-api";
+import { useChatStore } from "../store/chat";
+import { getBookCreateSessionId, setBookCreateSessionId } from "./chat-page-state";
 import type { Theme } from "../hooks/use-theme";
 import type { TFunction } from "../hooks/use-i18n";
 import { useColors } from "../hooks/use-colors";
@@ -256,6 +258,10 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
+  const createSession = useChatStore((s) => s.createSession);
+  const loadSessionDetail = useChatStore((s) => s.loadSessionDetail);
+  const activateSession = useChatStore((s) => s.activateSession);
+  const [bookCreateSessionReady, setBookCreateSessionReady] = useState(false);
 
   const summaryRows = useMemo(
     () => (draft ? buildCreationDraftSummary(draft, projectLang) : []),
@@ -289,6 +295,42 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const existingId = getBookCreateSessionId();
+        if (existingId) {
+          await loadSessionDetail(existingId);
+          if (cancelled) {
+            return;
+          }
+          const session = useChatStore.getState().sessions[existingId];
+          if (session?.bookId === null) {
+            activateSession(existingId);
+            if (!cancelled) {
+              setBookCreateSessionReady(true);
+            }
+            return;
+          }
+        }
+        const newSessionId = await createSession(null);
+        if (!cancelled) {
+          setBookCreateSessionId(newSessionId);
+          setBookCreateSessionReady(true);
+        }
+      } catch (cause) {
+        if (!cancelled) {
+          setBookCreateSessionReady(false);
+          setError(cause instanceof Error ? cause.message : String(cause));
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activateSession, createSession, loadSessionDetail]);
+
+  useEffect(() => {
     if (submitting || creating) {
       return;
     }
@@ -303,10 +345,23 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
   }, [submitting, creating]);
 
   const runAgentInstruction = async (instruction: string): Promise<AgentResponse> => {
+    const { activeSessionId, selectedModel, selectedService } = useChatStore.getState();
+    if (!activeSessionId) {
+      const msg =
+        projectLang === "zh"
+          ? "会话尚未就绪，请稍候或刷新页面重试。"
+          : "Session not ready yet. Wait a moment or refresh the page.";
+      throw new Error(msg);
+    }
     return fetchJson<AgentResponse>("/agent", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ instruction }),
+      body: JSON.stringify({
+        instruction,
+        sessionId: activeSessionId,
+        model: selectedModel ?? undefined,
+        service: selectedService ?? undefined,
+      }),
     });
   };
 
@@ -472,21 +527,21 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
             <div className="flex flex-wrap gap-3">
               <button
                 onClick={handleDraftSubmit}
-                disabled={submitting || creating || !input.trim()}
+                disabled={submitting || creating || !input.trim() || !bookCreateSessionReady}
                 className={`px-4 py-3 ${c.btnPrimary} rounded-md disabled:opacity-50 font-medium text-sm`}
               >
                 {submitting ? copy.submitting : copy.submit}
               </button>
               <button
                 onClick={handleCreate}
-                disabled={!canCreateFromDraft(draft) || creating || submitting}
+                disabled={!canCreateFromDraft(draft) || creating || submitting || !bookCreateSessionReady}
                 className={`px-4 py-3 rounded-md border border-border bg-secondary text-secondary-foreground disabled:opacity-50 font-medium text-sm`}
               >
                 {creating ? copy.creating : copy.create}
               </button>
               <button
                 onClick={handleDiscard}
-                disabled={!draft || submitting || creating}
+                disabled={!draft || submitting || creating || !bookCreateSessionReady}
                 className="px-4 py-3 rounded-md border border-border text-muted-foreground hover:text-foreground hover:border-foreground/20 disabled:opacity-50 font-medium text-sm"
               >
                 {copy.discard}
