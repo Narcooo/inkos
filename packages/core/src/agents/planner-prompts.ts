@@ -211,6 +211,7 @@ export const PLANNER_MEMO_USER_TEMPLATE_EN = `# Chapter {{chapterNumber}} memo r
 
 {{brief_block}}
 {{chapter_context_block}}
+{{current_focus_block}}
 
 ## Last screen of previous chapter (excerpt)
 {{previous_chapter_ending_excerpt}}
@@ -260,6 +261,7 @@ export const PLANNER_MEMO_USER_TEMPLATE = `# 第 {{chapterNumber}} 章 memo 请�
 
 {{brief_block}}
 {{chapter_context_block}}
+{{current_focus_block}}
 
 ## 上一章最后一屏（原文节选）
 {{previous_chapter_ending_excerpt}}
@@ -306,6 +308,7 @@ export interface PlannerUserMessageInput {
   readonly bookRulesRelevant: string;
   readonly brief?: string;
   readonly chapterContext?: string;
+  readonly currentFocus?: string;
   readonly language?: "zh" | "en";
 }
 
@@ -317,11 +320,13 @@ export function buildPlannerUserMessage(input: PlannerUserMessageInput): string 
 
   const briefBlock = buildBriefBlock(input.brief ?? "", language);
   const chapterContextBlock = buildChapterContextBlock(input.chapterContext ?? "", language);
+  const currentFocusBlock = buildCurrentFocusBlock(input.currentFocus ?? "", language);
 
   const filled = template
     .replaceAll("{{chapterNumber}}", String(input.chapterNumber))
     .replaceAll("{{brief_block}}", briefBlock)
     .replaceAll("{{chapter_context_block}}", chapterContextBlock)
+    .replaceAll("{{current_focus_block}}", currentFocusBlock)
     .replaceAll("{{previous_chapter_ending_excerpt}}", input.previousChapterEndingExcerpt)
     .replaceAll("{{recent_summaries}}", input.recentSummaries)
     .replaceAll("{{current_arc_prose}}", input.currentArcProse)
@@ -335,6 +340,40 @@ export function buildPlannerUserMessage(input: PlannerUserMessageInput): string 
 
   const golden = buildGoldenOpeningGuidance(input.chapterNumber, language);
   return golden ? `${filled}\n\n${golden}` : filled;
+}
+
+/**
+ * Phase planner-fix-B (2026-05-08): pass current_focus.md content INTO the
+ * planner LLM userMessage. Previously current_focus was only used as a
+ * regex-extraction source for plan.intent metadata (mustAvoid / styleEmphasis /
+ * localOverrideGoal) — the LLM itself never saw the file content. When users
+ * wrote current_focus with non-magic-word headings (e.g. "## 当前执行焦点"
+ * instead of "## 当前焦点"), regex extraction silently fell through, leaving
+ * the planner LLM with no chapter-level user intent at all → it would then
+ * "free-style" the goal from prior chapter summaries + arc prose.
+ *
+ * Truncate to ~6000 chars to keep the planner prompt budget stable. Most
+ * user current_focus files are under 5KB; long files (multi-chapter rolling
+ * focus) get the head 6KB which usually contains the immediate-chapter plan.
+ */
+const CURRENT_FOCUS_TRUNCATE_CHARS = 6000;
+
+function buildCurrentFocusBlock(currentFocus: string, language: "zh" | "en"): string {
+  const trimmed = currentFocus.trim();
+  if (!trimmed) return "";
+  const truncated = trimmed.length > CURRENT_FOCUS_TRUNCATE_CHARS
+    ? trimmed.slice(0, CURRENT_FOCUS_TRUNCATE_CHARS) + "\n\n[... 已截断（仅头 6000 字进入 prompt）]"
+    : trimmed;
+  if (language === "en") {
+    return `## current_focus.md (rolling 1–3 chapter user control file)
+${truncated}
+
+This file is the user's authoritative near-term plan. It overrides outline-fallback when the user explicitly speaks to chapter ${"{{chapterNumber}}"} here. Read it carefully — chapter goal, scene anchors, character constraints, hook decisions for the next 1–3 chapters all live in it. If the user's writing structure doesn't use the magic headings (active focus / chapter override / avoid), the regex extraction below may be empty — fall back to reading this file directly.`;
+  }
+  return `## current_focus.md（用户的近 1-3 章控制文件——本章规划的主要参考）
+${truncated}
+
+本文件是用户对近期章节最权威的指令。当用户在文件中明确写到第 {{chapterNumber}} 章时，这部分内容**优先于卷纲兜底**。请仔细阅读——本章目标、场景锚点、角色约束、伏笔决策都可能在这里。如果用户结构未使用魔术节标题（当前焦点 / 本章覆盖 / 避免），下方 regex 抽出的字段可能为空，请直接以本节内容为本章规划主要依据。`;
 }
 
 /**

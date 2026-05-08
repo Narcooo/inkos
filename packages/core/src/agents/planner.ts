@@ -140,6 +140,14 @@ export class PlannerAgent extends BaseAgent {
       previousEndingExcerpt: seedMaterials.previousEndingExcerpt,
       brief: seedMaterials.brief,
       chapterContext: input.externalContext,
+      // Phase planner-fix-B (2026-05-08): pass current_focus.md content
+      // directly to the planner LLM. Previously current_focus was only used
+      // as a regex-extraction source for plan.intent metadata. When users
+      // wrote current_focus with non-magic-word headings, regex extraction
+      // silently fell through and the planner LLM received zero direct
+      // chapter-level user intent → it would free-style the goal from prior
+      // chapter summaries + arc prose. Passing the file content fixes this.
+      currentFocus: seedMaterials.currentFocus,
       recyclableHooks: memorySelection.recyclableHooks,
       // Phase hotfix 4: thread book language through so the planner uses
       // English prompts (system + user template + golden opening guidance)
@@ -187,6 +195,7 @@ export class PlannerAgent extends BaseAgent {
     readonly previousEndingExcerpt?: string;
     readonly brief?: string;
     readonly chapterContext?: string;
+    readonly currentFocus?: string;
     readonly recyclableHooks?: ReadonlyArray<StoredHook>;
     readonly language?: "zh" | "en";
   }): Promise<ChapterMemo> {
@@ -232,6 +241,7 @@ export class PlannerAgent extends BaseAgent {
       bookRulesRelevant: bookRulesRaw.trim().length > 0 ? bookRulesRaw.trim() : noBookRules,
       brief: input.brief ?? "",
       chapterContext: input.chapterContext ?? "",
+      currentFocus: input.currentFocus ?? "",
       language,
     });
 
@@ -640,9 +650,15 @@ export class PlannerAgent extends BaseAgent {
   }
 
   private matchExactOutlineLine(line: string, chapterNumber: number): RegExpMatchArray | undefined {
+    // Permissive prefix: allows arbitrary content before 第N章 / Chapter N as long
+    // as a boundary char (whitespace, pipe, fullwidth pipe) precedes it. This
+    // covers stage headings like `## 6.1 第一阶段｜第4章｜...` and table rows
+    // like `| 阶段 | 第4章 | <plot> |` — common Chinese organizational patterns
+    // that the original strict-prefix regex missed (forcing fallback to file
+    // first directive = useless boilerplate).
     const patterns = [
-      new RegExp(`^(?:#+\\s*)?(?:[-*]\\s+)?(?:\\*\\*)?Chapter\\s*${chapterNumber}(?!\\d|\\s*[-~–—]\\s*\\d)(?:[:：-])?(?:\\*\\*)?\\s*(.*)$`, "i"),
-      new RegExp(`^(?:#+\\s*)?(?:[-*]\\s+)?(?:\\*\\*)?第\\s*${chapterNumber}\\s*章(?!\\d|\\s*[-~–—]\\s*\\d)(?:[:：-])?(?:\\*\\*)?\\s*(.*)$`),
+      new RegExp(`^(?:.*?[\\s\\|｜])?Chapter\\s*${chapterNumber}(?!\\d|\\s*[-~–—]\\s*\\d)(?:[:：\\-｜|])?\\s*(.*)$`, "i"),
+      new RegExp(`^(?:.*?[\\s\\|｜])?第\\s*${chapterNumber}\\s*章(?!\\d|\\s*[-~–—]\\s*\\d)(?:[:：\\-｜|])?\\s*(.*)$`),
     ];
 
     return patterns
@@ -652,8 +668,8 @@ export class PlannerAgent extends BaseAgent {
 
   private matchAnyExactOutlineLine(line: string): RegExpMatchArray | undefined {
     const patterns = [
-      /^(?:#+\s*)?(?:[-*]\s+)?(?:\*\*)?Chapter\s*\d+(?!\s*[-~–—]\s*\d)(?:[:：-])?(?:\*\*)?\s*(.*)$/i,
-      /^(?:#+\s*)?(?:[-*]\s+)?(?:\*\*)?第\s*\d+\s*章(?!\s*[-~–—]\s*\d)(?:[:：-])?(?:\*\*)?\s*(.*)$/i,
+      /^(?:.*?[\s\|｜])?Chapter\s*\d+(?!\s*[-~–—]\s*\d)(?:[:：\-｜|])?\s*(.*)$/i,
+      /^(?:.*?[\s\|｜])?第\s*\d+\s*章(?!\s*[-~–—]\s*\d)(?:[:：\-｜|])?\s*(.*)$/i,
     ];
 
     return patterns
@@ -672,11 +688,14 @@ export class PlannerAgent extends BaseAgent {
   }
 
   private matchAnyRangeOutlineLine(line: string): RegExpMatchArray | undefined {
+    // Same permissive-prefix approach as matchExactOutlineLine: stage tables
+    // and pipe-separated rows like `## 6.1 第一阶段｜第1—20章｜重回东沧...`
+    // and `| 第一阶段 | 第 1—20 章 | <plot> |` are now first-class matches.
     const patterns = [
-      /^(?:#+\s*)?(?:[-*]\s+)?(?:\*\*)?Chapter\s*(\d+)\s*[-~–—]\s*(\d+)\b(?:[:：-])?(?:\*\*)?\s*(.*)$/i,
-      /^(?:#+\s*)?(?:[-*]\s+)?(?:\*\*)?第\s*(\d+)\s*[-~–—]\s*(\d+)\s*章(?:[:：-])?(?:\*\*)?\s*(.*)$/i,
-      /^(?:[-*]\s+)?(?:\*\*)?章节范围(?:\*\*)?[：:]\s*(\d+)\s*[-~–—]\s*(\d+)\s*章\s*(.*)$/,
-      /^(?:[-*]\s+)?(?:\*\*)?Chapter\s*[Rr]ange(?:\*\*)?[：:]\s*(\d+)\s*[-~–—]\s*(\d+)\b\s*(.*)$/i,
+      /^(?:.*?[\s\|｜])?Chapter\s*(\d+)\s*[-~–—]\s*(\d+)\b(?:[:：\-｜|])?\s*(.*)$/i,
+      /^(?:.*?[\s\|｜])?第\s*(\d+)\s*[-~–—]\s*(\d+)\s*章(?:[:：\-｜|])?\s*(.*)$/i,
+      /^(?:.*?[\s\|｜])?章节范围(?:\*\*)?[：:]\s*(\d+)\s*[-~–—]\s*(\d+)\s*章\s*(.*)$/,
+      /^(?:.*?[\s\|｜])?Chapter\s*[Rr]ange(?:\*\*)?[：:]\s*(\d+)\s*[-~–—]\s*(\d+)\b\s*(.*)$/i,
     ];
 
     return patterns
