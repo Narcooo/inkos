@@ -1145,13 +1145,13 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   app.post("/api/v1/books/:id/write-next", async (c) => {
     const id = c.req.param("id");
-    const body = await c.req.json<{ wordCount?: number }>().catch(() => ({ wordCount: undefined }));
+    const body = await c.req.json<{ wordCount?: number; context?: string }>().catch(() => ({})) as { wordCount?: number; context?: string };
 
     broadcast("write:start", { bookId: id });
 
     // Fire and forget — progress/completion/errors pushed via SSE
     const pipeline = new PipelineRunner(await buildPipelineConfig());
-    pipeline.writeNextChapter(id, body.wordCount).then(
+    pipeline.writeNextChapter(id, body.wordCount, undefined, body.context).then(
       (result) => {
         broadcast("write:complete", { bookId: id, chapterNumber: result.chapterNumber, status: result.status, title: result.title, wordCount: result.wordCount });
       },
@@ -1161,6 +1161,19 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     );
 
     return c.json({ status: "writing", bookId: id });
+  });
+
+  app.post("/api/v1/books/:id/plan-directions", async (c) => {
+    const id = c.req.param("id");
+    const body = await c.req.json<{ chapterContext?: string }>().catch(() => ({})) as { chapterContext?: string };
+
+    try {
+      const pipeline = new PipelineRunner(await buildPipelineConfig());
+      const result = await pipeline.planDirections(id, body.chapterContext);
+      return c.json(result);
+    } catch (e) {
+      return c.json({ error: e instanceof Error ? e.message : String(e) }, 500);
+    }
   });
 
   app.post("/api/v1/books/:id/draft", async (c) => {
@@ -1934,7 +1947,8 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
         });
 
         try {
-          const writeResult = await pipeline.writeNextChapter(agentBookId);
+          const directionContext = instruction.replace(/^(write\s+next|写下一章|继续写|下一章|再来一章)\s*/i, "").trim() || undefined;
+          const writeResult = await pipeline.writeNextChapter(agentBookId, undefined, undefined, directionContext);
           const responseText = [
             `已为 ${agentBookId} 完成第 ${writeResult.chapterNumber} 章`,
             writeResult.title ? `《${writeResult.title}》` : "",

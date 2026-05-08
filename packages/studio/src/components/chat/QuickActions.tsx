@@ -3,6 +3,7 @@ import {
   Search,
   FileOutput,
   TrendingUp,
+  Compass,
 } from "lucide-react";
 
 export interface QuickActionsProps {
@@ -26,6 +27,13 @@ const CHIPS: ReadonlyArray<ChipDef> = [
     labelEn: "Write next",
     commandZh: "写下一章",
     commandEn: "write next",
+  },
+  {
+    icon: <Compass size={12} />,
+    labelZh: "规划方向",
+    labelEn: "Plan directions",
+    commandZh: "plan_directions",
+    commandEn: "plan_directions",
   },
   {
     icon: <Search size={12} />,
