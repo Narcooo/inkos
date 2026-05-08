@@ -310,7 +310,7 @@ function applyServiceEntry(llm: Record<string, unknown>, entry: ServiceConfigEnt
   const transportDefaults = endpoint?.transportDefaults;
   llm.service = entry.service;
   llm.provider = deriveProviderFromService(entry.service);
-  llm.baseUrl = entry.baseUrl ?? resolveServicePreset(entry.service)?.baseUrl ?? "";
+  llm.baseUrl = entry.baseUrl ?? llm.baseUrl ?? resolveServicePreset(entry.service)?.baseUrl ?? "";
 
   if (entry.temperature !== undefined) llm.temperature = entry.temperature;
   if (entry.apiFormat !== undefined) llm.apiFormat = entry.apiFormat;
