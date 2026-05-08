@@ -59,6 +59,7 @@ export {
   RuleStackSectionsSchema,
   RuleStackSchema,
   ChapterTraceSchema,
+  type StoryDirection,
 } from "./models/input-governance.js";
 export { PlannerAgent, type PlanChapterInput, type PlanChapterOutput } from "./agents/planner.js";
 export {

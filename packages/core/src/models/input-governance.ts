@@ -97,3 +97,13 @@ export const ChapterTraceSchema = z.object({
 });
 
 export type ChapterTrace = z.infer<typeof ChapterTraceSchema>;
+
+export const StoryDirectionSchema = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1).max(50),
+  summary: z.string().min(1).max(200),
+  memoGoal: z.string().min(1).max(50),
+  hookStrategy: z.string().min(1).max(200),
+});
+
+export type StoryDirection = z.infer<typeof StoryDirectionSchema>;

@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { BookCreationDraft } from "@actalk/inkos-core";
-import { BookPlus, CheckCircle2, RotateCcw, Sparkles } from "lucide-react";
+import { BookPlus, CheckCircle2, FileText, RotateCcw, Sparkles, Upload, X } from "lucide-react";
 import { fetchJson, useApi } from "../hooks/use-api";
 import type { Theme } from "../hooks/use-theme";
 import type { TFunction } from "../hooks/use-i18n";
@@ -106,6 +106,10 @@ interface PlatformCopy {
   readonly syncedHint: string;
   readonly helperTitle: string;
   readonly helperBody: string;
+  readonly uploadOutline: string;
+  readonly uploadHint: string;
+  readonly uploadedFile: string;
+  readonly clearUpload: string;
 }
 
 const PLATFORMS_ZH: ReadonlyArray<PlatformOption> = [
@@ -158,6 +162,10 @@ const PAGE_COPY: Record<"zh" | "en", PlatformCopy> = {
     syncedHint: "这份草案和 TUI / Studio Chat 共享。",
     helperTitle: "建议这样推进",
     helperBody: "先定世界观和主角，再定核心冲突、简介和卷一方向。想看当前草案时，可以在 TUI 里用 /draft。",
+    uploadOutline: "上传大纲文件",
+    uploadHint: "支持 .txt 和 .md 格式",
+    uploadedFile: "已上传",
+    clearUpload: "清除",
   },
   en: {
     idleTitle: "Start from a rough idea",
@@ -194,6 +202,10 @@ const PAGE_COPY: Record<"zh" | "en", PlatformCopy> = {
     syncedHint: "This draft is shared with TUI and Studio Chat.",
     helperTitle: "Recommended flow",
     helperBody: "Lock the world and protagonist first, then settle the conflict, blurb, and volume-one direction. In TUI, use /draft to inspect the same draft.",
+    uploadOutline: "Upload outline file",
+    uploadHint: "Supports .txt and .md files",
+    uploadedFile: "Uploaded",
+    clearUpload: "Clear",
   },
 };
 
@@ -463,6 +475,8 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [bookCreateSessionId, setBookCreateSessionIdState] = useState<string | null>(null);
+  const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const summaryRows = useMemo(
     () => (draft ? buildCreationDraftSummary(draft, projectLang) : []),
@@ -484,6 +498,29 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
 
   const updateForm = (patch: Partial<BookCreateFormState>) => {
     setForm((current) => ({ ...current, ...patch }));
+  };
+
+  const handleOutlineUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const ext = file.name.split(".").pop()?.toLowerCase();
+    if (ext !== "txt" && ext !== "md") return;
+    if (file.size > 500 * 1024) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const text = event.target?.result;
+      if (typeof text === "string") {
+        updateForm({ brief: text });
+        setUploadedFileName(file.name);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  };
+
+  const handleClearUpload = () => {
+    setUploadedFileName(null);
+    updateForm({ brief: "" });
   };
 
   const applyDraftToForm = () => {
@@ -764,6 +801,38 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
               placeholder={copy.briefPlaceholder}
             />
           </label>
+
+          <div className="flex items-center gap-3">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".txt,.md"
+              className="hidden"
+              onChange={handleOutlineUpload}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 ${c.btnSecondary} rounded-md text-xs font-medium`}
+            >
+              <Upload size={12} />
+              {copy.uploadOutline}
+            </button>
+            <span className="text-xs text-muted-foreground">{copy.uploadHint}</span>
+            {uploadedFileName && (
+              <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md border border-primary/20 bg-primary/5 text-xs text-primary">
+                <FileText size={12} />
+                {uploadedFileName}
+                <button
+                  type="button"
+                  onClick={handleClearUpload}
+                  className="ml-1 hover:text-destructive"
+                >
+                  <X size={10} />
+                </button>
+              </span>
+            )}
+          </div>
 
           {creating && (
             <div className="grid gap-2 sm:grid-cols-3">

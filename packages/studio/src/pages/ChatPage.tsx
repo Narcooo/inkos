@@ -18,6 +18,7 @@ import {
 } from "../components/ai-elements/reasoning";
 import { ChatMessage } from "../components/chat/ChatMessage";
 import { QuickActions } from "../components/chat/QuickActions";
+import { DirectionCards, type StoryDirection } from "../components/chat/DirectionCards";
 import { ToolExecutionSteps } from "../components/chat/ToolExecutionSteps";
 import {
   Loader2,
@@ -81,6 +82,10 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const [directions, setDirections] = useState<readonly StoryDirection[] | null>(null);
+  const [directionLoading, setDirectionLoading] = useState(false);
+  const [directionError, setDirectionError] = useState<string | null>(null);
 
   const isZh = t("nav.connected") === "\u5DF2\u8FDE\u63A5";
   const hasBook = Boolean(activeBookId);
@@ -244,7 +249,36 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
     void sendMessage(activeSessionId, text, activeBookId);
   };
 
+  const handlePlanDirections = async () => {
+    if (!activeBookId) return;
+    setDirectionLoading(true);
+    setDirectionError(null);
+    setDirections(null);
+    try {
+      const result = await fetchJson<{ directions: readonly StoryDirection[]; chapterNumber: number }>(
+        `/books/${activeBookId}/plan-directions`,
+        { method: "POST" },
+      );
+      setDirections(result.directions);
+    } catch (e) {
+      setDirectionError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDirectionLoading(false);
+    }
+  };
+
+  const handleDirectionSelect = (directionId: string) => {
+    const selected = directions?.find((d) => d.id === directionId);
+    if (!selected || !activeSessionId) return;
+    setDirections(null);
+    void sendMessage(activeSessionId, `write next ${selected.memoGoal}`, activeBookId);
+  };
+
   const handleQuickAction = (command: string) => {
+    if (command === "plan_directions") {
+      void handlePlanDirections();
+      return;
+    }
     if (!activeSessionId) return;
     void sendMessage(activeSessionId, command, activeBookId);
   };
@@ -360,12 +394,46 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
         )}
       </div>
 
+      {/* Direction selection cards */}
+      {directions && directions.length > 0 && (
+        <div className="shrink-0 max-w-3xl mx-auto w-full px-4 pb-2">
+          <DirectionCards
+            directions={directions}
+            onSelect={handleDirectionSelect}
+            disabled={loading}
+            isZh={isZh}
+          />
+        </div>
+      )}
+
+      {/* Direction loading state */}
+      {directionLoading && (
+        <div className="shrink-0 max-w-3xl mx-auto w-full px-4 pb-2">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
+            <Loader2 size={14} className="animate-spin" />
+            <span>{isZh ? "正在生成故事方向..." : "Generating story directions..."}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Direction error state */}
+      {directionError && (
+        <div className="shrink-0 max-w-3xl mx-auto w-full px-4 pb-2">
+          <div className="flex items-center gap-2 text-xs text-destructive py-2">
+            <span>{directionError}</span>
+            <button onClick={handlePlanDirections} className="underline hover:text-destructive/80">
+              {isZh ? "重试" : "Retry"}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Quick actions (only when a book is active) */}
       {hasBook && (
         <div className="shrink-0 max-w-3xl mx-auto w-full px-4">
           <QuickActions
             onAction={handleQuickAction}
-            disabled={loading || !activeSessionId}
+            disabled={loading || !activeSessionId || directionLoading}
             isZh={isZh}
           />
         </div>
