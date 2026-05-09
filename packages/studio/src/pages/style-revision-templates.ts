@@ -7,7 +7,10 @@ export interface StyleRevisionTemplate {
   readonly rules: Record<StyleTemplateLanguage, ReadonlyArray<string>>;
 }
 
-export const STYLE_REVISION_TEMPLATES: ReadonlyArray<StyleRevisionTemplate> = [
+export const CUSTOM_STYLE_TEMPLATE_EVENT = "inkos:style-templates-changed";
+const CUSTOM_STYLE_TEMPLATE_STORAGE_KEY = "inkos.custom-style-templates.v1";
+
+export const BUILTIN_STYLE_REVISION_TEMPLATES: ReadonlyArray<StyleRevisionTemplate> = [
   {
     id: "inkwell",
     label: {
@@ -157,8 +160,140 @@ export const STYLE_REVISION_TEMPLATES: ReadonlyArray<StyleRevisionTemplate> = [
   },
 ];
 
+export const STYLE_REVISION_TEMPLATES: ReadonlyArray<StyleRevisionTemplate> = BUILTIN_STYLE_REVISION_TEMPLATES;
+
+function storage(): Storage | null {
+  return typeof window === "undefined" ? null : window.localStorage;
+}
+
+function safeTemplates(value: unknown): ReadonlyArray<StyleRevisionTemplate> {
+  if (!Array.isArray(value)) return [];
+  return value.filter((entry): entry is StyleRevisionTemplate => {
+    const template = entry as Partial<StyleRevisionTemplate>;
+    return Boolean(
+      typeof template.id === "string" &&
+      template.label?.ko &&
+      template.description?.ko &&
+      Array.isArray(template.rules?.ko),
+    );
+  });
+}
+
+export function loadCustomStyleTemplates(): ReadonlyArray<StyleRevisionTemplate> {
+  const store = storage();
+  if (!store) return [];
+  try {
+    return safeTemplates(JSON.parse(store.getItem(CUSTOM_STYLE_TEMPLATE_STORAGE_KEY) ?? "[]"));
+  } catch {
+    return [];
+  }
+}
+
+export function saveCustomStyleTemplate(template: StyleRevisionTemplate): void {
+  const store = storage();
+  if (!store) return;
+  const existing = loadCustomStyleTemplates().filter((entry) => entry.id !== template.id);
+  store.setItem(CUSTOM_STYLE_TEMPLATE_STORAGE_KEY, JSON.stringify([...existing, template]));
+  window.dispatchEvent(new CustomEvent(CUSTOM_STYLE_TEMPLATE_EVENT));
+}
+
+export function getAllStyleRevisionTemplates(): ReadonlyArray<StyleRevisionTemplate> {
+  return [...BUILTIN_STYLE_REVISION_TEMPLATES, ...loadCustomStyleTemplates()];
+}
+
 export function findStyleRevisionTemplate(templateId: string): StyleRevisionTemplate | undefined {
-  return STYLE_REVISION_TEMPLATES.find((template) => template.id === templateId);
+  return getAllStyleRevisionTemplates().find((template) => template.id === templateId);
+}
+
+function slugifyName(name: string): string {
+  const normalized = name
+    .replace(/[^\p{Letter}\p{Number}]+/gu, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase();
+  return normalized || "risu-style";
+}
+
+function stripTemplateSyntax(value: string): string {
+  return value
+    .replace(/\{\{User\}\}/g, "user")
+    .replace(/\{\{user\}\}/g, "user")
+    .replace(/\{\{Char\}\}/g, "character")
+    .replace(/\{\{[#/]?if[^}]*\}\}/g, "")
+    .replace(/\{\{[#/]?if_pure[^}]*\}\}/g, "")
+    .replace(/\{\{\/if\}\}/g, "")
+    .replace(/\{\{[^}]+\}\}/g, "")
+    .replace(/<\/?[^>\n]+>/g, "")
+    .replace(/`AI`'?s?/g, "AI")
+    .trim();
+}
+
+function collectRisuStyleLines(parsed: unknown): string[] {
+  const root = parsed as {
+    name?: unknown;
+    promptTemplate?: ReadonlyArray<{ name?: unknown; text?: unknown; type2?: unknown }>;
+  };
+  const templateEntries = Array.isArray(root.promptTemplate) ? root.promptTemplate : [];
+  const relevant = templateEntries.filter((entry) => {
+    const name = String(entry.name ?? "");
+    const type2 = String(entry.type2 ?? "");
+    const text = String(entry.text ?? "");
+    const label = `${name}\n${type2}`;
+    return /문체|글쓰기|style|writing|dialogue|sentence rhythm|banned|금지/i.test(label)
+      || /<Dialogue>|<Ai Writing-Style>|<Banned Ai Writing-Style>|# `AI`'s Writing Guidelines|# `AI`'s Writing-Style/i.test(text);
+  });
+  const source = relevant.map((entry) => String(entry.text ?? "")).join("\n");
+  const candidates = stripTemplateSyntax(source)
+    .split("\n")
+    .map((line) => line.replace(/^\s*[-*]\s*/, "").trim())
+    .filter((line) => line.length >= 12 && line.length <= 240)
+    .filter((line) => !/^#+\s*/.test(line))
+    .filter((line) => !/^---+$/.test(line))
+    .filter((line) => !/^Example:/i.test(line))
+    .filter((line) => !/^Prohibited:/i.test(line))
+    .filter((line) => !/^Recommended:/i.test(line))
+    .filter((line) => !/OOC|out-of-character|stop role-playing|personal and private fictional session/i.test(line));
+  const seen = new Set<string>();
+  const lines: string[] = [];
+  for (const line of candidates) {
+    const key = line.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    lines.push(line);
+    if (lines.length >= 18) break;
+  }
+  return lines;
+}
+
+export function buildStyleTemplateFromRisuPreset(jsonText: string): StyleRevisionTemplate {
+  const parsed = JSON.parse(jsonText) as { name?: unknown };
+  const rawName = typeof parsed.name === "string" && parsed.name.trim() ? parsed.name.trim() : "Risu 문체";
+  const name = rawName.replace(/^[^\p{Letter}\p{Number}]+/u, "").trim() || rawName;
+  const lines = collectRisuStyleLines(parsed);
+  if (lines.length === 0) {
+    throw new Error("Risu preset에서 문체 지시를 찾지 못했습니다.");
+  }
+  const rulesKo = [
+    "아래 규칙은 Risu 프리셋에서 추출한 문체 지시입니다. 원문 표현을 참고하되, 작품의 장르와 사건 사실을 우선합니다.",
+    ...lines,
+  ];
+  const rulesEn = [
+    "These rules were extracted from a Risu preset. Use the original wording as style guidance while preserving genre and plot facts.",
+    ...lines,
+  ];
+  const rulesZh = [
+    "以下规则提取自 Risu preset。请参考原文作为文风要求，同时保留题材和剧情事实。",
+    ...lines,
+  ];
+  return {
+    id: `risu-${slugifyName(name)}`,
+    label: { ko: name, en: name, zh: name },
+    description: {
+      ko: `Risu 프리셋 "${name}"에서 추출한 사용자 문체 양식입니다.`,
+      en: `A custom style template extracted from the Risu preset "${name}".`,
+      zh: `从 Risu preset "${name}" 提取的自定义文风模板。`,
+    },
+    rules: { ko: rulesKo, en: rulesEn, zh: rulesZh },
+  };
 }
 
 export function buildStyleRevisionBrief(

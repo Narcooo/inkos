@@ -14,6 +14,7 @@ export type HashRoute =
   | { page: "logs" }
   | { page: "genres" }
   | { page: "style" }
+  | { page: "risu-style" }
   | { page: "style-revision" }
   | { page: "import" }
   | { page: "radar" }
@@ -25,6 +26,7 @@ function parseHash(hash: string): HashRoute {
   if (!path || path === "/") return { page: "dashboard" };
   if (path === "config" || path === "services") return { page: "services" };
   if (path === "book/new") return { page: "book-create" };
+  if (path === "risu-style") return { page: "risu-style" };
   if (path === "style-revision") return { page: "style-revision" };
 
   const serviceMatch = path.match(/^services\/([^/]+)$/);
@@ -47,6 +49,7 @@ function routeToHash(route: HashRoute): string {
     case "book-create": return "#/book/new";
     case "services": return "#/services";
     case "service-detail": return `#/services/${encodeURIComponent(route.serviceId)}`;
+    case "risu-style": return "#/risu-style";
     case "style-revision": return "#/style-revision";
     default: return "";
   }
@@ -54,7 +57,7 @@ function routeToHash(route: HashRoute): string {
 
 export { parseHash, routeToHash }; // for testing
 
-const HASH_PAGES = new Set(["dashboard", "book", "book-settings", "book-create", "services", "service-detail", "style-revision"]);
+const HASH_PAGES = new Set(["dashboard", "book", "book-settings", "book-create", "services", "service-detail", "risu-style", "style-revision"]);
 
 export function useHashRoute() {
   const [route, setRouteState] = useState<HashRoute>(() => parseHash(window.location.hash));

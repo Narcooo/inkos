@@ -3,6 +3,7 @@ import {
   STYLE_REVISION_TEMPLATES,
   buildStyleCreationBrief,
   buildStyleRevisionBrief,
+  buildStyleTemplateFromRisuPreset,
   findStyleRevisionTemplate,
 } from "./style-revision-templates";
 
@@ -41,5 +42,27 @@ describe("style revision templates", () => {
     expect(brief).toContain("작품 전체의 문체 지시");
     expect(brief).toContain("Inkwell");
     expect(brief).toContain("읽는 속도를 빠르게 유지할 것.");
+  });
+
+  it("extracts a custom style template from Risu preset JSON", () => {
+    const template = buildStyleTemplateFromRisuPreset(JSON.stringify({
+      name: "🖊️ Inkwell v1.5",
+      promptTemplate: [
+        {
+          name: "문체 지침",
+          text: [
+            "# AI Writing-Style",
+            "- Keep the reading pace fast.",
+            "- Dialogue should consist of short, rapid exchanges.",
+            "- Do not copy the user's input actions/descriptions as-is.",
+          ].join("\n"),
+        },
+      ],
+    }));
+
+    expect(template.id).toBe("risu-inkwell-v1-5");
+    expect(template.label.ko).toBe("Inkwell v1.5");
+    expect(template.rules.ko.join("\n")).toContain("Keep the reading pace fast.");
+    expect(template.rules.ko.join("\n")).toContain("short, rapid exchanges");
   });
 });

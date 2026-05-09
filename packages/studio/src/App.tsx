@@ -15,6 +15,7 @@ import { DaemonControl } from "./pages/DaemonControl";
 import { LogViewer } from "./pages/LogViewer";
 import { GenreManager } from "./pages/GenreManager";
 import { StyleManager } from "./pages/StyleManager";
+import { RisuStyleImporter } from "./pages/RisuStyleImporter";
 import { StyleRevisionManager } from "./pages/StyleRevisionManager";
 import { ImportManager } from "./pages/ImportManager";
 import { RadarView } from "./pages/RadarView";
@@ -81,6 +82,7 @@ export function App() {
     toLogs: () => setRoute({ page: "logs" }),
     toGenres: () => setRoute({ page: "genres" }),
     toStyle: () => setRoute({ page: "style" }),
+    toRisuStyle: () => setRoute({ page: "risu-style" }),
     toStyleRevision: () => setRoute({ page: "style-revision" }),
     toImport: () => setRoute({ page: "import" }),
     toRadar: () => setRoute({ page: "radar" }),
@@ -241,6 +243,11 @@ export function App() {
           {route.page === "style" && (
             <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
               <StyleManager nav={nav} theme={theme} t={t} />
+            </div>
+          )}
+          {route.page === "risu-style" && (
+            <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
+              <RisuStyleImporter nav={nav} theme={theme} t={t} />
             </div>
           )}
           {route.page === "style-revision" && (

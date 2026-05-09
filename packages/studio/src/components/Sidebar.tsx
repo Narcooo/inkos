@@ -68,6 +68,7 @@ interface Nav {
   toLogs: () => void;
   toGenres: () => void;
   toStyle: () => void;
+  toRisuStyle: () => void;
   toStyleRevision: () => void;
   toImport: () => void;
   toRadar: () => void;
@@ -375,6 +376,12 @@ export function Sidebar({ nav, activePage, sse, t }: {
               icon={<Wand2 size={16} />}
               active={activePage === "style"}
               onClick={nav.toStyle}
+            />
+            <SidebarItem
+              label={sidebarText(language, { zh: "Risu 转文风", en: "Risu to Style", ko: "Risu to 문체" })}
+              icon={<FileInput size={16} />}
+              active={activePage === "risu-style"}
+              onClick={nav.toRisuStyle}
             />
             <SidebarItem
               label={sidebarText(language, { zh: "文风修改", en: "Style Revision", ko: "문체 변경" })}

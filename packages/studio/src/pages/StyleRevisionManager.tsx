@@ -6,9 +6,10 @@ import type { TFunction } from "../hooks/use-i18n";
 import { useI18n } from "../hooks/use-i18n";
 import { useColors } from "../hooks/use-colors";
 import {
-  STYLE_REVISION_TEMPLATES,
+  CUSTOM_STYLE_TEMPLATE_EVENT,
   buildStyleRevisionBrief,
   findStyleRevisionTemplate,
+  getAllStyleRevisionTemplates,
   type StyleTemplateLanguage,
 } from "./style-revision-templates";
 
@@ -114,9 +115,11 @@ export function StyleRevisionManager({ nav, theme, t }: { nav: Nav; theme: Theme
   const { lang: uiLang } = useI18n();
   const { data: booksData } = useApi<{ books: ReadonlyArray<BookSummary> }>("/books");
   const books = booksData?.books ?? [];
+  const [styleTemplateVersion, setStyleTemplateVersion] = useState(0);
+  const styleTemplates = useMemo(() => getAllStyleRevisionTemplates(), [styleTemplateVersion]);
   const [bookId, setBookId] = useState("");
   const [chapterNumber, setChapterNumber] = useState("");
-  const [templateId, setTemplateId] = useState(STYLE_REVISION_TEMPLATES[0]?.id ?? "");
+  const [templateId, setTemplateId] = useState(styleTemplates[0]?.id ?? "");
   const [customInstruction, setCustomInstruction] = useState("");
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState<{ tone: "success" | "error"; message: string } | null>(null);
@@ -126,9 +129,24 @@ export function StyleRevisionManager({ nav, theme, t }: { nav: Nav; theme: Theme
   const selectedBook = detail?.book ?? books.find((book) => book.id === bookId);
   const language = resolveLanguage(selectedBook?.language, uiLang);
   const copy = copyFor(language);
-  const selectedTemplate = findStyleRevisionTemplate(templateId) ?? STYLE_REVISION_TEMPLATES[0];
+  const selectedTemplate = findStyleRevisionTemplate(templateId) ?? styleTemplates[0];
   const chapters = detail?.chapters ?? [];
   const canRun = Boolean(bookId && chapterNumber && selectedTemplate && !running);
+
+  useEffect(() => {
+    const onTemplatesChanged = () => setStyleTemplateVersion((version) => version + 1);
+    window.addEventListener(CUSTOM_STYLE_TEMPLATE_EVENT, onTemplatesChanged);
+    return () => window.removeEventListener(CUSTOM_STYLE_TEMPLATE_EVENT, onTemplatesChanged);
+  }, []);
+
+  useEffect(() => {
+    if (!templateId && styleTemplates[0]) {
+      setTemplateId(styleTemplates[0].id);
+    }
+    if (templateId && !styleTemplates.some((template) => template.id === templateId)) {
+      setTemplateId(styleTemplates[0]?.id ?? "");
+    }
+  }, [styleTemplates, templateId]);
 
   useEffect(() => {
     if (!bookId && books[0]) {
@@ -255,7 +273,7 @@ export function StyleRevisionManager({ nav, theme, t }: { nav: Nav; theme: Theme
             }}
             className={`w-full ${c.input} rounded-md px-3 py-2.5 focus:outline-none text-sm bg-background`}
           >
-            {STYLE_REVISION_TEMPLATES.map((template) => (
+            {styleTemplates.map((template) => (
               <option key={template.id} value={template.id}>{template.label[language]}</option>
             ))}
           </select>

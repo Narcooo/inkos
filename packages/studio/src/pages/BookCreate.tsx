@@ -17,9 +17,10 @@ import {
   setBookCreateSessionId,
 } from "./chat-page-state";
 import {
-  STYLE_REVISION_TEMPLATES,
+  CUSTOM_STYLE_TEMPLATE_EVENT,
   buildStyleCreationBrief,
   findStyleRevisionTemplate,
+  getAllStyleRevisionTemplates,
   type StyleTemplateLanguage,
 } from "./style-revision-templates";
 
@@ -756,6 +757,7 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
   const [draft, setDraft] = useState<BookCreationDraft | undefined>();
   const [form, setForm] = useState<BookCreateFormState>(() => defaultBookCreateForm(projectLang));
   const [styleTemplateId, setStyleTemplateId] = useState("custom");
+  const [styleTemplateVersion, setStyleTemplateVersion] = useState(0);
   const [input, setInput] = useState("");
   const [loadingDraft, setLoadingDraft] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -770,6 +772,7 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
   const currentGenreIsListed = genreChoices.some((genre) => genre.id === form.genre);
   const selectedGenre = genreChoices.find((genre) => genre.id === form.genre);
   const selectedPlatform = platformChoices.find((option) => option.value === form.platform);
+  const styleTemplates = useMemo(() => getAllStyleRevisionTemplates(), [styleTemplateVersion]);
 
   const summaryRows = useMemo(
     () => (draft ? buildCreationDraftSummary(draft, projectLang === "ko" ? "en" : projectLang) : []),
@@ -789,6 +792,12 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
       targetChapters: current.targetChapters || "200",
     }));
   }, [platformChoices, projectLang]);
+
+  useEffect(() => {
+    const onTemplatesChanged = () => setStyleTemplateVersion((version) => version + 1);
+    window.addEventListener(CUSTOM_STYLE_TEMPLATE_EVENT, onTemplatesChanged);
+    return () => window.removeEventListener(CUSTOM_STYLE_TEMPLATE_EVENT, onTemplatesChanged);
+  }, []);
 
   const updateForm = (patch: Partial<BookCreateFormState>) => {
     setForm((current) => ({ ...current, ...patch }));
@@ -1124,7 +1133,7 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
               aria-label={copy.styleTemplateLabel}
             >
               <option value="custom">{copy.customStyleTemplate}</option>
-              {STYLE_REVISION_TEMPLATES.map((template) => (
+              {styleTemplates.map((template) => (
                 <option key={template.id} value={template.id}>{template.label[styleTemplateLanguage]}</option>
               ))}
             </select>

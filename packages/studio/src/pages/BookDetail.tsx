@@ -7,9 +7,10 @@ import { useColors } from "../hooks/use-colors";
 import { deriveBookActivity, shouldRefetchBookView } from "../hooks/use-book-activity";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import {
-  STYLE_REVISION_TEMPLATES,
+  CUSTOM_STYLE_TEMPLATE_EVENT,
   buildStyleRevisionBrief,
   findStyleRevisionTemplate,
+  getAllStyleRevisionTemplates,
 } from "./style-revision-templates";
 import {
   ChevronLeft,
@@ -113,6 +114,8 @@ export function BookDetail({
   const [settingsStatus, setSettingsStatus] = useState<BookStatus | null>(null);
   const [exportFormat, setExportFormat] = useState<ExportFormat>("txt");
   const [exportApprovedOnly, setExportApprovedOnly] = useState(false);
+  const [styleTemplateVersion, setStyleTemplateVersion] = useState(0);
+  const styleTemplates = useMemo(() => getAllStyleRevisionTemplates(), [styleTemplateVersion]);
   const activity = useMemo(() => deriveBookActivity(sse.messages, bookId), [bookId, sse.messages]);
   const writing = writeRequestPending || activity.writing;
   const drafting = draftRequestPending || activity.drafting;
@@ -126,6 +129,12 @@ export function BookDetail({
         : t("nav.connected") === "Connected"
           ? "en"
           : "zh";
+
+  useEffect(() => {
+    const onTemplatesChanged = () => setStyleTemplateVersion((version) => version + 1);
+    window.addEventListener(CUSTOM_STYLE_TEMPLATE_EVENT, onTemplatesChanged);
+    return () => window.removeEventListener(CUSTOM_STYLE_TEMPLATE_EVENT, onTemplatesChanged);
+  }, []);
 
   useEffect(() => {
     const recent = sse.messages.at(-1);
@@ -669,7 +678,7 @@ export function BookDetail({
                         <option value="rework">{t("book.rework")}</option>
                         <option value="anti-detect">{t("book.antiDetect")}</option>
                         <optgroup label={uiLanguage === "ko" ? "문체 수정 양식" : uiLanguage === "en" ? "Style Templates" : "文风模板"}>
-                          {STYLE_REVISION_TEMPLATES.map((template) => (
+                          {styleTemplates.map((template) => (
                             <option key={template.id} value={`style:${template.id}`}>
                               {template.label[uiLanguage]}
                             </option>
