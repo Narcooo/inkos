@@ -10,6 +10,7 @@ import {
   buildStyleRevisionBrief,
   findStyleRevisionTemplate,
   getAllStyleRevisionTemplates,
+  type StyleRevisionTemplate,
   type StyleTemplateLanguage,
 } from "./style-revision-templates";
 
@@ -183,9 +184,13 @@ export function StyleRevisionManager({ nav, theme, t }: { nav: Nav; theme: Theme
   const c = useColors(theme);
   const { lang: uiLang } = useI18n();
   const { data: booksData } = useApi<{ books: ReadonlyArray<BookSummary> }>("/books");
+  const { data: styleTemplatesData } = useApi<{ templates: ReadonlyArray<StyleRevisionTemplate> }>("/style-templates");
   const books = booksData?.books ?? [];
   const [styleTemplateVersion, setStyleTemplateVersion] = useState(0);
-  const styleTemplates = useMemo(() => getAllStyleRevisionTemplates(), [styleTemplateVersion]);
+  const styleTemplates = useMemo(
+    () => getAllStyleRevisionTemplates(styleTemplatesData?.templates),
+    [styleTemplateVersion, styleTemplatesData?.templates],
+  );
   const [sourceMode, setSourceMode] = useState<SourceMode>("book");
   const [bookId, setBookId] = useState("");
   const [chapterNumber, setChapterNumber] = useState("");
@@ -202,7 +207,7 @@ export function StyleRevisionManager({ nav, theme, t }: { nav: Nav; theme: Theme
   const selectedBook = detail?.book ?? books.find((book) => book.id === bookId);
   const language = resolveLanguage(selectedBook?.language, uiLang);
   const copy = copyFor(language);
-  const selectedTemplate = findStyleRevisionTemplate(templateId) ?? styleTemplates[0];
+  const selectedTemplate = findStyleRevisionTemplate(templateId, styleTemplatesData?.templates) ?? styleTemplates[0];
   const chapters = detail?.chapters ?? [];
   const canRunBookRevision = Boolean(bookId && chapterNumber && selectedTemplate && !running);
   const canRunFileRevision = Boolean(fileText.trim() && selectedTemplate && !running);

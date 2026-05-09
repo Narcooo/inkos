@@ -11,6 +11,7 @@ import {
   buildStyleRevisionBrief,
   findStyleRevisionTemplate,
   getAllStyleRevisionTemplates,
+  type StyleRevisionTemplate,
 } from "./style-revision-templates";
 import {
   ChevronLeft,
@@ -101,6 +102,7 @@ export function BookDetail({
 }) {
   const c = useColors(theme);
   const { data, loading, error, refetch } = useApi<BookData>(`/books/${bookId}`);
+  const { data: styleTemplatesData } = useApi<{ templates: ReadonlyArray<StyleRevisionTemplate> }>("/style-templates");
   const [writeRequestPending, setWriteRequestPending] = useState(false);
   const [draftRequestPending, setDraftRequestPending] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -115,7 +117,10 @@ export function BookDetail({
   const [exportFormat, setExportFormat] = useState<ExportFormat>("txt");
   const [exportApprovedOnly, setExportApprovedOnly] = useState(false);
   const [styleTemplateVersion, setStyleTemplateVersion] = useState(0);
-  const styleTemplates = useMemo(() => getAllStyleRevisionTemplates(), [styleTemplateVersion]);
+  const styleTemplates = useMemo(
+    () => getAllStyleRevisionTemplates(styleTemplatesData?.templates),
+    [styleTemplateVersion, styleTemplatesData?.templates],
+  );
   const activity = useMemo(() => deriveBookActivity(sse.messages, bookId), [bookId, sse.messages]);
   const writing = writeRequestPending || activity.writing;
   const drafting = draftRequestPending || activity.drafting;
@@ -248,7 +253,7 @@ export function BookDetail({
   };
 
   const handleStyleRevise = async (chapterNum: number, templateId: string) => {
-    const template = findStyleRevisionTemplate(templateId);
+    const template = findStyleRevisionTemplate(templateId, styleTemplatesData?.templates);
     if (!template) return;
     const brief = buildStyleRevisionBrief(template, uiLanguage);
     setRevisingChapters((prev) => [...prev, chapterNum]);

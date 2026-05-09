@@ -44,7 +44,8 @@ import {
   type LogEntry,
 } from "@actalk/inkos-core";
 import { access, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { isSafeBookId } from "./safety.js";
 import { ApiError } from "./errors.js";
 import { buildStudioBookConfig } from "./book-create.js";
@@ -149,6 +150,53 @@ interface TextStyleRevisionRequest {
   readonly brief?: unknown;
   readonly fileName?: unknown;
   readonly language?: unknown;
+}
+
+interface RuntimeStyleTemplate {
+  readonly id: string;
+  readonly label: Record<"zh" | "en" | "ko", string>;
+  readonly description: Record<"zh" | "en" | "ko", string>;
+  readonly rules: Record<"zh" | "en" | "ko", ReadonlyArray<string>>;
+}
+
+function isRuntimeStyleTemplate(value: unknown): value is RuntimeStyleTemplate {
+  if (!value || typeof value !== "object") return false;
+  const template = value as Partial<RuntimeStyleTemplate>;
+  return Boolean(
+    typeof template.id === "string" &&
+    template.label?.zh &&
+    template.label?.en &&
+    template.label?.ko &&
+    template.description?.zh &&
+    template.description?.en &&
+    template.description?.ko &&
+    Array.isArray(template.rules?.zh) &&
+    Array.isArray(template.rules?.en) &&
+    Array.isArray(template.rules?.ko),
+  );
+}
+
+async function loadRuntimeStyleTemplates(): Promise<RuntimeStyleTemplate[]> {
+  const currentDir = dirname(fileURLToPath(import.meta.url));
+  const candidateDirs = [
+    resolve(currentDir, "../pages/style-templates"),
+    resolve(currentDir, "../../src/pages/style-templates"),
+  ];
+
+  for (const dir of candidateDirs) {
+    try {
+      const entries = (await readdir(dir)).filter((entry) => entry.endsWith(".json")).sort();
+      const templates = await Promise.all(entries.map(async (entry) => {
+        const parsed = JSON.parse(await readFile(join(dir, entry), "utf-8")) as unknown;
+        return isRuntimeStyleTemplate(parsed) ? parsed : null;
+      }));
+      return templates.filter((template): template is RuntimeStyleTemplate => Boolean(template));
+    } catch {
+      // Try the next candidate path.
+    }
+  }
+
+  return [];
 }
 
 function normalizeTextStyleRevisionRequest(body: TextStyleRevisionRequest): {
@@ -995,6 +1043,11 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       }),
     );
     return c.json({ genres });
+  });
+
+  app.get("/api/v1/style-templates", async (c) => {
+    const templates = await loadRuntimeStyleTemplates();
+    return c.json({ templates });
   });
 
   // --- Book Create ---

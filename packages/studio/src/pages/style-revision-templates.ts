@@ -43,6 +43,18 @@ function safeTemplates(value: unknown): ReadonlyArray<StyleRevisionTemplate> {
   });
 }
 
+function resolveBuiltinStyleTemplates(runtimeTemplates?: unknown): ReadonlyArray<StyleRevisionTemplate> {
+  const runtime = safeTemplates(runtimeTemplates);
+  if (!runtime.length) return BUILTIN_STYLE_REVISION_TEMPLATES;
+
+  const runtimeById = new Map(runtime.map((template) => [template.id, template]));
+  const builtinIds = new Set(BUILTIN_STYLE_REVISION_TEMPLATES.map((template) => template.id));
+  return [
+    ...BUILTIN_STYLE_REVISION_TEMPLATES.map((template) => runtimeById.get(template.id) ?? template),
+    ...runtime.filter((template) => !builtinIds.has(template.id)),
+  ];
+}
+
 export function loadCustomStyleTemplates(): ReadonlyArray<StyleRevisionTemplate> {
   const store = storage();
   if (!store) return [];
@@ -61,12 +73,15 @@ export function saveCustomStyleTemplate(template: StyleRevisionTemplate): void {
   window.dispatchEvent(new CustomEvent(CUSTOM_STYLE_TEMPLATE_EVENT));
 }
 
-export function getAllStyleRevisionTemplates(): ReadonlyArray<StyleRevisionTemplate> {
-  return [...BUILTIN_STYLE_REVISION_TEMPLATES, ...loadCustomStyleTemplates()];
+export function getAllStyleRevisionTemplates(runtimeTemplates?: unknown): ReadonlyArray<StyleRevisionTemplate> {
+  return [...resolveBuiltinStyleTemplates(runtimeTemplates), ...loadCustomStyleTemplates()];
 }
 
-export function findStyleRevisionTemplate(templateId: string): StyleRevisionTemplate | undefined {
-  return getAllStyleRevisionTemplates().find((template) => template.id === templateId);
+export function findStyleRevisionTemplate(
+  templateId: string,
+  runtimeTemplates?: unknown,
+): StyleRevisionTemplate | undefined {
+  return getAllStyleRevisionTemplates(runtimeTemplates).find((template) => template.id === templateId);
 }
 
 function slugifyName(name: string): string {

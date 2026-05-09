@@ -21,6 +21,7 @@ import {
   buildStyleCreationBrief,
   findStyleRevisionTemplate,
   getAllStyleRevisionTemplates,
+  type StyleRevisionTemplate,
   type StyleTemplateLanguage,
 } from "./style-revision-templates";
 
@@ -749,6 +750,7 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
   const { lang: uiLang } = useI18n();
   const { data: project } = useApi<{ language: string }>("/project");
   const { data: genresData } = useApi<{ genres: ReadonlyArray<GenreListItem> }>("/genres");
+  const { data: styleTemplatesData } = useApi<{ templates: ReadonlyArray<StyleRevisionTemplate> }>("/style-templates");
   const projectLang = project?.language === "ko" ? "ko" : project?.language === "en" ? "en" : "zh";
   const copy = uiLang === "ko" ? KOREAN_PAGE_COPY : PAGE_COPY[projectLang === "ko" ? "en" : projectLang];
   const platformChoices = platformOptionsForLanguage(projectLang);
@@ -772,7 +774,10 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
   const currentGenreIsListed = genreChoices.some((genre) => genre.id === form.genre);
   const selectedGenre = genreChoices.find((genre) => genre.id === form.genre);
   const selectedPlatform = platformChoices.find((option) => option.value === form.platform);
-  const styleTemplates = useMemo(() => getAllStyleRevisionTemplates(), [styleTemplateVersion]);
+  const styleTemplates = useMemo(
+    () => getAllStyleRevisionTemplates(styleTemplatesData?.templates),
+    [styleTemplateVersion, styleTemplatesData?.templates],
+  );
 
   const summaryRows = useMemo(
     () => (draft ? buildCreationDraftSummary(draft, projectLang === "ko" ? "en" : projectLang) : []),
@@ -808,7 +813,7 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
     if (templateId === "custom") {
       return;
     }
-    const template = findStyleRevisionTemplate(templateId);
+    const template = findStyleRevisionTemplate(templateId, styleTemplatesData?.templates);
     if (!template) {
       return;
     }

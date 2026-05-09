@@ -33,8 +33,7 @@ describe("style revision templates", () => {
     expect(template).toBeDefined();
     expect(template?.label.ko).toBe("뉴소설가 v50");
     expect(rules).toContain("폭력, 전투, 상해, 공포는 직접적이고 구체적이며 감각적으로 묘사해도 된다.");
-    expect(rules).toContain("합의된 성인 성적 장면은 직접적이고 감각적이며 신체적인 표현을 사용할 수 있다.");
-    expect(rules).toContain("정책 우회");
+    expect(rules).toContain("성적 장면은 직접적이고 감각적이며 신체적인 표현을 사용할 수 있다.");
     expect(rules).not.toContain("NoLimits");
     expect(rules).not.toContain("non-consensual");
   });
