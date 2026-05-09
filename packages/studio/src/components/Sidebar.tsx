@@ -68,6 +68,7 @@ interface Nav {
   toLogs: () => void;
   toGenres: () => void;
   toStyle: () => void;
+  toStyleRevision: () => void;
   toImport: () => void;
   toRadar: () => void;
   toDoctor: () => void;
@@ -374,6 +375,12 @@ export function Sidebar({ nav, activePage, sse, t }: {
               icon={<Wand2 size={16} />}
               active={activePage === "style"}
               onClick={nav.toStyle}
+            />
+            <SidebarItem
+              label={sidebarText(language, { zh: "文风修改", en: "Style Revision", ko: "문체 변경" })}
+              icon={<Wand2 size={16} />}
+              active={activePage === "style-revision"}
+              onClick={nav.toStyleRevision}
             />
             <SidebarItem
               label={t("nav.import")}
