@@ -55,12 +55,14 @@ export async function validateChapterTruthPersistence(params: {
       persistenceOutput.updatedState,
       params.previousTruth.oldHooks,
       persistenceOutput.updatedHooks,
-      params.language,
+      params.language === "ko" ? "zh" : params.language,
       params.authorityContext,
     );
   } catch (error) {
     params.logger?.warn(`State validation error for chapter ${params.chapterNumber}: ${String(error)}`);
-    const errorDescription = params.language === "en"
+    const errorDescription = params.language === "ko"
+      ? `상태 검증을 사용할 수 없습니다: ${String(error)}`
+      : params.language === "en"
       ? `State validation unavailable: ${String(error)}`
       : `状态校验不可用：${String(error)}`;
     const errorIssue: AuditIssue = {

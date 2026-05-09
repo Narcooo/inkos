@@ -45,6 +45,20 @@ interface BookSummary {
   readonly chaptersWritten: number;
 }
 
+type SidebarLanguage = "zh" | "en" | "ko";
+
+function resolveSidebarLanguage(t: TFunction): SidebarLanguage {
+  return t("nav.connected") === "연결됨"
+    ? "ko"
+    : t("nav.connected") === "\u5DF2\u8FDE\u63A5"
+    ? "zh"
+    : "en";
+}
+
+function sidebarText(language: SidebarLanguage, messages: Record<SidebarLanguage, string>): string {
+  return messages[language];
+}
+
 interface Nav {
   toDashboard: () => void;
   toBook: (id: string) => void;
@@ -81,6 +95,7 @@ export function Sidebar({ nav, activePage, sse, t }: {
   const [renameValue, setRenameValue] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<{ sessionId: string; title: string } | null>(null);
   const [expandedBooks, setExpandedBooks] = useState<Set<string>>(new Set());
+  const language = resolveSidebarLanguage(t);
 
   const books = data?.books ?? [];
 
@@ -237,7 +252,7 @@ export function Sidebar({ nav, activePage, sse, t }: {
                     <div className="mt-0.5">
                       {bookSessions.map((session) => {
                         const isActiveSession = isActiveBook && activeSessionId === session.sessionId;
-                        const label = getSessionLabel(session);
+                        const label = getSessionLabel(session, language);
                         return (
                           <div
                             key={session.sessionId}
@@ -255,7 +270,7 @@ export function Sidebar({ nav, activePage, sse, t }: {
                                 <Loader2 size={12} className="shrink-0 animate-spin text-primary" />
                               ) : (
                                 <span className="shrink-0 text-[11px] text-muted-foreground/40">
-                                  {formatRelativeTime(session.sessionId)}
+                                  {formatRelativeTime(session.sessionId, language)}
                                 </span>
                               )}
                             </button>
@@ -272,7 +287,7 @@ export function Sidebar({ nav, activePage, sse, t }: {
                                   }}
                                 >
                                   <Pencil size={14} />
-                                  <span>改名</span>
+                                  <span>{sidebarText(language, { zh: "改名", en: "Rename", ko: "이름 변경" })}</span>
                                 </DropdownMenuItem>
                                 <DropdownMenuSeparator />
                                 <DropdownMenuItem
@@ -280,7 +295,7 @@ export function Sidebar({ nav, activePage, sse, t }: {
                                   onClick={() => setDeleteTarget({ sessionId: session.sessionId, title: label })}
                                 >
                                   <Trash2 size={14} />
-                                  <span>删除</span>
+                                  <span>{sidebarText(language, { zh: "删除", en: "Delete", ko: "삭제" })}</span>
                                 </DropdownMenuItem>
                               </DropdownMenuContent>
                             </DropdownMenu>
@@ -293,7 +308,7 @@ export function Sidebar({ nav, activePage, sse, t }: {
                         className="w-full flex items-center gap-2 pl-9 pr-2 py-1 text-xs text-muted-foreground/50 hover:text-foreground transition-colors"
                       >
                         <Plus size={12} />
-                        <span>新建会话</span>
+                        <span>{sidebarText(language, { zh: "新建会话", en: "New chat", ko: "새 대화" })}</span>
                       </button>
                     </div>
                   )}
@@ -408,7 +423,9 @@ export function Sidebar({ nav, activePage, sse, t }: {
           className="sm:max-w-[360px] p-4 gap-3"
         >
           <DialogHeader className="space-y-0 gap-0">
-            <DialogTitle className="font-sans text-sm font-medium">重命名会话</DialogTitle>
+            <DialogTitle className="font-sans text-sm font-medium">
+              {sidebarText(language, { zh: "重命名会话", en: "Rename Chat", ko: "대화 이름 변경" })}
+            </DialogTitle>
           </DialogHeader>
           <input
             id="session-rename-input"
@@ -421,7 +438,7 @@ export function Sidebar({ nav, activePage, sse, t }: {
                 void handleRenameConfirm();
               }
             }}
-            placeholder="输入新标题"
+            placeholder={sidebarText(language, { zh: "输入新标题", en: "Enter a new title", ko: "새 제목 입력" })}
             className="w-full rounded-md border border-border/60 bg-background px-3 py-1.5 text-sm outline-none focus:border-border"
           />
           <DialogFooter className="gap-1 sm:gap-1">
@@ -433,7 +450,7 @@ export function Sidebar({ nav, activePage, sse, t }: {
               }}
               className="px-3 py-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
             >
-              取消
+              {sidebarText(language, { zh: "取消", en: "Cancel", ko: "취소" })}
             </button>
             <button
               type="button"
@@ -441,7 +458,7 @@ export function Sidebar({ nav, activePage, sse, t }: {
               disabled={!renameValue.trim()}
               className="px-3 py-1 text-xs font-medium rounded-md bg-foreground text-background hover:opacity-90 transition-opacity disabled:opacity-30"
             >
-              保存
+              {sidebarText(language, { zh: "保存", en: "Save", ko: "저장" })}
             </button>
           </DialogFooter>
         </DialogContent>
@@ -449,10 +466,14 @@ export function Sidebar({ nav, activePage, sse, t }: {
 
       <ConfirmDialog
         open={deleteTarget !== null}
-        title="删除会话"
-        message={`确认删除“${deleteTarget?.title ?? ""}”吗？该操作只删除这条会话，不影响书籍内容。`}
-        confirmLabel="删除"
-        cancelLabel="取消"
+        title={sidebarText(language, { zh: "删除会话", en: "Delete Chat", ko: "대화 삭제" })}
+        message={sidebarText(language, {
+          zh: `确认删除“${deleteTarget?.title ?? ""}”吗？该操作只删除这条会话，不影响书籍内容。`,
+          en: `Delete "${deleteTarget?.title ?? ""}"? This only deletes the chat and does not affect the book content.`,
+          ko: `"${deleteTarget?.title ?? ""}" 대화를 삭제할까요? 이 작업은 대화만 삭제하며 작품 내용에는 영향을 주지 않습니다.`,
+        })}
+        confirmLabel={sidebarText(language, { zh: "删除", en: "Delete", ko: "삭제" })}
+        cancelLabel={sidebarText(language, { zh: "取消", en: "Cancel", ko: "취소" })}
         variant="danger"
         onConfirm={() => void handleDeleteConfirm()}
         onCancel={() => setDeleteTarget(null)}
@@ -461,7 +482,10 @@ export function Sidebar({ nav, activePage, sse, t }: {
   );
 }
 
-function getSessionLabel(session: { sessionId: string; title: string | null; messages: ReadonlyArray<{ role: string; content: string }> }): string {
+function getSessionLabel(
+  session: { sessionId: string; title: string | null; messages: ReadonlyArray<{ role: string; content: string }> },
+  language: SidebarLanguage,
+): string {
   if (session.title) return session.title;
   // 后端会在第一条用户消息发送时立即把消息内容持久化为占位标题。
   // 这里处理的是"已有消息但标题还没同步回来"的短暂中间态（乐观显示）。
@@ -470,22 +494,28 @@ function getSessionLabel(session: { sessionId: string; title: string | null; mes
     const oneLine = firstUserMsg.replace(/\s+/g, " ");
     return oneLine.length > 20 ? `${oneLine.slice(0, 20)}…` : oneLine;
   }
-  return "新会话";
+  return sidebarText(language, { zh: "新会话", en: "New chat", ko: "새 대화" });
 }
 
-function formatRelativeTime(sessionId: string): string {
+function formatRelativeTime(sessionId: string, language: SidebarLanguage): string {
   const rawTs = Number(sessionId.split("-")[0]);
   if (!Number.isFinite(rawTs)) return "";
   const diff = Date.now() - rawTs;
   const minutes = Math.floor(diff / 60_000);
-  if (minutes < 1) return "刚刚";
-  if (minutes < 60) return `${minutes} 分钟`;
+  if (minutes < 1) return sidebarText(language, { zh: "刚刚", en: "now", ko: "방금" });
+  if (minutes < 60) {
+    return language === "ko" ? `${minutes}분` : language === "en" ? `${minutes}m` : `${minutes} 分钟`;
+  }
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} 小时`;
+  if (hours < 24) {
+    return language === "ko" ? `${hours}시간` : language === "en" ? `${hours}h` : `${hours} 小时`;
+  }
   const days = Math.floor(hours / 24);
-  if (days < 30) return `${days} 天`;
+  if (days < 30) {
+    return language === "ko" ? `${days}일` : language === "en" ? `${days}d` : `${days} 天`;
+  }
   const months = Math.floor(days / 30);
-  return `${months} 个月`;
+  return language === "ko" ? `${months}개월` : language === "en" ? `${months}mo` : `${months} 个月`;
 }
 
 function SidebarItem({ label, icon, active, onClick, badge, badgeColor }: {

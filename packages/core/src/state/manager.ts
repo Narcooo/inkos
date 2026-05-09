@@ -4,19 +4,27 @@ import type { BookConfig } from "../models/book.js";
 import type { ChapterMeta } from "../models/chapter.js";
 import { bootstrapStructuredStateFromMarkdown, resolveDurableStoryProgress } from "./state-bootstrap.js";
 
+type ControlDocumentLanguage = "zh" | "en" | "ko";
+
 export class StateManager {
   /** Books actively being written by this process — used for same-process stale lock detection. */
   private readonly activeWrites = new Set<string>();
 
   constructor(private readonly projectRoot: string) {}
 
-  private static defaultAuthorIntent(language: "zh" | "en"): string {
+  private static defaultAuthorIntent(language: ControlDocumentLanguage): string {
+    if (language === "ko") {
+      return "# 작가 의도\n\n(이 작품의 장기적인 창작 방향을 적어 주세요.)\n";
+    }
     return language === "zh"
       ? "# 作者意图\n\n（在这里描述这本书的长期创作方向。）\n"
       : "# Author Intent\n\n(Describe the long-horizon vision for this book here.)\n";
   }
 
-  private static defaultCurrentFocus(language: "zh" | "en"): string {
+  private static defaultCurrentFocus(language: ControlDocumentLanguage): string {
+    if (language === "ko") {
+      return "# 현재 초점\n\n## 활성 초점\n\n(다음 1-3장에서 가장 우선적으로 밀고 갈 내용을 적어 주세요.)\n";
+    }
     return language === "zh"
       ? "# 当前聚焦\n\n## 当前重点\n\n（描述接下来 1-3 章最需要优先推进的内容。）\n"
       : "# Current Focus\n\n## Active Focus\n\n(Describe what the next 1-3 chapters should prioritize.)\n";
@@ -29,7 +37,7 @@ export class StateManager {
 
   async ensureControlDocumentsAt(
     bookDir: string,
-    language: "zh" | "en",
+    language: ControlDocumentLanguage,
     authorIntent?: string,
   ): Promise<void> {
     const storyDir = join(bookDir, "story");
@@ -37,12 +45,19 @@ export class StateManager {
     const outlineDir = join(storyDir, "outline");
     const rolesMajorDir = join(storyDir, "roles", "主要角色");
     const rolesMinorDir = join(storyDir, "roles", "次要角色");
+    const rolesMajorKoDir = join(storyDir, "roles", "주요인물");
+    const rolesMinorKoDir = join(storyDir, "roles", "보조인물");
 
     await mkdir(storyDir, { recursive: true });
     await mkdir(runtimeDir, { recursive: true });
     await mkdir(outlineDir, { recursive: true });
-    await mkdir(rolesMajorDir, { recursive: true });
-    await mkdir(rolesMinorDir, { recursive: true });
+    if (language === "ko") {
+      await mkdir(rolesMajorKoDir, { recursive: true });
+      await mkdir(rolesMinorKoDir, { recursive: true });
+    } else {
+      await mkdir(rolesMajorDir, { recursive: true });
+      await mkdir(rolesMinorDir, { recursive: true });
+    }
 
     await this.writeIfMissing(
       join(storyDir, "author_intent.md"),
@@ -60,7 +75,7 @@ export class StateManager {
     const styleGuidePath = join(storyDir, "style_guide.md");
     try {
       const existing = await readFile(styleGuidePath, "utf-8");
-      if (!existing.includes("写作方法论") && !existing.includes("Writing Methodology")) {
+      if (!existing.includes("写作方法论") && !existing.includes("Writing Methodology") && !existing.includes("집필 방법론")) {
         const { buildWritingMethodologySection } = await import("../utils/writing-methodology.js");
         await writeFile(styleGuidePath, `${existing}\n\n${buildWritingMethodologySection(language)}`, "utf-8");
       }
@@ -87,10 +102,12 @@ export class StateManager {
     return { authorIntent, currentFocus, runtimeDir };
   }
 
-  private async resolveControlDocumentLanguage(bookId: string): Promise<"zh" | "en"> {
+  private async resolveControlDocumentLanguage(bookId: string): Promise<ControlDocumentLanguage> {
     try {
       const raw = await readFile(join(this.bookDir(bookId), "book.json"), "utf-8");
-      const parsed = JSON.parse(raw) as { language?: unknown };
+      const parsed = JSON.parse(raw) as { genre?: unknown; language?: unknown };
+      if (parsed.language === "ko") return "ko";
+      if (typeof parsed.genre === "string" && parsed.genre.startsWith("ko-")) return "ko";
       return parsed.language === "zh" ? "zh" : "en";
     } catch {
       return "en";

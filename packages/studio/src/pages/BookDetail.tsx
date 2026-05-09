@@ -112,6 +112,15 @@ export function BookDetail({
   const writing = writeRequestPending || activity.writing;
   const drafting = draftRequestPending || activity.drafting;
   const latestPersistedChapter = data ? data.nextChapter - 1 : 0;
+  const uiLanguage = data?.book.language === "ko"
+    ? "ko"
+    : data?.book.language === "en"
+      ? "en"
+      : t("nav.connected") === "연결됨"
+        ? "ko"
+        : t("nav.connected") === "Connected"
+          ? "en"
+          : "zh";
 
   useEffect(() => {
     const recent = sse.messages.at(-1);
@@ -143,7 +152,7 @@ export function BookDetail({
       await postApi(`/books/${bookId}/write-next`);
     } catch (e) {
       setWriteRequestPending(false);
-      alert(e instanceof Error ? e.message : "Failed");
+      alert(e instanceof Error ? e.message : uiLanguage === "ko" ? "실패했습니다" : uiLanguage === "en" ? "Failed" : "失败");
     }
   };
 
@@ -153,7 +162,7 @@ export function BookDetail({
       await postApi(`/books/${bookId}/draft`);
     } catch (e) {
       setDraftRequestPending(false);
-      alert(e instanceof Error ? e.message : "Failed");
+      alert(e instanceof Error ? e.message : uiLanguage === "ko" ? "실패했습니다" : uiLanguage === "en" ? "Failed" : "失败");
     }
   };
 
@@ -168,7 +177,7 @@ export function BookDetail({
       }
       nav.toDashboard();
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Delete failed");
+      alert(e instanceof Error ? e.message : uiLanguage === "ko" ? "삭제 실패" : uiLanguage === "en" ? "Delete failed" : "删除失败");
     } finally {
       setDeleting(false);
     }
@@ -176,7 +185,9 @@ export function BookDetail({
 
   const handleRewrite = async (chapterNum: number) => {
     const brief = window.prompt(
-      data?.book.language === "en"
+      uiLanguage === "ko"
+        ? "선택 사항: 이번 다시 쓰기에 반영할 추가 아이디어를 입력하세요. 비워두면 기존 초점을 그대로 사용합니다."
+        : uiLanguage === "en"
         ? "Optional rewrite brief for this run only. Leave blank to use existing focus."
         : "可选：输入这次重写要遵循的补充想法。留空则沿用现有 focus。",
       "",
@@ -191,7 +202,7 @@ export function BookDetail({
       });
       refetch();
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Rewrite failed");
+      alert(e instanceof Error ? e.message : uiLanguage === "ko" ? "다시 쓰기 실패" : uiLanguage === "en" ? "Rewrite failed" : "重写失败");
     } finally {
       setRewritingChapters((prev) => prev.filter((n) => n !== chapterNum));
     }
@@ -199,7 +210,9 @@ export function BookDetail({
 
   const handleRevise = async (chapterNum: number, mode: ReviseMode) => {
     const brief = window.prompt(
-      data?.book.language === "en"
+      uiLanguage === "ko"
+        ? "선택 사항: 이번 수정에 반영할 추가 아이디어를 입력하세요. 비워두면 기존 초점을 그대로 사용합니다."
+        : uiLanguage === "en"
         ? "Optional revise brief for this run only. Leave blank to use existing focus."
         : "可选：输入这次修订要遵循的补充想法。留空则沿用现有 focus。",
       "",
@@ -214,7 +227,7 @@ export function BookDetail({
       });
       refetch();
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Revision failed");
+      alert(e instanceof Error ? e.message : uiLanguage === "ko" ? "수정 실패" : uiLanguage === "en" ? "Revision failed" : "修订失败");
     } finally {
       setRevisingChapters((prev) => prev.filter((n) => n !== chapterNum));
     }
@@ -222,7 +235,9 @@ export function BookDetail({
 
   const handleSync = async (chapterNum: number) => {
     const brief = window.prompt(
-      data?.book.language === "en"
+      uiLanguage === "ko"
+        ? "선택 사항: 편집된 장 본문을 해석할 때 반영할 추가 설명을 입력하세요. 비워두면 본문에서 바로 동기화합니다."
+        : uiLanguage === "en"
         ? "Optional sync brief for interpreting the edited chapter body. Leave blank to sync directly from the text."
         : "可选：输入这次同步时要遵循的补充说明。留空则直接按正文同步。",
       "",
@@ -237,7 +252,7 @@ export function BookDetail({
       });
       refetch();
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Sync failed");
+      alert(e instanceof Error ? e.message : uiLanguage === "ko" ? "동기화 실패" : uiLanguage === "en" ? "Sync failed" : "同步失败");
     } finally {
       setSyncingChapters((prev) => prev.filter((n) => n !== chapterNum));
     }
@@ -258,7 +273,7 @@ export function BookDetail({
       });
       refetch();
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Save failed");
+      alert(e instanceof Error ? e.message : uiLanguage === "ko" ? "저장 실패" : uiLanguage === "en" ? "Save failed" : "保存失败");
     } finally {
       setSavingSettings(false);
     }
@@ -288,7 +303,7 @@ export function BookDetail({
     </div>
   );
 
-  if (error) return <div className="text-destructive p-8 bg-destructive/5 rounded-xl border border-destructive/20">Error: {error}</div>;
+  if (error) return <div className="text-destructive p-8 bg-destructive/5 rounded-xl border border-destructive/20">{t("common.error")}: {error}</div>;
   if (!data) return null;
 
   const { book, chapters } = data;
@@ -446,7 +461,7 @@ export function BookDetail({
                   });
                   alert(`${t("common.exportSuccess")}\n${data.path}\n(${data.chapters} ${t("dash.chapters")})`);
                 } catch (e) {
-                  alert(e instanceof Error ? e.message : "Export failed");
+                  alert(e instanceof Error ? e.message : uiLanguage === "ko" ? "내보내기 실패" : uiLanguage === "en" ? "Export failed" : "导出失败");
                 }
               }}
               className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-secondary/50 text-muted-foreground rounded-lg hover:text-foreground hover:bg-secondary transition-all border border-border/50"
@@ -545,7 +560,7 @@ export function BookDetail({
                           <button
                             onClick={async () => {
                               try { await postApi(`/books/${bookId}/chapters/${ch.number}/approve`); refetch(); }
-                              catch (e) { alert(e instanceof Error ? e.message : "Approve failed"); }
+                              catch (e) { alert(e instanceof Error ? e.message : uiLanguage === "ko" ? "승인 실패" : uiLanguage === "en" ? "Approve failed" : "通过失败"); }
                             }}
                             className="p-2 rounded-lg bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500 hover:text-white transition-all shadow-sm"
                             title={t("book.approve")}
@@ -555,7 +570,7 @@ export function BookDetail({
                           <button
                             onClick={async () => {
                               try { await postApi(`/books/${bookId}/chapters/${ch.number}/reject`); refetch(); }
-                              catch (e) { alert(e instanceof Error ? e.message : "Reject failed"); }
+                              catch (e) { alert(e instanceof Error ? e.message : uiLanguage === "ko" ? "반려 실패" : uiLanguage === "en" ? "Reject failed" : "驳回失败"); }
                             }}
                             className="p-2 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive hover:text-white transition-all shadow-sm"
                             title={t("book.reject")}
@@ -568,10 +583,12 @@ export function BookDetail({
                         onClick={async () => {
                           try {
                             const auditResult = await fetchJson<{ passed?: boolean; issues?: unknown[] }>(`/books/${bookId}/audit/${ch.number}`, { method: "POST" });
-                            alert(auditResult.passed ? "Audit passed" : `Audit failed: ${auditResult.issues?.length ?? 0} issues`);
+                            alert(auditResult.passed
+                              ? uiLanguage === "ko" ? "검토 통과" : uiLanguage === "en" ? "Audit passed" : "审计通过"
+                              : uiLanguage === "ko" ? `검토 실패: 문제 ${auditResult.issues?.length ?? 0}개` : uiLanguage === "en" ? `Audit failed: ${auditResult.issues?.length ?? 0} issues` : `审计失败：${auditResult.issues?.length ?? 0} 个问题`);
                             refetch();
                           } catch (e) {
-                            alert(e instanceof Error ? e.message : "Audit failed");
+                            alert(e instanceof Error ? e.message : uiLanguage === "ko" ? "검토 실패" : uiLanguage === "en" ? "Audit failed" : "审计失败");
                           }
                         }}
                         className="p-2 rounded-lg bg-secondary text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all shadow-sm"
@@ -593,7 +610,7 @@ export function BookDetail({
                         onClick={() => handleSync(ch.number)}
                         disabled={syncingChapters.includes(ch.number) || ch.number !== latestPersistedChapter}
                         className="p-2 rounded-lg bg-secondary text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all shadow-sm disabled:opacity-50"
-                        title={data?.book.language === "en" ? "Sync truth/state from edited chapter" : "根据已编辑章节同步 truth/state"}
+                        title={uiLanguage === "ko" ? "편집된 장에서 truth/state 동기화" : uiLanguage === "en" ? "Sync truth/state from edited chapter" : "根据已编辑章节同步 truth/state"}
                       >
                         {syncingChapters.includes(ch.number)
                           ? <div className="w-3.5 h-3.5 border-2 border-muted-foreground/20 border-t-muted-foreground rounded-full animate-spin" />
@@ -607,7 +624,7 @@ export function BookDetail({
                           if (mode) handleRevise(ch.number, mode);
                         }}
                         className="px-2 py-1.5 text-[11px] font-bold rounded-lg bg-secondary text-muted-foreground border border-border/50 outline-none hover:text-primary hover:bg-primary/10 transition-all disabled:opacity-50 cursor-pointer"
-                        title="Revise with AI"
+                        title={uiLanguage === "ko" ? "AI로 수정" : uiLanguage === "en" ? "Revise with AI" : "用 AI 修订"}
                       >
                         <option value="" disabled>{revisingChapters.includes(ch.number) ? t("common.loading") : t("book.curate")}</option>
                         <option value="spot-fix">{t("book.spotFix")}</option>

@@ -119,7 +119,8 @@ export class ArchitectAgent extends BaseAgent {
   ): Promise<ArchitectOutput> {
     const { profile: gp, body: genreBody } =
       await readGenreProfile(this.ctx.projectRoot, book.genre);
-    const resolvedLanguage = book.language ?? gp.language;
+    const rawLanguage = book.language ?? gp.language;
+    const resolvedLanguage: "zh" | "en" = rawLanguage === "zh" ? "zh" : "en";
 
     const contextBlock = externalContext
       ? `\n\n## 外部指令\n以下是来自外部系统的创作指令，请将其融入设定中：\n\n${externalContext}\n`
@@ -139,11 +140,16 @@ export class ArchitectAgent extends BaseAgent {
       ? this.buildEnglishFoundationPrompt(book, gp, genreBody, contextBlock, reviewFeedbackBlock, numericalBlock, powerBlock, eraBlock)
       : this.buildChineseFoundationPrompt(book, gp, genreBody, contextBlock, reviewFeedbackBlock, numericalBlock, powerBlock, eraBlock);
 
+    const isKoreanTemplate = rawLanguage === "ko" || gp.id.startsWith("ko-") || book.genre.startsWith("ko-");
     const langPrefix = resolvedLanguage === "en"
-      ? `【LANGUAGE OVERRIDE】ALL output (story_frame, volume_map, roles, book_rules, pending_hooks) MUST be written in English. Character names, place names, and all prose must be in English. The === SECTION: === tags remain unchanged. Do NOT emit rhythm_principles or current_state sections — rhythm principles live inside the last paragraph of volume_map; environment/era anchors (when relevant) are woven into story_frame's world-tonal-ground paragraph.\n\n`
+      ? isKoreanTemplate
+        ? `【LANGUAGE OVERRIDE】ALL output (story_frame, volume_map, roles, book_rules, pending_hooks) MUST be written in natural Korean. Character names, place names, and all prose must be in Korean unless the user explicitly supplied another language. The === SECTION: === tags remain unchanged. Do NOT emit rhythm_principles or current_state sections — rhythm principles live inside the last paragraph of volume_map; environment/era anchors (when relevant) are woven into story_frame's world-tonal-ground paragraph.\n\n`
+        : `【LANGUAGE OVERRIDE】ALL output (story_frame, volume_map, roles, book_rules, pending_hooks) MUST be written in English. Character names, place names, and all prose must be in English. The === SECTION: === tags remain unchanged. Do NOT emit rhythm_principles or current_state sections — rhythm principles live inside the last paragraph of volume_map; environment/era anchors (when relevant) are woven into story_frame's world-tonal-ground paragraph.\n\n`
       : "";
     const userMessage = resolvedLanguage === "en"
-      ? `Generate the complete foundation for a ${gp.name} novel titled "${book.title}". Write everything in English.`
+      ? isKoreanTemplate
+        ? `Generate the complete foundation for a ${gp.name} novel titled "${book.title}". Write everything in natural Korean.`
+        : `Generate the complete foundation for a ${gp.name} novel titled "${book.title}". Write everything in English.`
       : `请为标题为"${book.title}"的${gp.name}小说生成完整基础设定。`;
 
     const response = await this.chat([
@@ -406,6 +412,10 @@ enableFullCastTracking: false
     powerBlock: string,
     eraBlock: string,
   ): string {
+    const languageInstruction = gp.id.startsWith("ko-") || book.genre.startsWith("ko-")
+      ? "\n\nKorean template note: write every prose section in natural Korean while preserving the required English section labels and === SECTION: === markers."
+      : "";
+
     return `You are the architect of this book. Your only job is to produce **prose-density foundation design** — not tables, not schema, not bullet lists. The book's aura comes from your prose density: Phase 3 planner reads sparse memos out of your volume_map only if it was written to chapter-level prose; the writer only produces living characters because your role sheets carry contrast details; the reviewer only catches hard errors because your story_frame set the tonal anchors.${contextBlock}${reviewFeedbackBlock}
 
 ## Book metadata
@@ -416,7 +426,7 @@ enableFullCastTracking: false
 - Title: ${book.title}
 
 ## Genre body
-${genreBody}
+${genreBody}${languageInstruction}
 
 ## Output constraints
 ${numericalBlock}
@@ -714,27 +724,106 @@ You MUST emit all **5 SECTION blocks in order**: story_frame → volume_map → 
     return roles;
   }
 
-  private buildStoryBibleShim(storyFrame: string, language: "zh" | "en"): string {
+  private buildStoryBibleShim(storyFrame: string, language: "zh" | "en" | "ko"): string {
+    if (language === "ko") {
+      return `# 스토리 바이블 (호환용 포인터 - 폐기 예정)\n\n> 이 파일은 외부 도구 호환을 위해 보존됩니다. 권위 있는 원본은 다음 위치입니다:\n> - outline/story_frame.md (주제 / 정서적 바닥 / 핵심 갈등 / 세계 규칙 / 결말 방향)\n> - outline/volume_map.md (권별 및 장기 플롯 지도)\n> - roles/ 디렉터리 (인물별 설정 파일)\n\n## story_frame 발췌\n\n${storyFrame.slice(0, 2000)}\n`;
+    }
     if (language === "en") {
       return `# Story Bible (compat pointer — deprecated)\n\n> This file is kept for external readers only. The authoritative source is now:\n> - outline/story_frame.md (theme / tonal ground / core conflict / world rules / endgame)\n> - outline/volume_map.md (chapter-granular plot map)\n> - roles/ directory (one-file-per-character sheets)\n\n## Excerpt from story_frame\n\n${storyFrame.slice(0, 2000)}\n`;
     }
     return `# 故事圣经（兼容指针——已废弃）\n\n> 本文件仅为外部读取保留。权威来源已迁移至：\n> - outline/story_frame.md（主题 / 基调 / 核心冲突 / 世界铁律 / 终局）\n> - outline/volume_map.md（章级别的分卷地图）\n> - roles/ 文件夹（一人一卡角色档案）\n\n## story_frame 摘录\n\n${storyFrame.slice(0, 2000)}\n`;
   }
 
-  private buildCharacterMatrixShim(roles: ReadonlyArray<ArchitectRole>, language: "zh" | "en"): string {
+  private buildCharacterMatrixShim(roles: ReadonlyArray<ArchitectRole>, language: "zh" | "en" | "ko"): string {
+    const roleDirs = this.roleDirectoryNames(language);
     const majorLines = roles.filter((role) => role.tier === "major")
-      .map((role) => `- roles/主要角色/${role.name}.md`);
+      .map((role) => `- roles/${roleDirs.major}/${role.name}.md`);
     const minorLines = roles.filter((role) => role.tier === "minor")
-      .map((role) => `- roles/次要角色/${role.name}.md`);
+      .map((role) => `- roles/${roleDirs.minor}/${role.name}.md`);
 
+    if (language === "ko") {
+      return `# 인물 매트릭스 (호환용 포인터 - 폐기 예정)\n\n> 이 파일은 외부 도구 호환을 위해 보존됩니다. 권위 있는 원본은 roles/ 디렉터리의 인물별 파일입니다.\n\n## 주요 인물\n\n${majorLines.join("\n") || "(없음)"}\n\n## 보조 인물\n\n${minorLines.join("\n") || "(없음)"}\n`;
+    }
     if (language === "en") {
       return `# Character Matrix (compat pointer — deprecated)\n\n> This file is kept for external readers only. Authoritative source is now the roles/ directory (one-file-per-character).\n\n## Major characters\n\n${majorLines.join("\n") || "(none)"}\n\n## Minor characters\n\n${minorLines.join("\n") || "(none)"}\n`;
     }
     return `# 角色矩阵（兼容指针——已废弃）\n\n> 本文件仅为外部读取保留。权威来源已迁移至 roles/ 文件夹（一人一卡）。\n\n## 主要角色\n\n${majorLines.join("\n") || "（无）"}\n\n## 次要角色\n\n${minorLines.join("\n") || "（无）"}\n`;
   }
 
-  private buildBookRulesShim(bookRulesBody: string, language: "zh" | "en"): string {
+  private roleDirectoryNames(language: "zh" | "en" | "ko"): { major: string; minor: string } {
+    if (language === "ko") {
+      return { major: "주요인물", minor: "보조인물" };
+    }
+    if (language === "en") {
+      return { major: "major", minor: "minor" };
+    }
+    return { major: "主要角色", minor: "次要角色" };
+  }
+
+  private normalizeKoreanFoundationText(content: string): string {
+    return content
+      .replace(/^prohib\S*:/m, "prohibitions:")
+      .replace(/^## 01_Theme_and_Tonal_Ground\b/gm, "## 01_주제와 정서적 톤")
+      .replace(/^## 02_Core_Conflict_and_Foreground_Background_Story_Layers\b/gm, "## 02_핵심 갈등과 전경/배경 서사")
+      .replace(/^## 03_World_Tonal_Ground \(hard rules \+ sensory tone \+ book-specific rules\)/gm, "## 03_세계의 규칙과 감각적 톤")
+      .replace(/^## 04_Endgame_Direction_and_Book_Objective\b/gm, "## 04_결말 방향과 작품 목표")
+      .replace(/\*\*Book Objective:/g, "**작품 목표:")
+      .replace(/\broles\/주요캐릭터\//g, "roles/주요인물/")
+      .replace(/\broles\/보조캐릭터\//g, "roles/보조인물/")
+      .replace(/^## 01_Volume_Themes_and_Emotional_Curves\b/gm, "## 01_권별 주제와 감정 곡선")
+      .replace(/^## 02_Cross_Volume_Hooks_and_Payoff_Promises.*$/gm, "## 02_권을 가로지르는 훅과 회수 약속")
+      .replace(/^## 03_Per_Volume_OKRs \(Objective \+ 3 Key Results\)/gm, "## 03_권별 목표와 핵심 결과")
+      .replace(/^## 04_Volume_End_Mandatory_Changes\b/gm, "## 04_권말 필수 변화")
+      .replace(/^## 05_Rhythm_Principles \(concrete \+ universal\)/gm, "## 05_리듬 원칙")
+      .replace(/\bVolume (\d+) Objective:/g, "$1권 목표:")
+      .replace(/\*\*Volume (\d+):/g, "**$1권:")
+      .replace(/\*\*Objective\*\*:/g, "**목표**:")
+      .replace(/\*\*Key Results\*\*:/g, "**핵심 결과**:")
+      .replace(/^## Core_Tags\b/gm, "## 핵심 태그")
+      .replace(/^## Contrast_Detail\b/gm, "## 반전 디테일")
+      .replace(/^## Back_Story\b/gm, "## 과거 서사")
+      .replace(/^## Protagonist_Arc \(start → end → cost\)/gm, "## 주인공 아크 (출발점 -> 도착점 -> 대가)")
+      .replace(/^## Current_State\b/gm, "## 현재 상태")
+      .replace(/^## 현재 상태 \(initial state at chapter 0\)/gm, "## 현재 상태")
+      .replace(/^## Relationship_Network\b/gm, "## 관계망")
+      .replace(/^## Relationship_to_Protagonist\b/gm, "## 주인공과의 관계")
+      .replace(/^## Inner_Driver\b/gm, "## 내적 동기")
+      .replace(/^## Inner_Arc\b/gm, "## 내적 아크")
+      .replace(/^## Growth_Arc\b/gm, "## 성장 아크");
+  }
+
+  private normalizeKoreanPendingHooksText(content: string): string {
+    return content
+      .replace(
+        /^\| hook_id \| start_chapter \| type \| status \| last_advanced \| expected_payoff \| payoff_timing \| depends_on \| pays_off_in_arc \| core_hook \| half_life \| promoted \| notes \|/m,
+        "| hook_id | 시작 장 | 유형 | 상태 | 최근 진행 | 예상 회수 | 회수 리듬 | 선행 조건 | 회수 권 | 핵심 | 반감기 | 승격 | 비고 |",
+      )
+      .replace(
+        /^\| hook_id \| start_chapter \| type \| status \| last_advanced_chapter \| expected_payoff \| payoff_timing \| notes \|/m,
+        "| hook_id | 시작 장 | 유형 | 상태 | 최근 진행 장 | 예상 회수 | 회수 리듬 | 비고 |",
+      )
+      .replace(/\bforeground\b/g, "전면")
+      .replace(/\bbackground\b/g, "배경")
+      .replace(/\bactive\b/g, "활성")
+      .replace(/\bprogressing\b/g, "진행 중")
+      .replace(/\bnear-term\b/g, "근시일 회수")
+      .replace(/\bmid-arc\b/g, "중반 회수")
+      .replace(/\bslow-burn\b/g, "장기 회수")
+      .replace(/\bendgame\b/g, "결말부 회수")
+      .replace(/\bVolume\s+(\d+)\b/g, "$1권")
+      .replace(/\btrue\b/g, "예")
+      .replace(/\bfalse\b/g, "아니오")
+      .replace(/\bnone\b/g, "없음");
+  }
+
+  private buildBookRulesShim(bookRulesBody: string, language: "zh" | "en" | "ko"): string {
     const trimmedBody = bookRulesBody.trim();
+    if (language === "ko") {
+      const excerpt = trimmedBody
+        ? `\n\n## 서사 지침 발췌\n\n${trimmedBody}\n`
+        : "";
+      return `# 작품 규칙 (호환용 포인터 - 폐기 예정)\n\n> 이 파일은 외부 도구 호환을 위해 보존됩니다. 권위 있는 YAML frontmatter(protagonist / prohibitions / genreLock / ...)는 이제 outline/story_frame.md 상단에 있습니다. readBookRules()는 그 위치를 우선 읽고, 예전 구조의 작품에 대해서만 이 파일로 되돌아옵니다.${excerpt}`;
+    }
     if (language === "en") {
       const excerpt = trimmedBody
         ? `\n\n## Narrative guidance excerpt\n\n${trimmedBody}\n`
@@ -754,20 +843,17 @@ You MUST emit all **5 SECTION blocks in order**: story_frame → volume_map → 
     bookDir: string,
     output: ArchitectOutput,
     _numericalSystem: boolean = true,
-    language: "zh" | "en" = "zh",
+    language: "zh" | "en" | "ko" = "zh",
     mode: "init" | "revise" = "init",
   ): Promise<void> {
     const storyDir = join(bookDir, "story");
     const outlineDir = join(storyDir, "outline");
     const rolesDir = join(storyDir, "roles");
-    const rolesMajorDir = join(rolesDir, "主要角色");
-    const rolesMinorDir = join(rolesDir, "次要角色");
 
     await Promise.all([
       mkdir(storyDir, { recursive: true }),
       mkdir(outlineDir, { recursive: true }),
-      mkdir(rolesMajorDir, { recursive: true }),
-      mkdir(rolesMinorDir, { recursive: true }),
+      mkdir(rolesDir, { recursive: true }),
     ]);
 
     const writes: Array<Promise<void>> = [];
@@ -777,6 +863,17 @@ You MUST emit all **5 SECTION blocks in order**: story_frame → volume_map → 
     const rhythmPrinciples = output.rhythmPrinciples ?? "";
     const roles = output.roles ?? [];
     const isPhase5Output = Boolean(output.storyFrame?.trim());
+    const fileLanguage: "zh" | "en" | "ko" = language === "en" && /[가-힣]/u.test(`${storyFrameBody}\n${volumeMap}\n${output.bookRules}\n${output.pendingHooks}`)
+      ? "ko"
+      : language;
+    const roleDirs = this.roleDirectoryNames(fileLanguage);
+    const rolesMajorDir = join(rolesDir, roleDirs.major);
+    const rolesMinorDir = join(rolesDir, roleDirs.minor);
+
+    await Promise.all([
+      mkdir(rolesMajorDir, { recursive: true }),
+      mkdir(rolesMinorDir, { recursive: true }),
+    ]);
 
     if (mode === "revise" && !isPhase5Output) {
       throw new Error(
@@ -798,7 +895,9 @@ You MUST emit all **5 SECTION blocks in order**: story_frame → volume_map → 
       writes.push(writeFile(join(storyDir, "book_rules.md"), output.bookRules, "utf-8"));
       writes.push(writeFile(
         join(storyDir, "character_matrix.md"),
-        language === "en"
+        fileLanguage === "ko"
+          ? "# 인물 매트릭스\n\n<!-- 인물마다 ## 섹션을 하나씩 추가하세요. 새 인물은 새 ## 블록으로 붙입니다. -->\n"
+          : language === "en"
           ? "# Character Matrix\n\n<!-- One ## section per character. Add new characters as new ## blocks. -->\n"
           : "# 角色矩阵\n\n<!-- 每个角色一个 ## 块，新角色追加新 ## 即可。 -->\n",
         "utf-8",
@@ -807,14 +906,22 @@ You MUST emit all **5 SECTION blocks in order**: story_frame → volume_map → 
       if (mode === "init") {
         const currentStateSeed = output.currentState?.trim()
           ? output.currentState
-          : (language === "en"
+          : (fileLanguage === "ko"
+              ? "# 현재 상태\n\n> 작품 생성 시점의 자리표시자입니다. 실행 상태는 각 장 이후 정리기가 최신 상태를 덧붙입니다.\n"
+              : language === "en"
               ? "# Current State\n\n> Seeded at book creation. Runtime state is appended by the consolidator after each chapter.\n"
               : "# 当前状态\n\n> 建书时占位。运行时每章之后由 consolidator 追加最新状态。\n");
         writes.push(writeFile(join(storyDir, "current_state.md"), currentStateSeed, "utf-8"));
-        writes.push(writeFile(join(storyDir, "pending_hooks.md"), output.pendingHooks, "utf-8"));
+        writes.push(writeFile(
+          join(storyDir, "pending_hooks.md"),
+          fileLanguage === "ko" ? this.normalizeKoreanPendingHooksText(output.pendingHooks) : output.pendingHooks,
+          "utf-8",
+        ));
         writes.push(writeFile(
           join(storyDir, "emotional_arcs.md"),
-          language === "en"
+          fileLanguage === "ko"
+            ? "# 감정선\n\n| 인물 | 장 | 감정 상태 | 촉발 사건 | 강도 (1-10) | 변화 방향 |\n| --- | --- | --- | --- | --- | --- |\n"
+            : language === "en"
             ? "# Emotional Arcs\n\n| Character | Chapter | Emotional State | Trigger Event | Intensity (1-10) | Arc Direction |\n| --- | --- | --- | --- | --- | --- |\n"
             : "# 情感弧线\n\n| 角色 | 章节 | 情绪状态 | 触发事件 | 强度(1-10) | 弧线方向 |\n|------|------|----------|----------|------------|----------|\n",
           "utf-8",
@@ -831,13 +938,22 @@ You MUST emit all **5 SECTION blocks in order**: story_frame → volume_map → 
     // book_rules.md becomes a compat shim.
     const { frontmatter: bookRulesFrontmatter, body: bookRulesBody } =
       extractYamlFrontmatter(output.bookRules);
-    const storyFrame = bookRulesFrontmatter
+    const rawStoryFrame = bookRulesFrontmatter
       ? `${bookRulesFrontmatter}\n\n${storyFrameBody.trim()}\n`
       : storyFrameBody;
+    const storyFrame = fileLanguage === "ko"
+      ? this.normalizeKoreanFoundationText(rawStoryFrame)
+      : rawStoryFrame;
+    const normalizedVolumeMap = fileLanguage === "ko"
+      ? this.normalizeKoreanFoundationText(volumeMap)
+      : volumeMap;
+    const normalizedPendingHooks = fileLanguage === "ko"
+      ? this.normalizeKoreanPendingHooksText(output.pendingHooks)
+      : output.pendingHooks;
 
     // Phase 5 primary prose files
     writes.push(writeFile(join(outlineDir, "story_frame.md"), storyFrame, "utf-8"));
-    writes.push(writeFile(join(outlineDir, "volume_map.md"), volumeMap, "utf-8"));
+    writes.push(writeFile(join(outlineDir, "volume_map.md"), normalizedVolumeMap, "utf-8"));
     // Phase 5 consolidation: rhythm principles live inside the last paragraph
     // of volume_map. A separate 节奏原则.md / rhythm_principles.md file is only
     // written when the architect happened to produce a standalone block (legacy
@@ -846,7 +962,7 @@ You MUST emit all **5 SECTION blocks in order**: story_frame → volume_map → 
     // and fight against the "no duplication" rule — readers who need the rhythm
     // content already pull it from volume_map's closing paragraph.
     if (rhythmPrinciples.trim()) {
-      const rhythmFileName = language === "en" ? "rhythm_principles.md" : "节奏原则.md";
+      const rhythmFileName = fileLanguage === "ko" ? "rhythm_principles.md" : language === "en" ? "rhythm_principles.md" : "节奏原则.md";
       writes.push(writeFile(join(outlineDir, rhythmFileName), rhythmPrinciples, "utf-8"));
     }
 
@@ -855,18 +971,21 @@ You MUST emit all **5 SECTION blocks in order**: story_frame → volume_map → 
       const targetDir = role.tier === "major" ? rolesMajorDir : rolesMinorDir;
       const safeName = role.name.replace(/[/\\:*?"<>|]/g, "_").trim();
       if (!safeName) continue;
-      writes.push(writeFile(join(targetDir, `${safeName}.md`), role.content, "utf-8"));
+      const roleContent = fileLanguage === "ko"
+        ? this.normalizeKoreanFoundationText(role.content)
+        : role.content;
+      writes.push(writeFile(join(targetDir, `${safeName}.md`), roleContent, "utf-8"));
     }
 
     // Compat shims — these are pointer files, not authoritative content.
     writes.push(writeFile(
       join(storyDir, "story_bible.md"),
-      this.buildStoryBibleShim(storyFrame, language),
+      this.buildStoryBibleShim(storyFrame, fileLanguage),
       "utf-8",
     ));
     writes.push(writeFile(
       join(storyDir, "character_matrix.md"),
-      this.buildCharacterMatrixShim(roles, language),
+      this.buildCharacterMatrixShim(roles, fileLanguage),
       "utf-8",
     ));
 
@@ -880,7 +999,7 @@ You MUST emit all **5 SECTION blocks in order**: story_frame → volume_map → 
     // prefers story_frame.md but still falls back here for older books.
     writes.push(writeFile(
       join(storyDir, "book_rules.md"),
-      this.buildBookRulesShim(bookRulesBody, language),
+      this.buildBookRulesShim(bookRulesBody, fileLanguage),
       "utf-8",
     ));
 
@@ -897,14 +1016,18 @@ You MUST emit all **5 SECTION blocks in order**: story_frame → volume_map → 
     if (mode === "init") {
       const currentStateSeed = output.currentState?.trim()
         ? output.currentState
-        : (language === "en"
+        : (fileLanguage === "ko"
+            ? "# 현재 상태\n\n> 작품 생성 시점의 자리표시자입니다. 실행 상태는 각 장 이후 정리기가 최신 상태를 덧붙입니다. 인물별 초기 상태는 roles/*의 \"현재 상태\" 항목에, 초기 세계 핵심 사실은 pending_hooks의 시작 장 0 행에 기록됩니다.\n"
+            : language === "en"
             ? "# Current State\n\n> Seeded at book creation. Runtime state is appended by the consolidator after each chapter. Initial per-character state lives in roles/*.Current_State; load-bearing initial world facts live in pending_hooks rows with start_chapter=0.\n"
             : "# 当前状态\n\n> 建书时占位。运行时每章之后由 consolidator 追加最新状态。每个角色的初始状态详见 roles/*.当前现状；承重的初始世界设定见 pending_hooks 里 startChapter=0 的行。\n");
       writes.push(writeFile(join(storyDir, "current_state.md"), currentStateSeed, "utf-8"));
-      writes.push(writeFile(join(storyDir, "pending_hooks.md"), output.pendingHooks, "utf-8"));
+      writes.push(writeFile(join(storyDir, "pending_hooks.md"), normalizedPendingHooks, "utf-8"));
       writes.push(writeFile(
         join(storyDir, "emotional_arcs.md"),
-        language === "en"
+        fileLanguage === "ko"
+          ? "# 감정선\n\n| 인물 | 장 | 감정 상태 | 촉발 사건 | 강도 (1-10) | 변화 방향 |\n| --- | --- | --- | --- | --- | --- |\n"
+          : language === "en"
           ? "# Emotional Arcs\n\n| Character | Chapter | Emotional State | Trigger Event | Intensity (1-10) | Arc Direction |\n| --- | --- | --- | --- | --- | --- |\n"
           : "# 情感弧线\n\n| 角色 | 章节 | 情绪状态 | 触发事件 | 强度(1-10) | 弧线方向 |\n|------|------|----------|----------|------------|----------|\n",
         "utf-8",
@@ -935,7 +1058,8 @@ You MUST emit all **5 SECTION blocks in order**: story_frame → volume_map → 
   ): Promise<ArchitectOutput> {
     const { profile: gp, body: genreBody } =
       await readGenreProfile(this.ctx.projectRoot, book.genre);
-    const resolvedLanguage = book.language ?? gp.language;
+    const rawLanguage = book.language ?? gp.language;
+    const resolvedLanguage: "zh" | "en" = rawLanguage === "zh" ? "zh" : "en";
     const reviewFeedbackBlock = this.buildReviewFeedbackBlock(reviewFeedback, resolvedLanguage);
 
     const contextBlock = externalContext
@@ -966,6 +1090,7 @@ Naturally extend the existing arc. Advance existing conflicts, pay off planted h
           : `## 续写方向
 自然延续已有叙事弧线。推进现有冲突、兑现已埋伏笔、引入有机新变数。`);
 
+    const isKoreanTemplate = rawLanguage === "ko" || gp.id.startsWith("ko-") || book.genre.startsWith("ko-");
     const systemPrompt = resolvedLanguage === "en"
       ? `You are a professional novel architect. Reverse-engineer a prose-density foundation from the source chapters and write the continuation path.${contextBlock}${reviewFeedbackBlock}
 
@@ -988,7 +1113,7 @@ Follow the consolidated 5-section === SECTION: === layout: story_frame, volume_m
 
 All prose must be derived from the source package. Do not invent settings. If the package says it is compressed, treat chapter catalog + excerpts as evidence for the foundation; the full chapters will be replayed later for detailed truth files. For volume_map, treat existing chapters as "review" (one paragraph) and continuation as prose chapter-level planning. Hook extraction must be complete for the evidence provided.
 
-All output MUST be written in English.`
+All output MUST be written in ${isKoreanTemplate ? "natural Korean" : "English"}.`
       : `你是专业的网络小说架构师。从已有章节中反向推导散文密度的基础设定，同时设计续写路径。${contextBlock}${reviewFeedbackBlock}
 
 ## 书籍元信息
@@ -1010,7 +1135,9 @@ ${continuationDirective}
 所有 prose 必须从资料包中推导，不得臆造。若资料包声明为压缩包，把章节目录和正文摘录当作基础设定证据；完整章节会在后续回放阶段逐章进入 truth files。volume_map 中，已有章节作为"回顾段"（一段散文），续写部分写到章级 prose。伏笔识别以资料包提供的证据为准，尽量完整。`;
 
     const userMessage = resolvedLanguage === "en"
-      ? `Generate the complete foundation for an imported ${gp.name} novel titled "${book.title}". Write everything in English.\n\n${chaptersText}`
+      ? isKoreanTemplate
+        ? `Generate the complete foundation for an imported ${gp.name} novel titled "${book.title}". Write everything in natural Korean.\n\n${chaptersText}`
+        : `Generate the complete foundation for an imported ${gp.name} novel titled "${book.title}". Write everything in English.\n\n${chaptersText}`
       : `以下是《${book.title}》的已有正文资料包，请从中反向推导完整基础设定：\n\n${chaptersText}`;
 
     const response = await this.chat([
@@ -1029,7 +1156,9 @@ ${continuationDirective}
   ): Promise<ArchitectOutput> {
     const { profile: gp, body: genreBody } =
       await readGenreProfile(this.ctx.projectRoot, book.genre);
-    const reviewFeedbackBlock = this.buildReviewFeedbackBlock(reviewFeedback, book.language ?? "zh");
+    const rawLanguage = book.language ?? "zh";
+    const resolvedLanguage: "zh" | "en" = rawLanguage === "zh" ? "zh" : "en";
+    const reviewFeedbackBlock = this.buildReviewFeedbackBlock(reviewFeedback, resolvedLanguage);
 
     const MODE_INSTRUCTIONS: Record<FanficMode, string> = {
       canon: "剧情发生在原作空白期或未详述的角度。不可改变原作已确立的事实。",
@@ -1075,7 +1204,7 @@ ${genreBody}
       },
     ], { temperature: 0.7 });
 
-    return this.parseSections(response.content, book.language ?? "zh");
+    return this.parseSections(response.content, resolvedLanguage);
   }
 
   // -------------------------------------------------------------------------

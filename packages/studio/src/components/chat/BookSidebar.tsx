@@ -7,11 +7,17 @@ import { fetchJson } from "../../hooks/use-api";
 import { PanelRightClose, PanelRightOpen, ArrowLeft, Loader2, Pencil, Save, X } from "lucide-react";
 import { Streamdown } from "streamdown";
 import { cjk } from "@streamdown/cjk";
+import { code } from "@streamdown/code";
+import { math } from "@streamdown/math";
+import { mermaid } from "@streamdown/mermaid";
+import { MARKDOWN_DOCUMENT_CLASS, normalizeMarkdownForDisplay } from "../markdown-display";
 import { ProgressSection } from "../sidebar/ProgressSection";
 import { FoundationSection } from "../sidebar/FoundationSection";
 import { SummarySection } from "../sidebar/SummarySection";
 import { ChaptersSection } from "../sidebar/ChaptersSection";
 import { CharacterSection } from "../sidebar/CharacterSection";
+
+export type SidebarLanguage = "zh" | "en" | "ko";
 
 export interface BookSidebarProps {
   readonly bookId: string;
@@ -20,20 +26,28 @@ export interface BookSidebarProps {
   readonly sse: { messages: ReadonlyArray<SSEMessage>; connected: boolean };
 }
 
-const FOUNDATION_LABELS: Record<string, string> = {
-  "story_bible.md": "世界观设定",
-  "volume_outline.md": "卷纲规划",
-  "book_rules.md": "叙事规则",
-  "current_state.md": "状态卡",
-  "pending_hooks.md": "伏笔池",
-  "subplot_board.md": "支线进度",
-  "emotional_arcs.md": "感情线",
-  "character_matrix.md": "角色矩阵",
+const FOUNDATION_LABELS: Record<string, Record<SidebarLanguage, string>> = {
+  "story_bible.md": { zh: "世界观设定", en: "Worldbuilding", ko: "세계관 설정" },
+  "volume_outline.md": { zh: "卷纲规划", en: "Volume Outline", ko: "권별 개요" },
+  "book_rules.md": { zh: "叙事规则", en: "Narrative Rules", ko: "서사 규칙" },
+  "current_state.md": { zh: "状态卡", en: "State Card", ko: "상태 카드" },
+  "pending_hooks.md": { zh: "伏笔池", en: "Hook Pool", ko: "복선 풀" },
+  "subplot_board.md": { zh: "支线进度", en: "Subplots", ko: "서브플롯 진행" },
+  "emotional_arcs.md": { zh: "感情线", en: "Emotional Arcs", ko: "감정선" },
+  "character_matrix.md": { zh: "角色矩阵", en: "Character Matrix", ko: "인물 매트릭스" },
 };
 
-const streamdownPlugins = { cjk };
+const streamdownPlugins = { cjk, code, math, mermaid };
 
-function ArtifactView({ bookId }: { readonly bookId: string }) {
+function resolveSidebarLanguage(t: TFunction): SidebarLanguage {
+  return t("nav.connected") === "연결됨"
+    ? "ko"
+    : t("nav.connected") === "\u5DF2\u8FDE\u63A5"
+    ? "zh"
+    : "en";
+}
+
+function ArtifactView({ bookId, language }: { readonly bookId: string; readonly language: SidebarLanguage }) {
   const artifactFile = useChatStore((s) => s.artifactFile);
   const artifactChapter = useChatStore((s) => s.artifactChapter);
   const closeArtifact = useChatStore((s) => s.closeArtifact);
@@ -45,8 +59,8 @@ function ArtifactView({ bookId }: { readonly bookId: string }) {
 
   const isChapter = artifactChapter !== null;
   const label = isChapter
-    ? `第 ${artifactChapter} 章`
-    : artifactFile ? FOUNDATION_LABELS[artifactFile] ?? artifactFile : "";
+    ? language === "ko" ? `${artifactChapter}장` : language === "en" ? `Chapter ${artifactChapter}` : `第 ${artifactChapter} 章`
+    : artifactFile ? FOUNDATION_LABELS[artifactFile]?.[language] ?? artifactFile : "";
 
   useEffect(() => {
     setEditing(false);
@@ -136,7 +150,9 @@ function ArtifactView({ bookId }: { readonly bookId: string }) {
             <Loader2 size={16} className="text-muted-foreground animate-spin" />
           </div>
         ) : content === null ? (
-          <p className="text-xs text-muted-foreground/50 italic px-4 py-3">文件不存在</p>
+          <p className="text-xs text-muted-foreground/50 italic px-4 py-3">
+            {language === "ko" ? "파일을 찾을 수 없습니다" : language === "en" ? "File not found" : "文件不存在"}
+          </p>
         ) : editing ? (
           <textarea
             value={editContent}
@@ -144,8 +160,10 @@ function ArtifactView({ bookId }: { readonly bookId: string }) {
             className="w-full h-full min-h-[300px] bg-transparent text-sm leading-7 px-4 py-3 resize-none outline-none border-0 font-mono"
           />
         ) : (
-          <div className="px-4 py-3 text-sm leading-7">
-            <Streamdown plugins={streamdownPlugins} mode="static">{content}</Streamdown>
+          <div className="px-4 py-3">
+            <Streamdown className={MARKDOWN_DOCUMENT_CLASS} plugins={streamdownPlugins} mode="static">
+              {normalizeMarkdownForDisplay(content)}
+            </Streamdown>
           </div>
         )}
       </div>
@@ -154,7 +172,7 @@ function ArtifactView({ bookId }: { readonly bookId: string }) {
 }
 
 function PanelView({ bookId, theme: _theme, t, sse }: BookSidebarProps) {
-  const isZh = t("nav.connected") === "\u5DF2\u8FDE\u63A5";
+  const language = resolveSidebarLanguage(t);
 
   // Show writing indicator only during pipeline operations (write/audit/revise)
   const [activeOp, setActiveOp] = useState<string | null>(null);
@@ -177,9 +195,9 @@ function PanelView({ bookId, theme: _theme, t, sse }: BookSidebarProps) {
   }, [sse.messages]);
 
   const OP_LABELS: Record<string, string> = {
-    write: isZh ? "正在写作中..." : "Writing...",
-    audit: isZh ? "正在审计中..." : "Auditing...",
-    revise: isZh ? "正在修订中..." : "Revising...",
+    write: language === "ko" ? "작성 중..." : language === "zh" ? "正在写作中..." : "Writing...",
+    audit: language === "ko" ? "감사 중..." : language === "zh" ? "正在审计中..." : "Auditing...",
+    revise: language === "ko" ? "수정 중..." : language === "zh" ? "正在修订中..." : "Revising...",
   };
 
   return (
@@ -192,11 +210,11 @@ function PanelView({ bookId, theme: _theme, t, sse }: BookSidebarProps) {
           </span>
         </div>
       )}
-      <ProgressSection sse={sse} />
-      <ChaptersSection bookId={bookId} isZh={isZh} />
-      <CharacterSection bookId={bookId} />
-      <FoundationSection bookId={bookId} />
-      <SummarySection bookId={bookId} />
+      <ProgressSection sse={sse} language={language} />
+      <ChaptersSection bookId={bookId} language={language} />
+      <CharacterSection bookId={bookId} language={language} />
+      <FoundationSection bookId={bookId} language={language} />
+      <SummarySection bookId={bookId} language={language} />
     </div>
   );
 }
@@ -213,6 +231,7 @@ export function BookSidebar({ bookId, theme, t, sse }: BookSidebarProps) {
   const sidebarView = useChatStore((s) => s.sidebarView);
   const [width, setWidth] = useState(defaultSidebarWidth);
   const dragging = useRef(false);
+  const language = resolveSidebarLanguage(t);
 
   const onMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -244,7 +263,7 @@ export function BookSidebar({ bookId, theme, t, sse }: BookSidebarProps) {
         className="absolute left-0 top-0 h-full w-1 cursor-col-resize hover:bg-primary/20 active:bg-primary/30 transition-colors z-10"
       />
       {sidebarView === "artifact" ? (
-        <ArtifactView bookId={bookId} />
+        <ArtifactView bookId={bookId} language={language} />
       ) : (
         <PanelView bookId={bookId} theme={theme} t={t} sse={sse} />
       )}
@@ -255,6 +274,7 @@ export function BookSidebar({ bookId, theme, t, sse }: BookSidebarProps) {
 export function BookSidebarToggle({ bookId, theme, t, sse }: BookSidebarProps) {
   const [open, setOpen] = useState(false);
   const sidebarView = useChatStore((s) => s.sidebarView);
+  const language = resolveSidebarLanguage(t);
 
   return (
     <>
@@ -273,13 +293,15 @@ export function BookSidebarToggle({ bookId, theme, t, sse }: BookSidebarProps) {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between px-3 py-2 border-b border-border/20">
-              <span className="text-xs font-medium text-muted-foreground">书籍信息</span>
+              <span className="text-xs font-medium text-muted-foreground">
+                {language === "ko" ? "작품 정보" : language === "en" ? "Book Info" : "书籍信息"}
+              </span>
               <button onClick={() => setOpen(false)} className="text-muted-foreground hover:text-foreground">
                 <PanelRightClose size={14} />
               </button>
             </div>
             {sidebarView === "artifact" ? (
-              <ArtifactView bookId={bookId} />
+              <ArtifactView bookId={bookId} language={language} />
             ) : (
               <PanelView bookId={bookId} theme={theme} t={t} sse={sse} />
             )}

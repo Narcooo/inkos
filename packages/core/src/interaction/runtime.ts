@@ -13,7 +13,7 @@ import {
 } from "./session.js";
 
 type ReviseMode = "local-fix" | "rewrite";
-type RuntimeLanguage = "zh" | "en";
+type RuntimeLanguage = "zh" | "en" | "ko";
 
 export interface InteractionRuntimeTools {
   readonly listBooks: () => Promise<ReadonlyArray<string>>;
@@ -25,7 +25,7 @@ export interface InteractionRuntimeTools {
     readonly title: string;
     readonly genre?: string;
     readonly platform?: string;
-    readonly language?: "zh" | "en";
+    readonly language?: "zh" | "en" | "ko";
     readonly chapterWordCount?: number;
     readonly targetChapters?: number;
     readonly blurb?: string;
@@ -109,14 +109,24 @@ function extractToolMetadata(value: unknown): InteractionToolMetadata {
 }
 
 function resolveRuntimeLanguage(request: InteractionRequest): RuntimeLanguage {
-  return request.language === "en" ? "en" : "zh";
+  return request.language === "ko" ? "ko" : request.language === "en" ? "en" : "zh";
 }
 
-function localize<T>(language: RuntimeLanguage, messages: { zh: T; en: T }): T {
+function localize<T>(language: RuntimeLanguage, messages: { zh: T; en: T; ko?: T }): T {
+  if (language === "ko") {
+    return messages.ko ?? messages.en;
+  }
   return language === "en" ? messages.en : messages.zh;
 }
 
 function localizeMode(mode: AutomationMode, language: RuntimeLanguage): string {
+  if (language === "ko") {
+    return {
+      auto: "자동",
+      semi: "반자동",
+      manual: "수동",
+    }[mode] ?? mode;
+  }
   if (language === "en") {
     return mode;
   }
@@ -175,6 +185,7 @@ function buildTaskStartedState(
         stageLabel: localize(language, {
           zh: "准备章节输入",
           en: "preparing chapter inputs",
+          ko: "챕터 입력 준비",
         }),
       };
     case "develop_book":
@@ -184,6 +195,7 @@ function buildTaskStartedState(
         stageLabel: localize(language, {
           zh: "收敛创作草案",
           en: "developing book draft",
+          ko: "작품 초안 정리",
         }),
       };
     case "create_book":
@@ -193,6 +205,7 @@ function buildTaskStartedState(
         stageLabel: localize(language, {
           zh: "创建作品基础",
           en: "creating book foundation",
+          ko: "작품 기초 생성",
         }),
       };
     case "export_book":

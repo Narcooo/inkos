@@ -4,7 +4,7 @@ export function deriveBookIdFromTitle(title: string): string {
   return title
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9\u4e00-\u9fff]/gu, "-")
+    .replace(/[^a-z0-9\u4e00-\u9fff\uac00-\ud7af]/gu, "-")
     .replace(/-+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 30);

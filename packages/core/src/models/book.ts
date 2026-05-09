@@ -60,7 +60,7 @@ export const BookConfigSchema = z.object({
   status: BookStatusSchema,
   targetChapters: z.number().int().min(1).default(200),
   chapterWordCount: z.number().int().min(1000).default(3000),
-  language: z.enum(["zh", "en"]).optional(),
+  language: z.enum(["zh", "en", "ko"]).optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
   parentBookId: z.string().optional(),

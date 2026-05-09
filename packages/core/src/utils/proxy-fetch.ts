@@ -1,7 +1,7 @@
 import { ProxyAgent } from "undici";
 
 type ProxyEnv = Record<string, string | undefined>;
-type FetchInitWithDispatcher = RequestInit & { dispatcher?: unknown };
+type FetchInitWithDispatcher = Omit<RequestInit, "dispatcher"> & { dispatcher?: unknown };
 
 export function resolveProxyUrl(explicitProxyUrl?: string, env: ProxyEnv = process.env): string | undefined {
   const candidate = [
@@ -30,7 +30,7 @@ export function buildProxyFetchInit(
   if (!proxyUrl) return init;
   return {
     ...init,
-    dispatcher: new ProxyAgent(proxyUrl),
+    dispatcher: new ProxyAgent(proxyUrl) as unknown,
   };
 }
 
@@ -40,5 +40,5 @@ export function fetchWithProxy(
   explicitProxyUrl?: string,
   env: ProxyEnv = process.env,
 ): ReturnType<typeof fetch> {
-  return fetch(input, buildProxyFetchInit(init, explicitProxyUrl, env));
+  return fetch(input, buildProxyFetchInit(init, explicitProxyUrl, env) as RequestInit);
 }

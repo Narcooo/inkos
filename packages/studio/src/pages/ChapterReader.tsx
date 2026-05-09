@@ -45,6 +45,7 @@ export function ChapterReader({ bookId, chapterNumber, nav, theme, t }: {
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState("");
   const [saving, setSaving] = useState(false);
+  const uiLanguage = t("nav.connected") === "연결됨" ? "ko" : t("nav.connected") === "Connected" ? "en" : "zh";
 
   const handleStartEdit = () => {
     if (!data) return;
@@ -68,7 +69,7 @@ export function ChapterReader({ bookId, chapterNumber, nav, theme, t }: {
       setEditing(false);
       refetch();
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Save failed");
+      alert(e instanceof Error ? e.message : uiLanguage === "ko" ? "저장 실패" : uiLanguage === "en" ? "Save failed" : "保存失败");
     } finally {
       setSaving(false);
     }
@@ -81,13 +82,13 @@ export function ChapterReader({ bookId, chapterNumber, nav, theme, t }: {
     </div>
   );
 
-  if (error) return <div className="text-destructive p-8 bg-destructive/5 rounded-xl border border-destructive/20">Error: {error}</div>;
+  if (error) return <div className="text-destructive p-8 bg-destructive/5 rounded-xl border border-destructive/20">{t("common.error")}: {error}</div>;
   if (!data) return null;
 
   // Split markdown content into title and body
   const lines = data.content.split("\n");
   const titleLine = lines.find((l) => l.startsWith("# "));
-  const title = titleLine?.replace(/^#\s*/, "") ?? `Chapter ${chapterNumber}`;
+  const title = titleLine?.replace(/^#\s*/, "") ?? (uiLanguage === "ko" ? `${chapterNumber}장` : uiLanguage === "en" ? `Chapter ${chapterNumber}` : `第${chapterNumber}章`);
   const body = lines
     .filter((l) => l !== titleLine)
     .join("\n")
@@ -98,7 +99,7 @@ export function ChapterReader({ bookId, chapterNumber, nav, theme, t }: {
       await postApi(`/books/${bookId}/chapters/${chapterNumber}/approve`);
       nav.toBook(bookId);
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Approve failed");
+      alert(e instanceof Error ? e.message : uiLanguage === "ko" ? "승인 실패" : uiLanguage === "en" ? "Approve failed" : "通过失败");
     }
   };
 
@@ -107,7 +108,7 @@ export function ChapterReader({ bookId, chapterNumber, nav, theme, t }: {
       await postApi(`/books/${bookId}/chapters/${chapterNumber}/reject`);
       nav.toBook(bookId);
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Reject failed");
+      alert(e instanceof Error ? e.message : uiLanguage === "ko" ? "반려 실패" : uiLanguage === "en" ? "Reject failed" : "驳回失败");
     }
   };
 

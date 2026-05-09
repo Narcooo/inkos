@@ -2,7 +2,7 @@ import { BaseAgent } from "./base.js";
 import type { BookConfig } from "../models/book.js";
 import type { GenreProfile } from "../models/genre-profile.js";
 import type { ContextPackage, RuleStack } from "../models/input-governance.js";
-import { readGenreProfile, readBookRules } from "./rules-reader.js";
+import { readGenreProfile, readBookRules, normalizePromptLanguage } from "./rules-reader.js";
 import { parseWriterOutput, type ParsedWriterOutput } from "./writer-parser.js";
 import { buildGovernedMemoryEvidenceBlocks } from "../utils/governed-context.js";
 import {
@@ -43,7 +43,7 @@ export class ChapterAnalyzerAgent extends BaseAgent {
     const { book, bookDir, chapterNumber, chapterContent, chapterTitle } = input;
     const { profile: genreProfile, body: genreBody } =
       await readGenreProfile(this.ctx.projectRoot, book.genre);
-    const resolvedLanguage = book.language ?? genreProfile.language;
+    const resolvedLanguage = normalizePromptLanguage(book.language ?? genreProfile.language) ?? "zh";
 
     // Read current truth files (same set as writer.ts). Phase 5: prefer the
     // new prose outline (story_frame / volume_map) and roles/ directory.
@@ -182,7 +182,7 @@ export class ChapterAnalyzerAgent extends BaseAgent {
       { temperature: 0.3 },
     );
 
-    const countingMode = resolveLengthCountingMode(book.language ?? genreProfile.language);
+    const countingMode = resolveLengthCountingMode(resolvedLanguage);
     const output = parseWriterOutput(chapterNumber, response.content, genreProfile, countingMode);
     const canonicalContent = chapterContent;
     const canonicalWordCount = countChapterLength(canonicalContent, countingMode);

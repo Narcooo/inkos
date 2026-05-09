@@ -7,11 +7,16 @@ import {
 
 export function renderSummarySnapshot(
   summaries: ReadonlyArray<StoredSummary>,
-  language: "zh" | "en" = "zh",
+  language: "zh" | "en" | "ko" = "zh",
 ): string {
   if (summaries.length === 0) return "- none";
 
-  const headers = language === "en"
+  const headers = language === "ko"
+    ? [
+      "| 장 | 제목 | 등장인물 | 핵심 사건 | 상태 변화 | hook 활동 | 정서 톤 | 장 유형 |",
+      "| --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    : language === "en"
     ? [
       "| chapter | title | characters | events | stateChanges | hookActivity | mood | chapterType |",
       "| --- | --- | --- | --- | --- | --- | --- | --- |",
@@ -38,11 +43,17 @@ export function renderSummarySnapshot(
 
 export function renderHookSnapshot(
   hooks: ReadonlyArray<StoredHook>,
-  language: "zh" | "en" = "zh",
+  language: "zh" | "en" | "ko" = "zh",
 ): string {
   if (hooks.length === 0) return "- none";
+  const cellLanguage: "zh" | "en" = language === "zh" ? "zh" : "en";
 
-  const headers = language === "en"
+  const headers = language === "ko"
+    ? [
+      "| hook_id | 시작 장 | 유형 | 상태 | 최근 진행 | 예상 회수 | 회수 리듬 | 선행 의존 | 회수 권 | 핵심 | 반감기 | 승격 | 메모 |",
+      "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    : language === "en"
     ? [
       "| hook_id | start_chapter | type | status | last_advanced | expected_payoff | payoff_timing | depends_on | pays_off_in_arc | core_hook | half_life | promoted | notes |",
       "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
@@ -61,12 +72,12 @@ export function renderHookSnapshot(
       hook.status,
       hook.lastAdvancedChapter,
       hook.expectedPayoff,
-      localizeHookPayoffTiming(resolveHookPayoffTiming(hook), language),
-      renderDependsOnCell(hook.dependsOn ?? [], language),
+      localizeHookPayoffTiming(resolveHookPayoffTiming(hook), cellLanguage),
+      renderDependsOnCell(hook.dependsOn ?? [], cellLanguage),
       hook.paysOffInArc ?? "",
-      renderCoreHookCell(hook.coreHook === true, language),
+      renderCoreHookCell(hook.coreHook === true, cellLanguage),
       renderHalfLifeCell(hook.halfLifeChapters),
-      renderPromotedCell(hook.promoted, language),
+      renderPromotedCell(hook.promoted, cellLanguage),
       hook.notes,
     ].map((cell) => escapeTableCell(String(cell))).join(" | ")).map((row) => `| ${row} |`),
   ].join("\n");

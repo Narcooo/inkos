@@ -101,8 +101,8 @@ export async function runChapterReviewCycle(params: {
   };
   /** Re-run deterministic post-write checks (chapter-ref, paragraph shape, etc.) on any content. */
   readonly runPostWriteChecks?: (content: string) => ReadonlyArray<AuditIssue>;
-  readonly logWarn: (message: { zh: string; en: string }) => void;
-  readonly logStage: (message: { zh: string; en: string }) => void;
+  readonly logWarn: (message: { zh: string; en: string; ko?: string }) => void;
+  readonly logStage: (message: { zh: string; en: string; ko?: string }) => void;
 }): Promise<ChapterReviewCycleResult> {
   let totalUsage = params.initialUsage;
   let normalizeApplied = false;
@@ -224,6 +224,7 @@ export async function runChapterReviewCycle(params: {
       params.logStage({
         zh: `修复轮次 ${iteration + 1}/${MAX_REVIEW_ITERATIONS}（当前 ${currentAudit.score} 分）`,
         en: `repair iteration ${iteration + 1}/${MAX_REVIEW_ITERATIONS} (current score: ${currentAudit.score})`,
+        ko: `수정 라운드 ${iteration + 1}/${MAX_REVIEW_ITERATIONS} (현재 ${currentAudit.score}점)`,
       });
 
       const reviser = params.createReviser();
@@ -242,6 +243,7 @@ export async function runChapterReviewCycle(params: {
         params.logWarn({
           zh: `修复轮次 ${iteration + 1} 未产出新内容，退出循环`,
           en: `repair iteration ${iteration + 1} produced no new content, exiting loop`,
+          ko: `수정 라운드 ${iteration + 1}에서 새 내용이 생성되지 않아 반복을 종료합니다`,
         });
         break;
       }
@@ -267,6 +269,7 @@ export async function runChapterReviewCycle(params: {
         params.logStage({
           zh: `修复后达到通过线（${nextAssessment.score} 分），退出循环`,
           en: `repair reached pass threshold (${nextAssessment.score}), exiting loop`,
+          ko: `수정 후 통과 기준에 도달했습니다 (${nextAssessment.score}점). 반복을 종료합니다`,
         });
         finalContent = revisedContent;
         finalWordCount = revisedWordCount;
@@ -286,6 +289,7 @@ export async function runChapterReviewCycle(params: {
         params.logWarn({
           zh: `修复轮次 ${iteration + 1} 未净提升（${currentAudit.score} → ${nextAssessment.score}），退出循环`,
           en: `repair iteration ${iteration + 1} no net improvement (${currentAudit.score} → ${nextAssessment.score}), exiting loop`,
+          ko: `수정 라운드 ${iteration + 1}에서 점수가 개선되지 않았습니다 (${currentAudit.score} → ${nextAssessment.score}). 반복을 종료합니다`,
         });
         break;
       }

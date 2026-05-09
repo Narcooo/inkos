@@ -62,29 +62,16 @@ export function pickModelSelection(
 
   const preferredService = preference?.service?.trim();
   const preferredModel = preference?.model?.trim();
+  if (preferredService && preferredModel) {
+    if (selectedModel === preferredModel && selectedService === preferredService) return null;
+    return { model: preferredModel, service: preferredService };
+  }
+
   if (preferredService) {
     const preferredGroup = groupedModels.find((group) => group.service === preferredService);
-    const exactModel = preferredModel
-      ? preferredGroup?.models.find((model) => model.id === preferredModel)
-      : undefined;
-    if (preferredGroup && exactModel) {
-      return { model: exactModel.id, service: preferredGroup.service };
-    }
-    const firstPreferredModel = preferredGroup?.models[0];
-    if (preferredGroup && firstPreferredModel) {
-      return { model: firstPreferredModel.id, service: preferredGroup.service };
-    }
+    const onlyModel = preferredGroup?.models.length === 1 ? preferredGroup.models[0] : undefined;
+    if (preferredGroup && onlyModel) return { model: onlyModel.id, service: preferredGroup.service };
   }
 
-  if (preferredModel) {
-    for (const group of groupedModels) {
-      const exactModel = group.models.find((model) => model.id === preferredModel);
-      if (exactModel) return { model: exactModel.id, service: group.service };
-    }
-  }
-
-  const firstGroup = groupedModels.find((group) => group.models.length > 0);
-  const firstModel = firstGroup?.models[0];
-  if (!firstGroup || !firstModel) return null;
-  return { model: firstModel.id, service: firstGroup.service };
+  return null;
 }

@@ -2,11 +2,15 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildBookCreateAgentRequest,
   buildBookCreatePayload,
+  buildDraftInstructionFromForm,
   buildCreationDraftSummary,
+  applyCreationDraftToFormState,
+  extractCreationDraftFromAssistantText,
   canCreateFromDraft,
   defaultBookCreateForm,
   defaultChapterWordsForLanguage,
   ensureBookCreateSessionId,
+  hasEnoughFormForDraft,
   isBookCreateFormReady,
   platformOptionsForLanguage,
   pickValidValue,
@@ -152,6 +156,134 @@ describe("resolveDraftInstruction", () => {
   it("forces the first ideation turn through /new so an active book does not hijack the flow", () => {
     expect(resolveDraftInstruction("我想写个港风商战悬疑", false)).toBe("/new 我想写个港风商战悬疑");
     expect(resolveDraftInstruction("把世界观改成近未来港口城", true)).toBe("把世界观改成近未来港口城");
+  });
+});
+
+describe("buildDraftInstructionFromForm", () => {
+  const form = {
+    ...defaultBookCreateForm("en"),
+    title: "Tea House at the Last Gate",
+    genre: "ko-cozy",
+    platform: "kakao-page",
+    targetChapters: "120",
+    chapterWordCount: "2000",
+    brief: "은퇴한 마법사가 작은 찻집을 열고 손님들의 문제를 해결한다.",
+  };
+
+  it("recognizes any user-provided book field as draft material", () => {
+    expect(hasEnoughFormForDraft(form)).toBe(true);
+    expect(hasEnoughFormForDraft({ ...defaultBookCreateForm("en"), title: "Only a title" })).toBe(true);
+    expect(hasEnoughFormForDraft({ ...defaultBookCreateForm("en"), genre: "cozy" })).toBe(true);
+    expect(hasEnoughFormForDraft(defaultBookCreateForm("en"))).toBe(false);
+  });
+
+  it("builds a Korean /new instruction from the create form when the prompt box is empty", () => {
+    const instruction = buildDraftInstructionFromForm({
+      input: "",
+      form,
+      hasDraft: false,
+      uiLanguage: "ko",
+      genreLabel: "코지 판타지",
+      platformLabel: "카카오페이지",
+    });
+
+    expect(instruction).toContain("/new ");
+    expect(instruction).toContain("제목: Tea House at the Last Gate");
+    expect(instruction).toContain("장르: 코지 판타지 (ko-cozy)");
+    expect(instruction).toContain("은퇴한 마법사");
+  });
+
+  it("builds an instruction even when the form is blank and can inject a random genre", () => {
+    const instruction = buildDraftInstructionFromForm({
+      input: "",
+      form: defaultBookCreateForm("en"),
+      hasDraft: false,
+      uiLanguage: "ko",
+      fallbackGenreId: "ko-cozy",
+      fallbackGenreLabel: "코지 판타지",
+      platformLabel: "카카오페이지",
+    });
+
+    expect(instruction).toContain("/new ");
+    expect(instruction).toContain("비어 있는 항목은 직접 창작해서 채워줘");
+    expect(instruction).toContain("장르: 코지 판타지 (ko-cozy)");
+  });
+
+  it("keeps explicit user input as the highest priority", () => {
+    expect(buildDraftInstructionFromForm({
+      input: "더 따뜻하고 일상 중심으로",
+      form,
+      hasDraft: true,
+      uiLanguage: "ko",
+    })).toBe("더 따뜻하고 일상 중심으로");
+  });
+});
+
+describe("applyCreationDraftToFormState", () => {
+  it("fills the create form from a generated Korean draft", () => {
+    const current = defaultBookCreateForm("en");
+
+    expect(applyCreationDraftToFormState(current, {
+      concept: "코지 판타지",
+      title: "은퇴한 대마법사의 평온한 티타임",
+      genre: "ko-cozy",
+      platform: "kakao-page",
+      targetChapters: 120,
+      chapterWordCount: 2000,
+      blurb: "대륙 최강의 마법사가 숲속 찻집을 열었다.",
+      worldPremise: "마법 전쟁 이후 평화가 찾아온 변방의 숲속 마을.",
+      protagonist: "정체를 숨긴 은퇴 대마법사.",
+      conflictCore: "평온한 일상과 과거 인연의 개입.",
+      volumeOutline: "찻집 개업과 작은 사건 해결.",
+      missingFields: [],
+      readyToCreate: true,
+    }, [
+      { value: "kakao-page", label: "카카오페이지" },
+      { value: "other", label: "기타" },
+    ])).toMatchObject({
+      title: "은퇴한 대마법사의 평온한 티타임",
+      genre: "ko-cozy",
+      platform: "kakao-page",
+      targetChapters: "120",
+      chapterWordCount: "2000",
+    });
+  });
+});
+
+describe("extractCreationDraftFromAssistantText", () => {
+  it("parses a Korean markdown draft table into creation fields", () => {
+    const draft = extractCreationDraftFromAssistantText({
+      responseText: [
+        "제시해주신 SF 장르를 바탕으로 한 작품 초안입니다.",
+        "### 작품 초안",
+        "| 항목 | 내용 |",
+        "| :--- | :--- |",
+        "| **제목 후보** | 싱귤래리티의 잔상 / 코드 네임: 에덴 / 마지막 테라포밍 |",
+        "| **세계관** | 인류가 궤도 엘리베이터와 우주 정거장에 거주하는 미래. |",
+        "| **주인공** | 카엘: 기억 일부를 소실한 은퇴 특수 요원. |",
+        "| **핵심 갈등** | 데이터 조각의 진실을 둘러싼 거대 기업과의 대립. |",
+        "| **1부 방향** | 의문의 데이터 칩을 발견하고 과거의 적과 마주한다. |",
+        "| **소개문** | 기억을 잃은 전직 요원에게 낡은 데이터 칩 하나가 도착한다. |",
+      ].join("\n"),
+      concept: "SF 초안",
+      genreId: "ko-sci-fi",
+      platform: "kakao-page",
+      targetChapters: "120",
+      chapterWordCount: "2000",
+    });
+
+    expect(draft).toEqual(expect.objectContaining({
+      language: "ko",
+      title: "싱귤래리티의 잔상",
+      genre: "ko-sci-fi",
+      platform: "kakao-page",
+      worldPremise: "인류가 궤도 엘리베이터와 우주 정거장에 거주하는 미래.",
+      protagonist: "카엘: 기억 일부를 소실한 은퇴 특수 요원.",
+      conflictCore: "데이터 조각의 진실을 둘러싼 거대 기업과의 대립.",
+      volumeOutline: "의문의 데이터 칩을 발견하고 과거의 적과 마주한다.",
+      blurb: "기억을 잃은 전직 요원에게 낡은 데이터 칩 하나가 도착한다.",
+      readyToCreate: true,
+    }));
   });
 });
 

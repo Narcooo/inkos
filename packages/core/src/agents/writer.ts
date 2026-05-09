@@ -50,6 +50,15 @@ import {
   readCurrentStateWithFallback,
 } from "../utils/outline-paths.js";
 
+type WriterLanguage = "zh" | "en" | "ko";
+type WriterPromptLanguage = "zh" | "en";
+
+function resolveWriterLanguage(language: string | undefined): WriterLanguage {
+  if (language === "ko") return "ko";
+  if (language === "zh") return "zh";
+  return "en";
+}
+
 export interface WriteChapterInput {
   readonly book: BookConfig;
   readonly bookDir: string;
@@ -117,22 +126,28 @@ export class WriterAgent extends BaseAgent {
     return "writer";
   }
 
-  private localize(language: "zh" | "en", messages: { zh: string; en: string }): string {
+  private localize(language: "zh" | "en" | "ko", messages: { zh: string; en: string; ko?: string }): string {
+    if (language === "ko") return messages.ko ?? messages.en;
     return language === "en" ? messages.en : messages.zh;
   }
 
-  private logInfo(language: "zh" | "en", messages: { zh: string; en: string }): void {
+  private logInfo(language: "zh" | "en" | "ko", messages: { zh: string; en: string; ko?: string }): void {
     this.ctx.logger?.info(this.localize(language, messages));
   }
 
-  private logWarn(language: "zh" | "en", messages: { zh: string; en: string }): void {
+  private logWarn(language: "zh" | "en" | "ko", messages: { zh: string; en: string; ko?: string }): void {
     this.ctx.logger?.warn(this.localize(language, messages));
   }
 
   async writeChapter(input: WriteChapterInput): Promise<WriteChapterOutput> {
     const { book, bookDir, chapterNumber } = input;
 
-    const placeholder = "(文件尚未创建)";
+    const bookLanguageHint = resolveWriterLanguage(book.language);
+    const placeholder = bookLanguageHint === "ko"
+      ? "(파일이 아직 생성되지 않음)"
+      : bookLanguageHint === "en"
+      ? "(file not created yet)"
+      : "(文件尚未创建)";
     const [
       storyBible, volumeOutline, styleGuide, currentState, ledger, hooks,
       chapterSummaries, subplotBoard, emotionalArcs, characterMatrix, styleProfileRaw,
@@ -173,13 +188,15 @@ export class WriterAgent extends BaseAgent {
     const dialogueFingerprints = this.extractDialogueFingerprints(fingerprintChapters, storyBible);
     const relevantSummaries = this.findRelevantSummaries(chapterSummaries, volumeOutline, chapterNumber);
 
-    const hasParentCanon = parentCanon !== "(文件尚未创建)";
-    const hasFanficCanon = fanficCanonRaw !== "(文件尚未创建)";
-    const resolvedLanguage = book.language ?? genreProfile.language;
+    const hasParentCanon = !this.isMissingFilePlaceholder(parentCanon);
+    const hasFanficCanon = !this.isMissingFilePlaceholder(fanficCanonRaw);
+    const resolvedLanguage = resolveWriterLanguage(book.language ?? genreProfile.language);
+    const promptLanguage: WriterPromptLanguage = resolvedLanguage === "ko" ? "en" : resolvedLanguage;
+    const lengthLanguage = resolvedLanguage === "en" ? "en" : "zh";
     const targetWords = input.lengthSpec?.target ?? input.wordCountOverride ?? book.chapterWordCount;
-    const resolvedLengthSpec = input.lengthSpec ?? buildLengthSpec(targetWords, resolvedLanguage);
+    const resolvedLengthSpec = input.lengthSpec ?? buildLengthSpec(targetWords, lengthLanguage);
     const governedMemoryBlocks = input.contextPackage
-      ? buildGovernedMemoryEvidenceBlocks(input.contextPackage, resolvedLanguage)
+      ? buildGovernedMemoryEvidenceBlocks(input.contextPackage, promptLanguage)
       : undefined;
     const englishVarianceBrief = resolvedLanguage === "en"
       ? await buildEnglishVarianceBrief({
@@ -198,9 +215,12 @@ export class WriterAgent extends BaseAgent {
       : undefined;
 
     // ── Phase 1: Creative writing (temperature 0.7) ──
-    const creativeSystemPrompt = buildWriterSystemPrompt(
+    const koreanOutputDirective = book.language === "ko"
+      ? "LANGUAGE OVERRIDE: Write every chapter, title, outline note, state update, and truth-file update in natural Korean. Keep required machine-readable tags and field names unchanged, but all prose content must be Korean.\n\n"
+      : "";
+    const creativeSystemPrompt = koreanOutputDirective + buildWriterSystemPrompt(
       book, genreProfile, bookRules, bookRulesBody, genreBody, styleGuide, styleFingerprint,
-      chapterNumber, "creative", fanficContext, resolvedLanguage,
+      chapterNumber, "creative", fanficContext, promptLanguage,
       input.chapterMemo ? "governed" : "legacy",
       resolvedLengthSpec,
     );
@@ -214,7 +234,7 @@ export class WriterAgent extends BaseAgent {
           ruleStack: input.ruleStack,
           externalContext: input.externalContext,
           lengthSpec: resolvedLengthSpec,
-          language: book.language ?? genreProfile.language,
+          language: promptLanguage,
           varianceBrief: englishVarianceBrief?.text,
           selectedEvidenceBlock: this.joinGovernedEvidenceBlocks(governedMemoryBlocks),
         })
@@ -251,7 +271,7 @@ export class WriterAgent extends BaseAgent {
             dialogueFingerprints,
             relevantSummaries,
             parentCanon: hasParentCanon ? parentCanon : undefined,
-            language: book.language ?? genreProfile.language,
+            language: resolvedLanguage,
           });
         })();
 
@@ -260,6 +280,7 @@ export class WriterAgent extends BaseAgent {
     this.logInfo(resolvedLanguage, {
       zh: `阶段 1：创作正文（第${chapterNumber}章）`,
       en: `Phase 1: creative writing for chapter ${chapterNumber}`,
+      ko: `1단계: ${chapterNumber}장 본문 작성`,
     });
 
     const creativeResponse = await this.chat(
@@ -277,13 +298,14 @@ export class WriterAgent extends BaseAgent {
     // Memo was already parse-validated in the planner, so this only warns —
     // the LLM self-check may have skipped or abbreviated a row.
     if (input.chapterMemo) {
-      this.verifyPreWriteCheckAlignsWithMemo(creative.preWriteCheck, chapterNumber, resolvedLanguage);
+      this.verifyPreWriteCheckAlignsWithMemo(creative.preWriteCheck, chapterNumber, promptLanguage);
     }
 
     // ── Phase 2: State settlement (temperature 0.3) ──
     this.logInfo(resolvedLanguage, {
       zh: `阶段 2：状态结算（第${chapterNumber}章，${creative.wordCount}字）`,
       en: `Phase 2: state settlement for chapter ${chapterNumber} (${creative.wordCount} words)`,
+      ko: `2단계: ${chapterNumber}장 상태 정리 (${creative.wordCount}자)`,
     });
     const isGovernedSettlement = Boolean(input.chapterIntent && input.contextPackage && input.ruleStack);
     const filteredHooksForSettlement = isGovernedSettlement && input.contextPackage
@@ -292,7 +314,7 @@ export class WriterAgent extends BaseAgent {
           contextPackage: input.contextPackage,
           chapterIntent: input.chapterIntent,
           chapterNumber,
-          language: resolvedLanguage,
+          language: promptLanguage,
         })
       : hooks;
     const filteredSubplotsForSettlement = isGovernedSettlement
@@ -350,7 +372,7 @@ export class WriterAgent extends BaseAgent {
     const hookHealthIssues = resolvedRuntimeStateDelta
       && (runtimeStateArtifacts?.snapshot ?? settlement.runtimeStateSnapshot)
       ? analyzeHookHealth({
-          language: resolvedLanguage,
+          language: promptLanguage,
           chapterNumber,
           targetChapters: book.targetChapters,
           hooks: (runtimeStateArtifacts?.snapshot ?? settlement.runtimeStateSnapshot)!.hooks.hooks,
@@ -360,14 +382,14 @@ export class WriterAgent extends BaseAgent {
       : [];
 
     // ── Post-write validation (regex + rule-based, zero LLM cost) ──
-    const surfaceNormalizedContent = normalizePostWriteSurface(creative.content, resolvedLanguage);
+    const surfaceNormalizedContent = normalizePostWriteSurface(creative.content, promptLanguage);
     const surfaceNormalizedWordCount = countChapterLength(surfaceNormalizedContent, resolvedLengthSpec.countingMode);
     const ruleViolations = [
-      ...validatePostWrite(surfaceNormalizedContent, genreProfile, bookRules, resolvedLanguage),
-      ...detectCrossChapterRepetition(surfaceNormalizedContent, fingerprintChapters, resolvedLanguage),
-      ...detectParagraphLengthDrift(surfaceNormalizedContent, fingerprintChapters, resolvedLanguage),
+      ...validatePostWrite(surfaceNormalizedContent, genreProfile, bookRules, promptLanguage),
+      ...detectCrossChapterRepetition(surfaceNormalizedContent, fingerprintChapters, promptLanguage),
+      ...detectParagraphLengthDrift(surfaceNormalizedContent, fingerprintChapters, promptLanguage),
     ];
-    const aiTellIssues = analyzeAITells(surfaceNormalizedContent, resolvedLanguage).issues;
+    const aiTellIssues = analyzeAITells(surfaceNormalizedContent, promptLanguage).issues;
 
     const postWriteErrors = ruleViolations.filter(v => v.severity === "error");
     const postWriteWarnings = ruleViolations.filter(v => v.severity === "warning");
@@ -376,6 +398,7 @@ export class WriterAgent extends BaseAgent {
       this.logWarn(resolvedLanguage, {
         zh: `后写校验：第${chapterNumber}章 ${postWriteErrors.length} 个错误，${postWriteWarnings.length} 个警告`,
         en: `Post-write: ${postWriteErrors.length} errors, ${postWriteWarnings.length} warnings in chapter ${chapterNumber}`,
+        ko: `작성 후 검증: ${chapterNumber}장 오류 ${postWriteErrors.length}개, 경고 ${postWriteWarnings.length}개`,
       });
       for (const v of ruleViolations) {
         this.ctx.logger?.warn(`[${v.severity}] ${v.rule}: ${v.description}`);
@@ -385,6 +408,7 @@ export class WriterAgent extends BaseAgent {
       this.logWarn(resolvedLanguage, {
         zh: `AI 味检查：第${chapterNumber}章发现 ${aiTellIssues.length} 个问题`,
         en: `AI-tell check: ${aiTellIssues.length} issues in chapter ${chapterNumber}`,
+        ko: `AI 문체 검사: ${chapterNumber}장 문제 ${aiTellIssues.length}개`,
       });
       for (const issue of aiTellIssues) {
         this.ctx.logger?.warn(`[${issue.severity}] ${issue.category}: ${issue.description}`);
@@ -394,6 +418,7 @@ export class WriterAgent extends BaseAgent {
       this.logWarn(resolvedLanguage, {
         zh: `伏笔健康：第${chapterNumber}章发现 ${hookHealthIssues.length} 条警告`,
         en: `Hook health: ${hookHealthIssues.length} warning(s) in chapter ${chapterNumber}`,
+        ko: `복선 상태: ${chapterNumber}장 경고 ${hookHealthIssues.length}개`,
       });
       for (const issue of hookHealthIssues) {
         this.ctx.logger?.warn(`[${issue.severity}] ${issue.category}: ${issue.description}`);
@@ -458,9 +483,10 @@ export class WriterAgent extends BaseAgent {
     const { profile: genreProfile } = await readGenreProfile(this.ctx.projectRoot, input.book.genre);
     const parsedBookRules = await readBookRules(input.bookDir);
     const bookRules = parsedBookRules?.rules ?? null;
-    const resolvedLanguage = input.book.language ?? genreProfile.language;
+    const resolvedLanguage = resolveWriterLanguage(input.book.language ?? genreProfile.language);
+    const promptLanguage: WriterPromptLanguage = resolvedLanguage === "ko" ? "en" : resolvedLanguage;
     const governedMemoryBlocks = input.contextPackage
-      ? buildGovernedMemoryEvidenceBlocks(input.contextPackage, resolvedLanguage)
+      ? buildGovernedMemoryEvidenceBlocks(input.contextPackage, promptLanguage)
       : undefined;
 
     const settleResult = await this.settle({
@@ -505,7 +531,7 @@ export class WriterAgent extends BaseAgent {
       content: input.content,
       wordCount: countChapterLength(
         input.content,
-        resolvedLanguage === "en" ? "en_words" : "zh_chars",
+        promptLanguage === "en" ? "en_words" : "zh_chars",
       ),
       preWriteCheck: "",
       postSettlement: settlement.postSettlement,
@@ -559,13 +585,18 @@ export class WriterAgent extends BaseAgent {
     usage: TokenUsage;
   }> {
     // Phase 2a: Observer — extract all facts from the chapter
-    const resolvedLang = params.book.language ?? params.genreProfile.language;
-    const observerSystem = buildObserverSystemPrompt(params.book, params.genreProfile, resolvedLang);
-    const observerUser = buildObserverUserPrompt(params.chapterNumber, params.title, params.content, resolvedLang);
+    const resolvedLang = resolveWriterLanguage(params.book.language ?? params.genreProfile.language);
+    const promptLang = resolvedLang === "ko" ? "en" : resolvedLang;
+    const koreanOutputDirective = params.book.language === "ko"
+      ? "LANGUAGE OVERRIDE: Write all prose observations and truth-file updates in natural Korean. Keep required machine-readable tags and field names unchanged.\n\n"
+      : "";
+    const observerSystem = koreanOutputDirective + buildObserverSystemPrompt(params.book, params.genreProfile, promptLang);
+    const observerUser = buildObserverUserPrompt(params.chapterNumber, params.title, params.content, promptLang);
 
     this.logInfo(resolvedLang, {
       zh: `阶段 2a：提取第${params.chapterNumber}章事实`,
       en: `Phase 2a: observing facts for chapter ${params.chapterNumber}`,
+      ko: `2a단계: ${params.chapterNumber}장 사실 추출`,
     });
     const observerResponse = await this.chat(
       [
@@ -580,16 +611,17 @@ export class WriterAgent extends BaseAgent {
     this.logInfo(resolvedLang, {
       zh: "阶段 2b：把观察结果回写到真相文件",
       en: "Phase 2b: reflecting observations into truth files",
+      ko: "2b단계: 관찰 결과를 기준 문서에 반영",
     });
-    const settlerSystem = buildSettlerSystemPrompt(
-      params.book, params.genreProfile, params.bookRules, resolvedLang,
+    const settlerSystem = koreanOutputDirective + buildSettlerSystemPrompt(
+      params.book, params.genreProfile, params.bookRules, promptLang,
     );
     const governedControlBlock = params.chapterIntent && params.contextPackage && params.ruleStack
       ? this.buildSettlerGovernedControlBlock(
           params.chapterIntent,
           params.contextPackage,
           params.ruleStack,
-          resolvedLang,
+          promptLang,
         )
       : undefined;
 
@@ -665,7 +697,7 @@ export class WriterAgent extends BaseAgent {
     bookDir: string,
     output: WriteChapterOutput,
     numericalSystem: boolean = true,
-    language: "zh" | "en" = "zh",
+    language: "zh" | "en" | "ko" = "zh",
   ): Promise<void> {
     const chaptersDir = join(bookDir, "chapters");
     const storyDir = join(bookDir, "story");
@@ -674,7 +706,9 @@ export class WriterAgent extends BaseAgent {
     const paddedNum = String(output.chapterNumber).padStart(4, "0");
     const filename = `${paddedNum}_${this.sanitizeFilename(output.title)}.md`;
 
-    const heading = language === "en"
+    const heading = language === "ko"
+      ? `# ${output.chapterNumber}장 ${output.title}`
+      : language === "en"
       ? `# Chapter ${output.chapterNumber}: ${output.title}`
       : `# 第${output.chapterNumber}章 ${output.title}`;
     const chapterContent = [
@@ -729,48 +763,115 @@ export class WriterAgent extends BaseAgent {
     readonly dialogueFingerprints?: string;
     readonly relevantSummaries?: string;
     readonly parentCanon?: string;
-    readonly language?: "zh" | "en";
+    readonly language?: WriterLanguage;
   }): string {
+    const language = params.language ?? "zh";
+    const missingPlaceholder = language === "ko"
+      ? "(파일이 아직 생성되지 않음)"
+      : language === "en"
+      ? "(file not created yet)"
+      : "(文件尚未创建)";
     const contextBlock = params.externalContext
-      ? `\n## 外部指令\n以下是来自外部系统的创作指令，请在本章中融入：\n\n${params.externalContext}\n`
+      ? language === "ko"
+        ? `\n## 외부 지시\n아래는 외부 시스템에서 전달된 창작 지시입니다. 이번 장에 자연스럽게 반영하세요:\n\n${params.externalContext}\n`
+        : language === "en"
+        ? `\n## External Instruction\nThe following creative instruction comes from an external system. Work it into this chapter:\n\n${params.externalContext}\n`
+        : `\n## 外部指令\n以下是来自外部系统的创作指令，请在本章中融入：\n\n${params.externalContext}\n`
       : "";
 
     const ledgerBlock = params.ledger
-      ? `\n## 资源账本\n${params.ledger}\n`
+      ? language === "ko"
+        ? `\n## 자원 장부\n${params.ledger}\n`
+        : language === "en"
+        ? `\n## Resource Ledger\n${params.ledger}\n`
+        : `\n## 资源账本\n${params.ledger}\n`
       : "";
 
-    const summariesBlock = params.chapterSummaries !== "(文件尚未创建)"
-      ? `\n## 章节摘要（全部历史章节压缩上下文）\n${params.chapterSummaries}\n`
+    const summariesBlock = params.chapterSummaries !== missingPlaceholder && params.chapterSummaries !== "(文件尚未创建)"
+      ? language === "ko"
+        ? `\n## 챕터 요약 (이전 장 압축 문맥)\n${params.chapterSummaries}\n`
+        : language === "en"
+        ? `\n## Chapter Summaries (compressed context from prior chapters)\n${params.chapterSummaries}\n`
+        : `\n## 章节摘要（全部历史章节压缩上下文）\n${params.chapterSummaries}\n`
       : "";
 
-    const subplotBlock = params.subplotBoard !== "(文件尚未创建)"
-      ? `\n## 支线进度板\n${params.subplotBoard}\n`
+    const subplotBlock = params.subplotBoard !== missingPlaceholder && params.subplotBoard !== "(文件尚未创建)"
+      ? language === "ko"
+        ? `\n## 서브플롯 진행판\n${params.subplotBoard}\n`
+        : language === "en"
+        ? `\n## Subplot Board\n${params.subplotBoard}\n`
+        : `\n## 支线进度板\n${params.subplotBoard}\n`
       : "";
 
-    const emotionalBlock = params.emotionalArcs !== "(文件尚未创建)"
-      ? `\n## 情感弧线\n${params.emotionalArcs}\n`
+    const emotionalBlock = params.emotionalArcs !== missingPlaceholder && params.emotionalArcs !== "(文件尚未创建)"
+      ? language === "ko"
+        ? `\n## 감정선\n${params.emotionalArcs}\n`
+        : language === "en"
+        ? `\n## Emotional Arcs\n${params.emotionalArcs}\n`
+        : `\n## 情感弧线\n${params.emotionalArcs}\n`
       : "";
 
-    const matrixBlock = params.characterMatrix !== "(文件尚未创建)"
-      ? `\n## 角色交互矩阵\n${params.characterMatrix}\n`
+    const matrixBlock = params.characterMatrix !== missingPlaceholder && params.characterMatrix !== "(文件尚未创建)"
+      ? language === "ko"
+        ? `\n## 인물 상호작용 매트릭스\n${params.characterMatrix}\n`
+        : language === "en"
+        ? `\n## Character Interaction Matrix\n${params.characterMatrix}\n`
+        : `\n## 角色交互矩阵\n${params.characterMatrix}\n`
       : "";
 
     const fingerprintBlock = params.dialogueFingerprints
-      ? `\n## 角色对话指纹\n${params.dialogueFingerprints}\n`
+      ? language === "ko"
+        ? `\n## 인물 대화 지문\n${params.dialogueFingerprints}\n`
+        : language === "en"
+        ? `\n## Character Dialogue Fingerprints\n${params.dialogueFingerprints}\n`
+        : `\n## 角色对话指纹\n${params.dialogueFingerprints}\n`
       : "";
 
     const relevantBlock = params.relevantSummaries
-      ? `\n## 相关历史章节摘要\n${params.relevantSummaries}\n`
+      ? language === "ko"
+        ? `\n## 관련 이전 장 요약\n${params.relevantSummaries}\n`
+        : language === "en"
+        ? `\n## Relevant Prior Chapter Summaries\n${params.relevantSummaries}\n`
+        : `\n## 相关历史章节摘要\n${params.relevantSummaries}\n`
       : "";
 
     const canonBlock = params.parentCanon
-      ? `\n## 正传正典参照（番外写作专用）
+      ? language === "ko"
+        ? `\n## 본편 정전 참고 (외전 작성 전용)
+이 작품은 외전입니다. 아래 정전 제약은 어기면 안 되며, 인물은 자신의 정보 경계를 넘어선 사실을 언급하면 안 됩니다.
+${params.parentCanon}\n`
+        : language === "en"
+        ? `\n## Parent Canon Reference (spin-off writing only)
+This book is a spin-off. Do not violate the canon constraints below, and do not let characters cite information beyond their knowledge boundary.
+${params.parentCanon}\n`
+        : `\n## 正传正典参照（番外写作专用）
 本书是番外作品。以下正典约束不可违反，角色不得引用超出其信息边界的信息。
 ${params.parentCanon}\n`
       : "";
-    const lengthRequirementBlock = this.buildLengthRequirementBlock(params.lengthSpec, params.language ?? "zh");
+    const lengthRequirementBlock = this.buildLengthRequirementBlock(params.lengthSpec, language);
 
-    if (params.language === "en") {
+    if (language === "ko") {
+      return `${params.chapterNumber}장을 이어서 작성하세요.
+${contextBlock}
+## 현재 상태 카드
+${params.currentState}
+${ledgerBlock}
+## 복선 풀
+${params.hooks}
+${summariesBlock}${subplotBlock}${emotionalBlock}${matrixBlock}${fingerprintBlock}${relevantBlock}${canonBlock}
+## 최근 장
+${params.recentChapters || "(첫 장입니다. 이전 본문이 없습니다.)"}
+
+## 세계관 설정
+${params.storyBible}
+
+${lengthRequirementBlock}
+- 먼저 작성 전 점검표를 출력한 뒤 본문을 작성하세요
+- 출력은 PRE_WRITE_CHECK, CHAPTER_TITLE, CHAPTER_CONTENT 세 구획만 포함하세요
+- CHAPTER_TITLE과 CHAPTER_CONTENT의 자연어 본문은 반드시 한국어로 작성하세요`;
+    }
+
+    if (language === "en") {
       return `Write chapter ${params.chapterNumber}.
 ${contextBlock}
 ## Current State
@@ -817,7 +918,7 @@ ${lengthRequirementBlock}
     readonly ruleStack: RuleStack;
     readonly externalContext?: string;
     readonly lengthSpec: LengthSpec;
-    readonly language?: "zh" | "en";
+    readonly language?: WriterPromptLanguage;
     readonly varianceBrief?: string;
     readonly selectedEvidenceBlock?: string;
   }): string {
@@ -884,7 +985,7 @@ ${lengthRequirementBlock}
 - 只需输出 PRE_WRITE_CHECK、CHAPTER_TITLE、CHAPTER_CONTENT 三个区块`;
   }
 
-  private buildChapterContextBlock(externalContext: string | undefined, language: "zh" | "en"): string {
+  private buildChapterContextBlock(externalContext: string | undefined, language: WriterPromptLanguage): string {
     const trimmed = externalContext?.trim();
     if (!trimmed) return "";
     if (language === "en") {
@@ -923,7 +1024,7 @@ ${trimmed}
     chapterIntent: string,
     contextPackage: ContextPackage,
     ruleStack: RuleStack,
-    language: "zh" | "en",
+    language: WriterPromptLanguage,
   ): string {
     const selectedContext = renderNarrativeSelectedContext(contextPackage.selectedContext, language)
       .replace(/^### /gm, "- ");
@@ -976,7 +1077,7 @@ ${overrides}\n`;
   private verifyPreWriteCheckAlignsWithMemo(
     preWriteCheck: string,
     chapterNumber: number,
-    language: "zh" | "en",
+    language: WriterPromptLanguage,
   ): void {
     if (!preWriteCheck || preWriteCheck.trim().length === 0) {
       this.logWarn(language, {
@@ -999,7 +1100,12 @@ ${overrides}\n`;
     }
   }
 
-  private buildLengthRequirementBlock(lengthSpec: LengthSpec, language: "zh" | "en"): string {
+  private buildLengthRequirementBlock(lengthSpec: LengthSpec, language: WriterLanguage): string {
+    if (language === "ko") {
+      return `요구 사항:
+- 목표 분량: ${lengthSpec.target}자
+- 허용 범위: ${lengthSpec.softMin}-${lengthSpec.softMax}자`;
+    }
     if (language === "en") {
       return `Requirements:
 - Target length: ${lengthSpec.target} words
@@ -1047,11 +1153,17 @@ ${overrides}\n`;
     }
   }
 
+  private isMissingFilePlaceholder(value: string): boolean {
+    return value === "(文件尚未创建)"
+      || value === "(file not created yet)"
+      || value === "(파일이 아직 생성되지 않음)";
+  }
+
   /** Save new truth files (summaries, subplots, emotional arcs, character matrix). */
   async saveNewTruthFiles(
     bookDir: string,
     output: WriteChapterOutput,
-    language: "zh" | "en" = "zh",
+    language: "zh" | "en" | "ko" = "zh",
   ): Promise<void> {
     const storyDir = join(bookDir, "story");
     const writes: Array<Promise<void>> = [];
@@ -1155,7 +1267,7 @@ ${overrides}\n`;
   private async buildRuntimeStateArtifactsIfPresent(
     bookDir: string,
     delta: RuntimeStateDelta | undefined,
-    language: "zh" | "en",
+    language: "zh" | "en" | "ko",
     authoritativeChapterNumber?: number,
     allowReapply?: boolean,
   ): Promise<RuntimeStateArtifacts | null> {
@@ -1174,7 +1286,7 @@ ${overrides}\n`;
   private async resolveRuntimeStateArtifactsForOutput(
     bookDir: string,
     output: WriteChapterOutput,
-    language: "zh" | "en",
+    language: "zh" | "en" | "ko",
   ): Promise<RuntimeStateArtifacts | null> {
     if (!output.runtimeStateDelta) return null;
     const safeDelta = this.normalizeRuntimeStateDeltaChapter(
@@ -1207,7 +1319,7 @@ ${overrides}\n`;
   private async appendChapterSummary(
     storyDir: string,
     summary: string,
-    language: "zh" | "en",
+    language: "zh" | "en" | "ko",
   ): Promise<void> {
     const summaryPath = join(storyDir, "chapter_summaries.md");
     let existing = "";
@@ -1215,7 +1327,9 @@ ${overrides}\n`;
       existing = await readFile(summaryPath, "utf-8");
     } catch {
       // File doesn't exist yet — start with header
-      existing = language === "en"
+      existing = language === "ko"
+        ? "# 챕터 요약\n\n| 장 | 제목 | 등장인물 | 핵심 사건 | 상태 변화 | Hook 변화 | 분위기 | 챕터 유형 |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n"
+        : language === "en"
         ? "# Chapter Summaries\n\n| Chapter | Title | Characters | Key Events | State Changes | Hook Activity | Mood | Chapter Type |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n"
         : "# 章节摘要\n\n| 章节 | 标题 | 出场人物 | 关键事件 | 状态变化 | 伏笔动态 | 情绪基调 | 章节类型 |\n|------|------|----------|----------|----------|----------|----------|----------|\n";
     }
@@ -1227,6 +1341,7 @@ ${overrides}\n`;
         line.startsWith("|")
         && !line.startsWith("| 章节")
         && !line.startsWith("| Chapter")
+        && !line.startsWith("| 장")
         && !line.startsWith("|--")
         && !line.startsWith("| ---"),
       )

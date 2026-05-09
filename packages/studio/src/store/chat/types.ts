@@ -151,7 +151,7 @@ export interface MessageActions {
   renameSession: (sessionId: string, title: string) => Promise<void>;
   deleteSession: (sessionId: string) => Promise<void>;
   loadSessionDetail: (sessionId: string) => Promise<void>;
-  sendMessage: (sessionId: string, text: string, activeBookId?: string) => Promise<void>;
+  sendMessage: (sessionId: string, text: string, activeBookId?: string, uiLanguage?: "zh" | "en" | "ko") => Promise<void>;
   setSelectedModel: (model: string, service: string) => void;
 }
 

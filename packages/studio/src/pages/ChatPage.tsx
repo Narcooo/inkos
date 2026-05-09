@@ -83,6 +83,8 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const isZh = t("nav.connected") === "\u5DF2\u8FDE\u63A5";
+  const isKo = t("nav.connected") === "연결됨";
+  const language = isKo ? "ko" : isZh ? "zh" : "en";
   const hasBook = Boolean(activeBookId);
 
   // Derived: is the assistant currently streaming/thinking/executing tools?
@@ -102,15 +104,14 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
   const modelsByService = useServiceStore((s) => s.modelsByService);
   const fetchServices = useServiceStore((s) => s.fetchServices);
   const fetchBankModels = useServiceStore((s) => s.fetchBankModels);
-  const fetchCustomModels = useServiceStore((s) => s.fetchCustomModels);
+  const setLiveModels = useServiceStore((s) => s.setLiveModels);
   const [configuredModelSelection, setConfiguredModelSelection] = useState<ChatPageModelPreference | null>(null);
   const [serviceConfigLoaded, setServiceConfigLoaded] = useState(false);
 
   useEffect(() => { void fetchServices(); }, [fetchServices]);
   useEffect(() => {
     void fetchBankModels();
-    void fetchCustomModels();
-  }, [fetchBankModels, fetchCustomModels]);
+  }, [fetchBankModels]);
   useEffect(() => {
     let cancelled = false;
 
@@ -121,6 +122,9 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
           service: payload.service ?? null,
           model: payload.defaultModel ?? null,
         });
+        if (payload.service && payload.defaultModel) {
+          setLiveModels(payload.service, [{ id: payload.defaultModel, name: payload.defaultModel }]);
+        }
       })
       .catch(() => {
         if (!cancelled) setConfiguredModelSelection(null);
@@ -132,7 +136,7 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [setLiveModels]);
 
   const modelPickerStatus = useMemo(() => {
     if (servicesLoading || services.length === 0) return "loading" as const;
@@ -153,12 +157,12 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
   }, [services, modelsByService]);
 
   const selectedModelLabel = useMemo(() => {
-    if (!selectedModel) return "选择模型";
+    if (!selectedModel) return isKo ? "모델 선택" : isZh ? "选择模型" : "Select model";
     const group = groupedModels.find((item) => item.service === selectedService);
     const model = group?.models.find((item) => item.id === selectedModel);
     const modelLabel = model?.name ?? selectedModel;
     return group ? `${group.label} · ${modelLabel}` : modelLabel;
-  }, [groupedModels, selectedModel, selectedService]);
+  }, [groupedModels, isKo, isZh, selectedModel, selectedService]);
 
   // Auto-select from saved service config first, then fall back to the first available model.
   useEffect(() => {
@@ -241,15 +245,17 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
 
   const onSend = (text: string) => {
     if (!activeSessionId) return;
-    void sendMessage(activeSessionId, text, activeBookId);
+    void sendMessage(activeSessionId, text, activeBookId, language);
   };
 
   const handleQuickAction = (command: string) => {
     if (!activeSessionId) return;
-    void sendMessage(activeSessionId, command, activeBookId);
+    void sendMessage(activeSessionId, command, activeBookId, language);
   };
 
-  const emptyGuidance = isZh
+  const emptyGuidance = isKo
+    ? "무엇을 쓰고 싶은지 알려주세요. 장르, 세계관, 주인공, 핵심 갈등처럼 떠오르는 것부터 시작해도 됩니다."
+    : isZh
     ? "\u544A\u8BC9\u6211\u4F60\u60F3\u5199\u4EC0\u4E48\u2014\u2014\u9898\u6750\u3001\u4E16\u754C\u89C2\u3001\u4E3B\u89D2\u3001\u6838\u5FC3\u51B2\u7A81"
     : "Tell me what you want to write \u2014 genre, world, protagonist, core conflict";
 
@@ -316,7 +322,7 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
                           );
                         }
                         if (item.kind === "tools") {
-                          return <ToolExecutionSteps key={`x-${item.startIdx}`} executions={item.parts.map(p => p.execution)} />;
+                          return <ToolExecutionSteps key={`x-${item.startIdx}`} executions={item.parts.map(p => p.execution)} language={language} />;
                         }
                         if (item.kind === "text" && item.part.content) {
                           return (
@@ -350,7 +356,7 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
               <Message from="assistant">
                 <MessageContent>
                   <Shimmer className="text-sm" duration={1.5}>
-                    {isZh ? "思考中..." : "Thinking..."}
+                    {isKo ? "생각 중..." : isZh ? "思考中..." : "Thinking..."}
                   </Shimmer>
                 </MessageContent>
               </Message>
@@ -366,7 +372,7 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
           <QuickActions
             onAction={handleQuickAction}
             disabled={loading || !activeSessionId}
-            isZh={isZh}
+            language={language}
           />
         </div>
       )}
@@ -381,7 +387,7 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onSend(input); } }}
-                  placeholder={isZh ? "输入指令..." : "Enter command..."}
+                  placeholder={isKo ? "명령 입력..." : isZh ? "输入指令..." : "Enter command..."}
                   disabled={loading || !activeSessionId}
                   rows={1}
                   className="flex-1 bg-transparent text-sm leading-6 placeholder:text-muted-foreground/50 outline-none! border-none! ring-0! shadow-none focus:outline-none! focus:ring-0! focus:border-none! resize-none disabled:opacity-50 max-h-[200px] overflow-y-auto"
@@ -397,7 +403,9 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
               </div>
               <div className="flex items-center gap-2 px-3 pb-2 border-t border-border/20 pt-1.5">
                 {modelPickerStatus === "loading" ? (
-                  <span className="text-xs text-muted-foreground/40 animate-pulse">加载模型...</span>
+                  <span className="text-xs text-muted-foreground/40 animate-pulse">
+                    {isKo ? "모델 불러오는 중..." : isZh ? "加载模型..." : "Loading models..."}
+                  </span>
                 ) : modelPickerStatus === "ready" ? (
                   <DropdownMenu>
                     <DropdownMenuTrigger className="flex items-center gap-1.5 px-2 py-1 rounded-md hover:bg-muted text-sm transition-colors cursor-pointer">
@@ -410,6 +418,8 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
                       groupedModels={groupedModels}
                       selectedModel={selectedModel}
                       selectedService={selectedService}
+                      isKo={isKo}
+                      isZh={isZh}
                       onSelect={setSelectedModel}
                       onManage={() => nav.toServices()}
                     />
@@ -419,7 +429,7 @@ export function ChatPage({ activeBookId, nav, theme, t, sse: _sse }: ChatPagePro
                     onClick={() => nav.toServices()}
                     className="text-xs text-muted-foreground/50 hover:text-primary transition-colors"
                   >
-                    配置模型 →
+                    {isKo ? "모델 설정 →" : isZh ? "配置模型 →" : "Configure model →"}
                   </button>
                 )}
               </div>
@@ -434,12 +444,16 @@ function ModelPickerContent({
   groupedModels,
   selectedModel,
   selectedService,
+  isKo,
+  isZh,
   onSelect,
   onManage,
 }: {
   groupedModels: ReadonlyArray<{ service: string; label: string; models: ReadonlyArray<{ id: string; name?: string }> }>;
   selectedModel: string | null;
   selectedService: string | null;
+  isKo: boolean;
+  isZh: boolean;
   onSelect: (model: string, service: string) => void;
   onManage: () => void;
 }) {
@@ -453,7 +467,7 @@ function ModelPickerContent({
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="搜索模型..."
+          placeholder={isKo ? "모델 검색..." : isZh ? "搜索模型..." : "Search models..."}
           className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground/40"
           onClick={(e) => e.stopPropagation()}
           onKeyDown={(e) => e.stopPropagation()}
@@ -484,13 +498,13 @@ function ModelPickerContent({
         ))}
         {filtered.length === 0 && (
           <div className="px-3 py-4 text-xs text-muted-foreground/50 text-center italic">
-            无匹配模型
+            {isKo ? "일치하는 모델이 없습니다" : isZh ? "无匹配模型" : "No matching models"}
           </div>
         )}
       </div>
       <div className="border-t border-border/30">
         <DropdownMenuItem onClick={onManage} className="text-primary">
-          管理服务商
+          {isKo ? "서비스 관리" : isZh ? "管理服务商" : "Manage services"}
         </DropdownMenuItem>
       </div>
     </DropdownMenuContent>

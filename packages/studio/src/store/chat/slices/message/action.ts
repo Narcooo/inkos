@@ -280,14 +280,14 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
     }
   },
 
-  sendMessage: async (sessionId, text, activeBookId) => {
+  sendMessage: async (sessionId, text, activeBookId, uiLanguage) => {
     const trimmed = text.trim();
     const session = get().sessions[sessionId];
     if (!trimmed || !session || session.isStreaming) return;
 
     if (!get().selectedModel) {
       get().addUserMessage(sessionId, trimmed);
-      get().addErrorMessage(sessionId, "请先选择一个模型");
+      get().addErrorMessage(sessionId, uiLanguage === "ko" ? "먼저 모델을 선택하세요" : uiLanguage === "en" ? "Select a model first" : "请先选择一个模型");
       return;
     }
 
@@ -319,7 +319,9 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
       }
     }
 
-    const instruction = activeBookId ? trimmed : `/new ${trimmed}`;
+    const koreanInstructionPrefix = "한국어 모드: 모든 사용자-facing 응답, 작품 설정, 장르 선택, 제목, 개요, 본문 지시는 자연스러운 한국어로 처리하세요. 새 작품을 만들 때는 가능한 경우 ko-* 한국어 장르 템플릿을 우선 사용하세요.";
+    const localizedText = uiLanguage === "ko" ? `${koreanInstructionPrefix}\n\n${trimmed}` : trimmed;
+    const instruction = activeBookId ? localizedText : `/new ${localizedText}`;
     const streamTs = Date.now() + 1;
 
     set((state) => ({
@@ -386,7 +388,11 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
           }));
         }
       } else {
-        const emptyMessage = "模型未返回文本内容。请检查协议类型（chat/responses）、流式开关或上游服务兼容性。";
+        const emptyMessage = uiLanguage === "ko"
+          ? "모델이 텍스트 내용을 반환하지 않았습니다. 프로토콜 유형(chat/responses), 스트리밍 설정, 상위 서비스 호환성을 확인하세요."
+          : uiLanguage === "en"
+            ? "The model returned no text. Check the protocol type (chat/responses), streaming setting, or upstream service compatibility."
+            : "模型未返回文本内容。请检查协议类型（chat/responses）、流式开关或上游服务兼容性。";
         if (hasStream) {
           get().replaceStreamWithError(sessionId, streamTs, emptyMessage);
         } else {

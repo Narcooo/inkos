@@ -77,7 +77,7 @@ export async function retrySettlementAfterValidationFailure(
       retryOutput.updatedState,
       params.oldHooks,
       retryOutput.updatedHooks,
-      params.language,
+      params.language === "ko" ? "zh" : params.language,
     );
   } catch (error) {
     throw new Error(`State validation retry failed for chapter ${params.chapterNumber}: ${String(error)}`);
@@ -112,9 +112,18 @@ export function buildStateValidationFeedback(
   language: LengthLanguage,
 ): string {
   if (warnings.length === 0) {
-    return language === "en"
+    return language === "ko"
+      ? "이전 상태 정산이 본문과 모순됩니다. 본문을 기준으로 truth files를 엄격하게 수정하세요."
+      : language === "en"
       ? "The previous settlement contradicted the chapter text. Reconcile truth files strictly to the body."
       : "上一次状态结算与正文矛盾。请严格以正文为准修正 truth files。";
+  }
+
+  if (language === "ko") {
+    return [
+      "이전 상태 정산이 검증을 통과하지 못했습니다. 본문과 대조해 아래 모순을 수정하세요:",
+      ...warnings.map((warning) => `- [${warning.category}] ${warning.description}`),
+    ].join("\n");
   }
 
   if (language === "en") {
@@ -139,7 +148,9 @@ export function buildStateDegradedIssues(
       severity: "warning" as const,
       category: "state-validation",
       description: warning.description,
-      suggestion: language === "en"
+      suggestion: language === "ko"
+        ? "계속하기 전에 저장된 본문을 기준으로 이 장의 상태를 복구하세요."
+        : language === "en"
         ? "Repair chapter state from the persisted body before continuing."
         : "请先基于已保存正文修复本章 state，再继续后续章节。",
     }));
@@ -148,10 +159,14 @@ export function buildStateDegradedIssues(
   return [{
     severity: "warning",
     category: "state-validation",
-    description: language === "en"
+    description: language === "ko"
+      ? "상태 정산 재시도 후에도 검증을 통과하지 못했습니다."
+      : language === "en"
       ? "State validation still failed after settlement retry."
       : "状态结算重试后仍未通过校验。",
-    suggestion: language === "en"
+    suggestion: language === "ko"
+      ? "계속하기 전에 저장된 본문을 기준으로 이 장의 상태를 복구하세요."
+      : language === "en"
       ? "Repair chapter state from the persisted body before continuing."
       : "请先基于已保存正文修复本章 state，再继续后续章节。",
   }];

@@ -256,6 +256,69 @@ export function getPlannerMemoUserTemplate(language: "zh" | "en" = "zh"): string
   return language === "en" ? PLANNER_MEMO_USER_TEMPLATE_EN : PLANNER_MEMO_USER_TEMPLATE;
 }
 
+export const PLANNER_MEMO_SYSTEM_PROMPT_KO = `${PLANNER_MEMO_SYSTEM_PROMPT_EN}
+
+LANGUAGE OVERRIDE:
+- All human-readable content must be written in natural Korean.
+- Keep YAML keys as: chapter, goal, isGoldenOpening, threadRefs.
+- Use these exact Korean level-2 markdown headings:
+## 현재 작업
+## 독자가 지금 기다리는 것
+## 회수할 것 / 아직 숨길 것
+## 일상/전환 장면의 역할
+## 핵심 선택 3문 점검
+## 장 끝에 반드시 일어날 변화
+## 이번 장 hook 장부
+## 하지 말 것
+- The hook ledger subsection labels must stay machine-readable as open:, advance:, resolve:, defer:.
+- Do not use English or Chinese section headings.`;
+
+export const PLANNER_MEMO_USER_TEMPLATE_KO = `# {{chapterNumber}}장 메모 요청
+
+{{brief_block}}
+{{chapter_context_block}}
+
+## 이전 장 마지막 화면 발췌
+{{previous_chapter_ending_excerpt}}
+
+## 최근 3장 요약
+{{recent_summaries}}
+
+## 현재 아크가 밀고 가는 것
+{{current_arc_prose}}
+
+## 주인공 현재 상태
+{{protagonist_matrix_row}}
+
+## 이번 장 주요 대립/저항
+{{opponent_rows}}
+
+## 이번 장 주요 협력자
+{{collaborator_rows}}
+
+## 건드릴 수 있는 thread (복선 + 서브플롯)
+{{relevant_threads}}
+
+## 오래된 hook - 이번 장에서 반드시 advance / resolve / defer 처리
+{{recyclable_hooks}}
+
+## 이번 장 외부 제약
+- 골든 오프닝 장: {{isGoldenOpening}}
+- 하드 룰(이번 장에 닿을 수 있는 항목 발췌):
+{{book_rules_relevant}}
+
+{{chapterNumber}}장 메모를 작성하세요. 반드시 YAML frontmatter + markdown 형식만 출력하세요.`;
+
+export function getPlannerMemoSystemPromptLocalized(language: "zh" | "en" | "ko" = "zh"): string {
+  if (language === "ko") return PLANNER_MEMO_SYSTEM_PROMPT_KO;
+  return getPlannerMemoSystemPrompt(language);
+}
+
+export function getPlannerMemoUserTemplateLocalized(language: "zh" | "en" | "ko" = "zh"): string {
+  if (language === "ko") return PLANNER_MEMO_USER_TEMPLATE_KO;
+  return getPlannerMemoUserTemplate(language);
+}
+
 export const PLANNER_MEMO_USER_TEMPLATE = `# 第 {{chapterNumber}} 章 memo 请求
 
 {{brief_block}}
@@ -306,14 +369,14 @@ export interface PlannerUserMessageInput {
   readonly bookRulesRelevant: string;
   readonly brief?: string;
   readonly chapterContext?: string;
-  readonly language?: "zh" | "en";
+  readonly language?: "zh" | "en" | "ko";
 }
 
 export function buildPlannerUserMessage(input: PlannerUserMessageInput): string {
   const language = input.language ?? "zh";
-  const template = getPlannerMemoUserTemplate(language);
-  const yesText = language === "en" ? "yes" : "是";
-  const noText = language === "en" ? "no" : "否";
+  const template = getPlannerMemoUserTemplateLocalized(language);
+  const yesText = language === "ko" ? "예" : language === "en" ? "yes" : "是";
+  const noText = language === "ko" ? "아니오" : language === "en" ? "no" : "否";
 
   const briefBlock = buildBriefBlock(input.brief ?? "", language);
   const chapterContextBlock = buildChapterContextBlock(input.chapterContext ?? "", language);
@@ -344,9 +407,15 @@ export function buildPlannerUserMessage(input: PlannerUserMessageInput): string 
  *
  * Returns "" when no brief exists (legacy books without brief.md).
  */
-function buildBriefBlock(brief: string, language: "zh" | "en"): string {
+function buildBriefBlock(brief: string, language: "zh" | "en" | "ko"): string {
   const trimmed = brief.trim();
   if (!trimmed) return "";
+  if (language === "ko") {
+    return `## 창작 brief (사용자의 원래 의도 - 최우선)
+${trimmed}
+
+brief는 사용자의 직접 지시입니다. 이번 장을 계획할 때 주인공 설정, 세계 전제, 도입부 장치, 샘플 훅 등 brief의 핵심 설정을 먼저 지키세요. 초반에 착지해야 할 핵심 설정을 뒤 장으로 미루지 마세요.`;
+  }
   if (language === "en") {
     return `## Creative brief (user's original intent — authoritative)
 ${trimmed}
@@ -359,9 +428,13 @@ ${trimmed}
 brief 是用户的直接指令。本章规划时，必须优先兑现 brief 里写明的核心设定（主角设定、世界前提、开场机制、样本章回钩子等）。**不要把 brief 里的核心设定推迟到后面的章节**——该在前几章落地的必须落地。`;
 }
 
-function buildChapterContextBlock(chapterContext: string, language: "zh" | "en"): string {
+function buildChapterContextBlock(chapterContext: string, language: "zh" | "en" | "ko"): string {
   const trimmed = chapterContext.trim();
   if (!trimmed) return "";
+  if (language === "ko") {
+    return `## 이번 장 사용자 지시
+${trimmed}`;
+  }
   if (language === "en") {
     return `## Per-chapter user instruction (highest priority for this chapter)
 ${trimmed}
@@ -382,9 +455,17 @@ ${trimmed}
 
 export function buildGoldenOpeningGuidance(
   chapterNumber: number,
-  language: "zh" | "en" = "zh",
+  language: "zh" | "en" | "ko" = "zh",
 ): string {
   if (chapterNumber > 3) return "";
+
+  if (language === "ko") {
+    return `## 골든 오프닝 가이드 - ${chapterNumber}장
+
+이 장은 독자가 계속 읽을지 결정하는 초반부입니다. 1장은 주인공을 핵심 갈등 안으로 바로 던지고, 2장은 주인공의 우위나 특별한 장치를 구체적 사건으로 보여주며, 3장은 앞으로 3-10장 안에 달성할 수 있는 단기 목표를 고정해야 합니다.
+
+이번 장 memo의 goal은 그 슬롯의 동사, 즉 맞닥뜨리기 / 보여주기 / 결심하기 중 하나가 선명해야 합니다. 장 끝의 변화는 작은 훅이나 감정적 빈칸이어야 하며, 평평한 마무리로 닫지 마세요. 장면은 최대 3개, 이름 붙은 인물은 최대 3명으로 압축하고, 세계 정보는 설명 단락이 아니라 주인공의 행동과 사건 속에서 드러내세요.`;
+  }
 
   if (language === "en") {
     return `## Golden Opening Guidance — Chapter ${chapterNumber}

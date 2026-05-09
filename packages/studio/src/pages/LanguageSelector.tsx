@@ -1,10 +1,10 @@
 import { useState } from "react";
 
-export function LanguageSelector({ onSelect }: { onSelect: (lang: "zh" | "en") => void }) {
-  const [hovering, setHovering] = useState<"zh" | "en" | null>(null);
-  const [selected, setSelected] = useState<"zh" | "en" | null>(null);
+export function LanguageSelector({ onSelect }: { onSelect: (lang: "zh" | "en" | "ko") => void }) {
+  const [hovering, setHovering] = useState<"zh" | "en" | "ko" | null>(null);
+  const [selected, setSelected] = useState<"zh" | "en" | "ko" | null>(null);
 
-  const handleSelect = (lang: "zh" | "en") => {
+  const handleSelect = (lang: "zh" | "en" | "ko") => {
     setSelected(lang);
     // Brief pause for the selection animation before transitioning
     setTimeout(() => onSelect(lang), 400);
@@ -22,7 +22,7 @@ export function LanguageSelector({ onSelect }: { onSelect: (lang: "zh" | "en") =
       </div>
 
       {/* Language cards — generous, distinct, immersive */}
-      <div className="flex gap-8 mb-16">
+      <div className="flex flex-wrap justify-center gap-8 mb-16">
         <button
           onClick={() => handleSelect("zh")}
           onMouseEnter={() => setHovering("zh")}
@@ -41,6 +41,27 @@ export function LanguageSelector({ onSelect }: { onSelect: (lang: "zh" | "en") =
           </div>
           <div className="text-sm text-muted-foreground">
             番茄小说 · 起点中文网 · 飞卢
+          </div>
+        </button>
+
+        <button
+          onClick={() => handleSelect("ko")}
+          onMouseEnter={() => setHovering("ko")}
+          onMouseLeave={() => setHovering(null)}
+          className={`group w-80 border rounded-lg p-10 text-left transition-all duration-300 ${
+            selected === "ko"
+              ? "border-primary bg-primary/10 scale-[1.02]"
+              : hovering === "ko"
+                ? "border-primary/50 bg-card"
+                : "border-border bg-card/50"
+          }`}
+        >
+          <div className="font-serif text-3xl mb-4 text-foreground">한국어 인터페이스</div>
+          <div className="text-base text-foreground/70 leading-relaxed mb-6">
+            한국어 메뉴 · 로컬 허브 · 창작 작업실
+          </div>
+          <div className="text-sm text-muted-foreground">
+            UI와 한국어 템플릿 기반 창작 흐름을 한국어로 사용합니다
           </div>
         </button>
 
@@ -67,7 +88,7 @@ export function LanguageSelector({ onSelect }: { onSelect: (lang: "zh" | "en") =
       </div>
 
       <div className="text-sm text-muted-foreground">
-        可在设置中更改 · Can be changed in Settings
+        可在设置中更改 · Settings에서 언제든 바꿀 수 있습니다 · Can be changed in Settings
       </div>
     </div>
   );

@@ -79,6 +79,7 @@ const SubAgentParams = Type.Object({
   language: Type.Optional(Type.Union([
     Type.Literal("zh"),
     Type.Literal("en"),
+    Type.Literal("ko"),
   ], { description: "architect only: writing language. Default: zh" })),
   targetChapters: Type.Optional(Type.Number({ description: "architect only: total chapter count. Default: 200" })),
   chapterWordCount: Type.Optional(Type.Number({ description: "architect/writer: words per chapter. Default: 3000" })),
@@ -120,6 +121,13 @@ function prepareSubAgentArguments(args: unknown): SubAgentParamsType {
     } else {
       delete prepared.platform;
     }
+  }
+  if (typeof prepared.instruction !== "string" || prepared.instruction.trim().length === 0) {
+    const agent = typeof prepared.agent === "string" ? prepared.agent : "sub-agent";
+    const chapterNumber = typeof prepared.chapterNumber === "number"
+      ? ` chapter ${prepared.chapterNumber}`
+      : "";
+    prepared.instruction = `${agent}${chapterNumber}`.trim();
   }
   return prepared as SubAgentParamsType;
 }

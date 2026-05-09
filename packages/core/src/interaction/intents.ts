@@ -35,7 +35,7 @@ export const InteractionRequestSchema = z.object({
   title: z.string().min(1).optional(),
   genre: z.string().min(1).optional(),
   platform: z.string().min(1).optional(),
-  language: z.enum(["zh", "en"]).optional(),
+  language: z.enum(["zh", "en", "ko"]).optional(),
   chapterWordCount: z.number().int().min(1).optional(),
   targetChapters: z.number().int().min(1).optional(),
   blurb: z.string().min(1).optional(),

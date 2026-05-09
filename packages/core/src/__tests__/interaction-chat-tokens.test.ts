@@ -149,6 +149,87 @@ describe("developBookDraft – uses chatWithTools", () => {
     });
   });
 
+  it("uses Studio form fields as a draft even when the model answers with a question instead of a tool call", async () => {
+    mockChatWithTools.mockResolvedValueOnce({
+      content: "새로운 이야기를 시작하기 위해 우선 장르를 선택해 주세요.",
+      toolCalls: [],
+    });
+    const tools = createInteractionToolsFromDeps(
+      fakePipeline as never,
+      fakeState as never,
+    );
+
+    const result = await tools.developBookDraft?.([
+      "아래 작품 기본 정보를 바탕으로 장르에 맞는 기초 설정 초안을 만들어줘.",
+      "",
+      "제목: 밤항구 찻집",
+      "장르: 코지 판타지 (ko-cozy)",
+      "목표 플랫폼: 카카오페이지",
+      "목표 장수: 120",
+      "장당 분량: 2000",
+      "",
+      "이야기 소개 / 핵심 설정:",
+      "은퇴한 마법사가 작은 찻집을 열고 손님들의 문제를 해결한다.",
+    ].join("\n"), undefined) as Record<string, unknown>;
+    const interaction = (result as { __interaction: Record<string, unknown> }).__interaction;
+    const details = interaction.details as Record<string, unknown>;
+
+    expect(interaction.responseText).toContain("초안을 업데이트했습니다");
+    expect(details.creationDraft).toEqual(expect.objectContaining({
+      title: "밤항구 찻집",
+      genre: "ko-cozy",
+      platform: "카카오페이지",
+      targetChapters: 120,
+      chapterWordCount: 2000,
+      blurb: "은퇴한 마법사가 작은 찻집을 열고 손님들의 문제를 해결한다.",
+      missingFields: [],
+      readyToCreate: true,
+    }));
+    expect(details.toolCall).toBeUndefined();
+  });
+
+  it("extracts Korean markdown table draft fields when no tool call is returned", async () => {
+    mockChatWithTools.mockResolvedValueOnce({
+      content: [
+        "### 작품 초안",
+        "| 항목 | 내용 |",
+        "| :--- | :--- |",
+        "| **제목 후보** | 은퇴한 대마법사의 평온한 티타임 / 마법사의 작은 숲속 찻집 |",
+        "| **세계관** | 마법 전쟁 이후 평화가 찾아온 변방의 숲속 마을. |",
+        "| **주인공** | 에드릭: 정체를 숨긴 은퇴 대마법사. |",
+        "| **핵심 갈등** | 평온한 일상을 지키려는 마음과 과거 인연의 개입. |",
+        "| **1부 방향** | 찻집 개업과 마을 주민들의 작은 사건 해결. |",
+        "| **소개문** | 대륙 최강의 마법사가 숲속 찻집을 열었다. |",
+      ].join("\n"),
+      toolCalls: [],
+    });
+    const tools = createInteractionToolsFromDeps(
+      fakePipeline as never,
+      fakeState as never,
+    );
+
+    const result = await tools.developBookDraft?.([
+      "제목: ",
+      "장르: 코지 판타지 (ko-cozy)",
+      "목표 플랫폼: 카카오페이지",
+      "목표 장수: 120",
+      "장당 분량: 2000",
+    ].join("\n"), undefined) as Record<string, unknown>;
+    const interaction = (result as { __interaction: Record<string, unknown> }).__interaction;
+    const details = interaction.details as Record<string, unknown>;
+
+    expect(details.creationDraft).toEqual(expect.objectContaining({
+      title: "은퇴한 대마법사의 평온한 티타임",
+      genre: "ko-cozy",
+      worldPremise: "마법 전쟁 이후 평화가 찾아온 변방의 숲속 마을.",
+      protagonist: "에드릭: 정체를 숨긴 은퇴 대마법사.",
+      conflictCore: "평온한 일상을 지키려는 마음과 과거 인연의 개입.",
+      volumeOutline: "찻집 개업과 마을 주민들의 작은 사건 해결.",
+      blurb: "대륙 최강의 마법사가 숲속 찻집을 열었다.",
+      readyToCreate: true,
+    }));
+  });
+
   it("returns fallback when no LLM is configured", async () => {
     const noLlmPipeline = {
       config: {},

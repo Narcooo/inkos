@@ -205,6 +205,7 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
     createLogger: vi.fn(() => logger),
     computeAnalytics: vi.fn(() => ({})),
     isSafeBookId: actual.isSafeBookId,
+    deriveBookIdFromTitle: actual.deriveBookIdFromTitle,
     normalizePlatformOrOther: actual.normalizePlatformOrOther,
     chatCompletion: chatCompletionMock,
     loadProjectConfig: loadProjectConfigMock,
@@ -553,7 +554,7 @@ describe("createStudioServer daemon lifecycle", () => {
     });
   });
 
-  it("reloads latest llm config for doctor checks without restarting the studio server", async () => {
+  it("reports Studio model settings in doctor checks without probing the LLM", async () => {
     const startupConfig = {
       ...cloneProjectConfig(),
       llm: {
@@ -569,17 +570,14 @@ describe("createStudioServer daemon lifecycle", () => {
         ...cloneProjectConfig().llm,
         model: "fresh-model",
         baseUrl: "https://fresh.example.com/v1",
+        service: "custom:Fresh",
+        defaultModel: "fresh-model",
+        services: [
+          { service: "custom", name: "Fresh", baseUrl: "https://fresh.example.com/v1" },
+        ],
       },
     };
-    loadProjectConfigMock.mockResolvedValue(freshConfig);
-
-    // Stub /models so probe doesn't hit the real OpenAI endpoint and short-circuit on 401.
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: false,
-      status: 404,
-      text: async () => "Not Found",
-    });
-    vi.stubGlobal("fetch", fetchMock as typeof fetch);
+    await writeFile(join(root, "inkos.json"), JSON.stringify(freshConfig, null, 2), "utf-8");
 
     const { createStudioServer } = await import("./server.js");
     const app = createStudioServer(startupConfig as never, root);
@@ -587,19 +585,16 @@ describe("createStudioServer daemon lifecycle", () => {
     const response = await app.request("http://localhost/api/v1/doctor");
 
     expect(response.status).toBe(200);
-    expect(createLLMClientMock).toHaveBeenCalledWith(expect.objectContaining({
-      model: "fresh-model",
-      baseUrl: "https://fresh.example.com/v1",
-    }));
-    expect(chatCompletionMock).toHaveBeenCalledWith(
-      expect.anything(),
-      "fresh-model",
-      expect.any(Array),
-      expect.objectContaining({ maxTokens: expect.any(Number) }),
-    );
+    await expect(response.json()).resolves.toMatchObject({
+      projectEnv: true,
+      globalEnv: true,
+      llmConnected: true,
+    });
+    expect(createLLMClientMock).not.toHaveBeenCalled();
+    expect(chatCompletionMock).not.toHaveBeenCalled();
   });
 
-  it("auto-falls back to a non-stream probe in doctor checks when the first transport returns empty", async () => {
+  it("does not fallback-probe models during doctor checks", async () => {
     const freshConfig = {
       ...cloneProjectConfig(),
       llm: {
@@ -610,14 +605,7 @@ describe("createStudioServer daemon lifecycle", () => {
         apiFormat: "chat",
       },
     };
-    loadProjectConfigMock.mockResolvedValue(freshConfig);
-    // Stub /models so probe doesn't hit the real OpenAI endpoint and short-circuit on 401.
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: false,
-      status: 404,
-      text: async () => "Not Found",
-    });
-    vi.stubGlobal("fetch", fetchMock as typeof fetch);
+    await writeFile(join(root, "inkos.json"), JSON.stringify(freshConfig, null, 2), "utf-8");
     createLLMClientMock.mockImplementation(((cfg: unknown) => cfg) as any);
     chatCompletionMock.mockImplementation(async (client: any) => {
       if (client.stream === false) {
@@ -635,16 +623,10 @@ describe("createStudioServer daemon lifecycle", () => {
     const response = await app.request("http://localhost/api/v1/doctor");
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
-      llmConnected: true,
+      llmConnected: false,
     });
-    expect(createLLMClientMock).toHaveBeenCalledWith(expect.objectContaining({
-      stream: true,
-      apiFormat: "chat",
-    }));
-    expect(createLLMClientMock).toHaveBeenCalledWith(expect.objectContaining({
-      stream: false,
-      apiFormat: "chat",
-    }));
+    expect(createLLMClientMock).not.toHaveBeenCalled();
+    expect(chatCompletionMock).not.toHaveBeenCalled();
   });
 
   it("reloads latest llm config for radar scans without restarting the studio server", async () => {
@@ -1070,6 +1052,54 @@ describe("createStudioServer daemon lifecycle", () => {
     await expect(modelsResponse.json()).resolves.toMatchObject({
       models: [{ id: "corp-chat", name: "corp-chat" }],
     });
+  });
+
+  it("tests only the explicitly selected custom model", async () => {
+    await writeFile(join(root, "inkos.json"), JSON.stringify({
+      ...projectConfig,
+      llm: {
+        services: [
+          { service: "custom", name: "Switcher", baseUrl: "https://llm.internal.corp/v1" },
+        ],
+      },
+    }, null, 2), "utf-8");
+
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ data: [{ id: "bad-first" }, { id: "chosen-model" }] }),
+        text: async () => "",
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ choices: [{ message: { content: "ok" } }] }),
+      });
+    vi.stubGlobal("fetch", fetchMock as typeof fetch);
+
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const response = await app.request("http://localhost/api/v1/services/custom%3ASwitcher/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        apiKey: "sk-corp",
+        baseUrl: "https://llm.internal.corp/v1",
+        model: "chosen-model",
+        apiFormat: "chat",
+        stream: false,
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      selectedModel: "chosen-model",
+    });
+    expect(createLLMClientMock).toHaveBeenCalledTimes(1);
+    expect(createLLMClientMock).toHaveBeenCalledWith(expect.objectContaining({
+      model: "chosen-model",
+    }));
   });
 
   it("auto-detects a working custom combination when /models is unavailable", async () => {

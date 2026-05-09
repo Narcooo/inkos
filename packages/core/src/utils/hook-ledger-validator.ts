@@ -47,6 +47,7 @@ export interface HookLedger {
 const LEDGER_HEADING_PATTERNS = [
   /^#{2,3}\s*本章\s*hook\s*账\s*$/im,
   /^#{2,3}\s*Hook\s+ledger\s+for\s+this\s+chapter\s*$/im,
+  /^#{2,3}\s*이번\s+장\s*hook\s*장부\s*$/im,
 ];
 
 const SUBSECTION_KEYS: ReadonlyArray<keyof HookLedger> = ["open", "advance", "resolve", "defer"];

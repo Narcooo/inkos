@@ -14,15 +14,20 @@ import {
 
 export function renderHooksProjection(
   state: HooksState,
-  language: "zh" | "en" = "zh",
+  language: "zh" | "en" | "ko" = "zh",
   options?: { readonly currentChapter?: number },
 ): string {
-  const title = language === "en" ? "# Pending Hooks" : "# 伏笔池";
+  const title = language === "ko" ? "# 대기 중인 Hook" : language === "en" ? "# Pending Hooks" : "# 伏笔池";
   // Phase 7 + hotfixes 1 & 2: depends_on / pays_off_in_arc / core_hook / half_life / promoted
   // are visible columns, so writer and reviewer both see the causal chain, planned payoff arc,
   // stale threshold, and promotion flag. stale / blocked diagnostic flags are appended to the
   // status cell.
-  const headers = language === "en"
+  const headers = language === "ko"
+    ? [
+      "| hook_id | 시작 장 | 유형 | 상태 | 최근 진행 장 | 예상 회수 | 회수 리듬 | 선행 조건 | 회수 권 | 핵심 | 반감기 | 승격 | 비고 |",
+      "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    : language === "en"
     ? [
       "| hook_id | start_chapter | type | status | last_advanced_chapter | expected_payoff | payoff_timing | depends_on | pays_off_in_arc | core_hook | half_life | promoted | notes |",
       "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
@@ -57,7 +62,7 @@ export function renderHooksProjection(
           statusCell,
           hook.lastAdvancedChapter,
           hook.expectedPayoff,
-          localizeHookPayoffTiming(resolveHookPayoffTiming(hook), language),
+          localizeHookPayoffTiming(resolveHookPayoffTiming(hook), language === "ko" ? "en" : language),
           renderDependsOnCell(hook.dependsOn ?? [], language),
           hook.paysOffInArc ?? "",
           renderCoreHookCell(hook.coreHook === true, language),
@@ -71,12 +76,13 @@ export function renderHooksProjection(
   return [title, "", ...headers, ...rows, ""].join("\n");
 }
 
-function renderDependsOnCell(ids: ReadonlyArray<string>, language: "zh" | "en"): string {
-  if (ids.length === 0) return language === "en" ? "none" : "无";
+function renderDependsOnCell(ids: ReadonlyArray<string>, language: "zh" | "en" | "ko"): string {
+  if (ids.length === 0) return language === "ko" ? "없음" : language === "en" ? "none" : "无";
   return `[${ids.join(", ")}]`;
 }
 
-function renderCoreHookCell(isCore: boolean, language: "zh" | "en"): string {
+function renderCoreHookCell(isCore: boolean, language: "zh" | "en" | "ko"): string {
+  if (language === "ko") return isCore ? "예" : "아니오";
   if (language === "en") return isCore ? "true" : "false";
   return isCore ? "是" : "否";
 }
@@ -86,18 +92,24 @@ function renderHalfLifeCell(value: number | undefined): string {
   return String(Math.trunc(value));
 }
 
-function renderPromotedCell(value: boolean | undefined, language: "zh" | "en"): string {
+function renderPromotedCell(value: boolean | undefined, language: "zh" | "en" | "ko"): string {
   if (value === undefined) return "";
+  if (language === "ko") return value ? "예" : "아니오";
   if (language === "en") return value ? "true" : "false";
   return value ? "是" : "否";
 }
 
 export function renderChapterSummariesProjection(
   state: ChapterSummariesState,
-  language: "zh" | "en" = "zh",
+  language: "zh" | "en" | "ko" = "zh",
 ): string {
-  const title = language === "en" ? "# Chapter Summaries" : "# 章节摘要";
-  const headers = language === "en"
+  const title = language === "ko" ? "# 챕터 요약" : language === "en" ? "# Chapter Summaries" : "# 章节摘要";
+  const headers = language === "ko"
+    ? [
+      "| 장 | 제목 | 등장인물 | 핵심 사건 | 상태 변화 | Hook 변화 | 분위기 | 챕터 유형 |",
+      "| --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    : language === "en"
     ? [
       "| Chapter | Title | Characters | Key Events | State Changes | Hook Activity | Mood | Chapter Type |",
       "| --- | --- | --- | --- | --- | --- | --- | --- |",
@@ -127,9 +139,25 @@ export function renderChapterSummariesProjection(
 
 export function renderCurrentStateProjection(
   state: CurrentStateState,
-  language: "zh" | "en" = "zh",
+  language: "zh" | "en" | "ko" = "zh",
 ): string {
-  const layout = language === "en"
+  const layout = language === "ko"
+    ? {
+      title: "# 현재 상태",
+      tableHeader: "| 항목 | 값 |",
+      labels: {
+        chapter: "현재 장",
+        location: "현재 위치",
+        protagonistState: "주인공 상태",
+        goal: "현재 목표",
+        constraint: "현재 제약",
+        alliances: "현재 관계",
+        conflict: "현재 갈등",
+      },
+      placeholders: "(미설정)",
+      additionalTitle: "## 추가 상태",
+    }
+    : language === "en"
     ? {
       title: "# Current State",
       tableHeader: "| Field | Value |",
@@ -164,27 +192,27 @@ export function renderCurrentStateProjection(
   const slots = [
     {
       label: layout.labels.location,
-      aliases: ["Current Location", "当前位置"],
+      aliases: ["Current Location", "当前位置", "현재 위치"],
     },
     {
       label: layout.labels.protagonistState,
-      aliases: ["Protagonist State", "主角状态"],
+      aliases: ["Protagonist State", "主角状态", "주인공 상태"],
     },
     {
       label: layout.labels.goal,
-      aliases: ["Current Goal", "当前目标"],
+      aliases: ["Current Goal", "当前目标", "현재 목표"],
     },
     {
       label: layout.labels.constraint,
-      aliases: ["Current Constraint", "当前限制"],
+      aliases: ["Current Constraint", "当前限制", "현재 제약"],
     },
     {
       label: layout.labels.alliances,
-      aliases: ["Current Alliances", "Current Relationships", "当前敌我"],
+      aliases: ["Current Alliances", "Current Relationships", "当前敌我", "현재 관계"],
     },
     {
       label: layout.labels.conflict,
-      aliases: ["Current Conflict", "当前冲突"],
+      aliases: ["Current Conflict", "当前冲突", "현재 갈등"],
     },
   ] as const;
 

@@ -142,13 +142,18 @@ export async function readBookRules(bookDir: string): Promise<ParsedBookRules | 
   return parsed;
 }
 
+export function normalizePromptLanguage(language: "zh" | "en" | "ko" | undefined): "zh" | "en" | undefined {
+  if (!language) return undefined;
+  return language === "zh" ? "zh" : "en";
+}
+
 export async function readBookLanguage(bookDir: string): Promise<"zh" | "en" | undefined> {
   const raw = await tryReadFile(join(bookDir, "book.json"));
   if (!raw) return undefined;
 
   try {
     const parsed = BookConfigSchema.pick({ language: true }).safeParse(JSON.parse(raw));
-    return parsed.success ? parsed.data.language : undefined;
+    return parsed.success ? normalizePromptLanguage(parsed.data.language) : undefined;
   } catch {
     return undefined;
   }

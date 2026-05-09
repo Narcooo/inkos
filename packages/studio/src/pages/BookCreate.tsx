@@ -4,7 +4,13 @@ import { BookPlus, CheckCircle2, RotateCcw, Sparkles } from "lucide-react";
 import { fetchJson, useApi } from "../hooks/use-api";
 import type { Theme } from "../hooks/use-theme";
 import type { TFunction } from "../hooks/use-i18n";
+import { useI18n } from "../hooks/use-i18n";
 import { useColors } from "../hooks/use-colors";
+import {
+  filterGenresForLanguage,
+  resolveBookCreateLanguage,
+  type GenreListItem,
+} from "./genre-language";
 import {
   clearBookCreateSessionId,
   getBookCreateSessionId,
@@ -34,7 +40,7 @@ export interface BookCreatePayload {
   readonly title: string;
   readonly genre: string;
   readonly platform: string;
-  readonly language: "zh" | "en";
+  readonly language: "zh" | "en" | "ko";
   readonly targetChapters: number;
   readonly chapterWordCount: number;
   readonly blurb: string;
@@ -122,6 +128,14 @@ const PLATFORMS_EN: ReadonlyArray<PlatformOption> = [
   { value: "other", label: "Other" },
 ];
 
+const PLATFORMS_KO: ReadonlyArray<PlatformOption> = [
+  { value: "kakao-page", label: "카카오페이지" },
+  { value: "naver-series", label: "네이버 시리즈" },
+  { value: "munpia", label: "문피아" },
+  { value: "joara", label: "조아라" },
+  { value: "other", label: "기타" },
+];
+
 const PAGE_COPY: Record<"zh" | "en", PlatformCopy> = {
   zh: {
     idleTitle: "从一句模糊想法开始",
@@ -197,6 +211,43 @@ const PAGE_COPY: Record<"zh" | "en", PlatformCopy> = {
   },
 };
 
+const KOREAN_PAGE_COPY: PlatformCopy = {
+  idleTitle: "거친 아이디어에서 시작하기",
+  idleBody: "제목, 장르, 이야기 핵심을 먼저 정하세요. InkOS가 기초 설정을 만들고 새 작업실을 엽니다.",
+  formHeading: "작품 기본 정보",
+  formHint: "이 항목들은 작품 생성 과정에 바로 들어갑니다. 소개가 구체적일수록 이후 기초 설정이 안정적입니다.",
+  titleLabel: "제목",
+  titlePlaceholder: "예: 밤항구 장부",
+  genreLabel: "장르",
+  genrePlaceholder: "장르 템플릿 선택",
+  platformLabel: "목표 플랫폼",
+  targetChaptersLabel: "목표 장수",
+  chapterWordCountLabel: "장당 분량",
+  briefLabel: "이야기 소개 / 핵심 설정",
+  briefPlaceholder: "세계관, 주인공, 목표, 핵심 갈등, 1부 방향을 적어주세요.",
+  createBook: "작품 만들기",
+  creatingBook: "생성 중...",
+  creationStatus: "작품을 생성하는 중입니다. 완료되면 작업실로 자동 이동합니다.",
+  creationSteps: ["작품 설정 저장", "기초 설정 생성", "작업실 준비"],
+  assistantHeading: "AI가 설정을 먼저 다듬게 할까요?",
+  assistantHint: "이 초안 영역은 선택 사항입니다. 쓸 만한 초안이 있으면 왼쪽 폼에 적용할 수 있습니다.",
+  applyDraft: "초안 적용",
+  promptLabel: "이 작품 더 다듬기",
+  promptPlaceholder: "예: 코지 판타지로, 은퇴한 마법사가 작은 찻집을 열고 마을 문제를 해결하는 이야기.",
+  promptPlaceholderFollowup: "예: 1부는 찻집 개업과 첫 손님, 주인공의 상처 회복을 중심으로.",
+  submit: "초안 업데이트",
+  submitting: "처리 중...",
+  create: "현재 초안으로 작품 만들기",
+  creating: "생성 중...",
+  discard: "초안 버리기",
+  draftHeading: "현재 기초 설정 초안",
+  missingHeading: "아직 부족한 정보",
+  missingHint: "모든 항목을 한 번에 채울 필요는 없지만, 너무 모호하면 작품 생성을 서두르지 않는 편이 좋습니다.",
+  syncedHint: "이 초안은 TUI / Studio Chat과 공유됩니다.",
+  helperTitle: "추천 진행 방식",
+  helperBody: "세계관과 주인공을 먼저 정하고, 그다음 핵심 갈등, 소개, 1부 방향을 정하세요.",
+};
+
 export function pickValidValue(current: string, available: ReadonlyArray<string>): string {
   if (current && available.includes(current)) {
     return current;
@@ -204,11 +255,11 @@ export function pickValidValue(current: string, available: ReadonlyArray<string>
   return available[0] ?? "";
 }
 
-export function defaultChapterWordsForLanguage(language: "zh" | "en"): string {
+export function defaultChapterWordsForLanguage(language: "zh" | "en" | "ko"): string {
   return language === "en" ? "2000" : "3000";
 }
 
-export function defaultBookCreateForm(language: "zh" | "en"): BookCreateFormState {
+export function defaultBookCreateForm(language: "zh" | "en" | "ko"): BookCreateFormState {
   return {
     title: "",
     genre: "",
@@ -219,8 +270,8 @@ export function defaultBookCreateForm(language: "zh" | "en"): BookCreateFormStat
   };
 }
 
-export function platformOptionsForLanguage(language: "zh" | "en"): ReadonlyArray<PlatformOption> {
-  return language === "en" ? PLATFORMS_EN : PLATFORMS_ZH;
+export function platformOptionsForLanguage(language: "zh" | "en" | "ko"): ReadonlyArray<PlatformOption> {
+  return language === "ko" ? PLATFORMS_KO : language === "en" ? PLATFORMS_EN : PLATFORMS_ZH;
 }
 
 function parsePositiveInteger(value: string): number | null {
@@ -240,12 +291,12 @@ export function isBookCreateFormReady(form: BookCreateFormState): boolean {
 
 export function buildBookCreatePayload(
   form: BookCreateFormState,
-  language: "zh" | "en",
+  language: "zh" | "en" | "ko",
 ): BookCreatePayload {
   const targetChapters = parsePositiveInteger(form.targetChapters);
   const chapterWordCount = parsePositiveInteger(form.chapterWordCount);
   if (!targetChapters || !chapterWordCount || !isBookCreateFormReady(form)) {
-    throw new Error(language === "zh" ? "请先补齐建书表单。" : "Complete the book creation form first.");
+    throw new Error(language === "ko" ? "작품 만들기 양식을 먼저 채워주세요." : language === "zh" ? "请先补齐建书表单。" : "Complete the book creation form first.");
   }
   return {
     title: form.title.trim(),
@@ -266,6 +317,98 @@ export function resolveDraftInstruction(input: string, hasDraft: boolean): strin
   return hasDraft ? trimmed : `/new ${trimmed}`;
 }
 
+interface DraftInstructionFromFormOptions {
+  readonly input: string;
+  readonly form: BookCreateFormState;
+  readonly hasDraft: boolean;
+  readonly uiLanguage: "zh" | "en" | "ko";
+  readonly genreLabel?: string;
+  readonly fallbackGenreId?: string;
+  readonly fallbackGenreLabel?: string;
+  readonly platformLabel?: string;
+}
+
+export function hasEnoughFormForDraft(form: BookCreateFormState): boolean {
+  return Boolean(form.title.trim() || form.genre.trim() || form.brief.trim());
+}
+
+export function buildDraftInstructionFromForm(options: DraftInstructionFromFormOptions): string {
+  const typedInput = options.input.trim();
+  if (typedInput) {
+    return resolveDraftInstruction(typedInput, options.hasDraft);
+  }
+
+  const selectedGenreId = options.form.genre.trim() || options.fallbackGenreId?.trim() || "";
+  const selectedGenreLabel = options.genreLabel?.trim() || options.fallbackGenreLabel?.trim() || "";
+  const genreText = selectedGenreId
+    ? selectedGenreLabel
+      ? `${selectedGenreLabel} (${selectedGenreId})`
+      : selectedGenreId
+    : "";
+  const appendOptional = (lines: string[], label: string, value: string | undefined) => {
+    if (value?.trim()) {
+      lines.push(`${label}: ${value.trim()}`);
+    }
+  };
+  const appendBrief = (lines: string[], label: string, value: string) => {
+    if (value.trim()) {
+      lines.push("", `${label}:`, value.trim());
+    }
+  };
+  const lines = options.uiLanguage === "ko"
+    ? (() => {
+        const result = [
+        "아래 작품 기본 정보를 바탕으로 장르에 맞는 기초 설정 초안을 만들어줘.",
+        "비어 있는 항목은 직접 창작해서 채워줘. 장르가 선택되어 있으면 반드시 그 장르를 참고하고, 장르가 없으면 웹소설에 어울리는 장르를 하나 무작위로 선택해줘.",
+        "초안이 없더라도 바로 제목 후보, 세계관, 주인공, 핵심 갈등, 1부 방향, 소개문을 생성해줘.",
+        "",
+      ];
+        appendOptional(result, "제목", options.form.title);
+        appendOptional(result, "장르", genreText);
+        appendOptional(result, "목표 플랫폼", options.platformLabel ?? options.form.platform);
+        appendOptional(result, "목표 장수", options.form.targetChapters);
+        appendOptional(result, "장당 분량", options.form.chapterWordCount);
+        appendBrief(result, "이야기 소개 / 핵심 설정", options.form.brief);
+        result.push("", "결과에는 제목 후보가 필요하면 다듬은 제목, 세계관, 주인공, 핵심 갈등, 1부 방향, 소개문, 부족한 질문을 포함해줘.");
+        return result;
+      })()
+    : options.uiLanguage === "en"
+      ? (() => {
+          const result = [
+          "Use the book basics below to generate a genre-aware foundation draft.",
+          "Invent any missing fields. If a genre is selected, use it; if not, randomly choose a fitting web-novel genre.",
+          "Even when there is no existing draft, generate title candidates, world premise, protagonist, core conflict, volume-one direction, and blurb immediately.",
+          "",
+        ];
+          appendOptional(result, "Title", options.form.title);
+          appendOptional(result, "Genre", genreText);
+          appendOptional(result, "Target platform", options.platformLabel ?? options.form.platform);
+          appendOptional(result, "Target chapters", options.form.targetChapters);
+          appendOptional(result, "Words per chapter", options.form.chapterWordCount);
+          appendBrief(result, "Story brief / core premise", options.form.brief);
+          result.push("", "Include a refined title if helpful, world premise, protagonist, core conflict, volume-one direction, blurb, and remaining questions.");
+          return result;
+        })()
+      : (() => {
+          const result = [
+          "请基于下面的建书表单，生成符合所选题材模板的基础设定草案。",
+          "空缺字段请直接创作补齐。若已选择题材，必须参考该题材；若未选择题材，请随机选择一个适合网文的题材。",
+          "即使还没有草案，也要立刻生成书名候选、世界观、主角、核心冲突、卷一方向和简介。",
+          "",
+        ];
+          appendOptional(result, "书名", options.form.title);
+          appendOptional(result, "题材", genreText);
+          appendOptional(result, "目标平台", options.platformLabel ?? options.form.platform);
+          appendOptional(result, "目标章数", options.form.targetChapters);
+          appendOptional(result, "每章字数", options.form.chapterWordCount);
+          appendBrief(result, "故事简介 / 核心设定", options.form.brief);
+          result.push("", "结果请包含可优化书名、世界观、主角、核心冲突、卷一方向、简介，以及仍需补充的问题。");
+          return result;
+        })();
+
+  return resolveDraftInstruction(lines.join("\n"), options.hasDraft);
+}
+
 export function canCreateFromDraft(draft?: BookCreationDraft): boolean {
   if (!draft) {
     return false;
@@ -283,9 +426,19 @@ export function canCreateFromDraft(draft?: BookCreationDraft): boolean {
 
 export function buildCreationDraftSummary(
   draft: BookCreationDraft,
-  language: "zh" | "en",
+  language: "zh" | "en" | "ko",
 ): ReadonlyArray<DraftSummaryRow> {
-  const rows = language === "en"
+  const rows = language === "ko"
+    ? [
+        draft.title ? { key: "title", label: "제목", value: draft.title } : undefined,
+        draft.worldPremise ? { key: "worldPremise", label: "세계관", value: draft.worldPremise } : undefined,
+        draft.protagonist ? { key: "protagonist", label: "주인공", value: draft.protagonist } : undefined,
+        draft.conflictCore ? { key: "conflictCore", label: "핵심 갈등", value: draft.conflictCore } : undefined,
+        draft.volumeOutline ? { key: "volumeOutline", label: "1부 방향", value: draft.volumeOutline } : undefined,
+        draft.blurb ? { key: "blurb", label: "소개문", value: draft.blurb } : undefined,
+        draft.nextQuestion ? { key: "nextQuestion", label: "다음 단계", value: draft.nextQuestion } : undefined,
+      ]
+    : language === "en"
     ? [
         draft.title ? { key: "title", label: "Title", value: draft.title } : undefined,
         draft.worldPremise ? { key: "worldPremise", label: "World", value: draft.worldPremise } : undefined,
@@ -308,12 +461,111 @@ export function buildCreationDraftSummary(
   return rows.filter((row): row is DraftSummaryRow => Boolean(row));
 }
 
+export function applyCreationDraftToFormState(
+  current: BookCreateFormState,
+  draft: BookCreationDraft,
+  platformChoices: ReadonlyArray<PlatformOption>,
+): BookCreateFormState {
+  const draftBrief = [
+    draft.blurb,
+    draft.worldPremise,
+    draft.protagonist,
+    draft.conflictCore,
+    draft.volumeOutline,
+  ].filter((part): part is string => Boolean(part?.trim())).join("\n\n");
+  const platformValues = platformChoices.map((option) => option.value);
+  return {
+    title: draft.title?.trim() || current.title,
+    genre: draft.genre?.trim() || current.genre,
+    platform: pickValidValue(draft.platform ?? current.platform, platformValues),
+    targetChapters: draft.targetChapters ? String(draft.targetChapters) : current.targetChapters,
+    chapterWordCount: draft.chapterWordCount ? String(draft.chapterWordCount) : current.chapterWordCount,
+    brief: draftBrief || current.brief,
+  };
+}
+
+function cleanDraftCell(value: string): string {
+  return value.replace(/\*\*/g, "").replace(/<br\s*\/?>/gi, "\n").trim();
+}
+
+function firstDraftTitle(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  return cleanDraftCell(value)
+    .split(/\s*\/\s*|\n|,|，/u)
+    .map((part) => part.trim())
+    .find(Boolean);
+}
+
+export function extractCreationDraftFromAssistantText(args: {
+  readonly responseText?: string;
+  readonly concept: string;
+  readonly genreId?: string;
+  readonly language?: "zh" | "en" | "ko";
+  readonly platform?: string;
+  readonly targetChapters?: string;
+  readonly chapterWordCount?: string;
+}): BookCreationDraft | undefined {
+  const raw = args.responseText?.trim();
+  if (!raw) return undefined;
+
+  const table: Record<string, string> = {};
+  for (const line of raw.split("\n")) {
+    const match = /^\s*\|\s*(?:\*\*)?([^|*]+?)(?:\*\*)?\s*\|\s*([^|]+?)\s*\|\s*$/u.exec(line);
+    if (!match) continue;
+    const key = cleanDraftCell(match[1] ?? "");
+    const value = cleanDraftCell(match[2] ?? "");
+    if (!key || !value || /^:?-+:?$/u.test(key) || /^:?-+:?$/u.test(value)) continue;
+    table[key] = value;
+  }
+
+  const get = (...keys: string[]) => {
+    for (const key of keys) {
+      const value = table[key];
+      if (value?.trim()) return value.trim();
+    }
+    return undefined;
+  };
+
+  const title = firstDraftTitle(get("제목 후보", "제목", "Title candidates", "Title", "书名候选", "书名"));
+  const worldPremise = get("세계관", "World", "世界观");
+  const protagonist = get("주인공", "Protagonist", "主角");
+  const conflictCore = get("핵심 갈등", "Core Conflict", "核心冲突");
+  const volumeOutline = get("1부 방향", "Volume Direction", "卷一方向", "卷纲方向");
+  const blurb = get("소개문", "Blurb", "简介", "介绍文");
+  if (!title && !worldPremise && !protagonist && !conflictCore && !volumeOutline && !blurb) {
+    return undefined;
+  }
+
+  const parseNumber = (value: string | undefined) => {
+    const parsed = Number.parseInt(value ?? "", 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+  };
+
+  return {
+    concept: args.concept,
+    ...(title ? { title } : {}),
+    ...(args.genreId ? { genre: args.genreId } : {}),
+    ...(args.platform ? { platform: args.platform } : {}),
+    language: args.language ?? (args.genreId?.startsWith("ko-") ? "ko" : "en"),
+    targetChapters: parseNumber(args.targetChapters) ?? 200,
+    chapterWordCount: parseNumber(args.chapterWordCount) ?? 2000,
+    ...(blurb ? { blurb } : {}),
+    ...(worldPremise ? { worldPremise } : {}),
+    ...(protagonist ? { protagonist } : {}),
+    ...(conflictCore ? { conflictCore } : {}),
+    ...(volumeOutline ? { volumeOutline } : {}),
+    missingFields: [],
+    readyToCreate: Boolean(title && (args.genreId || table["장르"] || table["Genre"]) && (blurb || worldPremise)),
+  };
+}
+
 interface WaitForBookReadyOptions {
   readonly fetchBook?: (bookId: string) => Promise<unknown>;
   readonly fetchStatus?: (bookId: string) => Promise<{ status: string; error?: string }>;
   readonly maxAttempts?: number;
   readonly delayMs?: number;
   readonly waitImpl?: (ms: number) => Promise<void>;
+  readonly language?: "zh" | "en" | "ko";
 }
 
 const DEFAULT_BOOK_READY_MAX_ATTEMPTS = 120;
@@ -338,10 +590,11 @@ function readSessionId(response: SessionResponse): string | null {
 export function buildBookCreateAgentRequest(
   instruction: string,
   sessionId: string,
+  language: "zh" | "en" | "ko" = "en",
 ): { instruction: string; sessionId: string } {
   const trimmedSessionId = sessionId.trim();
   if (!trimmedSessionId) {
-    throw new Error("Book create session is not ready.");
+    throw new Error(language === "ko" ? "작품 만들기 세션이 아직 준비되지 않았습니다." : language === "zh" ? "建书会话尚未就绪。" : "Book create session is not ready.");
   }
   return { instruction, sessionId: trimmedSessionId };
 }
@@ -406,6 +659,7 @@ export async function waitForBookReady(
   const fetchStatus = options.fetchStatus ?? ((id: string) => fetchJson<{ status: string; error?: string }>(`/books/${id}/create-status`));
   const maxAttempts = options.maxAttempts ?? DEFAULT_BOOK_READY_MAX_ATTEMPTS;
   const delayMs = options.delayMs ?? DEFAULT_BOOK_READY_DELAY_MS;
+  const language = options.language ?? "en";
   const waitImpl = options.waitImpl ?? ((ms: number) => new Promise<void>((resolve) => {
     setTimeout(resolve, ms);
   }));
@@ -422,8 +676,11 @@ export async function waitForBookReady(
       try {
         const status = await fetchStatus(bookId);
         lastKnownStatus = status.status;
+        if (status.status === "ready") {
+          return;
+        }
         if (status.status === "error") {
-          throw new Error(status.error ?? `Book "${bookId}" failed to create`);
+          throw new Error(status.error ?? (language === "ko" ? `작품 "${bookId}" 생성에 실패했습니다.` : language === "zh" ? `Book "${bookId}" 创建失败` : `Book "${bookId}" failed to create`));
         }
       } catch (statusError) {
         if (statusError instanceof Error && statusError.message !== "404 Not Found") {
@@ -441,17 +698,19 @@ export async function waitForBookReady(
   }
 
   if (lastKnownStatus === "creating") {
-    throw new Error(`Book "${bookId}" is still being created. Wait a moment and refresh.`);
+    throw new Error(language === "ko" ? `작품 "${bookId}" 생성이 아직 진행 중입니다. 잠시 후 새로고침해 주세요.` : language === "zh" ? `Book "${bookId}" 仍在创建中。请稍候并刷新。` : `Book "${bookId}" is still being created. Wait a moment and refresh.`);
   }
 
-  throw lastError instanceof Error ? lastError : new Error(`Book "${bookId}" was not ready`);
+  throw lastError instanceof Error ? lastError : new Error(language === "ko" ? `작품 "${bookId}"이 아직 준비되지 않았습니다.` : language === "zh" ? `Book "${bookId}" 尚未就绪` : `Book "${bookId}" was not ready`);
 }
 
 export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunction }) {
   const c = useColors(theme);
+  const { lang: uiLang } = useI18n();
   const { data: project } = useApi<{ language: string }>("/project");
-  const projectLang = (project?.language ?? "zh") as "zh" | "en";
-  const copy = PAGE_COPY[projectLang];
+  const { data: genresData } = useApi<{ genres: ReadonlyArray<GenreListItem> }>("/genres");
+  const projectLang = project?.language === "ko" ? "ko" : project?.language === "en" ? "en" : "zh";
+  const copy = uiLang === "ko" ? KOREAN_PAGE_COPY : PAGE_COPY[projectLang === "ko" ? "en" : projectLang];
   const platformChoices = platformOptionsForLanguage(projectLang);
 
   const [draft, setDraft] = useState<BookCreationDraft | undefined>();
@@ -463,24 +722,32 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [bookCreateSessionId, setBookCreateSessionIdState] = useState<string | null>(null);
+  const genreChoices = useMemo(
+    () => filterGenresForLanguage(genresData?.genres ?? [], uiLang),
+    [genresData?.genres, uiLang],
+  );
+  const currentGenreIsListed = genreChoices.some((genre) => genre.id === form.genre);
+  const selectedGenre = genreChoices.find((genre) => genre.id === form.genre);
+  const selectedPlatform = platformChoices.find((option) => option.value === form.platform);
 
   const summaryRows = useMemo(
-    () => (draft ? buildCreationDraftSummary(draft, projectLang) : []),
+    () => (draft ? buildCreationDraftSummary(draft, projectLang === "ko" ? "en" : projectLang) : []),
     [draft, projectLang],
   );
   const canSubmitForm = isBookCreateFormReady(form);
+  const canSubmitDraft = true;
 
   useEffect(() => {
     setForm((current) => ({
       ...current,
       platform: pickValidValue(
         current.platform,
-        platformOptionsForLanguage(projectLang).map((option) => option.value),
+        platformChoices.map((option) => option.value),
       ),
       chapterWordCount: current.chapterWordCount || defaultChapterWordsForLanguage(projectLang),
       targetChapters: current.targetChapters || "200",
     }));
-  }, [projectLang]);
+  }, [platformChoices, projectLang]);
 
   const updateForm = (patch: Partial<BookCreateFormState>) => {
     setForm((current) => ({ ...current, ...patch }));
@@ -490,22 +757,7 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
     if (!draft) {
       return;
     }
-    const draftBrief = [
-      draft.blurb,
-      draft.worldPremise,
-      draft.protagonist,
-      draft.conflictCore,
-      draft.volumeOutline,
-    ].filter((part): part is string => Boolean(part?.trim())).join("\n\n");
-    const platformValues = platformChoices.map((option) => option.value);
-    setForm((current) => ({
-      title: draft.title?.trim() || current.title,
-      genre: draft.genre?.trim() || current.genre,
-      platform: pickValidValue(draft.platform ?? current.platform, platformValues),
-      targetChapters: draft.targetChapters ? String(draft.targetChapters) : current.targetChapters,
-      chapterWordCount: draft.chapterWordCount ? String(draft.chapterWordCount) : current.chapterWordCount,
-      brief: draftBrief || current.brief,
-    }));
+    setForm((current) => applyCreationDraftToFormState(current, draft, platformChoices));
   };
 
   const refreshDraft = async (): Promise<BookCreationDraft | undefined> => {
@@ -561,15 +813,33 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
     if (!bookCreateSessionId) {
       setBookCreateSessionIdState(sessionId);
     }
+    const koreanModePrompt = "한국어 모드: 모든 응답, 작품 설정, 장르 선택, 제목, 개요, 본문 지시는 자연스러운 한국어로 처리하세요. 새 작품에는 가능한 경우 ko-* 한국어 장르 템플릿을 우선 사용하세요.";
+    const localizedInstruction = uiLang !== "ko"
+      ? instruction
+      : instruction.startsWith("/new ")
+        ? `/new ${koreanModePrompt}\n\n${instruction.slice(5)}`
+        : `${koreanModePrompt}\n\n${instruction}`;
     return fetchJson<AgentResponse>("/agent", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(buildBookCreateAgentRequest(instruction, sessionId)),
+      body: JSON.stringify(buildBookCreateAgentRequest(localizedInstruction, sessionId, uiLang)),
     });
   };
 
   const handleDraftSubmit = async () => {
-    const instruction = resolveDraftInstruction(input, Boolean(draft));
+    const fallbackGenre = !selectedGenre && genreChoices.length > 0
+      ? genreChoices[Math.floor(Math.random() * genreChoices.length)]
+      : undefined;
+    const instruction = buildDraftInstructionFromForm({
+      input,
+      form,
+      hasDraft: Boolean(draft),
+      uiLanguage: uiLang,
+      genreLabel: selectedGenre?.name,
+      fallbackGenreId: fallbackGenre?.id,
+      fallbackGenreLabel: fallbackGenre?.name,
+      platformLabel: selectedPlatform?.label,
+    });
     if (!instruction) {
       return;
     }
@@ -582,13 +852,26 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
       if (createdBookId) {
         setStatus(data.response ?? null);
         setDraft(undefined);
-        await waitForBookReady(createdBookId);
+        await waitForBookReady(createdBookId, { language: projectLang });
         nav.toBook(createdBookId);
         return;
       }
       setInput("");
       setStatus(data.response ?? null);
-      setDraft(data.session?.creationDraft);
+      const parsedDraft = extractCreationDraftFromAssistantText({
+        responseText: data.response,
+        concept: instruction,
+        genreId: form.genre || fallbackGenre?.id,
+        language: resolveBookCreateLanguage(projectLang, form.genre || (fallbackGenre?.id ?? "")),
+        platform: form.platform,
+        targetChapters: form.targetChapters,
+        chapterWordCount: form.chapterWordCount,
+      });
+      const nextDraft = data.session?.creationDraft ?? parsedDraft;
+      setDraft(nextDraft);
+      if (nextDraft) {
+        setForm((current) => applyCreationDraftToFormState(current, nextDraft, platformChoices));
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -605,16 +888,19 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
     setError(null);
     setStatus(copy.creationStatus);
     try {
-      const payload = buildBookCreatePayload(form, projectLang);
+      const payload = buildBookCreatePayload(
+        form,
+        resolveBookCreateLanguage(projectLang, form.genre),
+      );
       const data = await fetchJson<{ status?: string; bookId?: string }>("/books/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
       if (!data.bookId) {
-        throw new Error(projectLang === "zh" ? "创建请求没有返回书籍 ID。" : "Create request did not return a book id.");
+        throw new Error(projectLang === "ko" ? "생성 요청에서 작품 ID가 반환되지 않았습니다." : projectLang === "zh" ? "创建请求没有返回书籍 ID。" : "Create request did not return a book id.");
       }
-      await waitForBookReady(data.bookId);
+      await waitForBookReady(data.bookId, { language: projectLang });
       nav.toBook(data.bookId);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -635,11 +921,11 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
       const data = await runAgentInstruction("/create");
       const bookId = data.session?.activeBookId;
       if (!bookId) {
-        throw new Error(projectLang === "zh" ? "创建完成后没有返回书籍 ID。" : "Create succeeded but no book id was returned.");
+        throw new Error(projectLang === "ko" ? "생성은 완료되었지만 작품 ID가 반환되지 않았습니다." : projectLang === "zh" ? "创建完成后没有返回书籍 ID。" : "Create succeeded but no book id was returned.");
       }
       setStatus(data.response ?? null);
       setDraft(undefined);
-      await waitForBookReady(bookId);
+      await waitForBookReady(bookId, { language: projectLang });
       nav.toBook(bookId);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -710,12 +996,21 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
             </label>
             <label className="space-y-2">
               <span className="text-xs font-medium text-muted-foreground">{copy.genreLabel}</span>
-              <input
+              <select
                 value={form.genre}
                 onChange={(event) => updateForm({ genre: event.target.value })}
-                className={`w-full ${c.input} rounded-md px-3 py-2.5 focus:outline-none text-sm`}
-                placeholder={copy.genrePlaceholder}
-              />
+                className={`w-full ${c.input} rounded-md px-3 py-2.5 focus:outline-none text-sm bg-background`}
+              >
+                <option value="">{copy.genrePlaceholder}</option>
+                {!currentGenreIsListed && form.genre.trim() && (
+                  <option value={form.genre}>{form.genre}</option>
+                )}
+                {genreChoices.map((genre) => (
+                  <option key={genre.id} value={genre.id}>
+                    {genre.name} ({genre.id})
+                  </option>
+                ))}
+              </select>
             </label>
           </div>
 
@@ -806,7 +1101,7 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
             <div className="flex flex-wrap gap-2">
               <button
                 onClick={handleDraftSubmit}
-                disabled={submitting || creating || !input.trim()}
+                disabled={submitting || creating || !canSubmitDraft}
                 className={`inline-flex items-center gap-2 px-3 py-2 ${c.btnPrimary} rounded-md disabled:opacity-50 font-medium text-xs`}
               >
                 <Sparkles size={14} />
@@ -832,7 +1127,7 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
             </div>
 
             {loadingDraft ? (
-              <div className="text-sm text-muted-foreground">{projectLang === "zh" ? "读取草案中…" : "Loading draft…"}</div>
+              <div className="text-sm text-muted-foreground">{projectLang === "ko" ? "초안 불러오는 중..." : projectLang === "zh" ? "读取草案中…" : "Loading draft…"}</div>
             ) : draft ? (
               <div className="space-y-4">
                 {summaryRows.length > 0 ? (

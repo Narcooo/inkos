@@ -128,18 +128,12 @@ describe("pickModelSelection", () => {
     expect(pickModelSelection(grouped, "kimi-k2.5", "moonshot")).toBeNull();
   });
 
-  it("selects the first available model when current selection is missing", () => {
-    expect(pickModelSelection(grouped, "gemini-3.1-flash-image-preview", "google")).toEqual({
-      model: "gemini-2.5-flash",
-      service: "google",
-    });
+  it("does not replace a missing current selection without a saved preference", () => {
+    expect(pickModelSelection(grouped, "gemini-3.1-flash-image-preview", "google")).toBeNull();
   });
 
-  it("selects the first available model when there is no current selection", () => {
-    expect(pickModelSelection(grouped, null, null)).toEqual({
-      model: "gemini-2.5-flash",
-      service: "google",
-    });
+  it("does not select the first available model when there is no saved preference", () => {
+    expect(pickModelSelection(grouped, null, null)).toBeNull();
   });
 
   it("prefers the configured service and model when there is no current selection", () => {
@@ -152,12 +146,12 @@ describe("pickModelSelection", () => {
     });
   });
 
-  it("prefers the configured service even when its configured model is stale", () => {
+  it("uses the configured model literally even when it is not in the loaded list", () => {
     expect(pickModelSelection(grouped, null, null, {
       service: "moonshot",
       model: "kimi-k3",
     })).toEqual({
-      model: "kimi-k2.5",
+      model: "kimi-k3",
       service: "moonshot",
     });
   });

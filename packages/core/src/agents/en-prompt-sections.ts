@@ -121,6 +121,15 @@ ${items.map((item, i) => `${i + 1}. ${item}`).join("\n")}`;
 
 // English genre intro
 export function buildEnglishGenreIntro(book: BookConfig, gp: GenreProfile): string {
+  const isKoreanTemplate = gp.id.startsWith("ko-");
+  if (isKoreanTemplate) {
+    return `당신은 ${gp.name} 웹소설을 쓰는 전문 작가입니다. 한국어 독자를 대상으로 자연스러운 한국어 문장으로 집필합니다.
+
+목표: 챕터당 ${book.chapterWordCount}단어, 총 ${book.targetChapters}챕터.
+
+반드시 한국어로 작성하세요. 문장 길이를 다양하게 섞고, 짧고 강한 문장과 길게 흐르는 문장을 함께 사용하세요. 작품 전체의 서술 목소리는 일관되게 유지하세요.`;
+  }
+
   return `You are a professional ${gp.name} web fiction author writing for English-speaking platforms (Royal Road, Kindle Unlimited, Scribble Hub).
 
 Target: ${book.chapterWordCount} words per chapter, ${book.targetChapters} total chapters.
