@@ -1267,6 +1267,7 @@ export class PipelineRunner {
       const language = this.resolveLengthLanguage(book.language ?? gp.language);
       const displayLanguage = this.resolveBookDisplayLanguage(book, gp.language);
       const countingMode = resolveLengthCountingMode(language);
+      const manualRevisionContext = this.config.externalContext?.trim();
       const reviseControlInput = (this.config.inputGovernanceMode ?? "v2") === "legacy"
         ? undefined
         : await this.createGovernedArtifacts(
@@ -1293,7 +1294,7 @@ export class PipelineRunner {
           : undefined,
       });
 
-      if (preRevision.blockingCount === 0 && preRevision.aiTellCount === 0) {
+      if (preRevision.blockingCount === 0 && preRevision.aiTellCount === 0 && !manualRevisionContext) {
         return {
           chapterNumber: targetChapter,
           wordCount: countChapterLength(content, countingMode),
@@ -1318,11 +1319,26 @@ export class PipelineRunner {
         zh: `修订第${targetChapter}章`,
         en: `revising chapter ${targetChapter}`,
       });
+      const revisionIssues: ReadonlyArray<AuditIssue> = manualRevisionContext
+        ? [
+            ...preRevision.auditResult.issues,
+            {
+              severity: "warning",
+              category: stageLanguage === "ko" ? "문체 수정 요청" : stageLanguage === "en" ? "Style Revision Request" : "文风修订要求",
+              description: stageLanguage === "ko"
+                ? "사용자가 이미 완성된 장을 선택한 문체 양식에 맞춰 수정하라고 요청했습니다."
+                : stageLanguage === "en"
+                  ? "The user requested a completed chapter style revision using the selected style template."
+                  : "用户要求按所选文风模板修订已完成章节。",
+              suggestion: manualRevisionContext,
+            },
+          ]
+        : preRevision.auditResult.issues;
       const reviseOutput = await reviser.reviseChapter(
         bookDir,
         content,
         targetChapter,
-        preRevision.auditResult.issues,
+        revisionIssues,
         mode,
         book.genre,
         reviseControlInput
@@ -1402,7 +1418,10 @@ export class PipelineRunner {
       const blockingDidNotWorsen = effectivePostRevision.blockingCount <= preRevision.blockingCount;
       const criticalDidNotWorsen = effectivePostRevision.criticalCount <= preRevision.criticalCount;
       const aiDidNotWorsen = effectivePostRevision.aiTellCount <= preRevision.aiTellCount;
-      const shouldApplyRevision = blockingDidNotWorsen
+      const contentChanged = normalizedRevision.content.trim() !== content.trim();
+      const shouldApplyRevision = manualRevisionContext
+        ? blockingDidNotWorsen && criticalDidNotWorsen && aiDidNotWorsen && contentChanged
+        : blockingDidNotWorsen
         && criticalDidNotWorsen
         && aiDidNotWorsen
         && (improvedBlocking || improvedAITells);

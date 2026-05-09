@@ -7,6 +7,11 @@ import { useColors } from "../hooks/use-colors";
 import { deriveBookActivity, shouldRefetchBookView } from "../hooks/use-book-activity";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import {
+  STYLE_REVISION_TEMPLATES,
+  buildStyleRevisionBrief,
+  findStyleRevisionTemplate,
+} from "./style-revision-templates";
+import {
   ChevronLeft,
   Zap,
   FileText,
@@ -228,6 +233,25 @@ export function BookDetail({
       refetch();
     } catch (e) {
       alert(e instanceof Error ? e.message : uiLanguage === "ko" ? "수정 실패" : uiLanguage === "en" ? "Revision failed" : "修订失败");
+    } finally {
+      setRevisingChapters((prev) => prev.filter((n) => n !== chapterNum));
+    }
+  };
+
+  const handleStyleRevise = async (chapterNum: number, templateId: string) => {
+    const template = findStyleRevisionTemplate(templateId);
+    if (!template) return;
+    const brief = buildStyleRevisionBrief(template, uiLanguage);
+    setRevisingChapters((prev) => [...prev, chapterNum]);
+    try {
+      await fetchJson(`/books/${bookId}/revise/${chapterNum}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "polish", brief }),
+      });
+      refetch();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : uiLanguage === "ko" ? "문체 수정 실패" : uiLanguage === "en" ? "Style revision failed" : "文风修订失败");
     } finally {
       setRevisingChapters((prev) => prev.filter((n) => n !== chapterNum));
     }
@@ -620,8 +644,13 @@ export function BookDetail({
                         disabled={revisingChapters.includes(ch.number)}
                         value=""
                         onChange={(e) => {
-                          const mode = e.target.value as ReviseMode;
-                          if (mode) handleRevise(ch.number, mode);
+                          const value = e.target.value;
+                          if (value.startsWith("style:")) {
+                            void handleStyleRevise(ch.number, value.slice("style:".length));
+                            return;
+                          }
+                          const mode = value as ReviseMode;
+                          if (mode) void handleRevise(ch.number, mode);
                         }}
                         className="px-2 py-1.5 text-[11px] font-bold rounded-lg bg-secondary text-muted-foreground border border-border/50 outline-none hover:text-primary hover:bg-primary/10 transition-all disabled:opacity-50 cursor-pointer"
                         title={uiLanguage === "ko" ? "AI로 수정" : uiLanguage === "en" ? "Revise with AI" : "用 AI 修订"}
@@ -632,6 +661,13 @@ export function BookDetail({
                         <option value="rewrite">{t("book.rewrite")}</option>
                         <option value="rework">{t("book.rework")}</option>
                         <option value="anti-detect">{t("book.antiDetect")}</option>
+                        <optgroup label={uiLanguage === "ko" ? "문체 수정 양식" : uiLanguage === "en" ? "Style Templates" : "文风模板"}>
+                          {STYLE_REVISION_TEMPLATES.map((template) => (
+                            <option key={template.id} value={`style:${template.id}`}>
+                              {template.label[uiLanguage]}
+                            </option>
+                          ))}
+                        </optgroup>
                       </select>
                     </div>
                   </td>
