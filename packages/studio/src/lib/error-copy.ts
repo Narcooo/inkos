@@ -26,6 +26,10 @@ const KNOWN_RUNTIME_REPLACEMENTS: ReadonlyArray<{
     pattern: /INKOS_LLM_API_KEY not set\. Run 'inkos config set-global' or add it to project \.env file\./g,
     replacement: "INKOS_LLM_API_KEY가 설정되지 않았습니다. `inkos config set-global`을 실행하거나 프로젝트 .env 파일에 추가하세요.",
   },
+  {
+    pattern: /Studio server connection was interrupted\. The request may have been stopped while the server was restarting\. Please try again\./g,
+    replacement: "Studio 서버 연결이 중간에 끊겼습니다. 서버가 재시작되는 동안 요청이 중단되었을 수 있습니다. 잠시 후 다시 시도해 주세요.",
+  },
 ];
 
 export function localizeKnownRuntimeMessage(message: string): string {

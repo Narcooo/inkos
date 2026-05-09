@@ -1279,6 +1279,74 @@ export class PipelineRunner {
       const displayLanguage = this.resolveBookDisplayLanguage(book, gp.language);
       const countingMode = resolveLengthCountingMode(language);
       const manualRevisionContext = this.config.externalContext?.trim();
+      if (options.persistAs === "copy" && manualRevisionContext) {
+        const chapterLengthTarget = chapterMeta.lengthTelemetry?.target ?? book.chapterWordCount;
+        const lengthLanguage = chapterMeta.lengthTelemetry?.countingMode === "en_words"
+          ? "en"
+          : language;
+        const lengthSpec = buildLengthSpec(chapterLengthTarget, lengthLanguage);
+        const reviser = new ReviserAgent(this.agentCtxFor("reviser", bookId));
+        this.logStage(stageLanguage, {
+          zh: `按文风模板修订第${targetChapter}章副本`,
+          en: `revising chapter ${targetChapter} as a style copy`,
+          ko: `${targetChapter}장 문체 사본 수정`,
+        });
+        const reviseOutput = await reviser.reviseChapter(
+          bookDir,
+          content,
+          targetChapter,
+          [
+            {
+              severity: "warning",
+              category: stageLanguage === "ko" ? "문체 수정 요청" : stageLanguage === "en" ? "Style Revision Request" : "文风修订要求",
+              description: stageLanguage === "ko"
+                ? "사용자가 원본을 보존한 채 선택한 문체 양식에 맞춘 수정 사본을 요청했습니다."
+                : stageLanguage === "en"
+                  ? "The user requested a style-revised copy while preserving the original chapter."
+                  : "用户要求在保留原章的同时生成文风修订副本。",
+              suggestion: manualRevisionContext,
+            },
+          ],
+          mode,
+          book.genre,
+          { lengthSpec },
+        );
+        if (reviseOutput.revisedContent.length === 0) {
+          throw new Error("Reviser returned empty content");
+        }
+        const chaptersDir = join(bookDir, "chapters");
+        const files = await readdir(chaptersDir);
+        const paddedNum = String(targetChapter).padStart(4, "0");
+        const existingFile = files.find((f) => f.startsWith(paddedNum) && f.endsWith(".md"));
+        if (!existingFile) {
+          throw new Error(`Chapter ${targetChapter} file not found in ${chaptersDir} (expected filename starting with ${paddedNum})`);
+        }
+        const reviseLang = this.resolveLengthLanguage(book.language ?? gp.language);
+        const reviseHeading = reviseLang === "en"
+          ? `# Chapter ${targetChapter}: ${chapterMeta.title}`
+          : reviseLang === "ko"
+            ? `# ${targetChapter}장 ${chapterMeta.title}`
+            : `# 第${targetChapter}章 ${chapterMeta.title}`;
+        const revisionDir = join(bookDir, "revisions", `chapter-${paddedNum}`);
+        await mkdir(revisionDir, { recursive: true });
+        const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+        const copyFile = `${timestamp}-style-revision.md`;
+        const relativeSavedPath = ["revisions", `chapter-${paddedNum}`, copyFile].join("/");
+        await writeFile(
+          join(revisionDir, copyFile),
+          `${reviseHeading}\n\n${reviseOutput.revisedContent}`,
+          "utf-8",
+        );
+        return {
+          chapterNumber: targetChapter,
+          wordCount: countChapterLength(reviseOutput.revisedContent, lengthSpec.countingMode),
+          fixedIssues: reviseOutput.fixedIssues,
+          applied: reviseOutput.revisedContent.trim() !== content.trim(),
+          status: "ready-for-review",
+          persistedAs: "copy",
+          savedPath: relativeSavedPath,
+        };
+      }
       const reviseControlInput = (this.config.inputGovernanceMode ?? "v2") === "legacy"
         ? undefined
         : await this.createGovernedArtifacts(

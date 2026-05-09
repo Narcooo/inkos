@@ -49,6 +49,16 @@ describe("fetchJson", () => {
     await expect(fetchJson("/books/../bad", {}, { fetchImpl })).rejects.toThrow("Invalid book ID: ../bad");
   });
 
+  it("turns network fetch failures into a localized server interruption message", async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new TypeError("Failed to fetch");
+    });
+
+    await expect(fetchJson("/books/demo/revise/1", { method: "POST" }, { fetchImpl })).rejects.toThrow(
+      "Studio 서버 연결이 중간에 끊겼습니다.",
+    );
+  });
+
   it("localizes known runtime errors before throwing", async () => {
     const fetchImpl = vi.fn(async () =>
       new Response(JSON.stringify({
@@ -60,7 +70,7 @@ describe("fetchJson", () => {
     );
 
     await expect(fetchJson("/books/demo/write-next", { method: "POST" }, { fetchImpl })).rejects.toThrow(
-      "最新第 1 章处于状态降级（state-degraded）。继续写下一章前，请先修复状态，或重写这一章。",
+      "최신 1장이 상태 저하(state-degraded) 상태입니다. 다음 장을 쓰기 전에 상태를 복구하거나 해당 장을 다시 써주세요.",
     );
   });
 });
