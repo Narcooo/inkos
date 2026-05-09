@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Wand2 } from "lucide-react";
+import { Download, FileText, Upload, Wand2 } from "lucide-react";
 import { fetchJson, useApi } from "../hooks/use-api";
 import type { Theme } from "../hooks/use-theme";
 import type { TFunction } from "../hooks/use-i18n";
@@ -40,10 +40,17 @@ interface RevisionResponse {
   readonly persistedAs?: "chapter" | "copy";
 }
 
+interface TextRevisionResponse {
+  readonly revisedContent: string;
+  readonly fileName: string;
+}
+
 interface Nav {
   toDashboard: () => void;
   toBook: (id: string) => void;
 }
+
+type SourceMode = "book" | "file";
 
 function resolveLanguage(lang: string | undefined, uiLang: string): StyleTemplateLanguage {
   if (lang === "ko" || uiLang === "ko") return "ko";
@@ -70,6 +77,17 @@ function copyFor(language: StyleTemplateLanguage) {
         success: "문체 변경을 완료했습니다.",
         savedAt: "사본 저장 위치",
         failed: "문체 변경 실패",
+        source: "대상",
+        bookSource: "작품 장",
+        fileSource: "텍스트 파일",
+        file: "텍스트 또는 Markdown 파일",
+        chooseFile: ".txt 또는 .md 파일을 선택하세요.",
+        fileText: "파일 내용",
+        filePlaceholder: "파일을 선택하거나 문체를 변경할 텍스트를 붙여 넣으세요.",
+        runFile: "파일 문체 변경",
+        download: "변경본 다운로드",
+        fileSuccess: "파일 문체 변경을 완료했습니다.",
+        unsupportedFile: "텍스트 파일(.txt, .md, .markdown)만 사용할 수 있습니다.",
       }
     : language === "en"
       ? {
@@ -89,6 +107,17 @@ function copyFor(language: StyleTemplateLanguage) {
           success: "Style revision complete.",
           savedAt: "Copy saved at",
           failed: "Style revision failed",
+          source: "Source",
+          bookSource: "Book Chapter",
+          fileSource: "Text File",
+          file: "Text or Markdown file",
+          chooseFile: "Select a .txt or .md file.",
+          fileText: "File content",
+          filePlaceholder: "Select a file or paste the text to revise.",
+          runFile: "Revise File Style",
+          download: "Download Revision",
+          fileSuccess: "File style revision complete.",
+          unsupportedFile: "Only text files (.txt, .md, .markdown) are supported.",
         }
       : {
           title: "文风修改",
@@ -107,7 +136,47 @@ function copyFor(language: StyleTemplateLanguage) {
           success: "文风修改完成。",
           savedAt: "副本保存位置",
           failed: "文风修改失败",
+          source: "对象",
+          bookSource: "书籍章节",
+          fileSource: "文本文件",
+          file: "文本或 Markdown 文件",
+          chooseFile: "选择 .txt 或 .md 文件。",
+          fileText: "文件内容",
+          filePlaceholder: "选择文件，或粘贴要修改文风的文本。",
+          runFile: "修改文件文风",
+          download: "下载修改稿",
+          fileSuccess: "文件文风修改完成。",
+          unsupportedFile: "只支持文本文件（.txt、.md、.markdown）。",
         };
+}
+
+function isSupportedTextFile(file: File): boolean {
+  const name = file.name.toLowerCase();
+  return name.endsWith(".txt")
+    || name.endsWith(".md")
+    || name.endsWith(".markdown")
+    || file.type === "text/plain"
+    || file.type === "text/markdown";
+}
+
+function revisedFileName(fileName: string): string {
+  const fallback = "style-revision.md";
+  const safe = fileName.trim() || fallback;
+  const dot = safe.lastIndexOf(".");
+  if (dot <= 0) return `${safe}-style-revision.md`;
+  return `${safe.slice(0, dot)}-style-revision${safe.slice(dot)}`;
+}
+
+function downloadTextFile(fileName: string, content: string): void {
+  const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = revisedFileName(fileName);
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }
 
 export function StyleRevisionManager({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunction }) {
@@ -117,10 +186,14 @@ export function StyleRevisionManager({ nav, theme, t }: { nav: Nav; theme: Theme
   const books = booksData?.books ?? [];
   const [styleTemplateVersion, setStyleTemplateVersion] = useState(0);
   const styleTemplates = useMemo(() => getAllStyleRevisionTemplates(), [styleTemplateVersion]);
+  const [sourceMode, setSourceMode] = useState<SourceMode>("book");
   const [bookId, setBookId] = useState("");
   const [chapterNumber, setChapterNumber] = useState("");
   const [templateId, setTemplateId] = useState(styleTemplates[0]?.id ?? "");
   const [customInstruction, setCustomInstruction] = useState("");
+  const [fileName, setFileName] = useState("");
+  const [fileText, setFileText] = useState("");
+  const [revisedFileText, setRevisedFileText] = useState("");
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState<{ tone: "success" | "error"; message: string } | null>(null);
   const { data: detail, refetch } = useApi<BookDetailResponse>(
@@ -131,7 +204,8 @@ export function StyleRevisionManager({ nav, theme, t }: { nav: Nav; theme: Theme
   const copy = copyFor(language);
   const selectedTemplate = findStyleRevisionTemplate(templateId) ?? styleTemplates[0];
   const chapters = detail?.chapters ?? [];
-  const canRun = Boolean(bookId && chapterNumber && selectedTemplate && !running);
+  const canRunBookRevision = Boolean(bookId && chapterNumber && selectedTemplate && !running);
+  const canRunFileRevision = Boolean(fileText.trim() && selectedTemplate && !running);
 
   useEffect(() => {
     const onTemplatesChanged = () => setStyleTemplateVersion((version) => version + 1);
@@ -172,7 +246,7 @@ export function StyleRevisionManager({ nav, theme, t }: { nav: Nav; theme: Theme
   }, [copy.custom, customInstruction, language, selectedTemplate]);
 
   const runRevision = async () => {
-    if (!canRun || !selectedTemplate) return;
+    if (!canRunBookRevision || !selectedTemplate) return;
     setRunning(true);
     setStatus(null);
     try {
@@ -194,6 +268,47 @@ export function StyleRevisionManager({ nav, theme, t }: { nav: Nav; theme: Theme
     } finally {
       setRunning(false);
     }
+  };
+
+  const runFileRevision = async () => {
+    if (!canRunFileRevision || !selectedTemplate) return;
+    setRunning(true);
+    setStatus(null);
+    setRevisedFileText("");
+    try {
+      const result = await fetchJson<TextRevisionResponse>("/style-revision/text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          content: fileText,
+          brief: templateBrief,
+          fileName: fileName || "input.md",
+          language,
+        }),
+      });
+      setFileName(result.fileName || fileName || "input.md");
+      setRevisedFileText(result.revisedContent);
+      setStatus({ tone: "success", message: copy.fileSuccess });
+    } catch (error) {
+      setStatus({
+        tone: "error",
+        message: error instanceof Error ? error.message : copy.failed,
+      });
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const onFileSelected = async (file: File | undefined) => {
+    if (!file) return;
+    setStatus(null);
+    setRevisedFileText("");
+    if (!isSupportedTextFile(file)) {
+      setStatus({ tone: "error", message: copy.unsupportedFile });
+      return;
+    }
+    setFileName(file.name);
+    setFileText(await file.text());
   };
 
   return (
@@ -223,7 +338,32 @@ export function StyleRevisionManager({ nav, theme, t }: { nav: Nav; theme: Theme
       )}
 
       <section className="rounded-lg border border-border/60 bg-card/80 p-5 space-y-5">
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="space-y-2">
+          <span className="text-xs font-medium text-muted-foreground">{copy.source}</span>
+          <div className="inline-flex rounded-md border border-border bg-background/70 p-1">
+            {([
+              ["book", copy.bookSource],
+              ["file", copy.fileSource],
+            ] as const).map(([mode, label]) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => {
+                  setSourceMode(mode);
+                  setStatus(null);
+                }}
+                className={`px-3 py-1.5 rounded text-sm font-medium transition ${
+                  sourceMode === mode ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {sourceMode === "book" && (
+          <div className="grid gap-4 sm:grid-cols-2">
           <label className="space-y-2">
             <span className="text-xs font-medium text-muted-foreground">{copy.book}</span>
             <select
@@ -261,7 +401,40 @@ export function StyleRevisionManager({ nav, theme, t }: { nav: Nav; theme: Theme
               ))}
             </select>
           </label>
-        </div>
+          </div>
+        )}
+
+        {sourceMode === "file" && (
+          <div className="space-y-4">
+            <label className="space-y-2 block">
+              <span className="text-xs font-medium text-muted-foreground">{copy.file}</span>
+              <div className={`w-full ${c.input} rounded-md px-3 py-3 bg-background`}>
+                <input
+                  type="file"
+                  accept=".txt,.md,.markdown,text/plain,text/markdown"
+                  onChange={(event) => void onFileSelected(event.target.files?.[0])}
+                  className="block w-full text-sm text-muted-foreground file:mr-3 file:rounded-md file:border-0 file:bg-primary file:px-3 file:py-2 file:text-sm file:font-medium file:text-primary-foreground"
+                />
+                <p className="mt-2 text-xs text-muted-foreground">{fileName || copy.chooseFile}</p>
+              </div>
+            </label>
+
+            <label className="space-y-2 block">
+              <span className="text-xs font-medium text-muted-foreground">{copy.fileText}</span>
+              <textarea
+                value={fileText}
+                onChange={(event) => {
+                  setFileText(event.target.value);
+                  setRevisedFileText("");
+                  setStatus(null);
+                }}
+                rows={12}
+                className={`w-full ${c.input} rounded-md px-3 py-3 focus:outline-none text-sm leading-7 resize-y font-mono`}
+                placeholder={copy.filePlaceholder}
+              />
+            </label>
+          </div>
+        )}
 
         <label className="space-y-2 block">
           <span className="text-xs font-medium text-muted-foreground">{copy.template}</span>
@@ -308,16 +481,28 @@ export function StyleRevisionManager({ nav, theme, t }: { nav: Nav; theme: Theme
         </label>
 
         <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={() => void runRevision()}
-            disabled={!canRun}
-            className={`inline-flex items-center gap-2 px-4 py-2.5 ${c.btnPrimary} rounded-md disabled:opacity-50 font-medium text-sm`}
-          >
-            <Wand2 size={15} />
-            {running ? copy.running : copy.run}
-          </button>
-          {bookId && (
+          {sourceMode === "book" ? (
+            <button
+              type="button"
+              onClick={() => void runRevision()}
+              disabled={!canRunBookRevision}
+              className={`inline-flex items-center gap-2 px-4 py-2.5 ${c.btnPrimary} rounded-md disabled:opacity-50 font-medium text-sm`}
+            >
+              <Wand2 size={15} />
+              {running ? copy.running : copy.run}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void runFileRevision()}
+              disabled={!canRunFileRevision}
+              className={`inline-flex items-center gap-2 px-4 py-2.5 ${c.btnPrimary} rounded-md disabled:opacity-50 font-medium text-sm`}
+            >
+              <Upload size={15} />
+              {running ? copy.running : copy.runFile}
+            </button>
+          )}
+          {sourceMode === "book" && bookId && (
             <button
               type="button"
               onClick={() => nav.toBook(bookId)}
@@ -326,8 +511,33 @@ export function StyleRevisionManager({ nav, theme, t }: { nav: Nav; theme: Theme
               {copy.openBook}
             </button>
           )}
+          {sourceMode === "file" && revisedFileText && (
+            <button
+              type="button"
+              onClick={() => downloadTextFile(fileName || "input.md", revisedFileText)}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-md border border-border text-muted-foreground hover:text-foreground hover:border-foreground/20 font-medium text-sm"
+            >
+              <Download size={15} />
+              {copy.download}
+            </button>
+          )}
         </div>
       </section>
+
+      {sourceMode === "file" && revisedFileText && (
+        <section className="rounded-lg border border-border/60 bg-card/80 p-5 space-y-3">
+          <div className="flex items-center gap-2">
+            <FileText size={16} className="text-primary" />
+            <h2 className="text-lg font-serif">{copy.download}</h2>
+          </div>
+          <textarea
+            value={revisedFileText}
+            onChange={(event) => setRevisedFileText(event.target.value)}
+            rows={14}
+            className={`w-full ${c.input} rounded-md px-3 py-3 focus:outline-none text-sm leading-7 resize-y font-mono`}
+          />
+        </section>
+      )}
     </div>
   );
 }

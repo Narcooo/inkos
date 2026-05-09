@@ -144,6 +144,88 @@ function extractToolError(result: unknown): string {
   return String(result).slice(0, 500);
 }
 
+interface TextStyleRevisionRequest {
+  readonly content?: unknown;
+  readonly brief?: unknown;
+  readonly fileName?: unknown;
+  readonly language?: unknown;
+}
+
+function normalizeTextStyleRevisionRequest(body: TextStyleRevisionRequest): {
+  readonly content: string;
+  readonly brief: string;
+  readonly fileName: string;
+  readonly language: "ko" | "en" | "zh";
+} {
+  const content = typeof body.content === "string" ? body.content.trim() : "";
+  if (!content) {
+    throw new ApiError(400, "INVALID_TEXT_REVISION_INPUT", "content cannot be blank");
+  }
+  if (content.length > 120_000) {
+    throw new ApiError(400, "INVALID_TEXT_REVISION_INPUT", "content is too long");
+  }
+  const brief = typeof body.brief === "string" ? body.brief.trim() : "";
+  if (!brief) {
+    throw new ApiError(400, "INVALID_TEXT_REVISION_INPUT", "brief cannot be blank");
+  }
+  const fileName = typeof body.fileName === "string" && body.fileName.trim()
+    ? body.fileName.trim().slice(0, 180)
+    : "input.md";
+  const rawLanguage = typeof body.language === "string" ? body.language : "";
+  const language = rawLanguage === "en" ? "en" : rawLanguage === "zh" ? "zh" : "ko";
+  return { content, brief, fileName, language };
+}
+
+function extractStandaloneRevisionContent(content: string): string {
+  const tagged = content.match(/===\s*REVISED_CONTENT\s*===\s*([\s\S]*?)(?=\n===\s*[A-Z_]+\s*===|$)/i);
+  const revised = tagged?.[1]?.trim() ?? content.trim();
+  return revised
+    .replace(/^```(?:markdown|md|text)?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+}
+
+function buildStandaloneStyleRevisionMessages(args: {
+  readonly content: string;
+  readonly brief: string;
+  readonly fileName: string;
+  readonly language: "ko" | "en" | "zh";
+}) {
+  const languageInstruction = args.language === "ko"
+    ? "출력은 반드시 한국어로 작성하되, 원문에 이미 있는 고유명사와 필요한 외국어 표기는 보존하세요."
+    : args.language === "en"
+      ? "Write the output in English unless the source text intentionally uses another language for names or quoted terms."
+      : "输出必须使用中文，但保留原文已有的专有名词和必要外文标记。";
+  return [
+    {
+      role: "system" as const,
+      content: [
+        "You are a professional prose style editor.",
+        "Revise the supplied standalone text according to the user's style brief.",
+        "Preserve factual events, character names, markdown headings, list structure, and the ending outcome.",
+        "Do not summarize, explain, ask follow-up questions, or wrap the result in commentary.",
+        languageInstruction,
+        "Output format:",
+        "=== REVISED_CONTENT ===",
+        "(the complete revised text only)",
+      ].join("\n"),
+    },
+    {
+      role: "user" as const,
+      content: [
+        `# File`,
+        args.fileName,
+        "",
+        "# Style brief",
+        args.brief,
+        "",
+        "# Text to revise",
+        args.content,
+      ].join("\n"),
+    },
+  ];
+}
+
 function isLikelyFailedToolResult(exec: CollectedToolExec): boolean {
   if (exec.status === "error") return true;
   const text = `${exec.error ?? ""}\n${exec.result ?? ""}`.toLowerCase();
@@ -2414,6 +2496,37 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       return c.json(result);
     } catch (e) {
       broadcast("revise:error", { bookId: id, error: String(e) });
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
+  app.post("/api/v1/style-revision/text", async (c) => {
+    try {
+      const body = await c.req.json<TextStyleRevisionRequest>().catch(() => ({}));
+      const request = normalizeTextStyleRevisionRequest(body);
+      const currentConfig = await loadCurrentProjectConfig();
+      const client = createLLMClient(currentConfig.llm);
+      const response = await chatCompletion(
+        client,
+        currentConfig.llm.model,
+        buildStandaloneStyleRevisionMessages(request),
+        {
+          temperature: 0.3,
+        },
+      );
+      const revisedContent = extractStandaloneRevisionContent(response.content);
+      if (!revisedContent) {
+        return c.json({ error: "Model did not return revised content" }, 502);
+      }
+      return c.json({
+        revisedContent,
+        fileName: request.fileName,
+        tokenUsage: response.usage,
+      });
+    } catch (e) {
+      if (e instanceof ApiError) {
+        return c.json({ error: e.message }, { status: e.status as 400 });
+      }
       return c.json({ error: String(e) }, 500);
     }
   });
