@@ -1,0 +1,33 @@
+{
+  "id": "show-dont-tell",
+  "label": {
+    "zh": "少解释，多呈现",
+    "en": "Show, Don't Tell",
+    "ko": "설명 줄이고 보여주기"
+  },
+  "description": {
+    "zh": "减少心理解释和作者评语，把信息压进动作、对白和场景细节。",
+    "en": "Reduce internal explanation and authorial commentary; move information into action, dialogue, and scene detail.",
+    "ko": "심리 설명과 작가적 해설을 줄이고 행동, 대화, 장면 디테일로 옮깁니다."
+  },
+  "rules": {
+    "zh": [
+      "删减直接心理说明、主题总结和作者评语。",
+      "用角色动作、停顿、选择、对白潜台词呈现情绪。",
+      "保留原剧情事实和人物关系，不新增支线。",
+      "每一段都必须有画面、动作、信息推进或人物变化。"
+    ],
+    "en": [
+      "Cut direct psychological explanation, thematic summary, and authorial commentary.",
+      "Show emotion through action, pauses, choices, and dialogue subtext.",
+      "Preserve plot facts and relationships; do not add side threads.",
+      "Every paragraph must carry image, action, information movement, or character change."
+    ],
+    "ko": [
+      "직접적인 심리 설명, 주제 요약, 작가적 논평을 줄일 것.",
+      "감정은 행동, 멈춤, 선택, 대화의 속뜻으로 드러낼 것.",
+      "원래의 사건 사실과 인물 관계는 바꾸지 말고 새 곁가지를 추가하지 말 것.",
+      "모든 문단은 장면, 행동, 정보 전진, 인물 변화 중 하나를 반드시 수행할 것."
+    ]
+  }
+}

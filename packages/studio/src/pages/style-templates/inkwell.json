@@ -1,0 +1,45 @@
+{
+  "id": "inkwell",
+  "label": {
+    "zh": "Inkwell",
+    "en": "Inkwell",
+    "ko": "Inkwell"
+  },
+  "description": {
+    "zh": "快速、轻巧、带干冷幽默的网文式修辞。用行动和细节呈现人物，避免套路化表达。",
+    "en": "A brisk, light web-novel polish with dry humor, action-led characterization, and anti-cliche guardrails.",
+    "ko": "빠른 웹소설 호흡에 건조한 유머와 톤 반전을 섞고, 인물은 행동과 디테일로 드러내는 문체입니다."
+  },
+  "rules": {
+    "zh": [
+      "保持阅读速度快。重要瞬间加重，其余部分轻快带过，不要让说明拖慢场面。",
+      "以「长叙述后接短句」制造节奏变化，但只在关键时刻使用，避免每段重复同一结构。",
+      "人物情绪和性格优先通过动作、选择、说话方式、反应和日常化思考呈现，不要直接贴标签。",
+      "严肃场面中可插入一个微小、琐碎或荒谬的细节形成干冷幽默；不要解释笑点。",
+      "对白保持短促、有来有回。减少冗长独白，并用少量动作代替反复的「他说/她说」。",
+      "背景描写只选一两个能定义氛围的感官细节；比喻要自然、临场，不堆叠套话。",
+      "不要照抄输入中的动作或描述，要改写成原创叙述，同时保留剧情事实。",
+      "禁用自我修正式转折、括号动作、频繁的「不是A而是B」、夸张神圣化词汇、刻板捷径和连续复用同一习惯动作。"
+    ],
+    "en": [
+      "Keep the reading pace brisk. Weight important moments, skim lightly over connective tissue, and do not let exposition stall the scene.",
+      "Use long narration followed by a short sentence for rhythm shifts, but only at key moments; do not repeat the same paragraph pattern.",
+      "Reveal emotion and personality through action, choices, speech patterns, reactions, and everyday thoughts rather than labels.",
+      "In serious moments, insert one small trivial or absurd detail to create dry humor or tonal reversal. Do not explain the joke.",
+      "Keep dialogue short and responsive. Avoid long monologues, and replace repeated speech tags with small actions when useful.",
+      "Choose one or two sensory details to define atmosphere. Use fresh, situational metaphors and avoid stacked cliches.",
+      "Do not copy the input's actions or descriptions verbatim; transform them into original narration while preserving plot facts.",
+      "Avoid self-correction turns, parenthetical actions, frequent 'not A but B' phrasing, grandiose sacred vocabulary, stereotyped shortcuts, and repeated signature gestures."
+    ],
+    "ko": [
+      "읽는 속도를 빠르게 유지할 것. 중요한 순간만 선명하게 누르고, 연결부는 가볍게 넘기며 설명으로 장면을 멈추지 말 것.",
+      "긴 서술 뒤 짧은 문장으로 끊는 리듬을 쓰되, 핵심 순간에만 사용할 것. 같은 문단 구조를 반복하지 말 것.",
+      "인물의 감정과 성격은 행동, 선택, 말투, 반응, 일상적인 사고방식으로 드러낼 것. 성격표처럼 직접 붙이지 말 것.",
+      "진지한 상황에 사소하거나 엉뚱한 디테일을 하나 끼워 넣어 건조한 유머나 톤 반전을 만들 것. 웃긴 이유를 설명하지 말 것.",
+      "대화는 짧고 빠르게 주고받게 할 것. 긴 독백을 피하고, 반복되는 대화 태그는 작은 행동으로 대체할 것.",
+      "배경 묘사는 분위기를 정하는 감각 디테일 한두 개만 고를 것. 비유는 관용구보다 장면에서 즉석으로 떠오른 것처럼 자연스럽게 쓸 것.",
+      "입력의 행동이나 묘사를 그대로 복사하지 말고 원래 사건 사실을 보존한 채 새 문장으로 바꿔 쓸 것.",
+      "중간 자기수정식 반전, 괄호 행동, 잦은 'A가 아니라 B였다' 구조, 과장된 신성화 어휘, 고정관념적 단축 묘사, 같은 버릇의 연속 반복을 피할 것."
+    ]
+  }
+}
