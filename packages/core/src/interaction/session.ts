@@ -61,6 +61,7 @@ export const BookCreationDraftSchema = z.object({
   conflictCore: z.string().min(1).optional(),
   volumeOutline: z.string().min(1).optional(),
   constraints: z.string().min(1).optional(),
+  styleGuide: z.string().min(1).optional(),
   authorIntent: z.string().min(1).optional(),
   currentFocus: z.string().min(1).optional(),
   nextQuestion: z.string().min(1).optional(),

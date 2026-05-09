@@ -336,6 +336,7 @@ export interface InitBookOptions {
   readonly externalContext?: string;
   readonly authorIntent?: string;
   readonly currentFocus?: string;
+  readonly styleGuide?: string;
 }
 
 export class PipelineRunner {
@@ -729,6 +730,20 @@ export class PipelineRunner {
         await writeFile(
           join(stagingBookDir, "story", "current_focus.md"),
           options.currentFocus.trimEnd() + "\n",
+          "utf-8",
+        );
+      }
+      if (options.styleGuide?.trim()) {
+        const styleGuidePath = join(stagingBookDir, "story", "style_guide.md");
+        const existingStyleGuide = await readFile(styleGuidePath, "utf-8").catch(() => "");
+        const styleHeading = stageLanguage === "ko"
+          ? "# 사용자 문체 지시"
+          : stageLanguage === "en"
+            ? "# User Style Direction"
+            : "# 用户文风要求";
+        await writeFile(
+          styleGuidePath,
+          `${styleHeading}\n\n${options.styleGuide.trimEnd()}\n\n${existingStyleGuide.trimStart()}`,
           "utf-8",
         );
       }

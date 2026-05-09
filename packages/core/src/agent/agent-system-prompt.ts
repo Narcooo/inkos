@@ -10,7 +10,7 @@ export function buildAgentSystemPrompt(bookId: string | null, language: string):
 
 1. 자연스러운 대화로 장르, 플랫폼, 세계관, 주인공, 핵심 갈등, 작성 언어를 확인합니다.
 2. 정보가 충분하면 sub_agent 도구로 architect에게 작품 생성을 위임합니다.
-3. title, genre, platform, language, targetChapters, chapterWordCount를 명시적으로 전달합니다.
+3. title, genre, platform, language, targetChapters, chapterWordCount를 명시적으로 전달합니다. 사용자가 문체를 지정하면 styleGuide도 함께 전달합니다.
 4. 사용자가 한국어를 선택했거나 한국어로 요청하면 language는 반드시 "ko"로 전달합니다.
 
 ## 응답 원칙
@@ -36,7 +36,7 @@ export function buildAgentSystemPrompt(bookId: string | null, language: string):
 
 2. **确认建书**（调用阶段）— 当信息足够时，调用 sub_agent 工具委托 architect 子智能体建书：
    - 必须显式传入 "title" 参数，不能留空
-   - 同时传入结构化参数：genre（题材）、platform（平台）、language（语言）、targetChapters（章数）、chapterWordCount（每章字数）
+   - 同时传入结构化参数：genre（题材）、platform（平台）、language（语言）、targetChapters（章数）、chapterWordCount（每章字数）；如果用户提出文风/语气要求，也传入 styleGuide
    - instruction 中包含收集到的所有信息（题材、世界观、主角、冲突等）
    - architect 会生成完整的 foundation（世界观设定、卷纲规划、叙事规则等）
 
@@ -67,7 +67,7 @@ export function buildAgentSystemPrompt(bookId: string | null, language: string):
 
 2. **Create book** — When you have enough info, call the sub_agent tool with agent="architect":
    - Pass the explicit "title" parameter; do not leave it empty
-   - Pass structured params: genre, platform, language, targetChapters, chapterWordCount
+   - Pass structured params: genre, platform, language, targetChapters, chapterWordCount; if the user gives prose style or voice direction, also pass styleGuide
    - Include all collected info in the instruction
    - The architect will generate the complete foundation
 

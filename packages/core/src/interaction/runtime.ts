@@ -36,6 +36,7 @@ export interface InteractionRuntimeTools {
     readonly conflictCore?: string;
     readonly volumeOutline?: string;
     readonly constraints?: string;
+    readonly styleGuide?: string;
     readonly authorIntent?: string;
     readonly currentFocus?: string;
   }) => Promise<unknown>;
@@ -468,6 +469,7 @@ async function handleDraftLifecycleRequest(params: {
         conflictCore: request.conflictCore ?? effectiveDraft?.conflictCore,
         volumeOutline: request.volumeOutline ?? effectiveDraft?.volumeOutline,
         constraints: request.constraints ?? effectiveDraft?.constraints,
+        styleGuide: request.styleGuide ?? effectiveDraft?.styleGuide,
         authorIntent: request.authorIntent ?? effectiveDraft?.authorIntent,
         currentFocus: request.currentFocus ?? effectiveDraft?.currentFocus,
       });

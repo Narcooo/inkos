@@ -54,6 +54,7 @@ describe("book create form", () => {
       targetChapters: "200",
       chapterWordCount: "3000",
       brief: "",
+      styleGuide: "",
     });
   });
 
@@ -79,6 +80,7 @@ describe("book create form", () => {
       targetChapters: "120",
       chapterWordCount: "2600",
       brief: " 主角查账洗白，旧案回潮。 ",
+      styleGuide: " 短句推进，多对白。 ",
     }, "zh")).toEqual({
       title: "夜港账本",
       genre: "都市悬疑",
@@ -87,6 +89,7 @@ describe("book create form", () => {
       targetChapters: 120,
       chapterWordCount: 2600,
       blurb: "主角查账洗白，旧案回潮。",
+      styleGuide: "短句推进，多对白。",
     });
   });
 });
@@ -168,12 +171,14 @@ describe("buildDraftInstructionFromForm", () => {
     targetChapters: "120",
     chapterWordCount: "2000",
     brief: "은퇴한 마법사가 작은 찻집을 열고 손님들의 문제를 해결한다.",
+    styleGuide: "담백한 3인칭, 짧은 문단, 감각 묘사 중심.",
   };
 
   it("recognizes any user-provided book field as draft material", () => {
     expect(hasEnoughFormForDraft(form)).toBe(true);
     expect(hasEnoughFormForDraft({ ...defaultBookCreateForm("en"), title: "Only a title" })).toBe(true);
     expect(hasEnoughFormForDraft({ ...defaultBookCreateForm("en"), genre: "cozy" })).toBe(true);
+    expect(hasEnoughFormForDraft({ ...defaultBookCreateForm("en"), styleGuide: "lean prose" })).toBe(true);
     expect(hasEnoughFormForDraft(defaultBookCreateForm("en"))).toBe(false);
   });
 
@@ -191,6 +196,8 @@ describe("buildDraftInstructionFromForm", () => {
     expect(instruction).toContain("제목: Tea House at the Last Gate");
     expect(instruction).toContain("장르: 코지 판타지 (ko-cozy)");
     expect(instruction).toContain("은퇴한 마법사");
+    expect(instruction).toContain("문체 지시:");
+    expect(instruction).toContain("담백한 3인칭");
   });
 
   it("builds an instruction even when the form is blank and can inject a random genre", () => {
@@ -235,6 +242,7 @@ describe("applyCreationDraftToFormState", () => {
       protagonist: "정체를 숨긴 은퇴 대마법사.",
       conflictCore: "평온한 일상과 과거 인연의 개입.",
       volumeOutline: "찻집 개업과 작은 사건 해결.",
+      styleGuide: "따뜻하고 담백한 3인칭.",
       missingFields: [],
       readyToCreate: true,
     }, [
@@ -246,6 +254,7 @@ describe("applyCreationDraftToFormState", () => {
       platform: "kakao-page",
       targetChapters: "120",
       chapterWordCount: "2000",
+      styleGuide: "따뜻하고 담백한 3인칭.",
     });
   });
 });
@@ -264,6 +273,7 @@ describe("extractCreationDraftFromAssistantText", () => {
         "| **핵심 갈등** | 데이터 조각의 진실을 둘러싼 거대 기업과의 대립. |",
         "| **1부 방향** | 의문의 데이터 칩을 발견하고 과거의 적과 마주한다. |",
         "| **소개문** | 기억을 잃은 전직 요원에게 낡은 데이터 칩 하나가 도착한다. |",
+        "| **문체** | 차갑고 절제된 3인칭, 기술 묘사는 짧게. |",
       ].join("\n"),
       concept: "SF 초안",
       genreId: "ko-sci-fi",
@@ -282,6 +292,7 @@ describe("extractCreationDraftFromAssistantText", () => {
       conflictCore: "데이터 조각의 진실을 둘러싼 거대 기업과의 대립.",
       volumeOutline: "의문의 데이터 칩을 발견하고 과거의 적과 마주한다.",
       blurb: "기억을 잃은 전직 요원에게 낡은 데이터 칩 하나가 도착한다.",
+      styleGuide: "차갑고 절제된 3인칭, 기술 묘사는 짧게.",
       readyToCreate: true,
     }));
   });

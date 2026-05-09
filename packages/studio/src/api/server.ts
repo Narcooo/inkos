@@ -926,6 +926,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       chapterWordCount?: number;
       targetChapters?: number;
       blurb?: string;
+      styleGuide?: string;
     }>();
 
     const now = new Date().toISOString();
@@ -957,6 +958,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
         chapterWordCount: body.chapterWordCount,
         targetChapters: body.targetChapters,
         blurb: body.blurb,
+        styleGuide: body.styleGuide,
       },
       tools,
     }).then(

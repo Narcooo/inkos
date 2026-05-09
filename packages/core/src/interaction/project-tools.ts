@@ -72,6 +72,7 @@ type PipelineLike = Pick<PipelineRunner, "writeNextChapter" | "reviseDraft"> & {
       readonly externalContext?: string;
       readonly authorIntent?: string;
       readonly currentFocus?: string;
+      readonly styleGuide?: string;
     },
   ) => Promise<void>;
 };
@@ -119,6 +120,7 @@ function buildCreationExternalContext(input: {
   readonly conflictCore?: string;
   readonly volumeOutline?: string;
   readonly constraints?: string;
+  readonly styleGuide?: string;
 }): string | undefined {
   const isKorean = input.genre?.startsWith("ko-")
     || input.language === "ko"
@@ -131,6 +133,7 @@ function buildCreationExternalContext(input: {
       input.conflictCore,
       input.volumeOutline,
       input.constraints,
+      input.styleGuide,
     ].filter(Boolean).join("\n"));
   const labels = isKorean
     ? {
@@ -142,6 +145,7 @@ function buildCreationExternalContext(input: {
         volumeOutline: "권/1부 방향",
         blurb: "소개와 판매 포인트",
         constraints: "창작 제약",
+        styleGuide: "문체 지시",
       }
     : input.language === "en"
       ? {
@@ -153,6 +157,7 @@ function buildCreationExternalContext(input: {
           volumeOutline: "Volume direction",
           blurb: "Blurb and selling points",
           constraints: "Creative constraints",
+          styleGuide: "Style direction",
         }
       : {
           worldPremise: "世界观与核心设定",
@@ -163,6 +168,7 @@ function buildCreationExternalContext(input: {
           volumeOutline: "卷纲方向",
           blurb: "简介卖点",
           constraints: "创作约束",
+          styleGuide: "文风要求",
         };
   const sections = [
     input.worldPremise ? `## ${labels.worldPremise}\n${input.worldPremise}` : undefined,
@@ -173,6 +179,7 @@ function buildCreationExternalContext(input: {
     input.volumeOutline ? `## ${labels.volumeOutline}\n${input.volumeOutline}` : undefined,
     input.blurb ? `## ${labels.blurb}\n${input.blurb}` : undefined,
     input.constraints ? `## ${labels.constraints}\n${input.constraints}` : undefined,
+    input.styleGuide ? `## ${labels.styleGuide}\n${input.styleGuide}` : undefined,
   ].filter((section): section is string => Boolean(section?.trim()));
 
   if (sections.length === 0) {
@@ -407,6 +414,7 @@ const CREATE_BOOK_TOOL: ToolDefinition = {
       chapterWordCount: { type: "number", description: "每章字数，默认 3000" },
       language: { type: "string", enum: ["zh", "en", "ko"], description: "写作语言：zh、en、ko。韩国语项目必须使用 ko。" },
       brief: { type: "string", description: "创意简述，会传给 Architect 智能体生成完整的世界观、主角、冲突等 foundation 文件。把用户提到的所有创意要素都写进这里。" },
+      styleGuide: { type: "string", description: "可选文风要求，如叙事人称、句子长度、对白密度、描写方式、禁用语气等。" },
     },
     required: ["title", "genre", "platform", "brief"],
   },
@@ -418,6 +426,7 @@ const BOOK_DRAFT_SYSTEM_PROMPT = [
   "规则：",
   "1. 从用户描述中推断所有字段，大胆预填合理默认值。",
   "2. brief 字段要详细——它会传给 Architect 智能体生成完整的世界观、主角、冲突等 foundation 文件。把用户提到的所有创意要素都写进 brief。",
+  "2a. 如果用户提到 문체/文风/style/叙事语气/문장 길이/대화 밀도，把它写进 styleGuide 字段，不要混进 brief。",
   "3. 如果用户后续要求修改某些字段，重新调用 create_book 工具，只更新被提到的字段，其余保持不变。",
   "4. 不要只回复文字讨论——必须调用 create_book 工具输出结构化参数。",
   "5. 如果用户输入来自 Studio 表单，已经包含书名、题材、平台、目标章数、每章字数、故事简介/核心设定，不要再追问这些字段；直接基于它们生成完整草案。",
@@ -450,7 +459,7 @@ function applyFieldsToDraft(
         draft.platform = value;
         break;
       case "language":
-        if (value === "zh" || value === "en") draft.language = value;
+        if (value === "zh" || value === "en" || value === "ko") draft.language = value;
         break;
       case "targetChapters": {
         const n = parseInt(value, 10);
@@ -486,6 +495,9 @@ function applyFieldsToDraft(
         break;
       case "constraints":
         draft.constraints = value;
+        break;
+      case "styleGuide":
+        draft.styleGuide = value;
         break;
       case "authorIntent":
         draft.authorIntent = value;
@@ -544,8 +556,13 @@ function extractStudioFormDraft(input: string, concept: string): BookCreationDra
     "Story brief / core premise",
     "故事简介 / 核心设定",
   ]);
+  const styleGuide = readLabeledBlock(input, [
+    "문체 지시",
+    "Style direction",
+    "文风要求",
+  ]);
 
-  if (!title && !genreRaw && !platformRaw && !targetChapters && !chapterWordCount && !blurb) {
+  if (!title && !genreRaw && !platformRaw && !targetChapters && !chapterWordCount && !blurb && !styleGuide) {
     return undefined;
   }
 
@@ -566,6 +583,7 @@ function extractStudioFormDraft(input: string, concept: string): BookCreationDra
     draft.blurb = blurb;
     draft.worldPremise = blurb;
   }
+  if (styleGuide) draft.styleGuide = styleGuide;
   if (/[가-힣]/u.test(input)) {
     draft.language = "ko";
   } else if (/Title|Story brief|Target chapters/u.test(input)) {
@@ -634,6 +652,7 @@ function extractMarkdownDraftFields(raw: string | undefined): Partial<BookCreati
   const conflictCore = get("핵심 갈등", "Core Conflict", "核心冲突");
   const volumeOutline = get("1부 방향", "Volume Direction", "卷一方向", "卷纲方向");
   const blurb = get("소개문", "Blurb", "简介", "介绍文");
+  const styleGuide = get("문체", "문체 지시", "Style", "Style direction", "文风", "文风要求");
 
   return {
     ...(title ? { title } : {}),
@@ -642,6 +661,7 @@ function extractMarkdownDraftFields(raw: string | undefined): Partial<BookCreati
     ...(conflictCore ? { conflictCore } : {}),
     ...(volumeOutline ? { volumeOutline } : {}),
     ...(blurb ? { blurb } : {}),
+    ...(styleGuide ? { styleGuide } : {}),
   };
 }
 
@@ -763,6 +783,7 @@ export function createInteractionToolsFromDeps(
         protagonist: contentDraft.protagonist ?? existingDraft?.protagonist,
         conflictCore: contentDraft.conflictCore ?? existingDraft?.conflictCore,
         volumeOutline: contentDraft.volumeOutline ?? existingDraft?.volumeOutline,
+        styleGuide: (parsedArgs.styleGuide as string) ?? contentDraft.styleGuide ?? formDraft?.styleGuide ?? existingDraft?.styleGuide,
       });
 
       return {
@@ -787,6 +808,7 @@ export function createInteractionToolsFromDeps(
         externalContext: buildCreationExternalContext(input),
         authorIntent: input.authorIntent,
         currentFocus: input.currentFocus,
+        styleGuide: input.styleGuide,
       });
       return {
         bookId: book.id,

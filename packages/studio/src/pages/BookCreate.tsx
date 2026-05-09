@@ -34,6 +34,7 @@ export interface BookCreateFormState {
   readonly targetChapters: string;
   readonly chapterWordCount: string;
   readonly brief: string;
+  readonly styleGuide: string;
 }
 
 export interface BookCreatePayload {
@@ -44,6 +45,7 @@ export interface BookCreatePayload {
   readonly targetChapters: number;
   readonly chapterWordCount: number;
   readonly blurb: string;
+  readonly styleGuide?: string;
 }
 
 export interface DraftSummaryRow {
@@ -91,6 +93,8 @@ interface PlatformCopy {
   readonly chapterWordCountLabel: string;
   readonly briefLabel: string;
   readonly briefPlaceholder: string;
+  readonly styleGuideLabel: string;
+  readonly styleGuidePlaceholder: string;
   readonly createBook: string;
   readonly creatingBook: string;
   readonly creationStatus: string;
@@ -151,6 +155,8 @@ const PAGE_COPY: Record<"zh" | "en", PlatformCopy> = {
     chapterWordCountLabel: "每章字数",
     briefLabel: "故事简介 / 核心设定",
     briefPlaceholder: "写清世界观、主角、目标、核心冲突和第一阶段方向。例如：近未来港口城，主角是水货账房，想洗白却被旧账拖回港口旧案。",
+    styleGuideLabel: "文风要求",
+    styleGuidePlaceholder: "可选。例：短句推进，强对白，少旁白，多动作细节。",
     createBook: "创建书籍",
     creatingBook: "创建中…",
     creationStatus: "正在创建书籍，完成后会自动进入工作台。",
@@ -187,6 +193,8 @@ const PAGE_COPY: Record<"zh" | "en", PlatformCopy> = {
     chapterWordCountLabel: "Words per chapter",
     briefLabel: "Story brief / core premise",
     briefPlaceholder: "Include the world, protagonist, goal, core conflict, and first arc direction.",
+    styleGuideLabel: "Style direction",
+    styleGuidePlaceholder: "Optional. Example: tight third-person POV, restrained lyricism, vivid sensory detail, quick dialogue.",
     createBook: "Create book",
     creatingBook: "Creating…",
     creationStatus: "Creating the book. The workspace will open automatically when it is ready.",
@@ -225,6 +233,8 @@ const KOREAN_PAGE_COPY: PlatformCopy = {
   chapterWordCountLabel: "장당 분량",
   briefLabel: "이야기 소개 / 핵심 설정",
   briefPlaceholder: "세계관, 주인공, 목표, 핵심 갈등, 1부 방향을 적어주세요.",
+  styleGuideLabel: "문체 지시",
+  styleGuidePlaceholder: "선택 사항. 예: 담백한 3인칭, 짧은 문단, 대화는 자연스럽게, 감정은 행동과 감각으로 보여주기.",
   createBook: "작품 만들기",
   creatingBook: "생성 중...",
   creationStatus: "작품을 생성하는 중입니다. 완료되면 작업실로 자동 이동합니다.",
@@ -267,6 +277,7 @@ export function defaultBookCreateForm(language: "zh" | "en" | "ko"): BookCreateF
     targetChapters: "200",
     chapterWordCount: defaultChapterWordsForLanguage(language),
     brief: "",
+    styleGuide: "",
   };
 }
 
@@ -306,6 +317,7 @@ export function buildBookCreatePayload(
     targetChapters,
     chapterWordCount,
     blurb: form.brief.trim(),
+    ...(form.styleGuide.trim() ? { styleGuide: form.styleGuide.trim() } : {}),
   };
 }
 
@@ -329,7 +341,7 @@ interface DraftInstructionFromFormOptions {
 }
 
 export function hasEnoughFormForDraft(form: BookCreateFormState): boolean {
-  return Boolean(form.title.trim() || form.genre.trim() || form.brief.trim());
+  return Boolean(form.title.trim() || form.genre.trim() || form.brief.trim() || form.styleGuide.trim());
 }
 
 export function buildDraftInstructionFromForm(options: DraftInstructionFromFormOptions): string {
@@ -369,6 +381,7 @@ export function buildDraftInstructionFromForm(options: DraftInstructionFromFormO
         appendOptional(result, "목표 장수", options.form.targetChapters);
         appendOptional(result, "장당 분량", options.form.chapterWordCount);
         appendBrief(result, "이야기 소개 / 핵심 설정", options.form.brief);
+        appendBrief(result, "문체 지시", options.form.styleGuide);
         result.push("", "결과에는 제목 후보가 필요하면 다듬은 제목, 세계관, 주인공, 핵심 갈등, 1부 방향, 소개문, 부족한 질문을 포함해줘.");
         return result;
       })()
@@ -386,6 +399,7 @@ export function buildDraftInstructionFromForm(options: DraftInstructionFromFormO
           appendOptional(result, "Target chapters", options.form.targetChapters);
           appendOptional(result, "Words per chapter", options.form.chapterWordCount);
           appendBrief(result, "Story brief / core premise", options.form.brief);
+          appendBrief(result, "Style direction", options.form.styleGuide);
           result.push("", "Include a refined title if helpful, world premise, protagonist, core conflict, volume-one direction, blurb, and remaining questions.");
           return result;
         })()
@@ -402,6 +416,7 @@ export function buildDraftInstructionFromForm(options: DraftInstructionFromFormO
           appendOptional(result, "目标章数", options.form.targetChapters);
           appendOptional(result, "每章字数", options.form.chapterWordCount);
           appendBrief(result, "故事简介 / 核心设定", options.form.brief);
+          appendBrief(result, "文风要求", options.form.styleGuide);
           result.push("", "结果请包含可优化书名、世界观、主角、核心冲突、卷一方向、简介，以及仍需补充的问题。");
           return result;
         })();
@@ -436,6 +451,7 @@ export function buildCreationDraftSummary(
         draft.conflictCore ? { key: "conflictCore", label: "핵심 갈등", value: draft.conflictCore } : undefined,
         draft.volumeOutline ? { key: "volumeOutline", label: "1부 방향", value: draft.volumeOutline } : undefined,
         draft.blurb ? { key: "blurb", label: "소개문", value: draft.blurb } : undefined,
+        draft.styleGuide ? { key: "styleGuide", label: "문체", value: draft.styleGuide } : undefined,
         draft.nextQuestion ? { key: "nextQuestion", label: "다음 단계", value: draft.nextQuestion } : undefined,
       ]
     : language === "en"
@@ -446,6 +462,7 @@ export function buildCreationDraftSummary(
         draft.conflictCore ? { key: "conflictCore", label: "Core Conflict", value: draft.conflictCore } : undefined,
         draft.volumeOutline ? { key: "volumeOutline", label: "Volume Direction", value: draft.volumeOutline } : undefined,
         draft.blurb ? { key: "blurb", label: "Blurb", value: draft.blurb } : undefined,
+        draft.styleGuide ? { key: "styleGuide", label: "Style", value: draft.styleGuide } : undefined,
         draft.nextQuestion ? { key: "nextQuestion", label: "Next", value: draft.nextQuestion } : undefined,
       ]
     : [
@@ -455,6 +472,7 @@ export function buildCreationDraftSummary(
         draft.conflictCore ? { key: "conflictCore", label: "核心冲突", value: draft.conflictCore } : undefined,
         draft.volumeOutline ? { key: "volumeOutline", label: "卷纲方向", value: draft.volumeOutline } : undefined,
         draft.blurb ? { key: "blurb", label: "简介", value: draft.blurb } : undefined,
+        draft.styleGuide ? { key: "styleGuide", label: "文风", value: draft.styleGuide } : undefined,
         draft.nextQuestion ? { key: "nextQuestion", label: "下一步", value: draft.nextQuestion } : undefined,
       ];
 
@@ -481,6 +499,7 @@ export function applyCreationDraftToFormState(
     targetChapters: draft.targetChapters ? String(draft.targetChapters) : current.targetChapters,
     chapterWordCount: draft.chapterWordCount ? String(draft.chapterWordCount) : current.chapterWordCount,
     brief: draftBrief || current.brief,
+    styleGuide: draft.styleGuide?.trim() || current.styleGuide,
   };
 }
 
@@ -532,7 +551,8 @@ export function extractCreationDraftFromAssistantText(args: {
   const conflictCore = get("핵심 갈등", "Core Conflict", "核心冲突");
   const volumeOutline = get("1부 방향", "Volume Direction", "卷一方向", "卷纲方向");
   const blurb = get("소개문", "Blurb", "简介", "介绍文");
-  if (!title && !worldPremise && !protagonist && !conflictCore && !volumeOutline && !blurb) {
+  const styleGuide = get("문체", "문체 지시", "Style", "Style direction", "文风", "文风要求");
+  if (!title && !worldPremise && !protagonist && !conflictCore && !volumeOutline && !blurb && !styleGuide) {
     return undefined;
   }
 
@@ -554,6 +574,7 @@ export function extractCreationDraftFromAssistantText(args: {
     ...(protagonist ? { protagonist } : {}),
     ...(conflictCore ? { conflictCore } : {}),
     ...(volumeOutline ? { volumeOutline } : {}),
+    ...(styleGuide ? { styleGuide } : {}),
     missingFields: [],
     readyToCreate: Boolean(title && (args.genreId || table["장르"] || table["Genre"]) && (blurb || worldPremise)),
   };
@@ -1057,6 +1078,17 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
               rows={9}
               className={`w-full ${c.input} rounded-md px-3 py-3 focus:outline-none text-sm leading-7 resize-y`}
               placeholder={copy.briefPlaceholder}
+            />
+          </label>
+
+          <label className="space-y-2 block">
+            <span className="text-xs font-medium text-muted-foreground">{copy.styleGuideLabel}</span>
+            <textarea
+              value={form.styleGuide}
+              onChange={(event) => updateForm({ styleGuide: event.target.value })}
+              rows={4}
+              className={`w-full ${c.input} rounded-md px-3 py-3 focus:outline-none text-sm leading-7 resize-y`}
+              placeholder={copy.styleGuidePlaceholder}
             />
           </label>
 
