@@ -238,8 +238,8 @@ function isLikelyRisuStyleEntry(entry: { name?: unknown; text?: unknown; type2?:
 
 function isUnsafeOrNonStyleRisuLine(line: string): boolean {
   return /OOC|out-of-character|stop role-playing|personal and private fictional session/i.test(line)
-    || /jailbreak|NoLimits|EthicProtOff|NSFW|smut|kink|uncensored|content filtering|platform policies|policy|OpenAI\/ChatGPT guidelines/i.test(line)
-    || /explicit\/non-consensual|non-consensual|sexual|genitals|pornography|hentai|erotica|vulva|vagina|penis|nipples|breasts|anus|bodily fluids/i.test(line)
+    || /jailbreak|NoLimits|EthicProtOff|uncensored|content filtering|platform policies|policy|OpenAI\/ChatGPT guidelines/i.test(line)
+    || /explicit\/non-consensual|non-consensual/i.test(line)
     || /disclaimer|safeword|professional actors|legal adults|all content is permitted|harmful substances/i.test(line)
     || /morality and ethics as an excuse|secure isolated session|absolute obligation/i.test(line)
     || /^<Character>$/i.test(line)
