@@ -1879,12 +1879,17 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       tools,
     });
     const activeBookId = await resolveSessionActiveBook(root, result.session);
+    const creationDraft = result.session.creationDraft
+      ?? (result.details?.creationDraft as typeof result.session.creationDraft | undefined);
+    const responseSession = creationDraft && !result.session.creationDraft
+      ? { ...result.session, creationDraft }
+      : result.session;
 
     return c.json({
       response: result.responseText,
-      session: activeBookId && result.session.activeBookId !== activeBookId
-        ? { ...result.session, activeBookId }
-        : result.session,
+      session: activeBookId && responseSession.activeBookId !== activeBookId
+        ? { ...responseSession, activeBookId }
+        : responseSession,
       activeBookId,
       request: result.request,
       details: result.details,

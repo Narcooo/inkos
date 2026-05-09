@@ -628,6 +628,9 @@ interface DraftResponse {
     readonly activeBookId?: string;
     readonly creationDraft?: BookCreationDraft;
   };
+  readonly details?: {
+    readonly creationDraft?: BookCreationDraft;
+  };
 }
 
 let pendingDefaultBookCreateSessionId: Promise<string> | null = null;
@@ -957,7 +960,7 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
         targetChapters: form.targetChapters,
         chapterWordCount: form.chapterWordCount,
       });
-      const nextDraft = data.session?.creationDraft ?? parsedDraft;
+      const nextDraft = data.session?.creationDraft ?? data.details?.creationDraft ?? parsedDraft;
       setDraft(nextDraft);
       if (nextDraft) {
         setForm((current) => applyCreationDraftToFormState(current, nextDraft, platformChoices));

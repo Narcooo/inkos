@@ -2789,4 +2789,52 @@ describe("createStudioServer daemon lifecycle", () => {
       },
     });
   });
+
+  it("falls back to draft details when the returned session omits creationDraft", async () => {
+    processProjectInteractionInputMock.mockResolvedValue({
+      request: { intent: "develop_book", language: "ko" },
+      responseText: "초안을 업데이트했습니다.",
+      session: {
+        sessionId: "session-draft-details",
+        projectRoot: root,
+        automationMode: "semi",
+        messages: [],
+        events: [],
+      },
+      details: {
+        creationDraft: {
+          concept: "시스템 아포칼립스",
+          title: "마지막 로그",
+          genre: "ko-system-apocalypse",
+          missingFields: [],
+          readyToCreate: true,
+        },
+      },
+    });
+    resolveSessionActiveBookMock.mockResolvedValue(undefined);
+
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const response = await app.request("http://localhost/api/v1/interaction/draft", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ instruction: "/new 시스템 아포칼립스 초안을 만들어줘" }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      session: {
+        creationDraft: {
+          title: "마지막 로그",
+          genre: "ko-system-apocalypse",
+        },
+      },
+      details: {
+        creationDraft: {
+          title: "마지막 로그",
+        },
+      },
+    });
+  });
 });
