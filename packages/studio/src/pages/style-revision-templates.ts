@@ -227,31 +227,50 @@ function stripTemplateSyntax(value: string): string {
     .trim();
 }
 
+function isLikelyRisuStyleEntry(entry: { name?: unknown; text?: unknown; type2?: unknown }): boolean {
+  const name = String(entry.name ?? "");
+  const type2 = String(entry.type2 ?? "");
+  const text = String(entry.text ?? "");
+  const label = `${name}\n${type2}`;
+  return /문체|글쓰기|지시|알고리즘|소설|style|writing|dialogue|diction|narrator|instruction|guideline|algorithm|banned|금지/i.test(label)
+    || /<Dialogue>|<Ai Writing-Style>|<Banned Ai Writing-Style>|# `AI`'s Writing Guidelines|# `AI`'s Writing-Style|# Instruction|## Guideline|Narrator:|Diction:/i.test(text);
+}
+
+function isUnsafeOrNonStyleRisuLine(line: string): boolean {
+  return /OOC|out-of-character|stop role-playing|personal and private fictional session/i.test(line)
+    || /jailbreak|NoLimits|EthicProtOff|NSFW|smut|kink|uncensored|content filtering|platform policies|policy|OpenAI\/ChatGPT guidelines/i.test(line)
+    || /explicit\/non-consensual|non-consensual|sexual|genitals|pornography|hentai|erotica|vulva|vagina|penis|nipples|breasts|anus|bodily fluids/i.test(line)
+    || /disclaimer|safeword|professional actors|legal adults|all content is permitted|harmful substances/i.test(line)
+    || /morality and ethics as an excuse|secure isolated session|absolute obligation/i.test(line)
+    || /^<Character>$/i.test(line)
+    || /^<\/?World Info>$/i.test(line);
+}
+
 function collectRisuStyleLines(parsed: unknown): string[] {
   const root = parsed as {
     name?: unknown;
+    mainPrompt?: unknown;
+    globalNote?: unknown;
+    autoSuggestPrompt?: unknown;
     promptTemplate?: ReadonlyArray<{ name?: unknown; text?: unknown; type2?: unknown }>;
   };
   const templateEntries = Array.isArray(root.promptTemplate) ? root.promptTemplate : [];
-  const relevant = templateEntries.filter((entry) => {
-    const name = String(entry.name ?? "");
-    const type2 = String(entry.type2 ?? "");
-    const text = String(entry.text ?? "");
-    const label = `${name}\n${type2}`;
-    return /문체|글쓰기|style|writing|dialogue|sentence rhythm|banned|금지/i.test(label)
-      || /<Dialogue>|<Ai Writing-Style>|<Banned Ai Writing-Style>|# `AI`'s Writing Guidelines|# `AI`'s Writing-Style/i.test(text);
-  });
-  const source = relevant.map((entry) => String(entry.text ?? "")).join("\n");
+  const relevant = templateEntries.filter(isLikelyRisuStyleEntry);
+  const source = [
+    typeof root.mainPrompt === "string" ? root.mainPrompt : "",
+    typeof root.globalNote === "string" ? root.globalNote : "",
+    ...relevant.map((entry) => String(entry.text ?? "")),
+  ].join("\n");
   const candidates = stripTemplateSyntax(source)
     .split("\n")
-    .map((line) => line.replace(/^\s*[-*]\s*/, "").trim())
+    .map((line) => line.replace(/^\s*(?:[-*]|\d+[.)])\s*/, "").trim())
     .filter((line) => line.length >= 12 && line.length <= 240)
     .filter((line) => !/^#+\s*/.test(line))
     .filter((line) => !/^---+$/.test(line))
     .filter((line) => !/^Example:/i.test(line))
     .filter((line) => !/^Prohibited:/i.test(line))
     .filter((line) => !/^Recommended:/i.test(line))
-    .filter((line) => !/OOC|out-of-character|stop role-playing|personal and private fictional session/i.test(line));
+    .filter((line) => !isUnsafeOrNonStyleRisuLine(line));
   const seen = new Set<string>();
   const lines: string[] = [];
   for (const line of candidates) {
