@@ -16,6 +16,12 @@ import {
   getBookCreateSessionId,
   setBookCreateSessionId,
 } from "./chat-page-state";
+import {
+  STYLE_REVISION_TEMPLATES,
+  buildStyleCreationBrief,
+  findStyleRevisionTemplate,
+  type StyleTemplateLanguage,
+} from "./style-revision-templates";
 
 interface Nav {
   toDashboard: () => void;
@@ -95,6 +101,8 @@ interface PlatformCopy {
   readonly briefPlaceholder: string;
   readonly styleGuideLabel: string;
   readonly styleGuidePlaceholder: string;
+  readonly styleTemplateLabel: string;
+  readonly customStyleTemplate: string;
   readonly createBook: string;
   readonly creatingBook: string;
   readonly creationStatus: string;
@@ -157,6 +165,8 @@ const PAGE_COPY: Record<"zh" | "en", PlatformCopy> = {
     briefPlaceholder: "写清世界观、主角、目标、核心冲突和第一阶段方向。例如：近未来港口城，主角是水货账房，想洗白却被旧账拖回港口旧案。",
     styleGuideLabel: "文风要求",
     styleGuidePlaceholder: "可选。例：短句推进，强对白，少旁白，多动作细节。",
+    styleTemplateLabel: "文风模板",
+    customStyleTemplate: "自定义 / 不使用模板",
     createBook: "创建书籍",
     creatingBook: "创建中…",
     creationStatus: "正在创建书籍，完成后会自动进入工作台。",
@@ -195,6 +205,8 @@ const PAGE_COPY: Record<"zh" | "en", PlatformCopy> = {
     briefPlaceholder: "Include the world, protagonist, goal, core conflict, and first arc direction.",
     styleGuideLabel: "Style direction",
     styleGuidePlaceholder: "Optional. Example: tight third-person POV, restrained lyricism, vivid sensory detail, quick dialogue.",
+    styleTemplateLabel: "Style template",
+    customStyleTemplate: "Custom / no template",
     createBook: "Create book",
     creatingBook: "Creating…",
     creationStatus: "Creating the book. The workspace will open automatically when it is ready.",
@@ -235,6 +247,8 @@ const KOREAN_PAGE_COPY: PlatformCopy = {
   briefPlaceholder: "세계관, 주인공, 목표, 핵심 갈등, 1부 방향을 적어주세요.",
   styleGuideLabel: "문체 지시",
   styleGuidePlaceholder: "선택 사항. 예: 담백한 3인칭, 짧은 문단, 대화는 자연스럽게, 감정은 행동과 감각으로 보여주기.",
+  styleTemplateLabel: "문체 양식",
+  customStyleTemplate: "사용자 지정 / 양식 없음",
   createBook: "작품 만들기",
   creatingBook: "생성 중...",
   creationStatus: "작품을 생성하는 중입니다. 완료되면 작업실로 자동 이동합니다.",
@@ -283,6 +297,10 @@ export function defaultBookCreateForm(language: "zh" | "en" | "ko"): BookCreateF
 
 export function platformOptionsForLanguage(language: "zh" | "en" | "ko"): ReadonlyArray<PlatformOption> {
   return language === "ko" ? PLATFORMS_KO : language === "en" ? PLATFORMS_EN : PLATFORMS_ZH;
+}
+
+function resolveStyleTemplateLanguage(language: string): StyleTemplateLanguage {
+  return language === "ko" ? "ko" : language === "en" ? "en" : "zh";
 }
 
 function parsePositiveInteger(value: string): number | null {
@@ -733,9 +751,11 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
   const projectLang = project?.language === "ko" ? "ko" : project?.language === "en" ? "en" : "zh";
   const copy = uiLang === "ko" ? KOREAN_PAGE_COPY : PAGE_COPY[projectLang === "ko" ? "en" : projectLang];
   const platformChoices = platformOptionsForLanguage(projectLang);
+  const styleTemplateLanguage = resolveStyleTemplateLanguage(uiLang);
 
   const [draft, setDraft] = useState<BookCreationDraft | undefined>();
   const [form, setForm] = useState<BookCreateFormState>(() => defaultBookCreateForm(projectLang));
+  const [styleTemplateId, setStyleTemplateId] = useState("custom");
   const [input, setInput] = useState("");
   const [loadingDraft, setLoadingDraft] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -774,11 +794,24 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
     setForm((current) => ({ ...current, ...patch }));
   };
 
+  const handleStyleTemplateChange = (templateId: string) => {
+    setStyleTemplateId(templateId);
+    if (templateId === "custom") {
+      return;
+    }
+    const template = findStyleRevisionTemplate(templateId);
+    if (!template) {
+      return;
+    }
+    updateForm({ styleGuide: buildStyleCreationBrief(template, styleTemplateLanguage) });
+  };
+
   const applyDraftToForm = () => {
     if (!draft) {
       return;
     }
     setForm((current) => applyCreationDraftToFormState(current, draft, platformChoices));
+    setStyleTemplateId("custom");
   };
 
   const refreshDraft = async (): Promise<BookCreationDraft | undefined> => {
@@ -1083,9 +1116,24 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
 
           <label className="space-y-2 block">
             <span className="text-xs font-medium text-muted-foreground">{copy.styleGuideLabel}</span>
+            <span className="block text-xs text-muted-foreground">{copy.styleTemplateLabel}</span>
+            <select
+              value={styleTemplateId}
+              onChange={(event) => handleStyleTemplateChange(event.target.value)}
+              className={`w-full ${c.input} rounded-md px-3 py-2.5 focus:outline-none text-sm bg-background`}
+              aria-label={copy.styleTemplateLabel}
+            >
+              <option value="custom">{copy.customStyleTemplate}</option>
+              {STYLE_REVISION_TEMPLATES.map((template) => (
+                <option key={template.id} value={template.id}>{template.label[styleTemplateLanguage]}</option>
+              ))}
+            </select>
             <textarea
               value={form.styleGuide}
-              onChange={(event) => updateForm({ styleGuide: event.target.value })}
+              onChange={(event) => {
+                setStyleTemplateId("custom");
+                updateForm({ styleGuide: event.target.value });
+              }}
               rows={4}
               className={`w-full ${c.input} rounded-md px-3 py-3 focus:outline-none text-sm leading-7 resize-y`}
               placeholder={copy.styleGuidePlaceholder}

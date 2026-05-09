@@ -179,3 +179,22 @@ export function buildStyleRevisionBrief(
     ...template.rules[language].map((rule) => `- ${rule}`),
   ].join("\n");
 }
+
+export function buildStyleCreationBrief(
+  template: StyleRevisionTemplate,
+  language: StyleTemplateLanguage,
+): string {
+  const heading = language === "ko"
+    ? "작품 전체의 문체 지시로 아래 양식을 적용하세요. 장르, 사건, 인물 설정보다 우선하지는 않지만, 모든 장의 서술 습관과 문장 리듬에 지속적으로 반영하세요."
+    : language === "en"
+      ? "Use the template below as the book-wide style direction. It must not override genre, plot, or character facts, but it should consistently guide narration habits and sentence rhythm."
+      : "请将下面模板作为全书文风要求。它不能覆盖题材、剧情或人物事实，但应持续影响叙述习惯和句子节奏。";
+  return [
+    heading,
+    "",
+    `## ${template.label[language]}`,
+    template.description[language],
+    "",
+    ...template.rules[language].map((rule) => `- ${rule}`),
+  ].join("\n");
+}

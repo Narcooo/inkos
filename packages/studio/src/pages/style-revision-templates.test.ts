@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   STYLE_REVISION_TEMPLATES,
+  buildStyleCreationBrief,
   buildStyleRevisionBrief,
   findStyleRevisionTemplate,
 } from "./style-revision-templates";
@@ -31,5 +32,14 @@ describe("style revision templates", () => {
     expect(brief).toContain("이미 완성된 장을 문체 중심으로 수정하세요");
     expect(brief).toContain("사건 사실");
     expect(brief).toContain("먹는 묘사는 구체적이고 감각적으로.");
+  });
+
+  it("builds a creation brief for book-wide style direction", () => {
+    const template = findStyleRevisionTemplate("inkwell")!;
+    const brief = buildStyleCreationBrief(template, "ko");
+
+    expect(brief).toContain("작품 전체의 문체 지시");
+    expect(brief).toContain("Inkwell");
+    expect(brief).toContain("읽는 속도를 빠르게 유지할 것.");
   });
 });
