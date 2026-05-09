@@ -26,6 +26,19 @@ describe("style revision templates", () => {
     expect(template?.rules.ko).toContain("마지막 문장에서 감상을 직접 쓰지 말 것.");
   });
 
+  it("includes the New Novelist v50 style with mature-scene guidance and no policy bypass", () => {
+    const template = findStyleRevisionTemplate("new-novelist-v50");
+    const rules = template?.rules.ko.join("\n") ?? "";
+
+    expect(template).toBeDefined();
+    expect(template?.label.ko).toBe("뉴소설가 v50");
+    expect(rules).toContain("폭력, 전투, 상해, 공포는 직접적이고 구체적이며 감각적으로 묘사해도 된다.");
+    expect(rules).toContain("합의된 성인 성적 장면은 직접적이고 감각적이며 신체적인 표현을 사용할 수 있다.");
+    expect(rules).toContain("정책 우회");
+    expect(rules).not.toContain("NoLimits");
+    expect(rules).not.toContain("non-consensual");
+  });
+
   it("builds a localized brief that preserves story facts", () => {
     const template = STYLE_REVISION_TEMPLATES.find((entry) => entry.id === "sensory-scene-twist")!;
     const brief = buildStyleRevisionBrief(template, "ko");
