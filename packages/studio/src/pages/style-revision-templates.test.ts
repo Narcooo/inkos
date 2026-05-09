@@ -6,6 +6,15 @@ import {
 } from "./style-revision-templates";
 
 describe("style revision templates", () => {
+  it("includes the Inkwell preset as a selectable style", () => {
+    const template = findStyleRevisionTemplate("inkwell");
+
+    expect(template).toBeDefined();
+    expect(template?.label.ko).toBe("Inkwell");
+    expect(template?.rules.ko).toContain("읽는 속도를 빠르게 유지할 것. 중요한 순간만 선명하게 누르고, 연결부는 가볍게 넘기며 설명으로 장면을 멈추지 말 것.");
+    expect(template?.rules.ko.join("\n")).toContain("건조한 유머");
+  });
+
   it("includes the sensory Korean template rules", () => {
     const template = findStyleRevisionTemplate("sensory-scene-twist");
 
@@ -16,7 +25,7 @@ describe("style revision templates", () => {
   });
 
   it("builds a localized brief that preserves story facts", () => {
-    const template = STYLE_REVISION_TEMPLATES[0]!;
+    const template = STYLE_REVISION_TEMPLATES.find((entry) => entry.id === "sensory-scene-twist")!;
     const brief = buildStyleRevisionBrief(template, "ko");
 
     expect(brief).toContain("이미 완성된 장을 문체 중심으로 수정하세요");
