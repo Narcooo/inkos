@@ -34,6 +34,11 @@ interface BookDetailResponse {
   readonly chapters: ReadonlyArray<ChapterMeta>;
 }
 
+interface RevisionResponse {
+  readonly savedPath?: string;
+  readonly persistedAs?: "chapter" | "copy";
+}
+
 interface Nav {
   toDashboard: () => void;
   toBook: (id: string) => void;
@@ -62,6 +67,7 @@ function copyFor(language: StyleTemplateLanguage) {
         chooseChapter: "장 선택",
         noChapters: "선택한 작품에 아직 장이 없습니다.",
         success: "문체 변경을 완료했습니다.",
+        savedAt: "사본 저장 위치",
         failed: "문체 변경 실패",
       }
     : language === "en"
@@ -80,6 +86,7 @@ function copyFor(language: StyleTemplateLanguage) {
           chooseChapter: "Select a chapter",
           noChapters: "The selected book has no chapters yet.",
           success: "Style revision complete.",
+          savedAt: "Copy saved at",
           failed: "Style revision failed",
         }
       : {
@@ -97,6 +104,7 @@ function copyFor(language: StyleTemplateLanguage) {
           chooseChapter: "选择章节",
           noChapters: "所选书籍还没有章节。",
           success: "文风修改完成。",
+          savedAt: "副本保存位置",
           failed: "文风修改失败",
         };
 }
@@ -150,12 +158,15 @@ export function StyleRevisionManager({ nav, theme, t }: { nav: Nav; theme: Theme
     setRunning(true);
     setStatus(null);
     try {
-      await fetchJson(`/books/${encodeURIComponent(bookId)}/revise/${encodeURIComponent(chapterNumber)}`, {
+      const result = await fetchJson<RevisionResponse>(`/books/${encodeURIComponent(bookId)}/revise/${encodeURIComponent(chapterNumber)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: "polish", brief: templateBrief }),
+        body: JSON.stringify({ mode: "polish", brief: templateBrief, saveAsCopy: true }),
       });
-      setStatus({ tone: "success", message: copy.success });
+      setStatus({
+        tone: "success",
+        message: result.savedPath ? `${copy.success} ${copy.savedAt}: ${result.savedPath}` : copy.success,
+      });
       refetch();
     } catch (error) {
       setStatus({

@@ -244,11 +244,18 @@ export function BookDetail({
     const brief = buildStyleRevisionBrief(template, uiLanguage);
     setRevisingChapters((prev) => [...prev, chapterNum]);
     try {
-      await fetchJson(`/books/${bookId}/revise/${chapterNum}`, {
+      const result = await fetchJson<{ savedPath?: string }>(`/books/${bookId}/revise/${chapterNum}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: "polish", brief }),
+        body: JSON.stringify({ mode: "polish", brief, saveAsCopy: true }),
       });
+      if (result.savedPath) {
+        alert(uiLanguage === "ko"
+          ? `문체 변경 사본을 저장했습니다.\n${result.savedPath}`
+          : uiLanguage === "en"
+            ? `Saved style revision copy.\n${result.savedPath}`
+            : `已保存文风修改副本。\n${result.savedPath}`);
+      }
       refetch();
     } catch (e) {
       alert(e instanceof Error ? e.message : uiLanguage === "ko" ? "문체 수정 실패" : uiLanguage === "en" ? "Style revision failed" : "文风修订失败");

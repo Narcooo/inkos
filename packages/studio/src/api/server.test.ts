@@ -1881,6 +1881,20 @@ describe("createStudioServer daemon lifecycle", () => {
     expect(reviseDraftMock).toHaveBeenCalledWith("demo-book", 3, "rewrite");
   });
 
+  it("passes copy persistence into style revise requests", async () => {
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const response = await app.request("http://localhost/api/v1/books/demo-book/revise/3", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "polish", brief: "Use sensory style.", saveAsCopy: true }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(reviseDraftMock).toHaveBeenCalledWith("demo-book", 3, "polish", { persistAs: "copy" });
+  });
+
   it("exposes a resync endpoint for rebuilding latest chapter truth artifacts", async () => {
     const { createStudioServer } = await import("./server.js");
     const app = createStudioServer(cloneProjectConfig() as never, root);

@@ -285,6 +285,12 @@ export interface ReviseResult {
   readonly skippedReason?: string;
   readonly lengthWarnings?: ReadonlyArray<string>;
   readonly lengthTelemetry?: LengthTelemetry;
+  readonly persistedAs?: "chapter" | "copy";
+  readonly savedPath?: string;
+}
+
+export interface ReviseDraftOptions {
+  readonly persistAs?: "chapter" | "copy";
 }
 
 export interface TruthFiles {
@@ -1238,7 +1244,12 @@ export class PipelineRunner {
   }
 
   /** Revise the latest (or specified) chapter based on audit issues. */
-  async reviseDraft(bookId: string, chapterNumber?: number, mode: ReviseMode = DEFAULT_REVISE_MODE): Promise<ReviseResult> {
+  async reviseDraft(
+    bookId: string,
+    chapterNumber?: number,
+    mode: ReviseMode = DEFAULT_REVISE_MODE,
+    options: ReviseDraftOptions = {},
+  ): Promise<ReviseResult> {
     const releaseLock = await this.state.acquireBookLock(bookId);
     try {
       const book = await this.state.loadBookConfig(bookId);
@@ -1438,10 +1449,11 @@ export class PipelineRunner {
       }
       this.logLengthWarnings(lengthWarnings);
 
-      // Save revised chapter file
+      // Save revised chapter file, or store it as a comparable copy for style-only revisions.
       this.logStage(stageLanguage, {
-        zh: `落盘第${targetChapter}章修订结果`,
-        en: `persisting revision for chapter ${targetChapter}`,
+        zh: options.persistAs === "copy" ? `保存第${targetChapter}章修订副本` : `落盘第${targetChapter}章修订结果`,
+        en: options.persistAs === "copy" ? `saving revision copy for chapter ${targetChapter}` : `persisting revision for chapter ${targetChapter}`,
+        ko: options.persistAs === "copy" ? `${targetChapter}장 수정 사본 저장` : `${targetChapter}장 수정 결과 저장`,
       });
       const chaptersDir = join(bookDir, "chapters");
       const files = await readdir(chaptersDir);
@@ -1456,6 +1468,29 @@ export class PipelineRunner {
         : reviseLang === "ko"
           ? `# ${targetChapter}장 ${chapterMeta.title}`
           : `# 第${targetChapter}章 ${chapterMeta.title}`;
+      if (options.persistAs === "copy") {
+        const revisionDir = join(bookDir, "revisions", `chapter-${paddedNum}`);
+        await mkdir(revisionDir, { recursive: true });
+        const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+        const copyFile = `${timestamp}-style-revision.md`;
+        const relativeSavedPath = ["revisions", `chapter-${paddedNum}`, copyFile].join("/");
+        await writeFile(
+          join(revisionDir, copyFile),
+          `${reviseHeading}\n\n${normalizedRevision.content}`,
+          "utf-8",
+        );
+        return {
+          chapterNumber: targetChapter,
+          wordCount: normalizedRevision.wordCount,
+          fixedIssues: reviseOutput.fixedIssues,
+          applied: true,
+          status: effectivePostRevision.auditResult.passed ? "ready-for-review" : "audit-failed",
+          lengthWarnings,
+          lengthTelemetry,
+          persistedAs: "copy",
+          savedPath: relativeSavedPath,
+        };
+      }
       await writeFile(
         join(chaptersDir, existingFile),
         `${reviseHeading}\n\n${normalizedRevision.content}`,
@@ -1524,6 +1559,7 @@ export class PipelineRunner {
         status: effectivePostRevision.auditResult.passed ? "ready-for-review" : "audit-failed",
         lengthWarnings,
         lengthTelemetry,
+        persistedAs: "chapter",
       };
     } finally {
       await releaseLock();

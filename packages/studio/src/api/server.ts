@@ -2390,8 +2390,8 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     const chapterNum = parseInt(c.req.param("chapter"), 10);
     const bookDir = state.bookDir(id);
     const body = await c.req
-      .json<{ mode?: string; brief?: string }>()
-      .catch(() => ({ mode: "spot-fix", brief: undefined }));
+      .json<{ mode?: string; brief?: string; saveAsCopy?: boolean }>()
+      .catch((): { mode?: string; brief?: string; saveAsCopy?: boolean } => ({ mode: "spot-fix", brief: undefined, saveAsCopy: false }));
 
     broadcast("revise:start", { bookId: id, chapter: chapterNum });
     try {
@@ -2406,11 +2406,10 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
         externalContext: body.brief,
       }));
       const normalizedMode = body.mode ?? "spot-fix";
-      const result = await pipeline.reviseDraft(
-        id,
-        chapterNum,
-        normalizedMode as "polish" | "rewrite" | "rework" | "spot-fix" | "anti-detect",
-      );
+      const reviseMode = normalizedMode as "polish" | "rewrite" | "rework" | "spot-fix" | "anti-detect";
+      const result = body.saveAsCopy
+        ? await pipeline.reviseDraft(id, chapterNum, reviseMode, { persistAs: "copy" })
+        : await pipeline.reviseDraft(id, chapterNum, reviseMode);
       broadcast("revise:complete", { bookId: id, chapter: chapterNum });
       return c.json(result);
     } catch (e) {
