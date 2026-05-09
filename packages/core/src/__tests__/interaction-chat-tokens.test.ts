@@ -230,6 +230,58 @@ describe("developBookDraft – uses chatWithTools", () => {
     }));
   });
 
+  it("extracts Korean numbered section draft fields when no tool call is returned", async () => {
+    mockChatWithTools.mockResolvedValueOnce({
+      content: [
+        "알겠습니다. `한계-돌파-무한-성장2` 프로젝트를 위한 SF 장르 초안을 생성합니다.",
+        "### **[작품 설정 초안: 프로젝트 코드명 '이벤트 호라이즌']**",
+        "**1. 제목 후보**",
+        "* **최종 후보:** 《심연의 테라포머: 인류 최후의 개척자》",
+        "* **대안 1:** 《나 홀로 은하계급 진화》",
+        "**2. 세계관 (Worldview)**",
+        "* **배경:** 서기 2450년, 지구는 자원 고갈과 환경 붕괴로 거주 불능 상태가 됨.",
+        "* **핵심 설정:** '나노 머신 엔진'과 '양자 의식 전이'.",
+        "**3. 주인공 (Protagonist)**",
+        "* **이름:** 강한결 (28세)",
+        "* **특징:** 전직 우주 탐사선 정비사.",
+        "**4. 핵심 갈등 (Core Conflict)**",
+        "* **내적 갈등:** 인간성을 유지하며 기계적 진화를 이룰 것인가.",
+        "* **외적 갈등:** 거대 기업 '아틀라스'의 음모와 고대 문명의 위협.",
+        "**5. 1부 방향 (Volume 1 Direction)**",
+        "* **목표:** 아틀라스의 추격을 뿌리치고, 자신만의 독립 함선을 구축한다.",
+        "**6. 소개문 (Synopsis)**",
+        "> \"지구는 죽었다. 이제 남은 것은 차가운 우주와 끝없는 탐욕뿐이다.\"",
+        "> 인류 최후의 방주 '아크'의 말단 정비사 강한결.",
+      ].join("\n"),
+      toolCalls: [],
+    });
+    const tools = createInteractionToolsFromDeps(
+      fakePipeline as never,
+      fakeState as never,
+    );
+
+    const result = await tools.developBookDraft?.([
+      "제목: ",
+      "장르: SF (ko-sci-fi)",
+      "목표 플랫폼: 카카오페이지",
+      "목표 장수: 120",
+      "장당 분량: 2000",
+    ].join("\n"), undefined) as Record<string, unknown>;
+    const interaction = (result as { __interaction: Record<string, unknown> }).__interaction;
+    const details = interaction.details as Record<string, unknown>;
+
+    expect(details.creationDraft).toEqual(expect.objectContaining({
+      title: "심연의 테라포머: 인류 최후의 개척자",
+      genre: "ko-sci-fi",
+      worldPremise: expect.stringContaining("서기 2450년"),
+      protagonist: expect.stringContaining("강한결"),
+      conflictCore: expect.stringContaining("인간성을 유지"),
+      volumeOutline: expect.stringContaining("독립 함선"),
+      blurb: expect.stringContaining("지구는 죽었다"),
+      readyToCreate: true,
+    }));
+  });
+
   it("returns fallback when no LLM is configured", async () => {
     const noLlmPipeline = {
       config: {},

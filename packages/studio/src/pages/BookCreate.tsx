@@ -524,15 +524,131 @@ export function applyCreationDraftToFormState(
 }
 
 function cleanDraftCell(value: string): string {
-  return value.replace(/\*\*/g, "").replace(/<br\s*\/?>/gi, "\n").trim();
+  return value
+    .replace(/\*\*/g, "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/^[>\s]*[-*]\s+/u, "")
+    .trim();
 }
 
 function firstDraftTitle(value: string | undefined): string | undefined {
   if (!value) return undefined;
-  return cleanDraftCell(value)
+  const candidates = cleanDraftCell(value)
     .split(/\s*\/\s*|\n|,|，/u)
     .map((part) => part.trim())
     .find(Boolean);
+  if (!candidates) return undefined;
+  return candidates
+    .replace(/^(?:최종\s*후보|대안\s*\d+|제목\s*후보|final\s+candidate|alternative\s*\d*|title\s*candidates?|候选\s*\d*)\s*[:：]\s*/iu, "")
+    .replace(/^[《「『“"']+|[》」』”"']+$/gu, "")
+    .trim() || undefined;
+}
+
+type DraftFieldKey =
+  | "title"
+  | "worldPremise"
+  | "protagonist"
+  | "conflictCore"
+  | "volumeOutline"
+  | "blurb"
+  | "styleGuide";
+
+const DRAFT_FIELD_LABELS: ReadonlyArray<{
+  readonly key: DraftFieldKey;
+  readonly labels: ReadonlyArray<string>;
+}> = [
+  { key: "title", labels: ["제목 후보", "제목", "Title candidates", "Title", "书名候选", "书名"] },
+  { key: "worldPremise", labels: ["세계관", "Worldview", "World", "世界观"] },
+  { key: "protagonist", labels: ["주인공", "Protagonist", "主角"] },
+  { key: "conflictCore", labels: ["핵심 갈등", "Core Conflict", "核心冲突"] },
+  { key: "volumeOutline", labels: ["1부 방향", "Volume 1 Direction", "Volume Direction", "卷一方向", "卷纲方向"] },
+  { key: "blurb", labels: ["소개문", "Synopsis", "Blurb", "简介", "介绍文"] },
+  { key: "styleGuide", labels: ["문체", "문체 지시", "Style", "Style direction", "文风", "文风要求"] },
+];
+
+function normalizeDraftHeading(value: string): string {
+  return cleanDraftCell(value)
+    .replace(/^#+\s*/u, "")
+    .replace(/^\[|\]$/gu, "")
+    .replace(/^【|】$/gu, "")
+    .replace(/^\s*\d+\s*[.)]\s*/u, "")
+    .replace(/\s*\([^)]*\)\s*$/u, "")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+function draftFieldKeyForHeading(line: string): DraftFieldKey | undefined {
+  const heading = normalizeDraftHeading(line);
+  if (!heading) return undefined;
+  for (const field of DRAFT_FIELD_LABELS) {
+    if (field.labels.some((label) => heading === label || heading.startsWith(`${label} `) || heading.startsWith(`${label}:`) || heading.startsWith(`${label}：`))) {
+      return field.key;
+    }
+  }
+  return undefined;
+}
+
+function extractSectionDraftFields(raw: string): Partial<Record<DraftFieldKey, string>> {
+  const fields: Partial<Record<DraftFieldKey, string>> = {};
+  let currentKey: DraftFieldKey | undefined;
+  let buffer: string[] = [];
+
+  const flush = () => {
+    if (!currentKey) return;
+    const value = buffer
+      .map((line) => cleanDraftCell(line.replace(/^>\s?/u, "")))
+      .filter(Boolean)
+      .join("\n")
+      .trim();
+    if (value && !fields[currentKey]) {
+      fields[currentKey] = value;
+    }
+  };
+
+  for (const line of raw.split("\n")) {
+    const nextKey = draftFieldKeyForHeading(line);
+    if (nextKey) {
+      flush();
+      currentKey = nextKey;
+      buffer = [];
+      continue;
+    }
+    if (currentKey) {
+      buffer.push(line);
+    }
+  }
+  flush();
+
+  return fields;
+}
+
+export function mergeCreationDrafts(
+  ...drafts: ReadonlyArray<BookCreationDraft | undefined>
+): BookCreationDraft | undefined {
+  const available = drafts.filter((draft): draft is BookCreationDraft => Boolean(draft));
+  if (available.length === 0) return undefined;
+
+  const merged = available.reduce<BookCreationDraft>((acc, draft) => ({
+    ...acc,
+    ...draft,
+    missingFields: draft.missingFields ?? acc.missingFields,
+    readyToCreate: draft.readyToCreate || acc.readyToCreate,
+  }), { concept: available[0]?.concept ?? "", missingFields: [], readyToCreate: false });
+
+  const missingFields = [
+    !merged.title?.trim() ? "title" : undefined,
+    !merged.genre?.trim() ? "genre" : undefined,
+    !merged.platform?.trim() ? "platform" : undefined,
+    typeof merged.targetChapters !== "number" ? "targetChapters" : undefined,
+    typeof merged.chapterWordCount !== "number" ? "chapterWordCount" : undefined,
+    !merged.blurb?.trim() && !merged.worldPremise?.trim() ? "blurb" : undefined,
+  ].filter((field): field is string => Boolean(field));
+
+  return {
+    ...merged,
+    missingFields,
+    readyToCreate: missingFields.length === 0,
+  };
 }
 
 export function extractCreationDraftFromAssistantText(args: {
@@ -557,21 +673,24 @@ export function extractCreationDraftFromAssistantText(args: {
     table[key] = value;
   }
 
+  const sectionFields = extractSectionDraftFields(raw);
+  const fields: Record<string, string> = { ...sectionFields, ...table };
+
   const get = (...keys: string[]) => {
     for (const key of keys) {
-      const value = table[key];
+      const value = fields[key];
       if (value?.trim()) return value.trim();
     }
     return undefined;
   };
 
-  const title = firstDraftTitle(get("제목 후보", "제목", "Title candidates", "Title", "书名候选", "书名"));
-  const worldPremise = get("세계관", "World", "世界观");
-  const protagonist = get("주인공", "Protagonist", "主角");
-  const conflictCore = get("핵심 갈등", "Core Conflict", "核心冲突");
-  const volumeOutline = get("1부 방향", "Volume Direction", "卷一方向", "卷纲方向");
-  const blurb = get("소개문", "Blurb", "简介", "介绍文");
-  const styleGuide = get("문체", "문체 지시", "Style", "Style direction", "文风", "文风要求");
+  const title = firstDraftTitle(sectionFields.title ?? get("제목 후보", "제목", "Title candidates", "Title", "书名候选", "书名"));
+  const worldPremise = sectionFields.worldPremise ?? get("세계관", "Worldview", "World", "世界观");
+  const protagonist = sectionFields.protagonist ?? get("주인공", "Protagonist", "主角");
+  const conflictCore = sectionFields.conflictCore ?? get("핵심 갈등", "Core Conflict", "核心冲突");
+  const volumeOutline = sectionFields.volumeOutline ?? get("1부 방향", "Volume 1 Direction", "Volume Direction", "卷一方向", "卷纲方向");
+  const blurb = sectionFields.blurb ?? get("소개문", "Synopsis", "Blurb", "简介", "介绍文");
+  const styleGuide = sectionFields.styleGuide ?? get("문체", "문체 지시", "Style", "Style direction", "文风", "文风要求");
   if (!title && !worldPremise && !protagonist && !conflictCore && !volumeOutline && !blurb && !styleGuide) {
     return undefined;
   }
@@ -960,7 +1079,11 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
         targetChapters: form.targetChapters,
         chapterWordCount: form.chapterWordCount,
       });
-      const nextDraft = data.session?.creationDraft ?? data.details?.creationDraft ?? parsedDraft;
+      const nextDraft = mergeCreationDrafts(
+        data.session?.creationDraft,
+        data.details?.creationDraft,
+        parsedDraft,
+      );
       setDraft(nextDraft);
       if (nextDraft) {
         setForm((current) => applyCreationDraftToFormState(current, nextDraft, platformChoices));

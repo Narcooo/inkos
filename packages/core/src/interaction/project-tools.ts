@@ -613,6 +613,7 @@ function stripMarkdown(value: string): string {
   return value
     .replace(/\*\*/g, "")
     .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/^[>\s]*[-*]\s+/u, "")
     .trim();
 }
 
@@ -622,7 +623,90 @@ function firstTitleCandidate(value: string | undefined): string | undefined {
     .split(/\s*\/\s*|\n|,|，/u)
     .map((part) => part.trim())
     .filter(Boolean);
-  return cleaned[0];
+  const candidate = cleaned[0];
+  if (!candidate) return undefined;
+  return candidate
+    .replace(/^(?:최종\s*후보|대안\s*\d+|제목\s*후보|final\s+candidate|alternative\s*\d*|title\s*candidates?|候选\s*\d*)\s*[:：]\s*/iu, "")
+    .replace(/^[《「『“"']+|[》」』”"']+$/gu, "")
+    .trim() || undefined;
+}
+
+type MarkdownDraftFieldKey =
+  | "title"
+  | "worldPremise"
+  | "protagonist"
+  | "conflictCore"
+  | "volumeOutline"
+  | "blurb"
+  | "styleGuide";
+
+const MARKDOWN_DRAFT_FIELD_LABELS: ReadonlyArray<{
+  readonly key: MarkdownDraftFieldKey;
+  readonly labels: ReadonlyArray<string>;
+}> = [
+  { key: "title", labels: ["제목 후보", "제목", "Title candidates", "Title", "书名候选", "书名"] },
+  { key: "worldPremise", labels: ["세계관", "Worldview", "World", "世界观"] },
+  { key: "protagonist", labels: ["주인공", "Protagonist", "主角"] },
+  { key: "conflictCore", labels: ["핵심 갈등", "Core Conflict", "核心冲突"] },
+  { key: "volumeOutline", labels: ["1부 방향", "Volume 1 Direction", "Volume Direction", "卷一方向", "卷纲方向"] },
+  { key: "blurb", labels: ["소개문", "Synopsis", "Blurb", "简介", "介绍文"] },
+  { key: "styleGuide", labels: ["문체", "문체 지시", "Style", "Style direction", "文风", "文风要求"] },
+];
+
+function normalizeMarkdownDraftHeading(value: string): string {
+  return stripMarkdown(value)
+    .replace(/^#+\s*/u, "")
+    .replace(/^\[|\]$/gu, "")
+    .replace(/^【|】$/gu, "")
+    .replace(/^\s*\d+\s*[.)]\s*/u, "")
+    .replace(/\s*\([^)]*\)\s*$/u, "")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+function markdownDraftFieldKeyForHeading(line: string): MarkdownDraftFieldKey | undefined {
+  const heading = normalizeMarkdownDraftHeading(line);
+  if (!heading) return undefined;
+  for (const field of MARKDOWN_DRAFT_FIELD_LABELS) {
+    if (field.labels.some((label) => heading === label || heading.startsWith(`${label} `) || heading.startsWith(`${label}:`) || heading.startsWith(`${label}：`))) {
+      return field.key;
+    }
+  }
+  return undefined;
+}
+
+function extractMarkdownDraftSections(raw: string): Partial<Record<MarkdownDraftFieldKey, string>> {
+  const fields: Partial<Record<MarkdownDraftFieldKey, string>> = {};
+  let currentKey: MarkdownDraftFieldKey | undefined;
+  let buffer: string[] = [];
+
+  const flush = () => {
+    if (!currentKey) return;
+    const value = buffer
+      .map((line) => stripMarkdown(line.replace(/^>\s?/u, "")))
+      .filter(Boolean)
+      .join("\n")
+      .trim();
+    if (value && !fields[currentKey]) {
+      fields[currentKey] = value;
+    }
+  };
+
+  for (const line of raw.split("\n")) {
+    const nextKey = markdownDraftFieldKeyForHeading(line);
+    if (nextKey) {
+      flush();
+      currentKey = nextKey;
+      buffer = [];
+      continue;
+    }
+    if (currentKey) {
+      buffer.push(line);
+    }
+  }
+  flush();
+
+  return fields;
 }
 
 function extractMarkdownDraftFields(raw: string | undefined): Partial<BookCreationDraft> {
@@ -638,21 +722,24 @@ function extractMarkdownDraftFields(raw: string | undefined): Partial<BookCreati
     fields[key] = value;
   }
 
+  const sections = extractMarkdownDraftSections(raw);
+  const allFields: Record<string, string> = { ...sections, ...fields };
+
   const get = (...keys: string[]) => {
     for (const key of keys) {
-      const value = fields[key];
+      const value = allFields[key];
       if (value?.trim()) return value.trim();
     }
     return undefined;
   };
 
-  const title = firstTitleCandidate(get("제목 후보", "제목", "Title candidates", "Title", "书名候选", "书名"));
-  const worldPremise = get("세계관", "World", "世界观");
-  const protagonist = get("주인공", "Protagonist", "主角");
-  const conflictCore = get("핵심 갈등", "Core Conflict", "核心冲突");
-  const volumeOutline = get("1부 방향", "Volume Direction", "卷一方向", "卷纲方向");
-  const blurb = get("소개문", "Blurb", "简介", "介绍文");
-  const styleGuide = get("문체", "문체 지시", "Style", "Style direction", "文风", "文风要求");
+  const title = firstTitleCandidate(sections.title ?? get("제목 후보", "제목", "Title candidates", "Title", "书名候选", "书名"));
+  const worldPremise = sections.worldPremise ?? get("세계관", "Worldview", "World", "世界观");
+  const protagonist = sections.protagonist ?? get("주인공", "Protagonist", "主角");
+  const conflictCore = sections.conflictCore ?? get("핵심 갈등", "Core Conflict", "核心冲突");
+  const volumeOutline = sections.volumeOutline ?? get("1부 방향", "Volume 1 Direction", "Volume Direction", "卷一方向", "卷纲方向");
+  const blurb = sections.blurb ?? get("소개문", "Synopsis", "Blurb", "简介", "介绍文");
+  const styleGuide = sections.styleGuide ?? get("문체", "문체 지시", "Style", "Style direction", "文风", "文风要求");
 
   return {
     ...(title ? { title } : {}),

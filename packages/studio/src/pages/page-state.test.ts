@@ -6,6 +6,7 @@ import {
   buildCreationDraftSummary,
   applyCreationDraftToFormState,
   extractCreationDraftFromAssistantText,
+  mergeCreationDrafts,
   canCreateFromDraft,
   defaultBookCreateForm,
   defaultChapterWordsForLanguage,
@@ -294,6 +295,84 @@ describe("extractCreationDraftFromAssistantText", () => {
       blurb: "기억을 잃은 전직 요원에게 낡은 데이터 칩 하나가 도착한다.",
       styleGuide: "차갑고 절제된 3인칭, 기술 묘사는 짧게.",
       readyToCreate: true,
+    }));
+  });
+
+  it("parses a Korean numbered section draft into creation fields", () => {
+    const draft = extractCreationDraftFromAssistantText({
+      responseText: [
+        "알겠습니다. `한계-돌파-무한-성장2` 프로젝트를 위한 SF 장르 초안을 생성합니다.",
+        "### **[작품 설정 초안: 프로젝트 코드명 '이벤트 호라이즌']**",
+        "**1. 제목 후보**",
+        "* **최종 후보:** 《심연의 테라포머: 인류 최후의 개척자》",
+        "* **대안 1:** 《나 홀로 은하계급 진화》",
+        "**2. 세계관 (Worldview)**",
+        "* **배경:** 서기 2450년, 지구는 자원 고갈과 환경 붕괴로 거주 불능 상태가 됨.",
+        "* **핵심 설정:** '나노 머신 엔진'과 '양자 의식 전이'.",
+        "**3. 주인공 (Protagonist)**",
+        "* **이름:** 강한결 (28세)",
+        "* **특징:** 전직 우주 탐사선 정비사.",
+        "**4. 핵심 갈등 (Core Conflict)**",
+        "* **내적 갈등:** 인간성을 유지하며 기계적 진화를 이룰 것인가.",
+        "* **외적 갈등:** 거대 기업 '아틀라스'의 음모와 고대 문명의 위협.",
+        "**5. 1부 방향 (Volume 1 Direction)**",
+        "* **목표:** 아틀라스의 추격을 뿌리치고, 자신만의 독립 함선을 구축한다.",
+        "**6. 소개문 (Synopsis)**",
+        "> \"지구는 죽었다. 이제 남은 것은 차가운 우주와 끝없는 탐욕뿐이다.\"",
+        "> 인류 최후의 방주 '아크'의 말단 정비사 강한결.",
+      ].join("\n"),
+      concept: "SF 초안",
+      genreId: "ko-sci-fi",
+      platform: "kakao-page",
+      targetChapters: "120",
+      chapterWordCount: "2000",
+    });
+
+    expect(draft).toEqual(expect.objectContaining({
+      language: "ko",
+      title: "심연의 테라포머: 인류 최후의 개척자",
+      genre: "ko-sci-fi",
+      platform: "kakao-page",
+      worldPremise: expect.stringContaining("서기 2450년"),
+      protagonist: expect.stringContaining("강한결"),
+      conflictCore: expect.stringContaining("인간성을 유지"),
+      volumeOutline: expect.stringContaining("독립 함선"),
+      blurb: expect.stringContaining("지구는 죽었다"),
+      readyToCreate: true,
+    }));
+  });
+});
+
+describe("mergeCreationDrafts", () => {
+  it("preserves server defaults while filling prose fields parsed from assistant text", () => {
+    const merged = mergeCreationDrafts(
+      {
+        concept: "SF 초안",
+        genre: "ko-sci-fi",
+        platform: "kakao-page",
+        targetChapters: 120,
+        chapterWordCount: 2000,
+        missingFields: ["title", "blurb"],
+        readyToCreate: false,
+      },
+      {
+        concept: "SF 초안",
+        title: "심연의 테라포머",
+        blurb: "지구가 죽은 뒤 아크의 정비사가 유물을 발견한다.",
+        worldPremise: "서기 2450년의 대이주 시대.",
+        missingFields: [],
+        readyToCreate: true,
+      },
+    );
+
+    expect(merged).toEqual(expect.objectContaining({
+      title: "심연의 테라포머",
+      genre: "ko-sci-fi",
+      platform: "kakao-page",
+      targetChapters: 120,
+      chapterWordCount: 2000,
+      readyToCreate: true,
+      missingFields: [],
     }));
   });
 });
