@@ -429,7 +429,8 @@ const BOOK_DRAFT_SYSTEM_PROMPT = [
   "2a. 如果用户提到 문체/文风/style/叙事语气/문장 길이/대화 밀도，把它写进 styleGuide 字段，不要混进 brief。",
   "3. 如果用户后续要求修改某些字段，重新调用 create_book 工具，只更新被提到的字段，其余保持不变。",
   "4. 不要只回复文字讨论——必须调用 create_book 工具输出结构化参数。",
-  "5. 如果用户输入来自 Studio 表单，已经包含书名、题材、平台、目标章数、每章字数、故事简介/核心设定，不要再追问这些字段；直接基于它们生成完整草案。",
+  "5. 如果因为模型或服务限制无法调用工具，必须在回复中提供一个 ```json fenced block，包含 title, genre, platform, language, targetChapters, chapterWordCount, blurb, worldPremise, protagonist, conflictCore, volumeOutline, styleGuide, nextQuestion 字段。",
+  "6. 如果用户输入来自 Studio 表单，已经包含书名、题材、平台、目标章数、每章字数、故事简介/核心设定，不要再追问这些字段；直接基于它们生成完整草案。",
 ].join("\n");
 
 /** Map directive field keys to BookCreationDraft property names. */
@@ -709,9 +710,56 @@ function extractMarkdownDraftSections(raw: string): Partial<Record<MarkdownDraft
   return fields;
 }
 
+function normalizeJsonDraftFields(value: unknown): Partial<BookCreationDraft> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const record = value as Record<string, unknown>;
+  const text = (key: string) => typeof record[key] === "string" && record[key].trim() ? record[key].trim() : undefined;
+  const number = (key: string) => typeof record[key] === "number" && Number.isFinite(record[key]) ? record[key] : undefined;
+  const language = text("language");
+  return {
+    ...(text("title") ? { title: text("title") } : {}),
+    ...(text("genre") ? { genre: text("genre") } : {}),
+    ...(text("platform") ? { platform: text("platform") } : {}),
+    ...(language === "zh" || language === "en" || language === "ko" ? { language } : {}),
+    ...(number("targetChapters") ? { targetChapters: number("targetChapters") } : {}),
+    ...(number("chapterWordCount") ? { chapterWordCount: number("chapterWordCount") } : {}),
+    ...(text("blurb") || text("brief") ? { blurb: text("blurb") ?? text("brief") } : {}),
+    ...(text("worldPremise") ? { worldPremise: text("worldPremise") } : {}),
+    ...(text("protagonist") ? { protagonist: text("protagonist") } : {}),
+    ...(text("conflictCore") ? { conflictCore: text("conflictCore") } : {}),
+    ...(text("volumeOutline") ? { volumeOutline: text("volumeOutline") } : {}),
+    ...(text("styleGuide") ? { styleGuide: text("styleGuide") } : {}),
+    ...(text("nextQuestion") ? { nextQuestion: text("nextQuestion") } : {}),
+  };
+}
+
+function extractJsonDraftFields(raw: string): Partial<BookCreationDraft> {
+  const fenced = [...raw.matchAll(/```(?:json)?\s*([\s\S]*?)```/giu)];
+  for (const match of fenced) {
+    try {
+      const draft = normalizeJsonDraftFields(JSON.parse(match[1]?.trim() ?? ""));
+      if (Object.keys(draft).length > 0) return draft;
+    } catch {
+      // Try the next candidate.
+    }
+  }
+
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    try {
+      return normalizeJsonDraftFields(JSON.parse(raw.slice(start, end + 1)));
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
 function extractMarkdownDraftFields(raw: string | undefined): Partial<BookCreationDraft> {
   if (!raw?.trim()) return {};
 
+  const jsonFields = extractJsonDraftFields(raw);
   const fields: Record<string, string> = {};
   for (const line of raw.split("\n")) {
     const match = /^\s*\|\s*(?:\*\*)?([^|*]+?)(?:\*\*)?\s*\|\s*([^|]+?)\s*\|\s*$/u.exec(line);
@@ -733,22 +781,28 @@ function extractMarkdownDraftFields(raw: string | undefined): Partial<BookCreati
     return undefined;
   };
 
-  const title = firstTitleCandidate(sections.title ?? get("제목 후보", "제목", "Title candidates", "Title", "书名候选", "书名"));
-  const worldPremise = sections.worldPremise ?? get("세계관", "Worldview", "World", "世界观");
-  const protagonist = sections.protagonist ?? get("주인공", "Protagonist", "主角");
-  const conflictCore = sections.conflictCore ?? get("핵심 갈등", "Core Conflict", "核心冲突");
-  const volumeOutline = sections.volumeOutline ?? get("1부 방향", "Volume 1 Direction", "Volume Direction", "卷一方向", "卷纲方向");
-  const blurb = sections.blurb ?? get("소개문", "Synopsis", "Blurb", "简介", "介绍文");
-  const styleGuide = sections.styleGuide ?? get("문체", "문체 지시", "Style", "Style direction", "文风", "文风要求");
+  const title = jsonFields.title ?? firstTitleCandidate(sections.title ?? get("제목 후보", "제목", "Title candidates", "Title", "书名候选", "书名"));
+  const worldPremise = jsonFields.worldPremise ?? sections.worldPremise ?? get("세계관", "Worldview", "World", "世界观");
+  const protagonist = jsonFields.protagonist ?? sections.protagonist ?? get("주인공", "Protagonist", "主角");
+  const conflictCore = jsonFields.conflictCore ?? sections.conflictCore ?? get("핵심 갈등", "Core Conflict", "核心冲突");
+  const volumeOutline = jsonFields.volumeOutline ?? sections.volumeOutline ?? get("1부 방향", "Volume 1 Direction", "Volume Direction", "卷一方向", "卷纲方向");
+  const blurb = jsonFields.blurb ?? sections.blurb ?? get("소개문", "Synopsis", "Blurb", "简介", "介绍文");
+  const styleGuide = jsonFields.styleGuide ?? sections.styleGuide ?? get("문체", "문체 지시", "Style", "Style direction", "文风", "文风要求");
 
   return {
     ...(title ? { title } : {}),
+    ...(jsonFields.genre ? { genre: jsonFields.genre } : {}),
+    ...(jsonFields.platform ? { platform: jsonFields.platform } : {}),
+    ...(jsonFields.language ? { language: jsonFields.language } : {}),
+    ...(jsonFields.targetChapters ? { targetChapters: jsonFields.targetChapters } : {}),
+    ...(jsonFields.chapterWordCount ? { chapterWordCount: jsonFields.chapterWordCount } : {}),
     ...(worldPremise ? { worldPremise } : {}),
     ...(protagonist ? { protagonist } : {}),
     ...(conflictCore ? { conflictCore } : {}),
     ...(volumeOutline ? { volumeOutline } : {}),
     ...(blurb ? { blurb } : {}),
     ...(styleGuide ? { styleGuide } : {}),
+    ...(jsonFields.nextQuestion ? { nextQuestion: jsonFields.nextQuestion } : {}),
   };
 }
 
@@ -860,11 +914,11 @@ export function createInteractionToolsFromDeps(
         ...(formDraft ?? {}),
         ...contentDraft,
         title: (parsedArgs.title as string) ?? contentDraft.title ?? formDraft?.title ?? existingDraft?.title,
-        genre: (parsedArgs.genre as string) ?? formDraft?.genre ?? existingDraft?.genre,
-        platform: (parsedArgs.platform as string) ?? formDraft?.platform ?? existingDraft?.platform,
-        language: (parsedArgs.language as "zh" | "en" | "ko") ?? formDraft?.language ?? existingDraft?.language,
-        targetChapters: (parsedArgs.targetChapters as number) ?? formDraft?.targetChapters ?? existingDraft?.targetChapters ?? 200,
-        chapterWordCount: (parsedArgs.chapterWordCount as number) ?? formDraft?.chapterWordCount ?? existingDraft?.chapterWordCount ?? 3000,
+        genre: (parsedArgs.genre as string) ?? contentDraft.genre ?? formDraft?.genre ?? existingDraft?.genre,
+        platform: (parsedArgs.platform as string) ?? contentDraft.platform ?? formDraft?.platform ?? existingDraft?.platform,
+        language: (parsedArgs.language as "zh" | "en" | "ko") ?? contentDraft.language ?? formDraft?.language ?? existingDraft?.language,
+        targetChapters: (parsedArgs.targetChapters as number) ?? contentDraft.targetChapters ?? formDraft?.targetChapters ?? existingDraft?.targetChapters ?? 200,
+        chapterWordCount: (parsedArgs.chapterWordCount as number) ?? contentDraft.chapterWordCount ?? formDraft?.chapterWordCount ?? existingDraft?.chapterWordCount ?? 3000,
         blurb: (parsedArgs.brief as string) ?? contentDraft.blurb ?? formDraft?.blurb ?? existingDraft?.blurb,
         worldPremise: (parsedArgs.worldPremise as string) ?? contentDraft.worldPremise ?? formDraft?.worldPremise ?? existingDraft?.worldPremise,
         protagonist: contentDraft.protagonist ?? existingDraft?.protagonist,

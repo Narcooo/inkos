@@ -387,12 +387,19 @@ export function buildDraftInstructionFromForm(options: DraftInstructionFromFormO
       lines.push("", `${label}:`, value.trim());
     }
   };
+  const jsonContract = [
+    "",
+    "Return a single JSON object inside a ```json fenced block. Fill these keys:",
+    "title, genre, platform, language, targetChapters, chapterWordCount, blurb, worldPremise, protagonist, conflictCore, volumeOutline, styleGuide, nextQuestion.",
+    "Do not use a markdown table for the fields.",
+  ];
   const lines = options.uiLanguage === "ko"
     ? (() => {
         const result = [
         "아래 작품 기본 정보를 바탕으로 장르에 맞는 기초 설정 초안을 만들어줘.",
         "비어 있는 항목은 직접 창작해서 채워줘. 장르가 선택되어 있으면 반드시 그 장르를 참고하고, 장르가 없으면 웹소설에 어울리는 장르를 하나 무작위로 선택해줘.",
         "초안이 없더라도 바로 제목 후보, 세계관, 주인공, 핵심 갈등, 1부 방향, 소개문을 생성해줘.",
+        "폼에 바로 반영해야 하므로 결과의 핵심 필드는 반드시 JSON 객체로 작성해줘.",
         "",
       ];
         appendOptional(result, "제목", options.form.title);
@@ -402,7 +409,7 @@ export function buildDraftInstructionFromForm(options: DraftInstructionFromFormO
         appendOptional(result, "장당 분량", options.form.chapterWordCount);
         appendBrief(result, "이야기 소개 / 핵심 설정", options.form.brief);
         appendBrief(result, "문체 지시", options.form.styleGuide);
-        result.push("", "결과에는 제목 후보가 필요하면 다듬은 제목, 세계관, 주인공, 핵심 갈등, 1부 방향, 소개문, 부족한 질문을 포함해줘.");
+        result.push("", "결과에는 제목 후보가 필요하면 다듬은 제목, 세계관, 주인공, 핵심 갈등, 1부 방향, 소개문, 부족한 질문을 포함해줘.", ...jsonContract);
         return result;
       })()
     : options.uiLanguage === "en"
@@ -411,6 +418,7 @@ export function buildDraftInstructionFromForm(options: DraftInstructionFromFormO
           "Use the book basics below to generate a genre-aware foundation draft.",
           "Invent any missing fields. If a genre is selected, use it; if not, randomly choose a fitting web-novel genre.",
           "Even when there is no existing draft, generate title candidates, world premise, protagonist, core conflict, volume-one direction, and blurb immediately.",
+          "The core fields must be returned as JSON so the form can be updated automatically.",
           "",
         ];
           appendOptional(result, "Title", options.form.title);
@@ -420,7 +428,7 @@ export function buildDraftInstructionFromForm(options: DraftInstructionFromFormO
           appendOptional(result, "Words per chapter", options.form.chapterWordCount);
           appendBrief(result, "Story brief / core premise", options.form.brief);
           appendBrief(result, "Style direction", options.form.styleGuide);
-          result.push("", "Include a refined title if helpful, world premise, protagonist, core conflict, volume-one direction, blurb, and remaining questions.");
+          result.push("", "Include a refined title if helpful, world premise, protagonist, core conflict, volume-one direction, blurb, and remaining questions.", ...jsonContract);
           return result;
         })()
       : (() => {
@@ -428,6 +436,7 @@ export function buildDraftInstructionFromForm(options: DraftInstructionFromFormO
           "请基于下面的建书表单，生成符合所选题材模板的基础设定草案。",
           "空缺字段请直接创作补齐。若已选择题材，必须参考该题材；若未选择题材，请随机选择一个适合网文的题材。",
           "即使还没有草案，也要立刻生成书名候选、世界观、主角、核心冲突、卷一方向和简介。",
+          "核心字段必须用 JSON 对象返回，方便表单自动回填。",
           "",
         ];
           appendOptional(result, "书名", options.form.title);
@@ -437,7 +446,7 @@ export function buildDraftInstructionFromForm(options: DraftInstructionFromFormO
           appendOptional(result, "每章字数", options.form.chapterWordCount);
           appendBrief(result, "故事简介 / 核心设定", options.form.brief);
           appendBrief(result, "文风要求", options.form.styleGuide);
-          result.push("", "结果请包含可优化书名、世界观、主角、核心冲突、卷一方向、简介，以及仍需补充的问题。");
+          result.push("", "结果请包含可优化书名、世界观、主角、核心冲突、卷一方向、简介，以及仍需补充的问题。", ...jsonContract);
           return result;
         })();
 
@@ -622,6 +631,53 @@ function extractSectionDraftFields(raw: string): Partial<Record<DraftFieldKey, s
   return fields;
 }
 
+function normalizeJsonDraftFields(value: unknown): Partial<BookCreationDraft> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const record = value as Record<string, unknown>;
+  const text = (key: string) => typeof record[key] === "string" && record[key].trim() ? record[key].trim() : undefined;
+  const number = (key: string) => typeof record[key] === "number" && Number.isFinite(record[key]) ? record[key] : undefined;
+  const language = text("language");
+  return {
+    ...(text("title") ? { title: text("title") } : {}),
+    ...(text("genre") ? { genre: text("genre") } : {}),
+    ...(text("platform") ? { platform: text("platform") } : {}),
+    ...(language === "zh" || language === "en" || language === "ko" ? { language } : {}),
+    ...(number("targetChapters") ? { targetChapters: number("targetChapters") } : {}),
+    ...(number("chapterWordCount") ? { chapterWordCount: number("chapterWordCount") } : {}),
+    ...(text("blurb") || text("brief") ? { blurb: text("blurb") ?? text("brief") } : {}),
+    ...(text("worldPremise") ? { worldPremise: text("worldPremise") } : {}),
+    ...(text("protagonist") ? { protagonist: text("protagonist") } : {}),
+    ...(text("conflictCore") ? { conflictCore: text("conflictCore") } : {}),
+    ...(text("volumeOutline") ? { volumeOutline: text("volumeOutline") } : {}),
+    ...(text("styleGuide") ? { styleGuide: text("styleGuide") } : {}),
+    ...(text("nextQuestion") ? { nextQuestion: text("nextQuestion") } : {}),
+  };
+}
+
+function extractJsonDraftFields(raw: string): Partial<BookCreationDraft> {
+  const fenced = [...raw.matchAll(/```(?:json)?\s*([\s\S]*?)```/giu)];
+  for (const match of fenced) {
+    try {
+      const parsed = JSON.parse(match[1]?.trim() ?? "");
+      const draft = normalizeJsonDraftFields(parsed);
+      if (Object.keys(draft).length > 0) return draft;
+    } catch {
+      // Fall through to the next candidate.
+    }
+  }
+
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    try {
+      return normalizeJsonDraftFields(JSON.parse(raw.slice(start, end + 1)));
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
 export function mergeCreationDrafts(
   ...drafts: ReadonlyArray<BookCreationDraft | undefined>
 ): BookCreationDraft | undefined {
@@ -663,6 +719,7 @@ export function extractCreationDraftFromAssistantText(args: {
   const raw = args.responseText?.trim();
   if (!raw) return undefined;
 
+  const jsonFields = extractJsonDraftFields(raw);
   const table: Record<string, string> = {};
   for (const line of raw.split("\n")) {
     const match = /^\s*\|\s*(?:\*\*)?([^|*]+?)(?:\*\*)?\s*\|\s*([^|]+?)\s*\|\s*$/u.exec(line);
@@ -684,13 +741,13 @@ export function extractCreationDraftFromAssistantText(args: {
     return undefined;
   };
 
-  const title = firstDraftTitle(sectionFields.title ?? get("제목 후보", "제목", "Title candidates", "Title", "书名候选", "书名"));
-  const worldPremise = sectionFields.worldPremise ?? get("세계관", "Worldview", "World", "世界观");
-  const protagonist = sectionFields.protagonist ?? get("주인공", "Protagonist", "主角");
-  const conflictCore = sectionFields.conflictCore ?? get("핵심 갈등", "Core Conflict", "核心冲突");
-  const volumeOutline = sectionFields.volumeOutline ?? get("1부 방향", "Volume 1 Direction", "Volume Direction", "卷一方向", "卷纲方向");
-  const blurb = sectionFields.blurb ?? get("소개문", "Synopsis", "Blurb", "简介", "介绍文");
-  const styleGuide = sectionFields.styleGuide ?? get("문체", "문체 지시", "Style", "Style direction", "文风", "文风要求");
+  const title = jsonFields.title ?? firstDraftTitle(sectionFields.title ?? get("제목 후보", "제목", "Title candidates", "Title", "书名候选", "书名"));
+  const worldPremise = jsonFields.worldPremise ?? sectionFields.worldPremise ?? get("세계관", "Worldview", "World", "世界观");
+  const protagonist = jsonFields.protagonist ?? sectionFields.protagonist ?? get("주인공", "Protagonist", "主角");
+  const conflictCore = jsonFields.conflictCore ?? sectionFields.conflictCore ?? get("핵심 갈등", "Core Conflict", "核心冲突");
+  const volumeOutline = jsonFields.volumeOutline ?? sectionFields.volumeOutline ?? get("1부 방향", "Volume 1 Direction", "Volume Direction", "卷一方向", "卷纲方向");
+  const blurb = jsonFields.blurb ?? sectionFields.blurb ?? get("소개문", "Synopsis", "Blurb", "简介", "介绍文");
+  const styleGuide = jsonFields.styleGuide ?? sectionFields.styleGuide ?? get("문체", "문체 지시", "Style", "Style direction", "文风", "文风要求");
   if (!title && !worldPremise && !protagonist && !conflictCore && !volumeOutline && !blurb && !styleGuide) {
     return undefined;
   }
@@ -703,11 +760,11 @@ export function extractCreationDraftFromAssistantText(args: {
   return {
     concept: args.concept,
     ...(title ? { title } : {}),
-    ...(args.genreId ? { genre: args.genreId } : {}),
-    ...(args.platform ? { platform: args.platform } : {}),
-    language: args.language ?? (args.genreId?.startsWith("ko-") ? "ko" : "en"),
-    targetChapters: parseNumber(args.targetChapters) ?? 200,
-    chapterWordCount: parseNumber(args.chapterWordCount) ?? 2000,
+    ...(jsonFields.genre ?? args.genreId ? { genre: jsonFields.genre ?? args.genreId } : {}),
+    ...(jsonFields.platform ?? args.platform ? { platform: jsonFields.platform ?? args.platform } : {}),
+    language: jsonFields.language ?? args.language ?? (args.genreId?.startsWith("ko-") ? "ko" : "en"),
+    targetChapters: jsonFields.targetChapters ?? parseNumber(args.targetChapters) ?? 200,
+    chapterWordCount: jsonFields.chapterWordCount ?? parseNumber(args.chapterWordCount) ?? 2000,
     ...(blurb ? { blurb } : {}),
     ...(worldPremise ? { worldPremise } : {}),
     ...(protagonist ? { protagonist } : {}),

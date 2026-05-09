@@ -341,6 +341,46 @@ describe("extractCreationDraftFromAssistantText", () => {
       readyToCreate: true,
     }));
   });
+
+  it("prefers a JSON draft block when the assistant includes structured fields", () => {
+    const draft = extractCreationDraftFromAssistantText({
+      responseText: [
+        "초안을 JSON으로 정리했습니다.",
+        "```json",
+        JSON.stringify({
+          title: "심연의 테라포머",
+          genre: "ko-sci-fi",
+          platform: "kakao-page",
+          language: "ko",
+          targetChapters: 130,
+          chapterWordCount: 2200,
+          blurb: "아크의 정비사가 고대 유물을 발견하고 은하 변두리에서 진화한다.",
+          worldPremise: "서기 2450년, 인류는 대이주 시대에 들어섰다.",
+          protagonist: "강한결, 전직 우주 탐사선 정비사.",
+          conflictCore: "인간성을 유지할 것인가, 생존을 위해 기계가 될 것인가.",
+          volumeOutline: "독립 함선을 구축하고 아틀라스의 추격을 피한다.",
+          styleGuide: "빠른 전개와 감각적인 기계 묘사.",
+        }, null, 2),
+        "```",
+      ].join("\n"),
+      concept: "SF 초안",
+      genreId: "ko-other",
+      platform: "other",
+      targetChapters: "120",
+      chapterWordCount: "2000",
+    });
+
+    expect(draft).toEqual(expect.objectContaining({
+      title: "심연의 테라포머",
+      genre: "ko-sci-fi",
+      platform: "kakao-page",
+      language: "ko",
+      targetChapters: 130,
+      chapterWordCount: 2200,
+      blurb: "아크의 정비사가 고대 유물을 발견하고 은하 변두리에서 진화한다.",
+      readyToCreate: true,
+    }));
+  });
 });
 
 describe("mergeCreationDrafts", () => {
