@@ -1,3 +1,6 @@
+import { createWriteStream, mkdirSync, existsSync } from "node:fs";
+import { join } from "node:path";
+import { Writable } from "node:stream";
 import type { LLMClient, LLMMessage, LLMResponse, OnStreamProgress } from "../llm/provider.js";
 import { chatCompletion } from "../llm/provider.js";
 import { searchWeb, fetchUrl } from "../utils/web-search.js";
@@ -10,6 +13,7 @@ export interface AgentContext {
   readonly bookId?: string;
   readonly logger?: Logger;
   readonly onStreamProgress?: OnStreamProgress;
+  readonly chatLogDir?: string;
 }
 
 export abstract class BaseAgent {
@@ -23,14 +27,58 @@ export abstract class BaseAgent {
     return this.ctx.logger;
   }
 
+  protected _createChatLogWriteStream(): Writable | undefined {
+    const logDir = this.ctx.chatLogDir;
+    if (!logDir) return undefined;
+
+    if (!existsSync(logDir)) {
+      mkdirSync(logDir, { recursive: true });
+    }
+
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    const random = Math.random().toString(36).slice(2, 8);
+    const filename = `chat-log-${this.name}-${timestamp}-${random}.log`;
+    return createWriteStream(join(logDir, filename), { encoding: "utf-8" });
+  }
+
   protected async chat(
     messages: ReadonlyArray<LLMMessage>,
     options?: { readonly temperature?: number; readonly maxTokens?: number },
   ): Promise<LLMResponse> {
-    return chatCompletion(this.ctx.client, this.ctx.model, messages, {
-      ...options,
-      onStreamProgress: this.ctx.onStreamProgress,
-    });
+    const chatLogWriteStream = this._createChatLogWriteStream();
+
+    try {
+      const client = this.ctx.client;
+      const model = this.ctx.model;
+      const temperature = options?.temperature ?? client.defaults.temperature;
+      const maxTokens = options?.maxTokens ?? client.defaults.maxTokens;
+      const headerLine = `[${this.name}] >>> BEGIN >>> model=${model} provider=${client.provider} service=${client.service} baseUrl=${client._piModel?.baseUrl ?? "(unknown)"} temperature=${temperature} maxTokens=${maxTokens} messageCount=${messages.length}`;
+
+      if (chatLogWriteStream) {
+        chatLogWriteStream.write(`${headerLine}\n`);
+        for (let i = 0; i < messages.length; i++) {
+          const msg = messages[i];
+          const hdr = `PROMPT [${msg.role}] (${msg.content.length} chars):`;
+          chatLogWriteStream.write(`${hdr}\n${msg.content}\n`);
+          if (i < messages.length - 1) chatLogWriteStream.write("---\n");
+        }
+      }
+
+      const result = await chatCompletion(client, model, messages, {
+        ...options,
+        onStreamProgress: this.ctx.onStreamProgress,
+      });
+
+      const respLine = `[${this.name}] <<< RESPONSE <<< ${result.content.length} chars | tokens: prompt=${result.usage.promptTokens} completion=${result.usage.completionTokens} total=${result.usage.totalTokens}`;
+
+      if (chatLogWriteStream) {
+        chatLogWriteStream.write(`${respLine}\n${result.content}\n=== END ===\n\n`);
+      }
+
+      return result;
+    } finally {
+      chatLogWriteStream?.end();
+    }
   }
 
   /**

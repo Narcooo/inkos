@@ -155,6 +155,7 @@ export function buildPipelineConfig(
     externalContext: extra?.externalContext,
     logger,
     onStreamProgress,
+    chatLogDirs: config.chatLogDirs,
   };
 }
 

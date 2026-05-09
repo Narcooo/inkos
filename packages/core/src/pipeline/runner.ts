@@ -231,6 +231,7 @@ export interface PipelineConfig {
   readonly inputGovernanceMode?: InputGovernanceMode;
   readonly logger?: Logger;
   readonly onStreamProgress?: OnStreamProgress;
+  readonly chatLogDirs?: Record<string, string>;
 }
 
 export interface TokenUsageSummary {
@@ -510,6 +511,10 @@ export class PipelineRunner {
         ].join("\n");
   }
 
+  private getChatLogDir(agentName: string): string | undefined {
+    return this.config.chatLogDirs?.[agentName];
+  }
+
   private agentCtx(bookId?: string): AgentContext {
     return {
       client: this.config.client,
@@ -518,6 +523,7 @@ export class PipelineRunner {
       bookId,
       logger: this.config.logger,
       onStreamProgress: this.config.onStreamProgress,
+      chatLogDir: this.getChatLogDir("base"),
     };
   }
 
@@ -578,6 +584,7 @@ export class PipelineRunner {
       bookId,
       logger: this.config.logger?.child(agent),
       onStreamProgress: this.config.onStreamProgress,
+      chatLogDir: this.getChatLogDir(agent),
     };
   }
 

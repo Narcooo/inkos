@@ -141,6 +141,7 @@ export const ProjectConfigSchema = z.object({
       retryTemperatureStep: 0.1,
     },
   }),
+  chatLogDirs: z.record(z.string(), z.string()).optional(),
 });
 
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
