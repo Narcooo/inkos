@@ -4,6 +4,12 @@ import type { Theme } from "../hooks/use-theme";
 import type { TFunction } from "../hooks/use-i18n";
 import { useColors } from "../hooks/use-colors";
 import { Pencil, Save, X } from "lucide-react";
+import { Streamdown } from "streamdown";
+import { cjk } from "@streamdown/cjk";
+import { code } from "@streamdown/code";
+import { math } from "@streamdown/math";
+import { mermaid } from "@streamdown/mermaid";
+import { MARKDOWN_DOCUMENT_CLASS, normalizeMarkdownForDisplay } from "../components/markdown-display";
 
 interface TruthFile {
   readonly name: string;
@@ -19,6 +25,8 @@ export const SHIM_AUTHORITATIVE_PATH: Readonly<Record<string, string>> = {
   "story_bible.md": "outline/story_frame.md",
   "book_rules.md": "outline/story_frame.md",
 };
+
+const streamdownPlugins = { cjk, code, math, mermaid };
 
 /**
  * Phase hotfix 2: when the GET response carries `legacy: true`, the file is
@@ -50,6 +58,7 @@ interface Nav {
 
 export function TruthFiles({ bookId, nav, theme, t }: { bookId: string; nav: Nav; theme: Theme; t: TFunction }) {
   const c = useColors(theme);
+  const uiLanguage = t("nav.connected") === "연결됨" ? "ko" : t("nav.connected") === "Connected" ? "en" : "zh";
   const { data } = useApi<{ files: ReadonlyArray<TruthFile> }>(`/books/${bookId}/truth`);
   const [selected, setSelected] = useState<string | null>(null);
   const [editMode, setEditMode] = useState(false);
@@ -83,7 +92,7 @@ export function TruthFiles({ bookId, nav, theme, t }: { bookId: string; nav: Nav
       setEditMode(false);
       refetchFile();
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Failed to save");
+      alert(e instanceof Error ? e.message : uiLanguage === "ko" ? "저장 실패" : uiLanguage === "en" ? "Failed to save" : "保存失败");
     } finally {
       setSavingEdit(false);
     }
@@ -132,9 +141,11 @@ export function TruthFiles({ bookId, nav, theme, t }: { bookId: string; nav: Nav
                   data-testid="legacy-shim-warning"
                   className="mb-3 px-3 py-2 rounded-md border border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300 text-xs leading-relaxed"
                 >
-                  <div className="font-medium">兼容层只读 / Read-only compat shim</div>
+                  <div className="font-medium">
+                    {uiLanguage === "ko" ? "읽기 전용 호환 레이어" : uiLanguage === "en" ? "Read-only compat shim" : "兼容层只读"}
+                  </div>
                   <div className="mt-1">
-                    本文件已废弃，仅供外部读取。权威来源：
+                    {uiLanguage === "ko" ? "이 파일은 폐기된 호환 파일이며 외부 읽기용으로만 남아 있습니다. 실제 기준 파일:" : uiLanguage === "en" ? "This deprecated file is kept for external reads only. Authoritative source:" : "本文件已废弃，仅供外部读取。权威来源："}
                     <code className="ml-1 px-1 py-0.5 rounded bg-background/40 font-mono">
                       {SHIM_AUTHORITATIVE_PATH[selected] ?? "outline/"}
                     </code>
@@ -149,7 +160,7 @@ export function TruthFiles({ bookId, nav, theme, t }: { bookId: string; nav: Nav
                       className={`inline-flex items-center gap-1 px-3 py-1.5 text-xs rounded-md ${c.btnSecondary}`}
                     >
                       <X size={14} />
-                      Cancel
+                      {t("truth.cancel")}
                     </button>
                     <button
                       onClick={handleSaveEdit}
@@ -167,7 +178,7 @@ export function TruthFiles({ bookId, nav, theme, t }: { bookId: string; nav: Nav
                       className={`inline-flex items-center gap-1 px-3 py-1.5 text-xs rounded-md ${c.btnSecondary}`}
                     >
                       <Pencil size={14} />
-                      Edit
+                      {t("truth.edit")}
                     </button>
                   )
                 )}
@@ -179,7 +190,9 @@ export function TruthFiles({ bookId, nav, theme, t }: { bookId: string; nav: Nav
                   className={`${c.input} flex-1 rounded-md p-3 text-sm font-mono leading-relaxed resize-none min-h-[360px]`}
                 />
               ) : (
-                <pre className="text-sm leading-relaxed whitespace-pre-wrap font-mono text-foreground/80">{fileData.content}</pre>
+                <Streamdown className={MARKDOWN_DOCUMENT_CLASS} plugins={streamdownPlugins} mode="static">
+                  {normalizeMarkdownForDisplay(fileData.content)}
+                </Streamdown>
               )}
             </>
           ) : selected && fileData?.content === null ? (

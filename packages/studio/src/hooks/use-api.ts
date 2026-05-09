@@ -95,7 +95,19 @@ export async function fetchJson<T>(
   }
 
   const fetchImpl = deps?.fetchImpl ?? fetch;
-  const res = await fetchImpl(url, init);
+  let res: Response;
+  try {
+    res = await fetchImpl(url, init);
+  } catch (error) {
+    const message = error instanceof Error && error.message.trim()
+      ? error.message
+      : "Failed to fetch";
+    throw new Error(localizeKnownRuntimeMessage(
+      message === "Failed to fetch"
+        ? "Studio server connection was interrupted. The request may have been stopped while the server was restarting. Please try again."
+        : message,
+    ));
+  }
 
   if (!res.ok) {
     throw new Error(await readErrorMessage(res));

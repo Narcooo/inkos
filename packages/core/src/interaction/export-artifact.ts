@@ -94,7 +94,7 @@ export async function buildExportArtifact(
       epubChapters.push({ title, content: html });
     }
     const epubInstance = new EPub(
-      { title: book.title, lang: book.language === "en" ? "en" : "zh-CN" },
+      { title: book.title, lang: book.language === "ko" ? "ko" : book.language === "en" ? "en" : "zh-CN" },
       epubChapters,
     );
     return {

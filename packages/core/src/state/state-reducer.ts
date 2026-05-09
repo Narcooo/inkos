@@ -178,7 +178,7 @@ function preferRicherText(primary: string, fallback: string): string {
 
 function applyCurrentStatePatch(
   currentState: CurrentStateState,
-  language: "zh" | "en",
+  language: "zh" | "en" | "ko",
   delta: RuntimeStateDelta,
 ): CurrentStateState {
   if (!delta.currentStatePatch) {
@@ -189,7 +189,16 @@ function applyCurrentStatePatch(
   }
 
   const nextFacts = [...currentState.facts];
-  const labels = language === "en"
+  const labels = language === "ko"
+    ? {
+      currentLocation: ["현재 위치", "Current Location", "当前位置"],
+      protagonistState: ["주인공 상태", "Protagonist State", "主角状态"],
+      currentGoal: ["현재 목표", "Current Goal", "当前目标"],
+      currentConstraint: ["현재 제약", "Current Constraint", "当前限制"],
+      currentAlliances: ["현재 관계", "Current Alliances", "Current Relationships", "当前敌我"],
+      currentConflict: ["현재 갈등", "Current Conflict", "当前冲突"],
+    }
+    : language === "en"
     ? {
       currentLocation: ["Current Location", "当前位置"],
       protagonistState: ["Protagonist State", "主角状态"],

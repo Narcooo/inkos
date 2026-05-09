@@ -8,6 +8,7 @@ import { useChatStore } from "../../store/chat";
 import type { BookSummary } from "../../store/chat";
 import { fetchJson } from "../../hooks/use-api";
 import { SidebarCard } from "./SidebarCard";
+import type { SidebarLanguage } from "../chat/BookSidebar";
 
 const streamdownPlugins = { cjk, code, math, mermaid };
 
@@ -27,11 +28,11 @@ function parseStoryBible(content: string): BookSummary {
   let cast = "";
 
   for (const section of sections) {
-    if (/^0?1[_\s]|世界观|world/i.test(section)) {
+    if (/^0?1[_\s]|世界观|세계관|world/i.test(section)) {
       world = section.replace(/^[^\n]+\n/, "").trim().split("\n\n")[0] ?? "";
-    } else if (/^0?2[_\s]|主角|protagonist/i.test(section)) {
+    } else if (/^0?2[_\s]|主角|주인공|protagonist/i.test(section)) {
       protagonist = section.replace(/^[^\n]+\n/, "").trim().split("\n\n")[0] ?? "";
-    } else if (/^0?3[_\s]|配角|supporting|cast/i.test(section)) {
+    } else if (/^0?3[_\s]|配角|조연|등장인물|supporting|cast/i.test(section)) {
       cast = section.replace(/^[^\n]+\n/, "").trim().split("\n\n")[0] ?? "";
     }
   }
@@ -41,9 +42,10 @@ function parseStoryBible(content: string): BookSummary {
 
 interface SummarySectionProps {
   readonly bookId: string;
+  readonly language: SidebarLanguage;
 }
 
-export function SummarySection({ bookId }: SummarySectionProps) {
+export function SummarySection({ bookId, language }: SummarySectionProps) {
   const summary = useChatStore((s) => s.bookSummary);
   const setBookSummary = useChatStore((s) => s.setBookSummary);
   const bookDataVersion = useChatStore((s) => s.bookDataVersion);
@@ -62,14 +64,14 @@ export function SummarySection({ bookId }: SummarySectionProps) {
   return (
     <>
       {summary.world && (
-        <SidebarCard title="世界观">
+        <SidebarCard title={language === "ko" ? "세계관" : language === "en" ? "World" : "世界观"}>
           <Streamdown className={SIDEBAR_MD_CLASS} plugins={streamdownPlugins}>
             {summary.world}
           </Streamdown>
         </SidebarCard>
       )}
       {(summary.protagonist || summary.cast) && (
-        <SidebarCard title="角色">
+        <SidebarCard title={language === "ko" ? "인물" : language === "en" ? "Characters" : "角色"}>
           {summary.protagonist && (
             <Streamdown className={SIDEBAR_MD_CLASS} plugins={streamdownPlugins}>
               {summary.protagonist}

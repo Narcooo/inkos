@@ -79,9 +79,11 @@ const SubAgentParams = Type.Object({
   language: Type.Optional(Type.Union([
     Type.Literal("zh"),
     Type.Literal("en"),
+    Type.Literal("ko"),
   ], { description: "architect only: writing language. Default: zh" })),
   targetChapters: Type.Optional(Type.Number({ description: "architect only: total chapter count. Default: 200" })),
   chapterWordCount: Type.Optional(Type.Number({ description: "architect/writer: words per chapter. Default: 3000" })),
+  styleGuide: Type.Optional(Type.String({ description: "architect only: optional style direction saved to story/style_guide.md for future chapters." })),
   revise: Type.Optional(Type.Boolean({
     description: "architect only: true 表示在当前 active book 上重新生成架构稿，而不是新建书籍。no-book creation sessions cannot revise an existing book.",
   })),
@@ -121,6 +123,13 @@ function prepareSubAgentArguments(args: unknown): SubAgentParamsType {
       delete prepared.platform;
     }
   }
+  if (typeof prepared.instruction !== "string" || prepared.instruction.trim().length === 0) {
+    const agent = typeof prepared.agent === "string" ? prepared.agent : "sub-agent";
+    const chapterNumber = typeof prepared.chapterNumber === "number"
+      ? ` chapter ${prepared.chapterNumber}`
+      : "";
+    prepared.instruction = `${agent}${chapterNumber}`.trim();
+  }
   return prepared as SubAgentParamsType;
 }
 
@@ -144,7 +153,7 @@ export function createSubAgentTool(
       _signal?: AbortSignal,
       onUpdate?: AgentToolUpdateCallback,
     ): Promise<AgentToolResult<unknown>> {
-      const { agent, instruction, bookId, title, chapterNumber, genre, platform, language, targetChapters, chapterWordCount, revise, feedback, mode, format, approvedOnly } = params;
+      const { agent, instruction, bookId, title, chapterNumber, genre, platform, language, targetChapters, chapterWordCount, styleGuide, revise, feedback, mode, format, approvedOnly } = params;
 
       const progress = (msg: string) => {
         onUpdate?.(textResult(msg));
@@ -194,7 +203,7 @@ export function createSubAgentTool(
                 createdAt: now,
                 updatedAt: now,
               },
-              { externalContext: instruction },
+              { externalContext: instruction, styleGuide },
             );
             progress(`Architect finished — book "${id}" foundation created.`);
             return textResult(

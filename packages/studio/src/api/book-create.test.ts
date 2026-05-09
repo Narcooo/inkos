@@ -36,6 +36,20 @@ describe("buildStudioBookConfig", () => {
     });
   });
 
+  it("keeps Korean titles as safe book ids", () => {
+    const config = buildStudioBookConfig(
+      {
+        title: "한국어 소설 제목",
+        genre: "ko-cozy",
+        platform: "kakao-page",
+        language: "en",
+      },
+      "2026-03-30T00:00:00.000Z",
+    );
+
+    expect(config.id).toBe("한국어-소설-제목");
+  });
+
   it("normalizes unsupported platform ids to other for storage", () => {
     const config = buildStudioBookConfig(
       {

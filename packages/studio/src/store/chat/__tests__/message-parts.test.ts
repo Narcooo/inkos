@@ -148,7 +148,7 @@ describe("buildPartsFromEvents", () => {
     expect(parts[0].type).toBe("tool");
     if (parts[0].type === "tool") {
       expect(parts[0].execution.error).toBe(
-        "最新第 1 章处于状态降级（state-degraded）。继续写下一章前，请先修复状态，或重写这一章。",
+        "최신 1장이 상태 저하(state-degraded) 상태입니다. 다음 장을 쓰기 전에 상태를 복구하거나 해당 장을 다시 써주세요.",
       );
     }
   });

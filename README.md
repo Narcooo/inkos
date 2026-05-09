@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <a href="README.en.md">English</a> | 中文 | <a href="README.ja.md">日本語</a>
+  <a href="README.en.md">English</a> | 中文 | <a href="README.ja.md">日本語</a> | <a href="README.ko.md">한국어</a>
 </p>
 
 ---
@@ -26,6 +26,8 @@ AI Agent 自主写小说——写、审、改，全程接管。覆盖玄幻、�
 **InkOS TUI 正式发布！** — 运行 `inkos tui` 进入全屏交互仪表盘。对话式创作、自然语言操作书籍、slash 命令补全、主题动效——TUI、Studio、OpenClaw 共享同一套交互内核。
 
 **v1.3.10 建书 platform 热修** — 修复网页和命令行建书时 `sub_agent.platform` 别名输入触发 schema 校验失败的问题；Studio、CLI、TUI、agent 建书链路都会把平台参数归一化为合法值。
+
+**Fork note — Korean writing workflow enhancements** — This fork adds first-class Korean (`ko`) handling across Studio and the core pipeline: Korean genre templates, Korean UI and runtime logs, Korean-safe book/foundation generation, custom-model selection fixes, and Markdown rendering for truth/foundation files. It also keeps custom model calls pinned to the selected model instead of falling back to unrelated models. These fork changes were implemented with Codex.
 
 **Native English novel writing now supported！** Set `--lang en` to write in English. See [English README](README.en.md) for details.
 

@@ -35,6 +35,10 @@ describe("hash route", () => {
       expect(parseHash("#/services")).toEqual({ page: "services" });
     });
 
+    it("parses risu-style", () => {
+      expect(parseHash("#/risu-style")).toEqual({ page: "risu-style" });
+    });
+
     it("parses service-detail", () => {
       expect(parseHash("#/services/openai")).toEqual({ page: "service-detail", serviceId: "openai" });
     });
@@ -77,6 +81,10 @@ describe("hash route", () => {
 
     it("service-detail -> #/services/{id}", () => {
       expect(routeToHash({ page: "service-detail", serviceId: "openai" })).toBe("#/services/openai");
+    });
+
+    it("risu-style -> #/risu-style", () => {
+      expect(routeToHash({ page: "risu-style" })).toBe("#/risu-style");
     });
 
     it("encodes Chinese serviceId", () => {

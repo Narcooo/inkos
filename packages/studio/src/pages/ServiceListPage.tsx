@@ -3,6 +3,7 @@ import { Check, Plus, Search, X } from "lucide-react";
 import { GROUP_LABELS, GROUP_ORDER, GROUP_SHORT_LABELS } from "../constants/service-groups";
 import { useServiceStore } from "../store/service";
 import type { EndpointGroup, ServiceInfo } from "../store/service";
+import { useI18n } from "../hooks/use-i18n";
 
 interface Nav {
   toDashboard: () => void;
@@ -21,7 +22,54 @@ function SkeletonCard() {
   );
 }
 
-function ServiceCard({ svc, onClick }: { svc: ServiceInfo; onClick: () => void }) {
+const SERVICE_LIST_COPY = {
+  zh: {
+    home: "首页",
+    title: "服务商管理",
+    search: "搜索服务商",
+    clearSearch: "清空搜索",
+    all: "全部",
+    clearFilter: "清除筛选",
+    onlyConnected: "只看已连接",
+    connected: "已连接",
+    notConfigured: "未配置",
+    customServices: "自定义服务",
+    customService: "自定义服务",
+    noMatches: "没有匹配的服务商",
+    groups: GROUP_LABELS,
+    shortGroups: GROUP_SHORT_LABELS,
+  },
+  ko: {
+    home: "홈",
+    title: "모델 설정",
+    search: "서비스 검색",
+    clearSearch: "검색 지우기",
+    all: "전체",
+    clearFilter: "필터 지우기",
+    onlyConnected: "연결된 항목만",
+    connected: "연결됨",
+    notConfigured: "설정 안 됨",
+    customServices: "사용자 지정 서비스",
+    customService: "사용자 지정 서비스",
+    noMatches: "일치하는 서비스가 없습니다",
+    groups: {
+      overseas: "해외 공식",
+      china: "중국 공식",
+      aggregator: "통합 / 2차 API",
+      local: "로컬 / 구독",
+      codingPlan: "CodingPlan",
+    },
+    shortGroups: {
+      overseas: "해외",
+      china: "중국",
+      aggregator: "통합",
+      local: "로컬",
+      codingPlan: "CodingPlan",
+    },
+  },
+} as const;
+
+function ServiceCard({ svc, onClick, copy }: { svc: ServiceInfo; onClick: () => void; copy: typeof SERVICE_LIST_COPY.zh | typeof SERVICE_LIST_COPY.ko }) {
   return (
     <button
       onClick={onClick}
@@ -37,13 +85,15 @@ function ServiceCard({ svc, onClick }: { svc: ServiceInfo; onClick: () => void }
         <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${svc.connected ? "bg-emerald-500" : "bg-muted-foreground/30"}`} />
       </div>
       <span className="text-xs text-muted-foreground/60">
-        {svc.connected ? "已连接" : "未配置"}
+        {svc.connected ? copy.connected : copy.notConfigured}
       </span>
     </button>
   );
 }
 
 export function ServiceListPage({ nav }: { nav: Nav }) {
+  const { lang } = useI18n();
+  const copy = lang === "ko" ? SERVICE_LIST_COPY.ko : SERVICE_LIST_COPY.zh;
   const services = useServiceStore((s) => s.services);
   const loading = useServiceStore((s) => s.servicesLoading);
   const fetchServices = useServiceStore((s) => s.fetchServices);
@@ -124,13 +174,13 @@ export function ServiceListPage({ nav }: { nav: Nav }) {
           onClick={nav.toDashboard}
           className="inline-flex items-center rounded-lg border border-border/50 bg-card/60 px-3 py-1.5 font-medium text-foreground hover:bg-secondary/50 transition-colors"
         >
-          首页
+          {copy.home}
         </button>
         <span className="text-border">/</span>
-        <span className="text-foreground">服务商管理</span>
+        <span className="text-foreground">{copy.title}</span>
       </div>
 
-      <h1 className="font-serif text-2xl">服务商管理</h1>
+      <h1 className="font-serif text-2xl">{copy.title}</h1>
 
       <div className="relative">
         <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground/40" />
@@ -138,14 +188,14 @@ export function ServiceListPage({ nav }: { nav: Nav }) {
           type="text"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="搜索服务商"
+          placeholder={copy.search}
           className="w-full rounded-lg border border-border/60 bg-background py-2 pl-9 pr-9 text-sm outline-none focus:border-primary/50"
         />
         {query && (
           <button
             onClick={() => setQuery("")}
             className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground/50 hover:text-muted-foreground"
-            aria-label="清空搜索"
+            aria-label={copy.clearSearch}
           >
             <X size={14} />
           </button>
@@ -162,7 +212,7 @@ export function ServiceListPage({ nav }: { nav: Nav }) {
               : "border-border/60 text-muted-foreground hover:bg-secondary/50",
           ].join(" ")}
         >
-          全部 {bankServices.length}
+          {copy.all} {bankServices.length}
         </button>
         {GROUP_ORDER.map((group) => {
           const selected = selectedGroups.has(group);
@@ -178,7 +228,7 @@ export function ServiceListPage({ nav }: { nav: Nav }) {
               ].join(" ")}
             >
               {selected && <Check size={12} />}
-              {GROUP_SHORT_LABELS[group]} {groupCounts[group]}
+              {copy.shortGroups[group]} {groupCounts[group]}
             </button>
           );
         })}
@@ -187,7 +237,7 @@ export function ServiceListPage({ nav }: { nav: Nav }) {
             onClick={() => setSelectedGroups(new Set())}
             className="inline-flex items-center rounded-full px-3 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
           >
-            清除筛选
+            {copy.clearFilter}
           </button>
         )}
       </div>
@@ -198,7 +248,7 @@ export function ServiceListPage({ nav }: { nav: Nav }) {
           checked={onlyConnected}
           onChange={(event) => setOnlyConnected(event.target.checked)}
         />
-        <span>只看已连接 ({connectedCount})</span>
+        <span>{copy.onlyConnected} ({connectedCount})</span>
       </label>
 
       <div className="h-px bg-border/30" />
@@ -215,13 +265,14 @@ export function ServiceListPage({ nav }: { nav: Nav }) {
         return (
           <section key={group} className="space-y-3">
             <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground/70">
-              {GROUP_LABELS[group]}
+              {copy.groups[group]}
             </h2>
             <div className="grid grid-cols-2 gap-3">
               {list.map((svc) => (
                 <ServiceCard
                   key={svc.service}
                   svc={svc}
+                  copy={copy}
                   onClick={() => nav.toServiceDetail(svc.service)}
                 />
               ))}
@@ -233,13 +284,14 @@ export function ServiceListPage({ nav }: { nav: Nav }) {
       {showCustomSection && (
         <section className="space-y-3">
           <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground/70">
-            自定义服务
+            {copy.customServices}
           </h2>
           <div className="grid grid-cols-2 gap-3">
             {filteredCustom.map((svc) => (
               <ServiceCard
                 key={svc.service}
                 svc={svc}
+                copy={copy}
                 onClick={() => nav.toServiceDetail(svc.service)}
               />
             ))}
@@ -249,7 +301,7 @@ export function ServiceListPage({ nav }: { nav: Nav }) {
                 className="flex min-h-[92px] flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed border-border/40 p-5 text-muted-foreground/60 transition-all hover:border-primary/30 hover:text-muted-foreground"
               >
                 <Plus size={18} />
-                <span className="text-xs">自定义服务</span>
+                <span className="text-xs">{copy.customService}</span>
               </button>
             )}
           </div>
@@ -258,7 +310,7 @@ export function ServiceListPage({ nav }: { nav: Nav }) {
 
       {!loading && filtered.length === 0 && filteredCustom.length === 0 && !canCreateCustom && (
         <div className="rounded-lg border border-dashed border-border/40 p-8 text-center text-sm text-muted-foreground">
-          没有匹配的服务商
+          {copy.noMatches}
         </div>
       )}
     </div>

@@ -19,7 +19,7 @@ import {
 import { parseMemo, PlannerParseError } from "../utils/chapter-memo-parser.js";
 import {
   buildPlannerUserMessage,
-  getPlannerMemoSystemPrompt,
+  getPlannerMemoSystemPromptLocalized,
 } from "./planner-prompts.js";
 import {
   composeCurrentArcProse,
@@ -188,7 +188,7 @@ export class PlannerAgent extends BaseAgent {
     readonly brief?: string;
     readonly chapterContext?: string;
     readonly recyclableHooks?: ReadonlyArray<StoredHook>;
-    readonly language?: "zh" | "en";
+    readonly language?: "zh" | "en" | "ko";
   }): Promise<ChapterMemo> {
     const [characterMatrix, subplotBoard, emotionalArcs, pendingHooks, bookRulesRaw] = await Promise.all([
       readCharacterMatrix(input.storyDir),
@@ -226,7 +226,7 @@ export class PlannerAgent extends BaseAgent {
       recyclableHooks: formatRecyclableHooks(
         input.recyclableHooks ?? [],
         input.chapterNumber,
-        language,
+        language === "ko" ? "en" : language,
       ),
       isGoldenOpening: input.isGoldenOpening,
       bookRulesRelevant: bookRulesRaw.trim().length > 0 ? bookRulesRaw.trim() : noBookRules,
@@ -235,7 +235,7 @@ export class PlannerAgent extends BaseAgent {
       language,
     });
 
-    const systemPrompt = getPlannerMemoSystemPrompt(language);
+    const systemPrompt = getPlannerMemoSystemPromptLocalized(language);
 
     let currentUserMessage = userMessage;
     let lastError: PlannerParseError | undefined;
@@ -410,8 +410,15 @@ export class PlannerAgent extends BaseAgent {
     return this.extractListItems(focusSection, limit);
   }
 
-  private renderHookBudget(activeCount: number, language: "zh" | "en"): string {
+  private renderHookBudget(activeCount: number, language: "zh" | "en" | "ko"): string {
     const cap = 12;
+    if (language === "ko") {
+      if (activeCount < 10) {
+        return `### Hook 예산\n- 현재 활성 hook ${activeCount}개 (용량: ${cap})`;
+      }
+      const remaining = Math.max(0, cap - activeCount);
+      return `### Hook 예산\n- 현재 활성 hook ${activeCount}개 - 용량 상한(${cap})에 가깝습니다. 새 hook은 ${remaining}개만 허용됩니다. 새 줄을 열기보다 기존 부채 회수를 우선하세요.`;
+    }
     if (activeCount < 10) {
       return language === "en"
         ? `### Hook Budget\n- ${activeCount} active hooks (capacity: ${cap})`
@@ -701,7 +708,7 @@ export class PlannerAgent extends BaseAgent {
   private renderIntentMarkdown(
     intent: ChapterIntent,
     memo: ChapterMemo,
-    language: "zh" | "en",
+    language: "zh" | "en" | "ko",
     pendingHooks: string,
     chapterSummaries: string,
     activeHookCount: number,
@@ -724,41 +731,41 @@ export class PlannerAgent extends BaseAgent {
       : "- (none)";
 
     return [
-      "# Chapter Intent",
+      language === "ko" ? "# 챕터 의도" : language === "en" ? "# Chapter Intent" : "# 章节意图",
       "",
-      "## Goal",
+      language === "ko" ? "## 목표" : language === "en" ? "## Goal" : "## 目标",
       intent.goal,
       "",
-      "## Outline Node",
-      intent.outlineNode ?? "(not found)",
+      language === "ko" ? "## 개요 노드" : language === "en" ? "## Outline Node" : "## 卷纲节点",
+      intent.outlineNode ?? (language === "ko" ? "(없음)" : language === "en" ? "(not found)" : "（未找到）"),
       "",
-      "## Arc Context",
-      intent.arcContext ?? "(none)",
+      language === "ko" ? "## 아크 맥락" : language === "en" ? "## Arc Context" : "## 弧线语境",
+      intent.arcContext ?? (language === "ko" ? "(없음)" : language === "en" ? "(none)" : "（无）"),
       "",
-      "## Must Keep",
+      language === "ko" ? "## 반드시 유지" : language === "en" ? "## Must Keep" : "## 必须保留",
       mustKeep,
       "",
-      "## Must Avoid",
+      language === "ko" ? "## 반드시 피할 것" : language === "en" ? "## Must Avoid" : "## 必须避免",
       mustAvoid,
       "",
-      "## Style Emphasis",
+      language === "ko" ? "## 스타일 강조" : language === "en" ? "## Style Emphasis" : "## 风格重点",
       styleEmphasis,
       "",
-      "## Chapter Memo",
+      language === "ko" ? "## 챕터 메모" : language === "en" ? "## Chapter Memo" : "## 章节备忘",
       `- isGoldenOpening: ${memo.isGoldenOpening ? "true" : "false"}`,
       "",
-      "### Thread Refs",
+      language === "ko" ? "### Thread 참조" : language === "en" ? "### Thread Refs" : "### 线程引用",
       threadRefsLine,
       "",
-      "### Body",
+      language === "ko" ? "### 본문" : language === "en" ? "### Body" : "### 正文",
       memoBody,
       "",
       this.renderHookBudget(activeHookCount, language),
       "",
-      "## Pending Hooks Snapshot",
+      language === "ko" ? "## 대기 중인 Hook 스냅샷" : language === "en" ? "## Pending Hooks Snapshot" : "## 待处理伏笔快照",
       pendingHooks,
       "",
-      "## Chapter Summaries Snapshot",
+      language === "ko" ? "## 챕터 요약 스냅샷" : language === "en" ? "## Chapter Summaries Snapshot" : "## 章节摘要快照",
       chapterSummaries,
       "",
     ].join("\n");

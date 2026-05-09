@@ -27,18 +27,19 @@ export class PlannerParseError extends Error {
 interface RequiredSection {
   readonly zh: string;
   readonly en: string;
+  readonly ko: string;
   readonly minContentChars: number;
 }
 
 const REQUIRED_SECTIONS: ReadonlyArray<RequiredSection> = [
-  { zh: "## 当前任务", en: "## Current task", minContentChars: 20 },
-  { zh: "## 读者此刻在等什么", en: "## What the reader is waiting for right now", minContentChars: 20 },
-  { zh: "## 该兑现的 / 暂不掀的", en: "## To pay off / to keep buried", minContentChars: 20 },
-  { zh: "## 日常/过渡承担什么任务", en: "## What the slow / transitional beats carry", minContentChars: 20 },
-  { zh: "## 关键抉择过三连问", en: "## Three-question check on the key choice", minContentChars: 20 },
-  { zh: "## 章尾必须发生的改变", en: "## Required end-of-chapter change", minContentChars: 20 },
-  { zh: "## 本章 hook 账", en: "## Hook ledger for this chapter", minContentChars: 20 },
-  { zh: "## 不要做", en: "## Do not", minContentChars: 1 },
+  { zh: "## 当前任务", en: "## Current task", ko: "## 현재 작업", minContentChars: 20 },
+  { zh: "## 读者此刻在等什么", en: "## What the reader is waiting for right now", ko: "## 독자가 지금 기다리는 것", minContentChars: 20 },
+  { zh: "## 该兑现的 / 暂不掀的", en: "## To pay off / to keep buried", ko: "## 회수할 것 / 아직 숨길 것", minContentChars: 20 },
+  { zh: "## 日常/过渡承担什么任务", en: "## What the slow / transitional beats carry", ko: "## 일상/전환 장면의 역할", minContentChars: 20 },
+  { zh: "## 关键抉择过三连问", en: "## Three-question check on the key choice", ko: "## 핵심 선택 3문 점검", minContentChars: 20 },
+  { zh: "## 章尾必须发生的改变", en: "## Required end-of-chapter change", ko: "## 장 끝에 반드시 일어날 변화", minContentChars: 20 },
+  { zh: "## 本章 hook 账", en: "## Hook ledger for this chapter", ko: "## 이번 장 hook 장부", minContentChars: 20 },
+  { zh: "## 不要做", en: "## Do not", ko: "## 하지 말 것", minContentChars: 1 },
 ];
 
 /**
@@ -117,7 +118,7 @@ export function parseMemo(
   }
 
   const missing = REQUIRED_SECTIONS.filter(
-    (section) => !body.includes(section.zh) && !body.includes(section.en),
+    (section) => !body.includes(section.zh) && !body.includes(section.en) && !body.includes(section.ko),
   );
   if (missing.length > 0) {
     // Report by zh heading (canonical) so the LLM-feedback loop stays stable.
@@ -132,7 +133,11 @@ export function parseMemo(
   // 20 chars (one short sentence) while "## 不要做" / "## Do not" allows 5
   // (e.g. "无", "N/A") since "no extra prohibitions" is a legitimate state.
   const empty = REQUIRED_SECTIONS.filter((section) => {
-    const heading = body.includes(section.zh) ? section.zh : section.en;
+    const heading = body.includes(section.zh)
+      ? section.zh
+      : body.includes(section.en)
+        ? section.en
+        : section.ko;
     const content = extractSectionContent(body, heading);
     return content.length < section.minContentChars;
   });

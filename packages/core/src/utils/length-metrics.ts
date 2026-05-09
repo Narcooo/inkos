@@ -1,6 +1,6 @@
 import type { LengthCountingMode, LengthNormalizeMode, LengthSpec } from "../models/length-governance.js";
 
-export type LengthLanguage = "zh" | "en";
+export type LengthLanguage = "zh" | "en" | "ko";
 
 const REFERENCE_TARGET = 2200;
 const SOFT_RANGE_DELTA = 300;

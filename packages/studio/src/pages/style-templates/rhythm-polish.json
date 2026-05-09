@@ -1,0 +1,33 @@
+{
+  "id": "rhythm-polish",
+  "label": {
+    "zh": "节奏打磨",
+    "en": "Rhythm Polish",
+    "ko": "문장 리듬 다듬기"
+  },
+  "description": {
+    "zh": "调整长短句、段落呼吸和重复句式，让已完成章节更顺。",
+    "en": "Adjust sentence length, paragraph breathing, and repeated syntax so the finished chapter reads smoother.",
+    "ko": "장단문, 문단 호흡, 반복 문형을 다듬어 완성된 장의 흐름을 매끈하게 만듭니다."
+  },
+  "rules": {
+    "zh": [
+      "保留剧情、对白含义、人物动机和结尾结果。",
+      "打散连续短句和重复开头，增加长短句变化。",
+      "删去弱信息重复句，但不要压缩必要的情绪余韵。",
+      "关键动作或情绪落点前后留出段落呼吸。"
+    ],
+    "en": [
+      "Preserve plot, dialogue meaning, character motivation, and ending outcome.",
+      "Break up consecutive short sentences and repeated openings; vary sentence length.",
+      "Remove weak repeated information without compressing necessary emotional aftertaste.",
+      "Leave paragraph breathing room around key actions and emotional beats."
+    ],
+    "ko": [
+      "줄거리, 대화의 의미, 인물 동기, 결말 결과는 보존할 것.",
+      "연속된 짧은 문장과 반복되는 문장 시작을 흩뜨리고 장단문 변화를 줄 것.",
+      "정보가 약한 반복문은 덜어내되 필요한 여운은 압축하지 말 것.",
+      "핵심 행동이나 감정의 착지 앞뒤에는 문단 호흡을 남길 것."
+    ]
+  }
+}

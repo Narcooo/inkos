@@ -18,6 +18,7 @@ import {
   buildGovernedTrace,
 } from "../utils/context-assembly.js";
 import { writeGovernedRuntimeArtifacts } from "../utils/runtime-writer.js";
+import { normalizePromptLanguage } from "./rules-reader.js";
 
 export interface ComposeChapterInput {
   readonly book: BookConfig;
@@ -43,7 +44,7 @@ export async function composeGovernedChapter(input: ComposeChapterInput): Promis
   const selectedContext = await collectSelectedContext(
     storyDir,
     input.plan,
-    input.book.language ?? "zh",
+    normalizePromptLanguage(input.book.language) ?? "zh",
   );
   const contextPackage = ContextPackageSchema.parse({
     chapter: input.chapterNumber,

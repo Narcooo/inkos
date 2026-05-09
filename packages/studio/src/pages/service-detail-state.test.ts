@@ -82,7 +82,7 @@ describe("saveServiceConfig", () => {
       apiFormat: "chat",
       stream: true,
       temperature: "0.7",
-      detectedModel: "",
+      selectedModel: "",
       fetchJsonImpl: fetchJsonImpl as never,
     });
 
@@ -134,7 +134,7 @@ describe("saveServiceConfig", () => {
       apiFormat: "chat",
       stream: true,
       temperature: "0.7",
-      detectedModel: "",
+      selectedModel: "",
       fetchJsonImpl: fetchJsonImpl as never,
     })).resolves.toEqual({
       detectedModel: "",
@@ -143,5 +143,62 @@ describe("saveServiceConfig", () => {
     });
 
     expect(calls).toEqual(["/services/openai/test"]);
+  });
+
+  it("passes the selected custom model through test and save", async () => {
+    const bodies: unknown[] = [];
+    const fetchJsonImpl = vi.fn(async (path: string, init?: { body?: string }) => {
+      if (init?.body) bodies.push(JSON.parse(init.body));
+      if (path === "/services/custom%3AOMLX/test") {
+        return {
+          ok: true,
+          models: [{ id: "qwen-local" }],
+          selectedModel: "qwen-local",
+          detected: { apiFormat: "chat", stream: false, baseUrl: "http://127.0.0.1:8000/v1" },
+        };
+      }
+      if (path === "/services/custom%3AOMLX/secret") return { ok: true };
+      if (path === "/services/config") return { ok: true };
+      throw new Error(`unexpected path: ${path}`);
+    });
+
+    await saveServiceConfig({
+      effectiveServiceId: "custom:OMLX",
+      serviceId: "custom:OMLX",
+      isCustom: true,
+      resolvedCustomName: "OMLX",
+      apiKey: "sk-local",
+      baseUrl: "http://127.0.0.1:8000/v1",
+      apiFormat: "chat",
+      stream: true,
+      temperature: "0.7",
+      selectedModel: "qwen-local",
+      fetchJsonImpl: fetchJsonImpl as never,
+    });
+
+    expect(bodies).toEqual([
+      {
+        apiKey: "sk-local",
+        apiFormat: "chat",
+        stream: true,
+        baseUrl: "http://127.0.0.1:8000/v1",
+        model: "qwen-local",
+      },
+      { apiKey: "sk-local" },
+      {
+        service: "custom:OMLX",
+        defaultModel: "qwen-local",
+        services: [
+          {
+            service: "custom",
+            name: "OMLX",
+            baseUrl: "http://127.0.0.1:8000/v1",
+            temperature: 0.7,
+            apiFormat: "chat",
+            stream: false,
+          },
+        ],
+      },
+    ]);
   });
 });

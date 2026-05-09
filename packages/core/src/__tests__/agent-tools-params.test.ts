@@ -74,6 +74,23 @@ describe("SubAgentParams schema", () => {
       arguments: blankPlatform,
     } as any)).not.toThrow();
   });
+
+  it("fills a default instruction before sub_agent schema validation", () => {
+    const prepared = tool.prepareArguments?.({
+      agent: "auditor",
+      chapterNumber: 2,
+    });
+
+    expect(prepared).toMatchObject({
+      agent: "auditor",
+      chapterNumber: 2,
+      instruction: "auditor chapter 2",
+    });
+    expect(() => validateToolArguments(tool as any, {
+      name: "sub_agent",
+      arguments: prepared,
+    } as any)).not.toThrow();
+  });
 });
 
 describe("architect agent — BookConfig construction", () => {

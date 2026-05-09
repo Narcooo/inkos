@@ -15,6 +15,8 @@ import { DaemonControl } from "./pages/DaemonControl";
 import { LogViewer } from "./pages/LogViewer";
 import { GenreManager } from "./pages/GenreManager";
 import { StyleManager } from "./pages/StyleManager";
+import { RisuStyleImporter } from "./pages/RisuStyleImporter";
+import { StyleRevisionManager } from "./pages/StyleRevisionManager";
 import { ImportManager } from "./pages/ImportManager";
 import { RadarView } from "./pages/RadarView";
 import { DoctorView } from "./pages/DoctorView";
@@ -24,7 +26,7 @@ import { useSSE } from "./hooks/use-sse";
 import { useSessionEvents } from "./hooks/use-session-events";
 import { useTheme } from "./hooks/use-theme";
 import { useI18n } from "./hooks/use-i18n";
-import { postApi, putApi, useApi } from "./hooks/use-api";
+import { postApi, useApi } from "./hooks/use-api";
 import { Sun, Moon } from "lucide-react";
 import { House } from "lucide-react";
 
@@ -43,7 +45,7 @@ export function App() {
   const { route, setRoute } = useHashRoute();
   const sse = useSSE();
   const { theme, setTheme } = useTheme();
-  const { t, lang: currentLang } = useI18n();
+  const { t, lang: currentLang, setLang } = useI18n();
   const { data: project, refetch: refetchProject } = useApi<{ language: string; languageExplicit: boolean }>("/project");
   const [showLanguageSelector, setShowLanguageSelector] = useState(false);
   const [ready, setReady] = useState(false);
@@ -80,6 +82,8 @@ export function App() {
     toLogs: () => setRoute({ page: "logs" }),
     toGenres: () => setRoute({ page: "genres" }),
     toStyle: () => setRoute({ page: "style" }),
+    toRisuStyle: () => setRoute({ page: "risu-style" }),
+    toStyleRevision: () => setRoute({ page: "style-revision" }),
     toImport: () => setRoute({ page: "import" }),
     toRadar: () => setRoute({ page: "radar" }),
     toDoctor: () => setRoute({ page: "doctor" }),
@@ -105,6 +109,7 @@ export function App() {
     return (
       <LanguageSelector
         onSelect={async (lang) => {
+          setLang(lang);
           await postApi("/project/language", { language: lang });
           setShowLanguageSelector(false);
           refetchProject();
@@ -128,7 +133,7 @@ export function App() {
                className="inline-flex items-center gap-2 rounded-lg border border-border/50 bg-card/70 px-3 py-1.5 text-sm font-semibold text-foreground hover:bg-secondary/50 transition-colors"
              >
                <House size={14} />
-               <span>首页</span>
+               <span>{t("bread.home")}</span>
                <span className="text-muted-foreground/70">/</span>
                <span className="font-serif">InkOS Studio</span>
              </button>
@@ -137,19 +142,19 @@ export function App() {
           <div className="flex items-center gap-3">
             <div className="flex gap-0.5 bg-muted/50 rounded-md p-0.5">
               <button
-                onClick={async () => {
-                  await putApi("/project", { language: "zh" });
-                  refetchProject();
-                }}
+                onClick={() => setLang("ko")}
+                className={`text-xs px-2 py-0.5 rounded ${currentLang === "ko" ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}
+              >
+                한
+              </button>
+              <button
+                onClick={() => setLang("zh")}
                 className={`text-xs px-2 py-0.5 rounded ${currentLang === "zh" ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}
               >
                 中
               </button>
               <button
-                onClick={async () => {
-                  await putApi("/project", { language: "en" });
-                  refetchProject();
-                }}
+                onClick={() => setLang("en")}
                 className={`text-xs px-2 py-0.5 rounded ${currentLang === "en" ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}
               >
                 EN
@@ -238,6 +243,16 @@ export function App() {
           {route.page === "style" && (
             <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
               <StyleManager nav={nav} theme={theme} t={t} />
+            </div>
+          )}
+          {route.page === "risu-style" && (
+            <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
+              <RisuStyleImporter nav={nav} theme={theme} t={t} />
+            </div>
+          )}
+          {route.page === "style-revision" && (
+            <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
+              <StyleRevisionManager nav={nav} theme={theme} t={t} />
             </div>
           )}
           {route.page === "import" && (

@@ -42,6 +42,46 @@ interface Nav {
   toServices: () => void;
 }
 
+const DASHBOARD_LOG_LABELS_KO: Record<string, string> = {
+  "生成基础设定": "기초 설정 생성",
+  "审核基础设定": "기초 설정 검토",
+  "保存书籍配置": "작품 설정 저장",
+  "写入基础设定文件": "기초 설정 파일 작성",
+  "初始化控制文档": "제어 문서 초기화",
+  "创建初始快照": "초기 스냅샷 생성",
+  "准备章节输入": "챕터 입력 준비",
+  "撰写章节草稿": "챕터 초안 작성",
+  "审计草稿": "초안 검토",
+  "文字层润色": "문장 다듬기",
+  "落盘最终章节": "최종 챕터 저장",
+  "生成最终真相文件": "최종 기준 문서 생성",
+  "校验真相文件变更": "기준 문서 변경 검증",
+  "同步记忆索引": "기억 색인 동기화",
+  "更新章节索引与快照": "챕터 색인 및 스냅샷 갱신",
+};
+
+function localizeDashboardLogMessage(message: string | undefined, language: "zh" | "en" | "ko"): string {
+  if (!message || language !== "ko") return message ?? "";
+  const postWrite = message.match(/^Post-write:\s*(\d+)\s*errors?,\s*(\d+)\s*warnings?\s*in chapter\s*(\d+)/i);
+  if (postWrite) return `작성 후 검증: ${postWrite[3]}장 오류 ${postWrite[1]}개, 경고 ${postWrite[2]}개`;
+  const aiTell = message.match(/^AI-tell check:\s*(\d+)\s*issues?\s*in chapter\s*(\d+)/i);
+  if (aiTell) return `AI 문체 검사: ${aiTell[2]}장 문제 ${aiTell[1]}개`;
+  const normalize = message.match(/^审计前字数归一化：第(\d+)章\s*(\d+)\s*->\s*(\d+)/u);
+  if (normalize) return `감사 전 분량 정규화: ${normalize[1]}장 ${normalize[2]} -> ${normalize[3]}`;
+  const repairRound = message.match(/^(?:阶段：)?修复轮次\s*(\d+)\/(\d+)（当前\s*(\d+)\s*分）/u);
+  if (repairRound) return `${message.startsWith("阶段：") ? "단계: " : ""}수정 라운드 ${repairRound[1]}/${repairRound[2]} (현재 ${repairRound[3]}점)`;
+  const noImprovement = message.match(/^(?:阶段：)?修复轮次\s*(\d+)\s*未净提升（(\d+)\s*→\s*(\d+)），退出循环/u);
+  if (noImprovement) return `수정 라운드 ${noImprovement[1]}에서 점수가 개선되지 않았습니다 (${noImprovement[2]} -> ${noImprovement[3]}). 반복을 종료합니다`;
+  let localized = message.replace(/^阶段：/, "단계: ");
+  for (const [source, target] of Object.entries(DASHBOARD_LOG_LABELS_KO)) {
+    localized = localized.replace(source, target);
+  }
+  localized = localized.replace(/第(\d+)轮/g, "$1차");
+  localized = localized.replace(/修复轮次\s*(\d+)\/(\d+)/g, "수정 라운드 $1/$2");
+  localized = localized.replace(/当前\s*(\d+)\s*分/g, "현재 $1점");
+  return localized;
+}
+
 function BookMenu({ bookId, bookTitle, nav, t, onDelete, onOpenChange }: {
   readonly bookId: string;
   readonly bookTitle: string;
@@ -129,6 +169,7 @@ function BookMenu({ bookId, bookTitle, nav, t, onDelete, onOpenChange }: {
 
 export function Dashboard({ nav, sse, theme, t }: { nav: Nav; sse: { messages: ReadonlyArray<SSEMessage> }; theme: Theme; t: TFunction }) {
   const c = useColors(theme);
+  const uiLanguage = t("nav.connected") === "연결됨" ? "ko" : t("nav.connected") === "Connected" ? "en" : "zh";
   const [menuOpenBookId, setMenuOpenBookId] = useState<string | null>(null);
   const { data, loading, error, refetch } = useApi<{ books: ReadonlyArray<BookSummary> }>("/books");
   const writingBooks = useMemo(() => deriveActiveBookIds(sse.messages), [sse.messages]);
@@ -151,14 +192,18 @@ export function Dashboard({ nav, sse, theme, t }: { nav: Nav; sse: { messages: R
   if (loading) return (
     <div className="flex flex-col items-center justify-center py-32 space-y-4">
       <div className="w-8 h-8 border-2 border-primary/20 border-t-primary rounded-full animate-spin" />
-      <span className="text-sm text-muted-foreground animate-pulse">Gathering manuscripts...</span>
+      <span className="text-sm text-muted-foreground animate-pulse">
+        {uiLanguage === "ko" ? "원고를 불러오는 중..." : uiLanguage === "en" ? "Gathering manuscripts..." : "正在整理书稿..."}
+      </span>
     </div>
   );
 
   if (error) return (
     <div className="flex flex-col items-center justify-center py-20 bg-destructive/5 border border-destructive/20 rounded-2xl">
       <AlertCircle className="text-destructive mb-4" size={32} />
-      <h2 className="text-lg font-semibold text-destructive">Failed to load library</h2>
+      <h2 className="text-lg font-semibold text-destructive">
+        {uiLanguage === "ko" ? "작품 목록을 불러오지 못했습니다" : uiLanguage === "en" ? "Failed to load library" : "加载书库失败"}
+      </h2>
       <p className="text-sm text-muted-foreground mt-1">{error}</p>
     </div>
   );
@@ -189,14 +234,14 @@ export function Dashboard({ nav, sse, theme, t }: { nav: Nav; sse: { messages: R
       {!hasServices && (
         <div className="rounded-lg border border-border/60 bg-card px-5 py-4 mb-8 flex items-center justify-between gap-4">
           <div>
-            <div className="text-sm font-medium">还没有配置 AI 模型</div>
-            <div className="text-xs text-muted-foreground mt-0.5">配好一个服务商才能开始创作</div>
+            <div className="text-sm font-medium">{t("dash.noModelTitle")}</div>
+            <div className="text-xs text-muted-foreground mt-0.5">{t("dash.noModelBody")}</div>
           </div>
           <button
             onClick={nav.toServices}
             className="px-4 py-2 text-xs rounded-lg bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-colors shrink-0"
           >
-            去配置
+            {t("dash.configureModel")}
           </button>
         </div>
       )}
@@ -276,7 +321,7 @@ export function Dashboard({ nav, sse, theme, t }: { nav: Nav; sse: { messages: R
                   <button
                     onClick={async () => {
                       try { await postApi(`/books/${book.id}/write-next`); }
-                      catch (e) { alert(e instanceof Error ? e.message : "Write failed"); }
+                      catch (e) { alert(e instanceof Error ? e.message : uiLanguage === "ko" ? "집필 실패" : uiLanguage === "en" ? "Write failed" : "写作失败"); }
                     }}
                     disabled={isWriting}
                     className={`flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-bold transition-all shadow-sm ${
@@ -335,8 +380,12 @@ export function Dashboard({ nav, sse, theme, t }: { nav: Nav; sse: { messages: R
                 <Flame size={18} className="animate-pulse" />
               </div>
               <div>
-                <h3 className="text-sm font-bold uppercase tracking-widest text-primary"> Manuscript Foundry</h3>
-                <p className="text-xs text-muted-foreground mt-0.5">Real-time LLM generation tracking</p>
+                <h3 className="text-sm font-bold uppercase tracking-widest text-primary">
+                  {uiLanguage === "ko" ? "원고 생성 진행" : uiLanguage === "en" ? "Manuscript Foundry" : "书稿工坊"}
+                </h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {uiLanguage === "ko" ? "실시간 LLM 생성 추적" : uiLanguage === "en" ? "Real-time LLM generation tracking" : "实时 LLM 生成追踪"}
+                </p>
               </div>
             </div>
             {progressEvent && (
@@ -348,7 +397,9 @@ export function Dashboard({ nav, sse, theme, t }: { nav: Nav; sse: { messages: R
                 <div className="w-px h-3 bg-primary/20" />
                 <div className="flex items-center gap-2">
                   <Zap size={12} />
-                  <span>{((progressEvent.data as { totalChars?: number })?.totalChars ?? 0).toLocaleString()} Chars</span>
+                  <span>
+                    {((progressEvent.data as { totalChars?: number })?.totalChars ?? 0).toLocaleString()} {uiLanguage === "ko" ? "자" : uiLanguage === "en" ? "Chars" : "字"}
+                  </span>
                 </div>
               </div>
             )}
@@ -357,10 +408,11 @@ export function Dashboard({ nav, sse, theme, t }: { nav: Nav; sse: { messages: R
           <div className="space-y-2 font-mono text-xs bg-black/5 dark:bg-black/20 p-6 rounded-xl border border-border/50 max-h-[200px] overflow-y-auto scrollbar-thin">
             {logEvents.map((msg, i) => {
               const d = msg.data as { tag?: string; message?: string };
+              const message = localizeDashboardLogMessage(d.message, uiLanguage);
               return (
                 <div key={i} className="flex gap-3 leading-relaxed animate-in fade-in slide-in-from-left-2 duration-300">
                   <span className="text-primary/60 font-bold shrink-0">[{d.tag}]</span>
-                  <span className="text-muted-foreground">{d.message}</span>
+                  <span className="text-muted-foreground">{message}</span>
                 </div>
               );
             })}

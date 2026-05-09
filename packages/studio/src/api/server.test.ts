@@ -205,6 +205,7 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
     createLogger: vi.fn(() => logger),
     computeAnalytics: vi.fn(() => ({})),
     isSafeBookId: actual.isSafeBookId,
+    deriveBookIdFromTitle: actual.deriveBookIdFromTitle,
     normalizePlatformOrOther: actual.normalizePlatformOrOther,
     chatCompletion: chatCompletionMock,
     loadProjectConfig: loadProjectConfigMock,
@@ -553,7 +554,7 @@ describe("createStudioServer daemon lifecycle", () => {
     });
   });
 
-  it("reloads latest llm config for doctor checks without restarting the studio server", async () => {
+  it("reports Studio model settings in doctor checks without probing the LLM", async () => {
     const startupConfig = {
       ...cloneProjectConfig(),
       llm: {
@@ -569,17 +570,14 @@ describe("createStudioServer daemon lifecycle", () => {
         ...cloneProjectConfig().llm,
         model: "fresh-model",
         baseUrl: "https://fresh.example.com/v1",
+        service: "custom:Fresh",
+        defaultModel: "fresh-model",
+        services: [
+          { service: "custom", name: "Fresh", baseUrl: "https://fresh.example.com/v1" },
+        ],
       },
     };
-    loadProjectConfigMock.mockResolvedValue(freshConfig);
-
-    // Stub /models so probe doesn't hit the real OpenAI endpoint and short-circuit on 401.
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: false,
-      status: 404,
-      text: async () => "Not Found",
-    });
-    vi.stubGlobal("fetch", fetchMock as typeof fetch);
+    await writeFile(join(root, "inkos.json"), JSON.stringify(freshConfig, null, 2), "utf-8");
 
     const { createStudioServer } = await import("./server.js");
     const app = createStudioServer(startupConfig as never, root);
@@ -587,19 +585,16 @@ describe("createStudioServer daemon lifecycle", () => {
     const response = await app.request("http://localhost/api/v1/doctor");
 
     expect(response.status).toBe(200);
-    expect(createLLMClientMock).toHaveBeenCalledWith(expect.objectContaining({
-      model: "fresh-model",
-      baseUrl: "https://fresh.example.com/v1",
-    }));
-    expect(chatCompletionMock).toHaveBeenCalledWith(
-      expect.anything(),
-      "fresh-model",
-      expect.any(Array),
-      expect.objectContaining({ maxTokens: expect.any(Number) }),
-    );
+    await expect(response.json()).resolves.toMatchObject({
+      projectEnv: true,
+      globalEnv: true,
+      llmConnected: true,
+    });
+    expect(createLLMClientMock).not.toHaveBeenCalled();
+    expect(chatCompletionMock).not.toHaveBeenCalled();
   });
 
-  it("auto-falls back to a non-stream probe in doctor checks when the first transport returns empty", async () => {
+  it("does not fallback-probe models during doctor checks", async () => {
     const freshConfig = {
       ...cloneProjectConfig(),
       llm: {
@@ -610,14 +605,7 @@ describe("createStudioServer daemon lifecycle", () => {
         apiFormat: "chat",
       },
     };
-    loadProjectConfigMock.mockResolvedValue(freshConfig);
-    // Stub /models so probe doesn't hit the real OpenAI endpoint and short-circuit on 401.
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: false,
-      status: 404,
-      text: async () => "Not Found",
-    });
-    vi.stubGlobal("fetch", fetchMock as typeof fetch);
+    await writeFile(join(root, "inkos.json"), JSON.stringify(freshConfig, null, 2), "utf-8");
     createLLMClientMock.mockImplementation(((cfg: unknown) => cfg) as any);
     chatCompletionMock.mockImplementation(async (client: any) => {
       if (client.stream === false) {
@@ -635,16 +623,10 @@ describe("createStudioServer daemon lifecycle", () => {
     const response = await app.request("http://localhost/api/v1/doctor");
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
-      llmConnected: true,
+      llmConnected: false,
     });
-    expect(createLLMClientMock).toHaveBeenCalledWith(expect.objectContaining({
-      stream: true,
-      apiFormat: "chat",
-    }));
-    expect(createLLMClientMock).toHaveBeenCalledWith(expect.objectContaining({
-      stream: false,
-      apiFormat: "chat",
-    }));
+    expect(createLLMClientMock).not.toHaveBeenCalled();
+    expect(chatCompletionMock).not.toHaveBeenCalled();
   });
 
   it("reloads latest llm config for radar scans without restarting the studio server", async () => {
@@ -1070,6 +1052,54 @@ describe("createStudioServer daemon lifecycle", () => {
     await expect(modelsResponse.json()).resolves.toMatchObject({
       models: [{ id: "corp-chat", name: "corp-chat" }],
     });
+  });
+
+  it("tests only the explicitly selected custom model", async () => {
+    await writeFile(join(root, "inkos.json"), JSON.stringify({
+      ...projectConfig,
+      llm: {
+        services: [
+          { service: "custom", name: "Switcher", baseUrl: "https://llm.internal.corp/v1" },
+        ],
+      },
+    }, null, 2), "utf-8");
+
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ data: [{ id: "bad-first" }, { id: "chosen-model" }] }),
+        text: async () => "",
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ choices: [{ message: { content: "ok" } }] }),
+      });
+    vi.stubGlobal("fetch", fetchMock as typeof fetch);
+
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const response = await app.request("http://localhost/api/v1/services/custom%3ASwitcher/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        apiKey: "sk-corp",
+        baseUrl: "https://llm.internal.corp/v1",
+        model: "chosen-model",
+        apiFormat: "chat",
+        stream: false,
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      selectedModel: "chosen-model",
+    });
+    expect(createLLMClientMock).toHaveBeenCalledTimes(1);
+    expect(createLLMClientMock).toHaveBeenCalledWith(expect.objectContaining({
+      model: "chosen-model",
+    }));
   });
 
   it("auto-detects a working custom combination when /models is unavailable", async () => {
@@ -1849,6 +1879,20 @@ describe("createStudioServer daemon lifecycle", () => {
     expect(response.status).toBe(200);
     expect(pipelineConfigs.at(-1)).toMatchObject({ externalContext: "把注意力拉回师债主线。" });
     expect(reviseDraftMock).toHaveBeenCalledWith("demo-book", 3, "rewrite");
+  });
+
+  it("passes copy persistence into style revise requests", async () => {
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const response = await app.request("http://localhost/api/v1/books/demo-book/revise/3", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "polish", brief: "Use sensory style.", saveAsCopy: true }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(reviseDraftMock).toHaveBeenCalledWith("demo-book", 3, "polish", { persistAs: "copy" });
   });
 
   it("exposes a resync endpoint for rebuilding latest chapter truth artifacts", async () => {
@@ -2690,6 +2734,107 @@ describe("createStudioServer daemon lifecycle", () => {
           nextQuestion: "你更想写长篇连载，还是十来章能收住？",
         }),
       }),
+    });
+  });
+
+  it("updates the shared creation draft through the dedicated draft endpoint", async () => {
+    processProjectInteractionInputMock.mockResolvedValue({
+      request: { intent: "develop_book", language: "ko" },
+      responseText: "초안을 업데이트했습니다.",
+      session: {
+        sessionId: "session-draft-update",
+        projectRoot: root,
+        automationMode: "semi",
+        creationDraft: {
+          concept: "코지 판타지",
+          title: "마법사의 정원",
+          genre: "ko-cozy",
+          missingFields: [],
+          readyToCreate: true,
+        },
+        messages: [],
+        events: [],
+      },
+      details: {
+        creationDraft: {
+          title: "마법사의 정원",
+          genre: "ko-cozy",
+        },
+      },
+    });
+    resolveSessionActiveBookMock.mockResolvedValue(undefined);
+
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const response = await app.request("http://localhost/api/v1/interaction/draft", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ instruction: "/new 코지 판타지 초안을 만들어줘" }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(processProjectInteractionInputMock).toHaveBeenCalledWith(expect.objectContaining({
+      projectRoot: root,
+      input: "/new 코지 판타지 초안을 만들어줘",
+      tools: expect.any(Object),
+    }));
+    await expect(response.json()).resolves.toMatchObject({
+      response: "초안을 업데이트했습니다.",
+      session: {
+        creationDraft: {
+          title: "마법사의 정원",
+          genre: "ko-cozy",
+        },
+      },
+    });
+  });
+
+  it("falls back to draft details when the returned session omits creationDraft", async () => {
+    processProjectInteractionInputMock.mockResolvedValue({
+      request: { intent: "develop_book", language: "ko" },
+      responseText: "초안을 업데이트했습니다.",
+      session: {
+        sessionId: "session-draft-details",
+        projectRoot: root,
+        automationMode: "semi",
+        messages: [],
+        events: [],
+      },
+      details: {
+        creationDraft: {
+          concept: "시스템 아포칼립스",
+          title: "마지막 로그",
+          genre: "ko-system-apocalypse",
+          missingFields: [],
+          readyToCreate: true,
+        },
+      },
+    });
+    resolveSessionActiveBookMock.mockResolvedValue(undefined);
+
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const response = await app.request("http://localhost/api/v1/interaction/draft", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ instruction: "/new 시스템 아포칼립스 초안을 만들어줘" }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      session: {
+        creationDraft: {
+          title: "마지막 로그",
+          genre: "ko-system-apocalypse",
+        },
+      },
+      details: {
+        creationDraft: {
+          title: "마지막 로그",
+        },
+      },
     });
   });
 });

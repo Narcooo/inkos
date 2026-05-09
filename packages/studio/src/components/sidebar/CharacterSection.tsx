@@ -4,6 +4,7 @@ import { useChatStore } from "../../store/chat";
 import { fetchJson } from "../../hooks/use-api";
 import { SidebarCard } from "./SidebarCard";
 import { cn } from "../../lib/utils";
+import type { SidebarLanguage } from "../chat/BookSidebar";
 
 interface CharacterInfo {
   name: string;
@@ -41,6 +42,11 @@ const ROLE_COLORS: Record<string, string> = {
   "ally": "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
   "minor": "bg-blue-500/15 text-blue-600 dark:text-blue-400",
   "mentioned": "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400",
+  "주인공": "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+  "적대자": "bg-red-500/15 text-red-600 dark:text-red-400",
+  "동료": "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
+  "조연": "bg-blue-500/15 text-blue-600 dark:text-blue-400",
+  "언급": "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400",
 };
 
 function getRoleColor(role: string): string {
@@ -51,11 +57,11 @@ function getRoleColor(role: string): string {
   return "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400";
 }
 
-function CharacterCard({ char }: { readonly char: CharacterInfo }) {
+function CharacterCard({ char, language }: { readonly char: CharacterInfo; readonly language: SidebarLanguage }) {
   const [expanded, setExpanded] = useState(false);
-  const role = char.fields["定位"] ?? char.fields["Role"] ?? "";
-  const tags = char.fields["标签"] ?? char.fields["Tags"] ?? "";
-  const current = char.fields["当前"] ?? char.fields["Current"] ?? "";
+  const role = char.fields["역할"] ?? char.fields["定位"] ?? char.fields["Role"] ?? "";
+  const tags = char.fields["태그"] ?? char.fields["标签"] ?? char.fields["Tags"] ?? "";
+  const current = char.fields["현재"] ?? char.fields["当前"] ?? char.fields["Current"] ?? "";
 
   return (
     <div className="rounded-lg bg-secondary/30 overflow-hidden">
@@ -77,13 +83,13 @@ function CharacterCard({ char }: { readonly char: CharacterInfo }) {
       {expanded && (
         <div className="px-2.5 pb-2.5 space-y-1">
           {tags && (
-            <p className="text-xs text-muted-foreground"><span className="text-muted-foreground/60">标签</span> {tags}</p>
+            <p className="text-xs text-muted-foreground"><span className="text-muted-foreground/60">{language === "ko" ? "태그" : language === "en" ? "Tags" : "标签"}</span> {tags}</p>
           )}
           {current && (
-            <p className="text-xs text-muted-foreground"><span className="text-muted-foreground/60">当前</span> {current}</p>
+            <p className="text-xs text-muted-foreground"><span className="text-muted-foreground/60">{language === "ko" ? "현재" : language === "en" ? "Current" : "当前"}</span> {current}</p>
           )}
           {Object.entries(char.fields)
-            .filter(([k]) => !["定位", "Role", "标签", "Tags", "当前", "Current"].includes(k))
+            .filter(([k]) => !["역할", "定位", "Role", "태그", "标签", "Tags", "현재", "当前", "Current"].includes(k))
             .map(([key, val]) => (
               <p key={key} className="text-xs text-muted-foreground">
                 <span className="text-muted-foreground/60">{key}</span> {val}
@@ -97,9 +103,10 @@ function CharacterCard({ char }: { readonly char: CharacterInfo }) {
 
 interface CharacterSectionProps {
   readonly bookId: string;
+  readonly language: SidebarLanguage;
 }
 
-export function CharacterSection({ bookId }: CharacterSectionProps) {
+export function CharacterSection({ bookId, language }: CharacterSectionProps) {
   const [characters, setCharacters] = useState<CharacterInfo[]>([]);
   const bookDataVersion = useChatStore((s) => s.bookDataVersion);
 
@@ -118,10 +125,10 @@ export function CharacterSection({ bookId }: CharacterSectionProps) {
   if (characters.length === 0) return null;
 
   return (
-    <SidebarCard title="角色">
+    <SidebarCard title={language === "ko" ? "인물" : language === "en" ? "Characters" : "角色"}>
       <div className="space-y-1.5">
         {characters.map((char) => (
-          <CharacterCard key={char.name} char={char} />
+          <CharacterCard key={char.name} char={char} language={language} />
         ))}
       </div>
     </SidebarCard>

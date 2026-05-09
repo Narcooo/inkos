@@ -5,7 +5,7 @@ export interface PolishChapterInput {
   readonly chapterContent: string;
   readonly chapterNumber: number;
   readonly chapterMemo?: ChapterMemo;
-  readonly language?: "zh" | "en";
+  readonly language?: "zh" | "en" | "ko";
   readonly temperature?: number;
 }
 
@@ -37,18 +37,25 @@ export class PolisherAgent extends BaseAgent {
   async polishChapter(input: PolishChapterInput): Promise<PolishChapterOutput> {
     const language = input.language ?? "zh";
     const isEnglish = language === "en";
+    const isKorean = language === "ko";
 
     const memoBlock = input.chapterMemo
-      ? isEnglish
+      ? isKorean
+        ? `\n\n## 챕터 메모 (이 목표에서 벗어나지 말 것)\n목표: ${input.chapterMemo.goal}\n\n${input.chapterMemo.body}`
+        : isEnglish
         ? `\n\n## Chapter Memo (do NOT let polish drift from this goal)\nGoal: ${input.chapterMemo.goal}\n\n${input.chapterMemo.body}`
         : `\n\n## 章节备忘（润色不得偏离此目标）\ngoal：${input.chapterMemo.goal}\n\n${input.chapterMemo.body}`
       : "";
 
-    const systemPrompt = isEnglish
+    const systemPrompt = isKorean
+      ? buildKoreanSystemPrompt()
+      : isEnglish
       ? buildEnglishSystemPrompt()
       : buildChineseSystemPrompt();
 
-    const userPrompt = isEnglish
+    const userPrompt = isKorean
+      ? `${input.chapterNumber}장을 문장층에서 다듬어 주세요. JSON, 제목, 설명 없이 다듬은 본문 전체만 반환하세요.${memoBlock}\n\n## 다듬을 챕터\n${input.chapterContent}`
+      : isEnglish
       ? `Polish chapter ${input.chapterNumber}. Return the polished chapter in full, nothing else — no JSON, no headers, no commentary.${memoBlock}\n\n## Chapter Under Polish\n${input.chapterContent}`
       : `请润色第${input.chapterNumber}章。只返回完整的润色后正文，不要 JSON、不要标题、不要解释。${memoBlock}\n\n## 待润色章节\n${input.chapterContent}`;
 
@@ -115,6 +122,18 @@ function buildChineseSystemPrompt(): string {
 直接返回润色后的完整章节正文——不要 JSON、不要章节标题行、不要任何解释或进度说明。如果发现必须交给 reviewer 的情节/结构问题，在正文末尾另起一行以 "[polisher-note] " 开头写明，每条一行。没有问题就不加。
 
 保留原文绝大多数句子。只改真正有问题的句子，不要整段重写。修改后章节总长变化不得超过原文字数 ±15%。`;
+}
+
+function buildKoreanSystemPrompt(): string {
+  return `당신은 한국어 웹소설 문장층 교정 편집자입니다.
+
+## 교정 경계
+
+문장, 문단, 어휘, 구두점, 감각 묘사, 대화 자연스러움만 다듬습니다. 사건을 추가하거나 삭제하지 말고, 인물 설정이나 주된 전개를 바꾸지 마세요. 구조나 플롯 문제가 보이면 본문 끝에 [polisher-note]로만 남기고 본문은 안전한 범위에서 유지합니다.
+
+## 출력 계약
+
+다듬은 챕터 본문 전체만 반환하세요. JSON, 섹션 제목, 해설, 진행 설명은 출력하지 마세요. 반드시 한국어 본문으로 유지하고, 실제로 문제가 있는 문장만 고치세요. 전체 길이 변화는 원문 대비 ±15% 안에 머물러야 합니다.`;
 }
 
 function buildEnglishSystemPrompt(): string {

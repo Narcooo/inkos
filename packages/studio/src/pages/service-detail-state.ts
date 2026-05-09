@@ -37,6 +37,7 @@ export async function probeServiceForDetail(
     readonly apiFormat: "chat" | "responses";
     readonly stream: boolean;
     readonly baseUrl?: string;
+    readonly model?: string;
   },
   deps?: { readonly fetchJsonImpl?: JsonFetcher },
 ): Promise<ServiceProbeResponse> {
@@ -49,6 +50,27 @@ export async function probeServiceForDetail(
       body: JSON.stringify(body),
     },
   );
+}
+
+export async function fetchServiceModelsForDetail(
+  serviceId: string,
+  args: {
+    readonly apiKey?: string;
+    readonly baseUrl?: string;
+    readonly refresh?: boolean;
+  } = {},
+  deps?: { readonly fetchJsonImpl?: JsonFetcher },
+): Promise<ReadonlyArray<ServiceDetailModelInfo>> {
+  const fetchJsonImpl = deps?.fetchJsonImpl ?? fetchJson;
+  const params = new URLSearchParams();
+  if (args.refresh) params.set("refresh", "1");
+  if (args.apiKey?.trim()) params.set("apiKey", args.apiKey.trim());
+  if (args.baseUrl?.trim()) params.set("baseUrl", args.baseUrl.trim());
+  const query = params.toString();
+  const result = await fetchJsonImpl<{ models?: ServiceDetailModelInfo[] }>(
+    `/services/${encodeURIComponent(serviceId)}/models${query ? `?${query}` : ""}`,
+  );
+  return result.models ?? [];
 }
 
 export async function rehydrateServiceConnectionStatus(args: {
@@ -103,7 +125,13 @@ export async function saveServiceConfig(args: {
   readonly apiFormat: "chat" | "responses";
   readonly stream: boolean;
   readonly temperature: string;
-  readonly detectedModel: string;
+  readonly selectedModel: string;
+  readonly messages?: {
+    readonly enterApiKey: string;
+    readonly enterBaseUrl: string;
+    readonly enterModel: string;
+    readonly connectionFailed: string;
+  };
   readonly fetchJsonImpl?: JsonFetcher;
 }): Promise<{
   readonly status: ServiceDetailConnectionStatus;
@@ -113,17 +141,31 @@ export async function saveServiceConfig(args: {
   const fetchJsonImpl = args.fetchJsonImpl ?? fetchJson;
   const trimmedKey = args.apiKey.trim();
   const trimmedBaseUrl = args.baseUrl.trim();
+  const messages = args.messages ?? {
+    enterApiKey: "请先输入 API Key",
+    enterBaseUrl: "请先填写 Base URL",
+    enterModel: "请先选择模型",
+    connectionFailed: "连接失败",
+  };
 
   if (!trimmedKey) {
     return {
-      status: { state: "error", message: "请先输入 API Key" },
+      status: { state: "error", message: messages.enterApiKey },
       detectedModel: "",
       detectedConfig: null,
     };
   }
   if (args.isCustom && !trimmedBaseUrl) {
     return {
-      status: { state: "error", message: "请先填写 Base URL" },
+      status: { state: "error", message: messages.enterBaseUrl },
+      detectedModel: "",
+      detectedConfig: null,
+    };
+  }
+  const trimmedModel = args.selectedModel.trim();
+  if (args.isCustom && !trimmedModel) {
+    return {
+      status: { state: "error", message: messages.enterModel },
       detectedModel: "",
       detectedConfig: null,
     };
@@ -136,10 +178,11 @@ export async function saveServiceConfig(args: {
       apiFormat: args.apiFormat,
       stream: args.stream,
       ...(args.isCustom ? { baseUrl: trimmedBaseUrl } : {}),
+      ...(trimmedModel ? { model: trimmedModel } : {}),
     }, { fetchJsonImpl });
   } catch (error) {
     return {
-      status: { state: "error", message: error instanceof Error ? error.message : "连接失败" },
+      status: { state: "error", message: error instanceof Error ? error.message : messages.connectionFailed },
       detectedModel: "",
       detectedConfig: null,
     };
@@ -147,13 +190,13 @@ export async function saveServiceConfig(args: {
 
   if (!probe.ok) {
     return {
-      status: { state: "error", message: probe.error ?? "连接失败" },
+      status: { state: "error", message: probe.error ?? messages.connectionFailed },
       detectedModel: "",
       detectedConfig: null,
     };
   }
 
-  const detectedModel = probe.selectedModel ?? args.detectedModel;
+  const detectedModel = trimmedModel || probe.selectedModel || "";
   const detectedConfig = probe.detected ?? null;
   const savedApiFormat = detectedConfig?.apiFormat ?? args.apiFormat;
   const savedStream = typeof detectedConfig?.stream === "boolean" ? detectedConfig.stream : args.stream;

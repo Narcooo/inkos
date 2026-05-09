@@ -1,6 +1,8 @@
+import { useEffect, useState } from "react";
 import { useApi } from "./use-api";
 
-type Lang = "zh" | "en";
+type Lang = "zh" | "en" | "ko";
+const UI_LANG_STORAGE_KEY = "inkos-ui-language";
 
 const strings = {
   // Header
@@ -20,6 +22,9 @@ const strings = {
   "dash.chapters": { zh: "章", en: "chapters" },
   "dash.recentEvents": { zh: "最近事件", en: "Recent Events" },
   "dash.writingProgress": { zh: "写作进度", en: "Writing Progress" },
+  "dash.noModelTitle": { zh: "还没有配置 AI 模型", en: "No AI model configured yet" },
+  "dash.noModelBody": { zh: "配好一个服务商才能开始创作", en: "Configure a provider before creating books" },
+  "dash.configureModel": { zh: "去配置", en: "Configure" },
 
   // Book Detail
   "book.writeNext": { zh: "写下一章", en: "Write Next" },
@@ -162,8 +167,8 @@ const strings = {
   "doctor.title": { zh: "环境诊断", en: "Environment Check" },
   "doctor.recheck": { zh: "重新检查", en: "Re-check" },
   "doctor.inkosJson": { zh: "inkos.json 配置", en: "inkos.json configuration" },
-  "doctor.projectEnv": { zh: "项目 .env 文件", en: "Project .env file" },
-  "doctor.globalEnv": { zh: "全局 ~/.inkos/.env", en: "Global ~/.inkos/.env" },
+  "doctor.projectEnv": { zh: "项目 .env / Studio 设置", en: "Project .env / Studio settings" },
+  "doctor.globalEnv": { zh: "全局 ~/.inkos/.env / Studio 设置", en: "Global ~/.inkos/.env / Studio settings" },
   "doctor.booksDir": { zh: "书籍目录", en: "Books directory" },
   "doctor.llmApi": { zh: "LLM API 连接", en: "LLM API connectivity" },
   "doctor.connected": { zh: "已连接", en: "Connected" },
@@ -274,13 +279,187 @@ const strings = {
 export type StringKey = keyof typeof strings;
 export type TFunction = (key: StringKey) => string;
 
+const koreanOverrides: Partial<Record<StringKey, string>> = {
+  "nav.books": "작품",
+  "nav.newBook": "새 작품",
+  "nav.config": "모델 설정",
+  "nav.connected": "연결됨",
+  "nav.disconnected": "연결 안 됨",
+  "nav.system": "시스템",
+  "nav.daemon": "데몬",
+  "nav.logs": "로그",
+  "nav.running": "실행 중",
+  "nav.agentOnline": "에이전트 온라인",
+  "nav.agentOffline": "에이전트 오프라인",
+  "nav.tools": "도구",
+  "nav.style": "문체",
+  "nav.import": "가져오기",
+  "nav.radar": "시장 레이더",
+  "nav.doctor": "환경 진단",
+  "dash.title": "작품 목록",
+  "dash.noBooks": "아직 작품이 없습니다",
+  "dash.createFirst": "첫 작품을 만들어 집필을 시작하세요",
+  "dash.writeNext": "다음 장 쓰기",
+  "dash.writing": "작성 중...",
+  "dash.stats": "통계",
+  "dash.chapters": "장",
+  "dash.recentEvents": "최근 이벤트",
+  "dash.writingProgress": "집필 진행도",
+  "dash.noModelTitle": "아직 AI 모델이 설정되지 않았습니다",
+  "dash.noModelBody": "창작을 시작하려면 먼저 서비스 제공자를 설정하세요",
+  "dash.configureModel": "설정하기",
+  "dash.subtitle": "AI 보조 초안과 당신의 작품 세계를 한곳에서 관리합니다.",
+  "book.writeNext": "다음 장 쓰기",
+  "book.draftOnly": "초안만",
+  "book.approveAll": "모두 승인",
+  "book.analytics": "분석",
+  "book.noChapters": "아직 장이 없습니다. \"다음 장 쓰기\"로 시작하세요.",
+  "book.approve": "승인",
+  "book.reject": "반려",
+  "book.words": "단어",
+  "book.deleteBook": "작품 삭제",
+  "book.confirmDelete": "이 작품과 모든 장을 삭제할까요?",
+  "book.settings": "작품 설정",
+  "book.status": "상태",
+  "book.drafting": "초안 생성 중...",
+  "book.pipelineWriting": "백그라운드 집필이 진행 중입니다. 완료되면 이 페이지가 자동으로 새로고침됩니다.",
+  "book.pipelineDrafting": "백그라운드 초안 생성이 진행 중입니다. 완료되면 이 페이지가 자동으로 새로고침됩니다.",
+  "book.pipelineFailed": "백그라운드 작업 실패",
+  "book.save": "저장",
+  "book.saving": "저장 중...",
+  "book.rewrite": "다시 쓰기",
+  "book.audit": "검토",
+  "book.export": "내보내기",
+  "book.approvedOnly": "승인본만",
+  "book.manuscriptTitle": "원고 제목",
+  "book.curate": "작업",
+  "book.spotFix": "부분 수정",
+  "book.polish": "다듬기",
+  "book.rework": "재작업",
+  "book.antiDetect": "AI 티 줄이기",
+  "book.statusActive": "진행 중",
+  "book.statusPaused": "일시중지",
+  "book.statusOutlining": "구상 중",
+  "book.statusCompleted": "완료",
+  "book.statusDropped": "중단",
+  "book.truthFiles": "트루스 파일",
+  "reader.backToList": "목록으로",
+  "reader.approve": "승인",
+  "reader.reject": "반려",
+  "reader.chapterList": "장 목록",
+  "reader.characters": "문자",
+  "reader.edit": "편집",
+  "reader.preview": "미리보기",
+  "reader.openingManuscript": "원고 여는 중...",
+  "reader.manuscriptPage": "원고 페이지",
+  "reader.minRead": "분 읽기",
+  "reader.endOfChapter": "이 장 끝",
+  "bread.books": "작품",
+  "bread.newBook": "새 작품",
+  "bread.config": "설정",
+  "bread.home": "홈",
+  "bread.chapter": "{n}장",
+  "config.title": "프로젝트 설정",
+  "config.project": "프로젝트",
+  "config.language": "언어",
+  "config.provider": "제공자",
+  "config.model": "모델",
+  "config.editHint": "CLI로 설정 편집:",
+  "config.modelRouting": "모델 라우팅",
+  "config.agent": "에이전트",
+  "config.baseUrl": "기본 URL",
+  "config.default": "기본값",
+  "config.optional": "선택사항",
+  "config.saveOverrides": "라우팅 저장",
+  "config.save": "저장",
+  "config.saving": "저장 중...",
+  "config.cancel": "취소",
+  "config.edit": "편집",
+  "config.enabled": "사용",
+  "config.disabled": "사용 안 함",
+  "config.temperature": "온도",
+  "config.maxTokens": "최대 토큰",
+  "config.stream": "스트리밍",
+  "config.chinese": "중국어",
+  "config.english": "영어",
+  "create.title": "작품 만들기",
+  "create.bookTitle": "제목",
+  "create.language": "언어",
+  "create.genre": "장르",
+  "create.wordsPerChapter": "장당 분량",
+  "create.targetChapters": "목표 장수",
+  "create.creating": "생성 중...",
+  "create.submit": "작품 만들기",
+  "create.titleRequired": "제목을 입력하세요",
+  "create.genreRequired": "장르를 선택하세요",
+  "create.placeholder": "작품 제목...",
+  "create.platform": "플랫폼",
+  "common.save": "저장",
+  "common.cancel": "취소",
+  "common.delete": "삭제",
+  "common.edit": "편집",
+  "common.error": "오류",
+  "common.loading": "불러오는 중...",
+  "common.refresh": "새로고침",
+  "common.enterCommand": "명령을 입력하세요...",
+  "common.exportSuccess": "프로젝트 디렉터리로 내보냈습니다",
+  "common.exportFormat": "내보내기 형식",
+  "truth.title": "트루스 파일",
+  "truth.edit": "편집",
+  "truth.chars": "글자",
+  "truth.save": "저장",
+  "truth.saving": "저장 중...",
+  "truth.cancel": "취소",
+  "truth.empty": "파일이 없습니다",
+  "truth.noFiles": "파일이 없습니다",
+  "truth.notFound": "파일을 찾을 수 없습니다",
+  "truth.selectFile": "파일을 선택해 내용을 보세요",
+  "truth.selectHint": "파일을 선택해 내용을 보세요",
+  "logs.title": "로그",
+  "logs.empty": "로그가 아직 없습니다",
+  "logs.showingRecent": "최근 로그를 표시합니다.",
+  "doctor.title": "환경 진단",
+  "doctor.recheck": "다시 확인",
+  "doctor.inkosJson": "inkos.json 설정",
+  "doctor.projectEnv": "프로젝트 .env / Studio 설정",
+  "doctor.globalEnv": "전역 ~/.inkos/.env / Studio 설정",
+  "doctor.booksDir": "작품 디렉터리",
+  "doctor.llmApi": "LLM API 연결",
+  "doctor.connected": "연결됨",
+  "doctor.failed": "실패",
+  "doctor.allPassed": "모든 점검 통과 — 환경이 정상입니다",
+  "doctor.someFailed": "일부 점검 실패 — 설정을 확인하세요",
+};
+
 export function useI18n() {
   const { data } = useApi<{ language: string }>("/project");
-  const lang: Lang = data?.language === "en" ? "en" : "zh";
+  const [lang, setLangState] = useState<Lang>(() => {
+    if (typeof window === "undefined") return "zh";
+    const stored = window.localStorage.getItem(UI_LANG_STORAGE_KEY);
+    return stored === "ko" || stored === "en" || stored === "zh" ? stored : "zh";
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const projectLanguage = data?.language === "ko" ? "ko" : data?.language === "en" ? "en" : data?.language === "zh" ? "zh" : undefined;
+    if (!projectLanguage) return;
+    setLangState(projectLanguage);
+    window.localStorage.setItem(UI_LANG_STORAGE_KEY, projectLanguage);
+  }, [data?.language]);
 
   function t(key: StringKey): string {
+    if (lang === "ko") {
+      return koreanOverrides[key] ?? strings[key].en;
+    }
     return strings[key][lang];
   }
 
-  return { t, lang };
+  function setLang(next: Lang) {
+    setLangState(next);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(UI_LANG_STORAGE_KEY, next);
+    }
+  }
+
+  return { t, lang, setLang };
 }

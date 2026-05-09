@@ -6,7 +6,9 @@
  *   story/outline/story_frame.md  →  preferred replacement for story_bible.md
  *   story/outline/volume_map.md   →  preferred replacement for volume_outline.md
  *   story/roles/主要角色/*.md +
- *   story/roles/次要角色/*.md    →  preferred replacement for character_matrix.md
+ *   story/roles/次要角色/*.md +
+ *   story/roles/주요인물/*.md +
+ *   story/roles/보조인물/*.md    →  preferred replacement for character_matrix.md
  *
  * All helpers accept a bookDir (path to a book root, containing `story/`)
  * and return a string — either the new-file content when it exists, or the
@@ -92,6 +94,8 @@ export async function readRoleCards(bookDir: string): Promise<ReadonlyArray<Role
   const minorDirZh = join(rolesRoot, "次要角色");
   const majorDirEn = join(rolesRoot, "major");
   const minorDirEn = join(rolesRoot, "minor");
+  const majorDirKo = join(rolesRoot, "주요인물");
+  const minorDirKo = join(rolesRoot, "보조인물");
 
   const cards: RoleCard[] = [];
   await Promise.all([
@@ -99,6 +103,8 @@ export async function readRoleCards(bookDir: string): Promise<ReadonlyArray<Role
     collectRoleDir(minorDirZh, "minor", cards),
     collectRoleDir(majorDirEn, "major", cards),
     collectRoleDir(minorDirEn, "minor", cards),
+    collectRoleDir(majorDirKo, "major", cards),
+    collectRoleDir(minorDirKo, "minor", cards),
   ]);
   return cards;
 }
@@ -149,8 +155,8 @@ export async function readCharacterContext(
     };
 
     const blocks = [
-      render(groups.major, "主要角色 / Major characters"),
-      render(groups.minor, "次要角色 / Minor characters"),
+      render(groups.major, "주요 인물 / 主要角色 / Major characters"),
+      render(groups.minor, "보조 인물 / 次要角色 / Minor characters"),
     ].filter(Boolean);
 
     return blocks.join("\n\n");
@@ -181,6 +187,7 @@ export async function readCharacterContext(
 const CURRENT_STATE_SEED_MARKERS = [
   "建书时占位",
   "Seeded at book creation",
+  "작품 생성 시점의 자리표시자",
 ];
 
 export function isCurrentStateSeedPlaceholder(raw: string): boolean {
@@ -192,8 +199,8 @@ export function isCurrentStateSeedPlaceholder(raw: string): boolean {
 }
 
 function extractCurrentStateFromRole(content: string): string | null {
-  // Accept both zh (`## 当前现状`) and en (`## Current_State` / `## Current State`).
-  const pattern = /^##\s*(?:当前现状|Current[_\s]?State)[^\n]*$/im;
+  // Accept zh, en, and ko headings for per-role initial state.
+  const pattern = /^##\s*(?:当前现状|Current[_\s]?State|현재\s*상태)[^\n]*$/im;
   const match = content.match(pattern);
   if (!match || match.index === undefined) return null;
   const after = content.slice(match.index + match[0].length);
@@ -237,6 +244,7 @@ export async function readCurrentStateWithFallback(
   const storyDir = join(bookDir, "story");
   const currentStatePath = join(storyDir, "current_state.md");
   const raw = await readOr(currentStatePath, "");
+  const language = await readBookDisplayLanguage(bookDir);
 
   if (!isCurrentStateSeedPlaceholder(raw)) {
     return raw;
@@ -251,7 +259,11 @@ export async function readCurrentStateWithFallback(
     .map((card) => {
       const state = extractCurrentStateFromRole(card.content);
       if (!state) return null;
-      const tierLabel = card.tier === "major" ? "主要" : "次要";
+      const tierLabel = language === "ko"
+        ? (card.tier === "major" ? "주요" : "보조")
+        : language === "en"
+        ? (card.tier === "major" ? "major" : "minor")
+        : (card.tier === "major" ? "主要" : "次要");
       return `- ${card.name}（${tierLabel}）：${state.replace(/\s+/g, " ")}`;
     })
     .filter((line): line is string => line !== null);
@@ -262,14 +274,44 @@ export async function readCurrentStateWithFallback(
     return raw.trim() ? raw : fallbackPlaceholder;
   }
 
-  const parts: string[] = ["# 初始状态（第 0 章，由 roles + 种子伏笔派生）"];
+  const labels = language === "ko"
+    ? {
+      title: "# 초기 상태 (0장, 인물 파일과 seed hook에서 파생)",
+      roles: "\n## 인물 초기 위치 / 처지",
+      hooks: "\n## seed hook (시작 장 = 0)",
+    }
+    : language === "en"
+    ? {
+      title: "# Initial State (chapter 0, derived from roles + seed hooks)",
+      roles: "\n## Initial character positions / situations",
+      hooks: "\n## Seed hooks (startChapter = 0)",
+    }
+    : {
+      title: "# 初始状态（第 0 章，由 roles + 种子伏笔派生）",
+      roles: "\n## 角色初始位置 / 处境",
+      hooks: "\n## 种子伏笔（startChapter = 0）",
+    };
+
+  const parts: string[] = [labels.title];
   if (roleLines.length > 0) {
-    parts.push("\n## 角色初始位置 / 处境");
+    parts.push(labels.roles);
     parts.push(...roleLines);
   }
   if (hookLines.length > 0) {
-    parts.push("\n## 种子伏笔（startChapter = 0）");
+    parts.push(labels.hooks);
     parts.push(...hookLines.map((line) => `- ${line}`));
   }
   return parts.join("\n");
+}
+
+async function readBookDisplayLanguage(bookDir: string): Promise<"zh" | "en" | "ko"> {
+  try {
+    const raw = await readFile(join(bookDir, "book.json"), "utf-8");
+    const parsed = JSON.parse(raw) as { language?: unknown; genre?: unknown };
+    if (parsed.language === "ko" || (typeof parsed.genre === "string" && parsed.genre.startsWith("ko-"))) return "ko";
+    if (parsed.language === "en") return "en";
+    return "zh";
+  } catch {
+    return "zh";
+  }
 }

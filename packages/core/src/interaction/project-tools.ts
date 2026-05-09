@@ -44,7 +44,7 @@ const SAFE_TRUTH_OUTLINE_FILE_NAMES = new Set([
   "outline/rhythm_principles.md",
 ]);
 
-const SAFE_ROLE_TRUTH_FILE_RE = /^roles\/(主要角色|次要角色|major|minor)\/[^/\\]+\.md$/u;
+const SAFE_ROLE_TRUTH_FILE_RE = /^roles\/(主要角色|次要角色|major|minor|주요인물|보조인물)\/[^/\\]+\.md$/u;
 
 export function assertSafeTruthFileName(fileName: string): string {
   const trimmed = fileName.trim();
@@ -72,6 +72,7 @@ type PipelineLike = Pick<PipelineRunner, "writeNextChapter" | "reviseDraft"> & {
       readonly externalContext?: string;
       readonly authorIntent?: string;
       readonly currentFocus?: string;
+      readonly styleGuide?: string;
     },
   ) => Promise<void>;
 };
@@ -88,11 +89,12 @@ function buildBookConfig(input: {
   readonly title: string;
   readonly genre?: string;
   readonly platform?: string;
-  readonly language?: "zh" | "en";
+  readonly language?: "zh" | "en" | "ko";
   readonly chapterWordCount?: number;
   readonly targetChapters?: number;
 }): BookConfig {
   const now = new Date().toISOString();
+  const inferredLanguage = input.language ?? (input.genre?.startsWith("ko-") ? "ko" : undefined);
   return {
     id: deriveBookIdFromTitle(input.title) || `book-${Date.now().toString(36)}`,
     title: input.title,
@@ -101,13 +103,15 @@ function buildBookConfig(input: {
     status: "outlining",
     targetChapters: input.targetChapters ?? 200,
     chapterWordCount: input.chapterWordCount ?? 3000,
-    ...(input.language ? { language: input.language } : {}),
+    ...(inferredLanguage ? { language: inferredLanguage } : {}),
     createdAt: now,
     updatedAt: now,
   };
 }
 
 function buildCreationExternalContext(input: {
+  readonly genre?: string;
+  readonly language?: "zh" | "en" | "ko";
   readonly blurb?: string;
   readonly worldPremise?: string;
   readonly settingNotes?: string;
@@ -116,16 +120,66 @@ function buildCreationExternalContext(input: {
   readonly conflictCore?: string;
   readonly volumeOutline?: string;
   readonly constraints?: string;
+  readonly styleGuide?: string;
 }): string | undefined {
+  const isKorean = input.genre?.startsWith("ko-")
+    || input.language === "ko"
+    || /[가-힣]/u.test([
+      input.blurb,
+      input.worldPremise,
+      input.settingNotes,
+      input.protagonist,
+      input.supportingCast,
+      input.conflictCore,
+      input.volumeOutline,
+      input.constraints,
+      input.styleGuide,
+    ].filter(Boolean).join("\n"));
+  const labels = isKorean
+    ? {
+        worldPremise: "세계관과 핵심 설정",
+        settingNotes: "보충 설정",
+        protagonist: "주인공 설정",
+        supportingCast: "주요 인물과 세력",
+        conflictCore: "핵심 갈등",
+        volumeOutline: "권/1부 방향",
+        blurb: "소개와 판매 포인트",
+        constraints: "창작 제약",
+        styleGuide: "문체 지시",
+      }
+    : input.language === "en"
+      ? {
+          worldPremise: "World and core premise",
+          settingNotes: "Additional setting notes",
+          protagonist: "Protagonist",
+          supportingCast: "Key cast and factions",
+          conflictCore: "Core conflict",
+          volumeOutline: "Volume direction",
+          blurb: "Blurb and selling points",
+          constraints: "Creative constraints",
+          styleGuide: "Style direction",
+        }
+      : {
+          worldPremise: "世界观与核心设定",
+          settingNotes: "补充设定",
+          protagonist: "主角设定",
+          supportingCast: "关键角色与势力",
+          conflictCore: "核心冲突",
+          volumeOutline: "卷纲方向",
+          blurb: "简介卖点",
+          constraints: "创作约束",
+          styleGuide: "文风要求",
+        };
   const sections = [
-    input.worldPremise ? `## 世界观与核心设定\n${input.worldPremise}` : undefined,
-    input.settingNotes ? `## 补充设定\n${input.settingNotes}` : undefined,
-    input.protagonist ? `## 主角设定\n${input.protagonist}` : undefined,
-    input.supportingCast ? `## 关键角色与势力\n${input.supportingCast}` : undefined,
-    input.conflictCore ? `## 核心冲突\n${input.conflictCore}` : undefined,
-    input.volumeOutline ? `## 卷纲方向\n${input.volumeOutline}` : undefined,
-    input.blurb ? `## 简介卖点\n${input.blurb}` : undefined,
-    input.constraints ? `## 创作约束\n${input.constraints}` : undefined,
+    input.worldPremise ? `## ${labels.worldPremise}\n${input.worldPremise}` : undefined,
+    input.settingNotes ? `## ${labels.settingNotes}\n${input.settingNotes}` : undefined,
+    input.protagonist ? `## ${labels.protagonist}\n${input.protagonist}` : undefined,
+    input.supportingCast ? `## ${labels.supportingCast}\n${input.supportingCast}` : undefined,
+    input.conflictCore ? `## ${labels.conflictCore}\n${input.conflictCore}` : undefined,
+    input.volumeOutline ? `## ${labels.volumeOutline}\n${input.volumeOutline}` : undefined,
+    input.blurb ? `## ${labels.blurb}\n${input.blurb}` : undefined,
+    input.constraints ? `## ${labels.constraints}\n${input.constraints}` : undefined,
+    input.styleGuide ? `## ${labels.styleGuide}\n${input.styleGuide}` : undefined,
   ].filter((section): section is string => Boolean(section?.trim()));
 
   if (sections.length === 0) {
@@ -164,6 +218,10 @@ function mapStageMessageToStatus(message: string): InteractionEvent["status"] | 
     || lower.includes("generating foundation")
     || lower.includes("reviewing foundation")
     || lower.includes("preparing chapter inputs")
+    || message.includes("챕터 입력 준비")
+    || message.includes("기초 설정")
+    || message.includes("작품 초안")
+    || message.includes("작품 기초")
     || message.includes("规划下一章意图")
     || message.includes("生成基础设定")
     || message.includes("审核基础设定")
@@ -173,18 +231,22 @@ function mapStageMessageToStatus(message: string): InteractionEvent["status"] | 
   }
   if (
     lower.includes("composing chapter runtime context")
+    || message.includes("챕터 런타임 컨텍스트 구성")
     || message.includes("组装章节运行时上下文")
   ) {
     return "composing";
   }
   if (
     lower.includes("writing chapter draft")
+    || message.includes("챕터 초안 작성")
     || message.includes("撰写章节草稿")
   ) {
     return "writing";
   }
   if (
     lower.includes("auditing draft")
+    || message.includes("초안 검토")
+    || message.includes("장 검토")
     || message.includes("审计草稿")
   ) {
     return "assessing";
@@ -194,6 +256,8 @@ function mapStageMessageToStatus(message: string): InteractionEvent["status"] | 
     || lower.includes("revising chapter")
     || lower.includes("rewrite")
     || lower.includes("repair")
+    || message.includes("수정")
+    || message.includes("복구")
     || message.includes("自动修复")
     || message.includes("整章改写")
     || message.includes("修订第")
@@ -207,6 +271,12 @@ function mapStageMessageToStatus(message: string): InteractionEvent["status"] | 
     || lower.includes("rebuilding final truth files")
     || lower.includes("validating truth file updates")
     || lower.includes("syncing memory indexes")
+    || message.includes("저장")
+    || message.includes("스냅샷")
+    || message.includes("최종 기준 문서")
+    || message.includes("기준 문서 변경 검증")
+    || message.includes("기억 색인 동기화")
+    || message.includes("챕터 색인")
     || message.includes("落盘")
     || message.includes("保存")
     || message.includes("快照")
@@ -225,6 +295,9 @@ function extractStageDetail(message: string): string | undefined {
   }
   if (message.startsWith("阶段：")) {
     return message.slice("阶段：".length).trim();
+  }
+  if (message.startsWith("단계: ")) {
+    return message.slice("단계: ".length).trim();
   }
   return undefined;
 }
@@ -330,17 +403,18 @@ async function withPipelineInteractionTelemetry<T extends { chapterNumber?: numb
 
 const CREATE_BOOK_TOOL: ToolDefinition = {
   name: "create_book",
-  description: "根据用户描述生成建书参数。系统会将参数渲染为可编辑表单，用户确认后建书。",
+  description: "根据用户描述或 Studio 建书表单生成建书参数。系统会将参数渲染为可编辑表单，用户确认后建书。",
   parameters: {
     type: "object",
     properties: {
       title: { type: "string", description: "书名" },
-      genre: { type: "string", description: "题材标识，如 xuanhuan, urban, romance, scifi, mystery" },
-      platform: { type: "string", enum: ["tomato", "qidian", "feilu", "other"], description: "发布平台" },
+      genre: { type: "string", description: "题材标识，如 xuanhuan, urban, romance, scifi, mystery, cozy, ko-cozy" },
+      platform: { type: "string", description: "发布平台，如 tomato, qidian, feilu, royal-road, kakao-page, naver-series, munpia, other" },
       targetChapters: { type: "number", description: "目标章数，默认 200" },
       chapterWordCount: { type: "number", description: "每章字数，默认 3000" },
-      language: { type: "string", enum: ["zh", "en"], description: "写作语言，默认 zh" },
+      language: { type: "string", enum: ["zh", "en", "ko"], description: "写作语言：zh、en、ko。韩国语项目必须使用 ko。" },
       brief: { type: "string", description: "创意简述，会传给 Architect 智能体生成完整的世界观、主角、冲突等 foundation 文件。把用户提到的所有创意要素都写进这里。" },
+      styleGuide: { type: "string", description: "可选文风要求，如叙事人称、句子长度、对白密度、描写方式、禁用语气等。" },
     },
     required: ["title", "genre", "platform", "brief"],
   },
@@ -352,8 +426,11 @@ const BOOK_DRAFT_SYSTEM_PROMPT = [
   "规则：",
   "1. 从用户描述中推断所有字段，大胆预填合理默认值。",
   "2. brief 字段要详细——它会传给 Architect 智能体生成完整的世界观、主角、冲突等 foundation 文件。把用户提到的所有创意要素都写进 brief。",
+  "2a. 如果用户提到 문체/文风/style/叙事语气/문장 길이/대화 밀도，把它写进 styleGuide 字段，不要混进 brief。",
   "3. 如果用户后续要求修改某些字段，重新调用 create_book 工具，只更新被提到的字段，其余保持不变。",
   "4. 不要只回复文字讨论——必须调用 create_book 工具输出结构化参数。",
+  "5. 如果因为模型或服务限制无法调用工具，必须在回复中提供一个 ```json fenced block，包含 title, genre, platform, language, targetChapters, chapterWordCount, blurb, worldPremise, protagonist, conflictCore, volumeOutline, styleGuide, nextQuestion 字段。",
+  "6. 如果用户输入来自 Studio 表单，已经包含书名、题材、平台、目标章数、每章字数、故事简介/核心设定，不要再追问这些字段；直接基于它们生成完整草案。",
 ].join("\n");
 
 /** Map directive field keys to BookCreationDraft property names. */
@@ -383,7 +460,7 @@ function applyFieldsToDraft(
         draft.platform = value;
         break;
       case "language":
-        if (value === "zh" || value === "en") draft.language = value;
+        if (value === "zh" || value === "en" || value === "ko") draft.language = value;
         break;
       case "targetChapters": {
         const n = parseInt(value, 10);
@@ -420,6 +497,9 @@ function applyFieldsToDraft(
       case "constraints":
         draft.constraints = value;
         break;
+      case "styleGuide":
+        draft.styleGuide = value;
+        break;
       case "authorIntent":
         draft.authorIntent = value;
         break;
@@ -432,6 +512,298 @@ function applyFieldsToDraft(
   }
 
   return draft;
+}
+
+function parsePositiveIntegerField(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const match = value.match(/\d+/);
+  if (!match) return undefined;
+  const parsed = parseInt(match[0]!, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function readLabeledBlock(input: string, labels: ReadonlyArray<string>): string | undefined {
+  const escapedLabels = labels.map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const labelPattern = escapedLabels.join("|");
+  const re = new RegExp(`(?:^|\\n)\\s*(?:${labelPattern})\\s*[:：]\\s*([\\s\\S]*?)(?=\\n\\s*[^\\n:：]{1,40}\\s*[:：]|$)`, "u");
+  const match = re.exec(input);
+  return match?.[1]?.trim() || undefined;
+}
+
+function readInlineField(input: string, labels: ReadonlyArray<string>): string | undefined {
+  for (const label of labels) {
+    const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp(`(?:^|\\n)\\s*${escaped}\\s*[:：]\\s*([^\\n]+)`, "u");
+    const match = re.exec(input);
+    const value = match?.[1]?.trim();
+    if (value) return value;
+  }
+  return undefined;
+}
+
+function stripIdFromLabeledValue(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  return value.replace(/\s*\([^)]+\)\s*$/u, "").trim() || value.trim();
+}
+
+function extractStudioFormDraft(input: string, concept: string): BookCreationDraft | undefined {
+  const title = readInlineField(input, ["제목", "Title", "书名"]);
+  const genreRaw = readInlineField(input, ["장르", "Genre", "题材"]);
+  const platformRaw = readInlineField(input, ["목표 플랫폼", "Target platform", "目标平台"]);
+  const targetChapters = parsePositiveIntegerField(readInlineField(input, ["목표 장수", "Target chapters", "目标章数"]));
+  const chapterWordCount = parsePositiveIntegerField(readInlineField(input, ["장당 분량", "Words per chapter", "每章字数"]));
+  const blurb = readLabeledBlock(input, [
+    "이야기 소개 / 핵심 설정",
+    "Story brief / core premise",
+    "故事简介 / 核心设定",
+  ]);
+  const styleGuide = readLabeledBlock(input, [
+    "문체 지시",
+    "Style direction",
+    "文风要求",
+  ]);
+
+  if (!title && !genreRaw && !platformRaw && !targetChapters && !chapterWordCount && !blurb && !styleGuide) {
+    return undefined;
+  }
+
+  const draft: BookCreationDraft = {
+    concept,
+    missingFields: [],
+    readyToCreate: false,
+  };
+  if (title) draft.title = title;
+  if (genreRaw) {
+    const idMatch = /\(([^)]+)\)\s*$/u.exec(genreRaw);
+    draft.genre = idMatch?.[1]?.trim() || stripIdFromLabeledValue(genreRaw);
+  }
+  if (platformRaw) draft.platform = stripIdFromLabeledValue(platformRaw);
+  if (targetChapters) draft.targetChapters = targetChapters;
+  if (chapterWordCount) draft.chapterWordCount = chapterWordCount;
+  if (blurb) {
+    draft.blurb = blurb;
+    draft.worldPremise = blurb;
+  }
+  if (styleGuide) draft.styleGuide = styleGuide;
+  if (/[가-힣]/u.test(input)) {
+    draft.language = "ko";
+  } else if (/Title|Story brief|Target chapters/u.test(input)) {
+    draft.language = "en";
+  } else {
+    draft.language = "zh";
+  }
+  return finalizeCreationDraft(draft);
+}
+
+function finalizeCreationDraft(draft: BookCreationDraft): BookCreationDraft {
+  const missingFields: string[] = [];
+  if (!draft.title?.trim()) missingFields.push("title");
+  if (!draft.genre?.trim()) missingFields.push("genre");
+  if (!draft.platform?.trim()) missingFields.push("platform");
+  if (typeof draft.targetChapters !== "number") missingFields.push("targetChapters");
+  if (typeof draft.chapterWordCount !== "number") missingFields.push("chapterWordCount");
+  if (!draft.blurb?.trim() && !draft.worldPremise?.trim()) missingFields.push("blurb");
+  return {
+    ...draft,
+    missingFields,
+    readyToCreate: missingFields.length === 0,
+  };
+}
+
+function stripMarkdown(value: string): string {
+  return value
+    .replace(/\*\*/g, "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/^[>\s]*[-*]\s+/u, "")
+    .trim();
+}
+
+function firstTitleCandidate(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const cleaned = stripMarkdown(value)
+    .split(/\s*\/\s*|\n|,|，/u)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const candidate = cleaned[0];
+  if (!candidate) return undefined;
+  return candidate
+    .replace(/^(?:최종\s*후보|대안\s*\d+|제목\s*후보|final\s+candidate|alternative\s*\d*|title\s*candidates?|候选\s*\d*)\s*[:：]\s*/iu, "")
+    .replace(/^[《「『“"']+|[》」』”"']+$/gu, "")
+    .trim() || undefined;
+}
+
+type MarkdownDraftFieldKey =
+  | "title"
+  | "worldPremise"
+  | "protagonist"
+  | "conflictCore"
+  | "volumeOutline"
+  | "blurb"
+  | "styleGuide";
+
+const MARKDOWN_DRAFT_FIELD_LABELS: ReadonlyArray<{
+  readonly key: MarkdownDraftFieldKey;
+  readonly labels: ReadonlyArray<string>;
+}> = [
+  { key: "title", labels: ["제목 후보", "제목", "Title candidates", "Title", "书名候选", "书名"] },
+  { key: "worldPremise", labels: ["세계관", "Worldview", "World", "世界观"] },
+  { key: "protagonist", labels: ["주인공", "Protagonist", "主角"] },
+  { key: "conflictCore", labels: ["핵심 갈등", "Core Conflict", "核心冲突"] },
+  { key: "volumeOutline", labels: ["1부 방향", "Volume 1 Direction", "Volume Direction", "卷一方向", "卷纲方向"] },
+  { key: "blurb", labels: ["소개문", "Synopsis", "Blurb", "简介", "介绍文"] },
+  { key: "styleGuide", labels: ["문체", "문체 지시", "Style", "Style direction", "文风", "文风要求"] },
+];
+
+function normalizeMarkdownDraftHeading(value: string): string {
+  return stripMarkdown(value)
+    .replace(/^#+\s*/u, "")
+    .replace(/^\[|\]$/gu, "")
+    .replace(/^【|】$/gu, "")
+    .replace(/^\s*\d+\s*[.)]\s*/u, "")
+    .replace(/\s*\([^)]*\)\s*$/u, "")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+function markdownDraftFieldKeyForHeading(line: string): MarkdownDraftFieldKey | undefined {
+  const heading = normalizeMarkdownDraftHeading(line);
+  if (!heading) return undefined;
+  for (const field of MARKDOWN_DRAFT_FIELD_LABELS) {
+    if (field.labels.some((label) => heading === label || heading.startsWith(`${label} `) || heading.startsWith(`${label}:`) || heading.startsWith(`${label}：`))) {
+      return field.key;
+    }
+  }
+  return undefined;
+}
+
+function extractMarkdownDraftSections(raw: string): Partial<Record<MarkdownDraftFieldKey, string>> {
+  const fields: Partial<Record<MarkdownDraftFieldKey, string>> = {};
+  let currentKey: MarkdownDraftFieldKey | undefined;
+  let buffer: string[] = [];
+
+  const flush = () => {
+    if (!currentKey) return;
+    const value = buffer
+      .map((line) => stripMarkdown(line.replace(/^>\s?/u, "")))
+      .filter(Boolean)
+      .join("\n")
+      .trim();
+    if (value && !fields[currentKey]) {
+      fields[currentKey] = value;
+    }
+  };
+
+  for (const line of raw.split("\n")) {
+    const nextKey = markdownDraftFieldKeyForHeading(line);
+    if (nextKey) {
+      flush();
+      currentKey = nextKey;
+      buffer = [];
+      continue;
+    }
+    if (currentKey) {
+      buffer.push(line);
+    }
+  }
+  flush();
+
+  return fields;
+}
+
+function normalizeJsonDraftFields(value: unknown): Partial<BookCreationDraft> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const record = value as Record<string, unknown>;
+  const text = (key: string) => typeof record[key] === "string" && record[key].trim() ? record[key].trim() : undefined;
+  const number = (key: string) => typeof record[key] === "number" && Number.isFinite(record[key]) ? record[key] : undefined;
+  const language = text("language");
+  return {
+    ...(text("title") ? { title: text("title") } : {}),
+    ...(text("genre") ? { genre: text("genre") } : {}),
+    ...(text("platform") ? { platform: text("platform") } : {}),
+    ...(language === "zh" || language === "en" || language === "ko" ? { language } : {}),
+    ...(number("targetChapters") ? { targetChapters: number("targetChapters") } : {}),
+    ...(number("chapterWordCount") ? { chapterWordCount: number("chapterWordCount") } : {}),
+    ...(text("blurb") || text("brief") ? { blurb: text("blurb") ?? text("brief") } : {}),
+    ...(text("worldPremise") ? { worldPremise: text("worldPremise") } : {}),
+    ...(text("protagonist") ? { protagonist: text("protagonist") } : {}),
+    ...(text("conflictCore") ? { conflictCore: text("conflictCore") } : {}),
+    ...(text("volumeOutline") ? { volumeOutline: text("volumeOutline") } : {}),
+    ...(text("styleGuide") ? { styleGuide: text("styleGuide") } : {}),
+    ...(text("nextQuestion") ? { nextQuestion: text("nextQuestion") } : {}),
+  };
+}
+
+function extractJsonDraftFields(raw: string): Partial<BookCreationDraft> {
+  const fenced = [...raw.matchAll(/```(?:json)?\s*([\s\S]*?)```/giu)];
+  for (const match of fenced) {
+    try {
+      const draft = normalizeJsonDraftFields(JSON.parse(match[1]?.trim() ?? ""));
+      if (Object.keys(draft).length > 0) return draft;
+    } catch {
+      // Try the next candidate.
+    }
+  }
+
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    try {
+      return normalizeJsonDraftFields(JSON.parse(raw.slice(start, end + 1)));
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
+function extractMarkdownDraftFields(raw: string | undefined): Partial<BookCreationDraft> {
+  if (!raw?.trim()) return {};
+
+  const jsonFields = extractJsonDraftFields(raw);
+  const fields: Record<string, string> = {};
+  for (const line of raw.split("\n")) {
+    const match = /^\s*\|\s*(?:\*\*)?([^|*]+?)(?:\*\*)?\s*\|\s*([^|]+?)\s*\|\s*$/u.exec(line);
+    if (!match) continue;
+    const key = stripMarkdown(match[1] ?? "");
+    const value = stripMarkdown(match[2] ?? "");
+    if (!key || !value || /^:?-+:?$/u.test(key) || /^:?-+:?$/u.test(value)) continue;
+    fields[key] = value;
+  }
+
+  const sections = extractMarkdownDraftSections(raw);
+  const allFields: Record<string, string> = { ...sections, ...fields };
+
+  const get = (...keys: string[]) => {
+    for (const key of keys) {
+      const value = allFields[key];
+      if (value?.trim()) return value.trim();
+    }
+    return undefined;
+  };
+
+  const title = jsonFields.title ?? firstTitleCandidate(sections.title ?? get("제목 후보", "제목", "Title candidates", "Title", "书名候选", "书名"));
+  const worldPremise = jsonFields.worldPremise ?? sections.worldPremise ?? get("세계관", "Worldview", "World", "世界观");
+  const protagonist = jsonFields.protagonist ?? sections.protagonist ?? get("주인공", "Protagonist", "主角");
+  const conflictCore = jsonFields.conflictCore ?? sections.conflictCore ?? get("핵심 갈등", "Core Conflict", "核心冲突");
+  const volumeOutline = jsonFields.volumeOutline ?? sections.volumeOutline ?? get("1부 방향", "Volume 1 Direction", "Volume Direction", "卷一方向", "卷纲方向");
+  const blurb = jsonFields.blurb ?? sections.blurb ?? get("소개문", "Synopsis", "Blurb", "简介", "介绍文");
+  const styleGuide = jsonFields.styleGuide ?? sections.styleGuide ?? get("문체", "문체 지시", "Style", "Style direction", "文风", "文风要求");
+
+  return {
+    ...(title ? { title } : {}),
+    ...(jsonFields.genre ? { genre: jsonFields.genre } : {}),
+    ...(jsonFields.platform ? { platform: jsonFields.platform } : {}),
+    ...(jsonFields.language ? { language: jsonFields.language } : {}),
+    ...(jsonFields.targetChapters ? { targetChapters: jsonFields.targetChapters } : {}),
+    ...(jsonFields.chapterWordCount ? { chapterWordCount: jsonFields.chapterWordCount } : {}),
+    ...(worldPremise ? { worldPremise } : {}),
+    ...(protagonist ? { protagonist } : {}),
+    ...(conflictCore ? { conflictCore } : {}),
+    ...(volumeOutline ? { volumeOutline } : {}),
+    ...(blurb ? { blurb } : {}),
+    ...(styleGuide ? { styleGuide } : {}),
+    ...(jsonFields.nextQuestion ? { nextQuestion: jsonFields.nextQuestion } : {}),
+  };
 }
 
 function formatDraftForUserMessage(
@@ -457,6 +829,16 @@ function formatDraftForUserMessage(
   return parts.join("\n");
 }
 
+function draftResponseText(input: string, fallback: string): string {
+  if (/[가-힣]/u.test(input)) {
+    return "입력된 작품 정보를 바탕으로 초안을 업데이트했습니다. 아래 초안 영역을 확인하고 필요하면 추가로 다듬어 주세요.";
+  }
+  if (/Title|Story brief|Target chapters/u.test(input)) {
+    return "Updated the book draft from the provided book basics. Review the draft below and refine it if needed.";
+  }
+  return fallback;
+}
+
 export function createInteractionToolsFromDeps(
   pipeline: PipelineLike,
   state: StateLike,
@@ -476,6 +858,7 @@ export function createInteractionToolsFromDeps(
     listBooks: () => state.listBooks(),
     developBookDraft: async (input, existingDraft) => {
       const concept = existingDraft?.concept ?? input;
+      const formDraft = extractStudioFormDraft(input, concept);
 
       if (!instrumentedPipeline.config?.client || !instrumentedPipeline.config?.model) {
         // Fallback: no LLM configured
@@ -520,25 +903,38 @@ export function createInteractionToolsFromDeps(
         }
       }
 
+      const contentDraft = extractMarkdownDraftFields(result.content);
+
       // Build a draft from tool call arguments
-      const draft: BookCreationDraft = {
+      const draft: BookCreationDraft = finalizeCreationDraft({
         concept,
-        title: (parsedArgs.title as string) ?? existingDraft?.title,
-        genre: (parsedArgs.genre as string) ?? existingDraft?.genre,
-        platform: (parsedArgs.platform as string) ?? existingDraft?.platform,
-        language: (parsedArgs.language as "zh" | "en") ?? existingDraft?.language,
-        targetChapters: (parsedArgs.targetChapters as number) ?? existingDraft?.targetChapters,
-        chapterWordCount: (parsedArgs.chapterWordCount as number) ?? existingDraft?.chapterWordCount,
-        blurb: (parsedArgs.brief as string) ?? existingDraft?.blurb,
         missingFields: [],
-        readyToCreate: Boolean(parsedArgs.title && parsedArgs.genre && parsedArgs.platform),
-      };
+        readyToCreate: false,
+        ...(existingDraft ?? {}),
+        ...(formDraft ?? {}),
+        ...contentDraft,
+        title: (parsedArgs.title as string) ?? contentDraft.title ?? formDraft?.title ?? existingDraft?.title,
+        genre: (parsedArgs.genre as string) ?? contentDraft.genre ?? formDraft?.genre ?? existingDraft?.genre,
+        platform: (parsedArgs.platform as string) ?? contentDraft.platform ?? formDraft?.platform ?? existingDraft?.platform,
+        language: (parsedArgs.language as "zh" | "en" | "ko") ?? contentDraft.language ?? formDraft?.language ?? existingDraft?.language,
+        targetChapters: (parsedArgs.targetChapters as number) ?? contentDraft.targetChapters ?? formDraft?.targetChapters ?? existingDraft?.targetChapters ?? 200,
+        chapterWordCount: (parsedArgs.chapterWordCount as number) ?? contentDraft.chapterWordCount ?? formDraft?.chapterWordCount ?? existingDraft?.chapterWordCount ?? 3000,
+        blurb: (parsedArgs.brief as string) ?? contentDraft.blurb ?? formDraft?.blurb ?? existingDraft?.blurb,
+        worldPremise: (parsedArgs.worldPremise as string) ?? contentDraft.worldPremise ?? formDraft?.worldPremise ?? existingDraft?.worldPremise,
+        protagonist: contentDraft.protagonist ?? existingDraft?.protagonist,
+        conflictCore: contentDraft.conflictCore ?? existingDraft?.conflictCore,
+        volumeOutline: contentDraft.volumeOutline ?? existingDraft?.volumeOutline,
+        styleGuide: (parsedArgs.styleGuide as string) ?? contentDraft.styleGuide ?? formDraft?.styleGuide ?? existingDraft?.styleGuide,
+      });
 
       return {
         __interaction: {
-          responseText: result.content || "已生成建书参数，请确认或修改。",
+          responseText: toolCall
+            ? (result.content || draftResponseText(input, "已生成建书参数，请确认或修改。"))
+            : draftResponseText(input, result.content || "已生成建书参数，请确认或修改。"),
           details: {
             creationDraft: draft,
+            draftRaw: result.content,
             toolCall: toolCall ? { name: toolCall.name, arguments: parsedArgs } : undefined,
           },
         },
@@ -553,6 +949,7 @@ export function createInteractionToolsFromDeps(
         externalContext: buildCreationExternalContext(input),
         authorIntent: input.authorIntent,
         currentFocus: input.currentFocus,
+        styleGuide: input.styleGuide,
       });
       return {
         bookId: book.id,

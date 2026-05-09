@@ -585,7 +585,7 @@ export async function executeAgentTool(
       // Phase hotfix 3: accept both locale dirs so English-layout books can
       // be edited via write_truth_file. The reader (utils/outline-paths.ts)
       // and Studio (server.ts) accept both — the agent whitelist must match.
-      const ROLE_PATH_PATTERN = /^roles\/(主要角色|次要角色|major|minor)\/[^/]+\.md$/;
+      const ROLE_PATH_PATTERN = /^roles\/(主要角色|次要角色|major|minor|주요인물|보조인물)\/[^/]+\.md$/;
 
       const isAllowed =
         ALLOWED_FLAT_FILES.includes(fileName)
@@ -600,6 +600,8 @@ export async function executeAgentTool(
           "roles/次要角色/<name>.md",
           "roles/major/<name>.md",
           "roles/minor/<name>.md",
+          "roles/주요인물/<name>.md",
+          "roles/보조인물/<name>.md",
         ];
         return JSON.stringify({
           error:

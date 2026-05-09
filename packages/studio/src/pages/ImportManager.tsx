@@ -18,9 +18,11 @@ type Tab = "chapters" | "canon" | "fanfic";
 export function ImportManager({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunction }) {
   const c = useColors(theme);
   const { lang } = useI18n();
+  const isKo = lang === "ko";
   const { data: booksData } = useApi<{ books: ReadonlyArray<BookSummary> }>("/books");
   const [tab, setTab] = useState<Tab>("chapters");
   const [status, setStatus] = useState("");
+  const [statusTone, setStatusTone] = useState<"ok" | "error">("ok");
   const [loading, setLoading] = useState(false);
 
   // Chapters state
@@ -49,9 +51,11 @@ export function ImportManager({ nav, theme, t }: { nav: Nav; theme: Theme; t: TF
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: chText, splitRegex: chSplitRegex || undefined }),
       });
-      setStatus(`Imported ${data.importedCount} chapters`);
+      setStatusTone("ok");
+      setStatus(isKo ? `${data.importedCount}개 장을 가져왔습니다` : `Imported ${data.importedCount} chapters`);
     } catch (e) {
-      setStatus(`Error: ${e instanceof Error ? e.message : String(e)}`);
+      setStatusTone("error");
+      setStatus(`${t("common.error")}: ${e instanceof Error ? e.message : String(e)}`);
     }
     setLoading(false);
   };
@@ -62,9 +66,11 @@ export function ImportManager({ nav, theme, t }: { nav: Nav; theme: Theme; t: TF
     setStatus("");
     try {
       await postApi(`/books/${canonTarget}/import/canon`, { fromBookId: canonFrom });
-      setStatus("Canon imported successfully!");
+      setStatusTone("ok");
+      setStatus(isKo ? "원본 설정을 가져왔습니다" : "Canon imported successfully!");
     } catch (e) {
-      setStatus(`Error: ${e instanceof Error ? e.message : String(e)}`);
+      setStatusTone("error");
+      setStatus(`${t("common.error")}: ${e instanceof Error ? e.message : String(e)}`);
     }
     setLoading(false);
   };
@@ -82,9 +88,11 @@ export function ImportManager({ nav, theme, t }: { nav: Nav; theme: Theme; t: TF
           genre: ffGenre, language: ffLang,
         }),
       });
-      setStatus(`Fanfic created: ${data.bookId}`);
+      setStatusTone("ok");
+      setStatus(isKo ? `팬픽 작품 생성됨: ${data.bookId}` : `Fanfic created: ${data.bookId}`);
     } catch (e) {
-      setStatus(`Error: ${e instanceof Error ? e.message : String(e)}`);
+      setStatusTone("error");
+      setStatus(`${t("common.error")}: ${e instanceof Error ? e.message : String(e)}`);
     }
     setLoading(false);
   };
@@ -176,22 +184,23 @@ export function ImportManager({ nav, theme, t }: { nav: Nav; theme: Theme; t: TF
             <div className="grid grid-cols-3 gap-3">
               <select value={ffMode} onChange={(e) => setFfMode(e.target.value)}
                 className="px-3 py-2 rounded-lg bg-secondary/30 border border-border text-sm">
-                <option value="canon">Canon</option>
+                <option value="canon">{isKo ? "원작 기준" : "Canon"}</option>
                 <option value="au">AU</option>
                 <option value="ooc">OOC</option>
                 <option value="cp">CP</option>
               </select>
               <select value={ffGenre} onChange={(e) => setFfGenre(e.target.value)}
                 className="px-3 py-2 rounded-lg bg-secondary/30 border border-border text-sm">
-                <option value="other">Other</option>
-                <option value="xuanhuan">玄幻</option>
-                <option value="urban">都市</option>
-                <option value="xianxia">仙侠</option>
+                <option value="other">{isKo ? "기타" : "Other"}</option>
+                <option value="xuanhuan">{isKo ? "동양 판타지" : "玄幻"}</option>
+                <option value="urban">{isKo ? "현대/도시" : "都市"}</option>
+                <option value="xianxia">{isKo ? "선협" : "仙侠"}</option>
               </select>
-              <select value={ffLang} onChange={(e) => setFfLang(e.target.value as "zh" | "en")}
+              <select value={ffLang} onChange={(e) => setFfLang(e.target.value as "zh" | "en" | "ko")}
                 className="px-3 py-2 rounded-lg bg-secondary/30 border border-border text-sm">
                 <option value="zh">中文</option>
                 <option value="en">English</option>
+                <option value="ko">한국어</option>
               </select>
             </div>
             <textarea value={ffText} onChange={(e) => setFfText(e.target.value)} rows={10}
@@ -206,7 +215,7 @@ export function ImportManager({ nav, theme, t }: { nav: Nav; theme: Theme; t: TF
         )}
 
         {status && (
-          <div className={`text-sm px-3 py-2 rounded-lg ${status.startsWith("Error") ? "bg-destructive/10 text-destructive" : "bg-emerald-500/10 text-emerald-600"}`}>
+          <div className={`text-sm px-3 py-2 rounded-lg ${statusTone === "error" ? "bg-destructive/10 text-destructive" : "bg-emerald-500/10 text-emerald-600"}`}>
             {status}
           </div>
         )}

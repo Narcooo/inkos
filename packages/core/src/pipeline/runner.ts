@@ -285,6 +285,12 @@ export interface ReviseResult {
   readonly skippedReason?: string;
   readonly lengthWarnings?: ReadonlyArray<string>;
   readonly lengthTelemetry?: LengthTelemetry;
+  readonly persistedAs?: "chapter" | "copy";
+  readonly savedPath?: string;
+}
+
+export interface ReviseDraftOptions {
+  readonly persistAs?: "chapter" | "copy";
 }
 
 export interface TruthFiles {
@@ -336,6 +342,7 @@ export interface InitBookOptions {
   readonly externalContext?: string;
   readonly authorIntent?: string;
   readonly currentFocus?: string;
+  readonly styleGuide?: string;
 }
 
 export class PipelineRunner {
@@ -349,23 +356,94 @@ export class PipelineRunner {
     this.state = new StateManager(config.projectRoot);
   }
 
-  private localize(language: LengthLanguage, messages: { zh: string; en: string }): string {
+  private localize(language: LengthLanguage | "ko", messages: { zh: string; en: string; ko?: string }): string {
+    if (language === "ko") return messages.ko ?? messages.en;
     return language === "en" ? messages.en : messages.zh;
+  }
+
+  private resolveLengthLanguage(language?: string | null): LengthLanguage {
+    if (language === "ko") return "ko";
+    return language === "en" ? "en" : "zh";
+  }
+
+  private localizeStageForLanguage(language: LengthLanguage, stage: string): string {
+    if (language !== "ko") return stage;
+    const auditChapter = stage.match(/^auditing chapter (\d+)$/i);
+    if (auditChapter?.[1]) return `${auditChapter[1]}장 검토`;
+    const reviseContext = stage.match(/^loading revision context for chapter (\d+)$/i);
+    if (reviseContext?.[1]) return `${reviseContext[1]}장 수정 컨텍스트 불러오기`;
+    const reviseChapter = stage.match(/^revising chapter (\d+)$/i);
+    if (reviseChapter?.[1]) return `${reviseChapter[1]}장 수정`;
+    const persistRevision = stage.match(/^persisting revision for chapter (\d+)$/i);
+    if (persistRevision?.[1]) return `${persistRevision[1]}장 수정 결과 저장`;
+    const zhAuditChapter = stage.match(/^审计第(\d+)章$/u);
+    if (zhAuditChapter?.[1]) return `${zhAuditChapter[1]}장 검토`;
+    const zhReviseContext = stage.match(/^加载第(\d+)章修订上下文$/u);
+    if (zhReviseContext?.[1]) return `${zhReviseContext[1]}장 수정 컨텍스트 불러오기`;
+    const zhReviseChapter = stage.match(/^修订第(\d+)章$/u);
+    if (zhReviseChapter?.[1]) return `${zhReviseChapter[1]}장 수정`;
+    const zhPersistRevision = stage.match(/^落盘第(\d+)章修订结果$/u);
+    if (zhPersistRevision?.[1]) return `${zhPersistRevision[1]}장 수정 결과 저장`;
+    const labels: Record<string, string> = {
+      "generating foundation": "기초 설정 생성",
+      "saving book config": "작품 설정 저장",
+      "writing foundation files": "기초 설정 파일 작성",
+      "initializing control documents": "제어 문서 초기화",
+      "creating initial snapshot": "초기 스냅샷 생성",
+      "importing fanfic canon": "팬픽 원본 설정 가져오기",
+      "generating fanfic foundation": "팬픽 기초 설정 생성",
+      "extracting source style fingerprint": "원작 문체 지문 추출",
+      "preparing chapter inputs": "챕터 입력 준비",
+      "writing chapter draft": "챕터 초안 작성",
+      "persisting draft and truth files": "초안 및 기준 문서 저장",
+      "updating chapter index and snapshots": "챕터 색인 및 스냅샷 갱신",
+      "planning next chapter intent": "다음 장 의도 계획",
+      "composing chapter runtime context": "챕터 런타임 컨텍스트 구성",
+      "polishing prose": "문장 다듬기",
+      "persisting final chapter": "최종 챕터 저장",
+      "rebuilding final truth files": "최종 기준 문서 생성",
+      "validating truth file updates": "기준 문서 변경 검증",
+      "syncing memory indexes": "기억 색인 동기화",
+      "repairing chapter state settlement": "챕터 상태 정산 복구",
+      "syncing truth files and indexes from edited chapter body": "편집된 본문에서 기준 문서와 색인 동기화",
+      "auditing draft": "초안 검토",
+      "生成基础设定": "기초 설정 생성",
+      "保存书籍配置": "작품 설정 저장",
+      "写入基础设定文件": "기초 설정 파일 작성",
+      "初始化控制文档": "제어 문서 초기화",
+      "创建初始快照": "초기 스냅샷 생성",
+      "准备章节输入": "챕터 입력 준비",
+      "撰写章节草稿": "챕터 초안 작성",
+      "落盘最终章节": "최종 챕터 저장",
+      "生成最终真相文件": "최종 기준 문서 생성",
+      "校验真相文件变更": "기준 문서 변경 검증",
+      "同步记忆索引": "기억 색인 동기화",
+      "更新章节索引与快照": "챕터 색인 및 스냅샷 갱신",
+      "审计草稿": "초안 검토",
+      "文字层润色": "문장 다듬기",
+    };
+    return labels[stage] ?? stage;
   }
 
   private async resolveBookLanguage(
     book: Pick<BookConfig, "genre" | "language">,
   ): Promise<LengthLanguage> {
     if (book.language) {
-      return book.language;
+      return this.resolveLengthLanguage(book.language);
     }
 
     try {
       const { profile } = await this.loadGenreProfile(book.genre);
-      return profile.language;
+      return this.resolveLengthLanguage(profile.language);
     } catch {
       return "zh";
     }
+  }
+
+  private resolveBookDisplayLanguage(book: Pick<BookConfig, "language">, profileLanguage?: string): "zh" | "en" | "ko" {
+    const language = book.language ?? profileLanguage;
+    if (language === "ko") return "ko";
+    return language === "en" ? "en" : "zh";
   }
 
   private async resolveBookLanguageById(bookId: string): Promise<LengthLanguage> {
@@ -381,17 +459,18 @@ export class PipelineRunner {
     return lengthSpec.countingMode === "en_words" ? "en" : "zh";
   }
 
-  private logStage(language: LengthLanguage, message: { zh: string; en: string }): void {
+  private logStage(language: LengthLanguage, message: { zh: string; en: string; ko?: string }): void {
+    const stage = this.localizeStageForLanguage(language, this.localize(language, message));
     this.config.logger?.info(
-      `${this.localize(language, { zh: "阶段：", en: "Stage: " })}${this.localize(language, message)}`,
+      `${this.localize(language, { zh: "阶段：", en: "Stage: ", ko: "단계: " })}${stage}`,
     );
   }
 
-  private logInfo(language: LengthLanguage, message: { zh: string; en: string }): void {
+  private logInfo(language: LengthLanguage, message: { zh: string; en: string; ko?: string }): void {
     this.config.logger?.info(this.localize(language, message));
   }
 
-  private logWarn(language: LengthLanguage, message: { zh: string; en: string }): void {
+  private logWarn(language: LengthLanguage, message: { zh: string; en: string; ko?: string }): void {
     this.config.logger?.warn(this.localize(language, message));
   }
 
@@ -617,7 +696,7 @@ export class PipelineRunner {
     this.logStage(stageLanguage, { zh: "生成基础设定", en: "generating foundation" });
     const { profile: gp } = await this.loadGenreProfile(book.genre);
     const reviewer = new FoundationReviewerAgent(this.agentCtxFor("foundation-reviewer", book.id));
-    const resolvedLanguage = (book.language ?? gp.language) === "en" ? "en" as const : "zh" as const;
+    const resolvedLanguage = (book.language ?? gp.language) === "zh" ? "zh" as const : "en" as const;
     const foundation = await this.generateAndReviewFoundation({
       generate: (reviewFeedback) => architect.generateFoundation(
         book,
@@ -657,6 +736,20 @@ export class PipelineRunner {
         await writeFile(
           join(stagingBookDir, "story", "current_focus.md"),
           options.currentFocus.trimEnd() + "\n",
+          "utf-8",
+        );
+      }
+      if (options.styleGuide?.trim()) {
+        const styleGuidePath = join(stagingBookDir, "story", "style_guide.md");
+        const existingStyleGuide = await readFile(styleGuidePath, "utf-8").catch(() => "");
+        const styleHeading = stageLanguage === "ko"
+          ? "# 사용자 문체 지시"
+          : stageLanguage === "en"
+            ? "# User Style Direction"
+            : "# 用户文风要求";
+        await writeFile(
+          styleGuidePath,
+          `${styleHeading}\n\n${options.styleGuide.trimEnd()}\n\n${existingStyleGuide.trimStart()}`,
           "utf-8",
         );
       }
@@ -746,7 +839,7 @@ export class PipelineRunner {
     });
 
     const reviewer = new FoundationReviewerAgent(this.agentCtxFor("foundation-reviewer", bookId));
-    const resolvedLanguage = (book.language ?? "zh") === "en" ? "en" as const : "zh" as const;
+    const resolvedLanguage = (book.language ?? "zh") === "zh" ? "zh" as const : "en" as const;
     try {
       const review = await reviewer.review({
         foundation,
@@ -766,8 +859,7 @@ export class PipelineRunner {
 
     const outlineDir = join(storyDir, "outline");
     await mkdir(outlineDir, { recursive: true });
-    await mkdir(join(storyDir, "roles", "主要角色"), { recursive: true });
-    await mkdir(join(storyDir, "roles", "次要角色"), { recursive: true });
+    await mkdir(join(storyDir, "roles"), { recursive: true });
 
     const { profile: gp } = await this.loadGenreProfile(book.genre);
     await architect.writeFoundationFiles(
@@ -860,7 +952,7 @@ export class PipelineRunner {
     const reviewer = new FoundationReviewerAgent(this.agentCtxFor("foundation-reviewer", book.id));
     this.logStage(stageLanguage, { zh: "生成同人基础设定", en: "generating fanfic foundation" });
     const { profile: gp } = await this.loadGenreProfile(book.genre);
-    const resolvedLanguage = (book.language ?? gp.language) === "en" ? "en" as const : "zh" as const;
+    const resolvedLanguage = (book.language ?? gp.language) === "zh" ? "zh" as const : "en" as const;
     const foundation = await this.generateAndReviewFoundation({
       generate: (reviewFeedback) => architect.generateFanficFoundation(
         book,
@@ -915,9 +1007,11 @@ export class PipelineRunner {
       );
 
       const { profile: gp } = await this.loadGenreProfile(book.genre);
+      const pipelineLang: LengthLanguage = (book.language ?? gp.language) === "en" ? "en" : "zh";
+      const displayLang = this.resolveBookDisplayLanguage(book, gp.language);
       const lengthSpec = buildLengthSpec(
         wordCount ?? book.chapterWordCount,
-        book.language ?? gp.language,
+        pipelineLang,
       );
 
       const writer = new WriterAgent(this.agentCtxFor("writer", bookId));
@@ -942,6 +1036,7 @@ export class PipelineRunner {
         chapterContent: output.content,
         lengthSpec,
         chapterIntent: writeInput.chapterIntent,
+        language: stageLanguage,
       });
       totalUsage = PipelineRunner.addUsage(totalUsage, normalizedDraft.tokenUsage);
       const draftOutput: WriteChapterOutput = {
@@ -954,6 +1049,7 @@ export class PipelineRunner {
         chapterNumber,
         draftOutput.wordCount,
         lengthSpec,
+        book.language,
       );
       const lengthTelemetry = this.buildLengthTelemetry({
         lengthSpec,
@@ -973,16 +1069,18 @@ export class PipelineRunner {
       const filename = `${paddedNum}_${sanitized}.md`;
       const filePath = join(chaptersDir, filename);
 
-      const resolvedLang = book.language ?? gp.language;
-      const heading = resolvedLang === "en"
+      const resolvedLang = displayLang;
+      const heading = book.language === "ko"
+        ? `# ${chapterNumber}장 ${draftOutput.title}`
+        : resolvedLang === "en"
         ? `# Chapter ${chapterNumber}: ${draftOutput.title}`
         : `# 第${chapterNumber}章 ${draftOutput.title}`;
       await writeFile(filePath, `${heading}\n\n${draftOutput.content}`, "utf-8");
 
       // Save truth files
       this.logStage(stageLanguage, { zh: "落盘草稿与真相文件", en: "persisting draft and truth files" });
-      await writer.saveChapter(bookDir, draftOutput, gp.numericalSystem, resolvedLang);
-      await writer.saveNewTruthFiles(bookDir, draftOutput, resolvedLang);
+      await writer.saveChapter(bookDir, draftOutput, gp.numericalSystem, displayLang);
+      await writer.saveNewTruthFiles(bookDir, draftOutput, displayLang);
       await this.syncLegacyStructuredStateFromMarkdown(bookDir, chapterNumber, draftOutput);
       await this.syncNarrativeMemoryIndex(bookId);
 
@@ -1095,10 +1193,12 @@ export class PipelineRunner {
     const content = await this.readChapterContent(bookDir, targetChapter);
     const auditor = new ContinuityAuditor(this.agentCtxFor("auditor", bookId));
     const { profile: gp } = await this.loadGenreProfile(book.genre);
-    const language = book.language ?? gp.language;
-    this.logStage(language, {
+    const language = this.resolveLengthLanguage(book.language ?? gp.language);
+    const displayLanguage = this.resolveBookDisplayLanguage(book, gp.language);
+    this.logStage(await this.resolveBookLanguage(book), {
       zh: `审计第${targetChapter}章`,
       en: `auditing chapter ${targetChapter}`,
+      ko: `${targetChapter}장 검토`,
     });
     const evaluation = await this.evaluateMergedAudit({
       auditor,
@@ -1129,7 +1229,7 @@ export class PipelineRunner {
         bookDir,
         chapterNumber: targetChapter,
         issues: result.issues.filter((issue) => issue.severity === "critical" || issue.severity === "warning"),
-        language,
+        language: displayLanguage,
       }).catch(() => undefined);
     }
 
@@ -1144,7 +1244,12 @@ export class PipelineRunner {
   }
 
   /** Revise the latest (or specified) chapter based on audit issues. */
-  async reviseDraft(bookId: string, chapterNumber?: number, mode: ReviseMode = DEFAULT_REVISE_MODE): Promise<ReviseResult> {
+  async reviseDraft(
+    bookId: string,
+    chapterNumber?: number,
+    mode: ReviseMode = DEFAULT_REVISE_MODE,
+    options: ReviseDraftOptions = {},
+  ): Promise<ReviseResult> {
     const releaseLock = await this.state.acquireBookLock(bookId);
     try {
       const book = await this.state.loadBookConfig(bookId);
@@ -1170,8 +1275,78 @@ export class PipelineRunner {
       const content = await this.readChapterContent(bookDir, targetChapter);
       const auditor = new ContinuityAuditor(this.agentCtxFor("auditor", bookId));
       const { profile: gp } = await this.loadGenreProfile(book.genre);
-      const language = book.language ?? gp.language;
+      const language = this.resolveLengthLanguage(book.language ?? gp.language);
+      const displayLanguage = this.resolveBookDisplayLanguage(book, gp.language);
       const countingMode = resolveLengthCountingMode(language);
+      const manualRevisionContext = this.config.externalContext?.trim();
+      if (options.persistAs === "copy" && manualRevisionContext) {
+        const chapterLengthTarget = chapterMeta.lengthTelemetry?.target ?? book.chapterWordCount;
+        const lengthLanguage = chapterMeta.lengthTelemetry?.countingMode === "en_words"
+          ? "en"
+          : language;
+        const lengthSpec = buildLengthSpec(chapterLengthTarget, lengthLanguage);
+        const reviser = new ReviserAgent(this.agentCtxFor("reviser", bookId));
+        this.logStage(stageLanguage, {
+          zh: `按文风模板修订第${targetChapter}章副本`,
+          en: `revising chapter ${targetChapter} as a style copy`,
+          ko: `${targetChapter}장 문체 사본 수정`,
+        });
+        const reviseOutput = await reviser.reviseChapter(
+          bookDir,
+          content,
+          targetChapter,
+          [
+            {
+              severity: "warning",
+              category: stageLanguage === "ko" ? "문체 수정 요청" : stageLanguage === "en" ? "Style Revision Request" : "文风修订要求",
+              description: stageLanguage === "ko"
+                ? "사용자가 원본을 보존한 채 선택한 문체 양식에 맞춘 수정 사본을 요청했습니다."
+                : stageLanguage === "en"
+                  ? "The user requested a style-revised copy while preserving the original chapter."
+                  : "用户要求在保留原章的同时生成文风修订副本。",
+              suggestion: manualRevisionContext,
+            },
+          ],
+          mode,
+          book.genre,
+          { lengthSpec },
+        );
+        if (reviseOutput.revisedContent.length === 0) {
+          throw new Error("Reviser returned empty content");
+        }
+        const chaptersDir = join(bookDir, "chapters");
+        const files = await readdir(chaptersDir);
+        const paddedNum = String(targetChapter).padStart(4, "0");
+        const existingFile = files.find((f) => f.startsWith(paddedNum) && f.endsWith(".md"));
+        if (!existingFile) {
+          throw new Error(`Chapter ${targetChapter} file not found in ${chaptersDir} (expected filename starting with ${paddedNum})`);
+        }
+        const reviseLang = this.resolveLengthLanguage(book.language ?? gp.language);
+        const reviseHeading = reviseLang === "en"
+          ? `# Chapter ${targetChapter}: ${chapterMeta.title}`
+          : reviseLang === "ko"
+            ? `# ${targetChapter}장 ${chapterMeta.title}`
+            : `# 第${targetChapter}章 ${chapterMeta.title}`;
+        const revisionDir = join(bookDir, "revisions", `chapter-${paddedNum}`);
+        await mkdir(revisionDir, { recursive: true });
+        const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+        const copyFile = `${timestamp}-style-revision.md`;
+        const relativeSavedPath = ["revisions", `chapter-${paddedNum}`, copyFile].join("/");
+        await writeFile(
+          join(revisionDir, copyFile),
+          `${reviseHeading}\n\n${reviseOutput.revisedContent}`,
+          "utf-8",
+        );
+        return {
+          chapterNumber: targetChapter,
+          wordCount: countChapterLength(reviseOutput.revisedContent, lengthSpec.countingMode),
+          fixedIssues: reviseOutput.fixedIssues,
+          applied: reviseOutput.revisedContent.trim() !== content.trim(),
+          status: "ready-for-review",
+          persistedAs: "copy",
+          savedPath: relativeSavedPath,
+        };
+      }
       const reviseControlInput = (this.config.inputGovernanceMode ?? "v2") === "legacy"
         ? undefined
         : await this.createGovernedArtifacts(
@@ -1198,7 +1373,7 @@ export class PipelineRunner {
           : undefined,
       });
 
-      if (preRevision.blockingCount === 0 && preRevision.aiTellCount === 0) {
+      if (preRevision.blockingCount === 0 && preRevision.aiTellCount === 0 && !manualRevisionContext) {
         return {
           chapterNumber: targetChapter,
           wordCount: countChapterLength(content, countingMode),
@@ -1223,11 +1398,26 @@ export class PipelineRunner {
         zh: `修订第${targetChapter}章`,
         en: `revising chapter ${targetChapter}`,
       });
+      const revisionIssues: ReadonlyArray<AuditIssue> = manualRevisionContext
+        ? [
+            ...preRevision.auditResult.issues,
+            {
+              severity: "warning",
+              category: stageLanguage === "ko" ? "문체 수정 요청" : stageLanguage === "en" ? "Style Revision Request" : "文风修订要求",
+              description: stageLanguage === "ko"
+                ? "사용자가 이미 완성된 장을 선택한 문체 양식에 맞춰 수정하라고 요청했습니다."
+                : stageLanguage === "en"
+                  ? "The user requested a completed chapter style revision using the selected style template."
+                  : "用户要求按所选文风模板修订已完成章节。",
+              suggestion: manualRevisionContext,
+            },
+          ]
+        : preRevision.auditResult.issues;
       const reviseOutput = await reviser.reviseChapter(
         bookDir,
         content,
         targetChapter,
-        preRevision.auditResult.issues,
+        revisionIssues,
         mode,
         book.genre,
         reviseControlInput
@@ -1250,6 +1440,7 @@ export class PipelineRunner {
         chapterNumber: targetChapter,
         chapterContent: reviseOutput.revisedContent,
         lengthSpec,
+        language: stageLanguage,
       });
       const postRevision = await this.evaluateMergedAudit({
         auditor,
@@ -1289,6 +1480,7 @@ export class PipelineRunner {
         targetChapter,
         normalizedRevision.wordCount,
         lengthSpec,
+        book.language,
       );
       const lengthTelemetry = this.buildLengthTelemetry({
         lengthSpec,
@@ -1305,7 +1497,10 @@ export class PipelineRunner {
       const blockingDidNotWorsen = effectivePostRevision.blockingCount <= preRevision.blockingCount;
       const criticalDidNotWorsen = effectivePostRevision.criticalCount <= preRevision.criticalCount;
       const aiDidNotWorsen = effectivePostRevision.aiTellCount <= preRevision.aiTellCount;
-      const shouldApplyRevision = blockingDidNotWorsen
+      const contentChanged = normalizedRevision.content.trim() !== content.trim();
+      const shouldApplyRevision = manualRevisionContext
+        ? blockingDidNotWorsen && criticalDidNotWorsen && aiDidNotWorsen && contentChanged
+        : blockingDidNotWorsen
         && criticalDidNotWorsen
         && aiDidNotWorsen
         && (improvedBlocking || improvedAITells);
@@ -1322,10 +1517,11 @@ export class PipelineRunner {
       }
       this.logLengthWarnings(lengthWarnings);
 
-      // Save revised chapter file
+      // Save revised chapter file, or store it as a comparable copy for style-only revisions.
       this.logStage(stageLanguage, {
-        zh: `落盘第${targetChapter}章修订结果`,
-        en: `persisting revision for chapter ${targetChapter}`,
+        zh: options.persistAs === "copy" ? `保存第${targetChapter}章修订副本` : `落盘第${targetChapter}章修订结果`,
+        en: options.persistAs === "copy" ? `saving revision copy for chapter ${targetChapter}` : `persisting revision for chapter ${targetChapter}`,
+        ko: options.persistAs === "copy" ? `${targetChapter}장 수정 사본 저장` : `${targetChapter}장 수정 결과 저장`,
       });
       const chaptersDir = join(bookDir, "chapters");
       const files = await readdir(chaptersDir);
@@ -1334,10 +1530,35 @@ export class PipelineRunner {
       if (!existingFile) {
         throw new Error(`Chapter ${targetChapter} file not found in ${chaptersDir} (expected filename starting with ${paddedNum})`);
       }
-      const reviseLang = book.language ?? gp.language;
+      const reviseLang = this.resolveLengthLanguage(book.language ?? gp.language);
       const reviseHeading = reviseLang === "en"
         ? `# Chapter ${targetChapter}: ${chapterMeta.title}`
-        : `# 第${targetChapter}章 ${chapterMeta.title}`;
+        : reviseLang === "ko"
+          ? `# ${targetChapter}장 ${chapterMeta.title}`
+          : `# 第${targetChapter}章 ${chapterMeta.title}`;
+      if (options.persistAs === "copy") {
+        const revisionDir = join(bookDir, "revisions", `chapter-${paddedNum}`);
+        await mkdir(revisionDir, { recursive: true });
+        const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+        const copyFile = `${timestamp}-style-revision.md`;
+        const relativeSavedPath = ["revisions", `chapter-${paddedNum}`, copyFile].join("/");
+        await writeFile(
+          join(revisionDir, copyFile),
+          `${reviseHeading}\n\n${normalizedRevision.content}`,
+          "utf-8",
+        );
+        return {
+          chapterNumber: targetChapter,
+          wordCount: normalizedRevision.wordCount,
+          fixedIssues: reviseOutput.fixedIssues,
+          applied: true,
+          status: effectivePostRevision.auditResult.passed ? "ready-for-review" : "audit-failed",
+          lengthWarnings,
+          lengthTelemetry,
+          persistedAs: "copy",
+          savedPath: relativeSavedPath,
+        };
+      }
       await writeFile(
         join(chaptersDir, existingFile),
         `${reviseHeading}\n\n${normalizedRevision.content}`,
@@ -1380,7 +1601,7 @@ export class PipelineRunner {
           issues: effectivePostRevision.auditResult.issues.filter(
             (issue) => issue.severity === "critical" || issue.severity === "warning",
           ),
-          language,
+          language: displayLanguage,
         }).catch(() => undefined);
       }
 
@@ -1406,6 +1627,7 @@ export class PipelineRunner {
         status: effectivePostRevision.auditResult.passed ? "ready-for-review" : "audit-failed",
         lengthWarnings,
         lengthTelemetry,
+        persistedAs: "chapter",
       };
     } finally {
       await releaseLock();
@@ -1524,7 +1746,8 @@ export class PipelineRunner {
         }
       : undefined;
     const { profile: gp } = await this.loadGenreProfile(book.genre);
-    const pipelineLang = book.language ?? gp.language;
+    const pipelineLang: LengthLanguage = (book.language ?? gp.language) === "en" ? "en" : "zh";
+    const displayLang = this.resolveBookDisplayLanguage(book, gp.language);
     const lengthSpec = buildLengthSpec(
       wordCount ?? book.chapterWordCount,
       pipelineLang,
@@ -1570,6 +1793,7 @@ export class PipelineRunner {
         chapterContent,
         lengthSpec,
         chapterIntent: writeInput.chapterIntent,
+        language: stageLanguage,
       }),
       normalizePostWriteSurface: (chapterContent) =>
         normalizePostWriteSurface(chapterContent, pipelineLang),
@@ -1620,7 +1844,7 @@ export class PipelineRunner {
           chapterContent: finalContent,
           chapterNumber,
           chapterMemo: reducedControlInput?.chapterMemo,
-          language: pipelineLang === "en" ? "en" : "zh",
+          language: displayLang,
         });
         totalUsage = PipelineRunner.addUsage(totalUsage, polishOutput.tokenUsage);
         if (polishOutput.changed && polishOutput.polishedContent.trim().length > 0) {
@@ -1731,6 +1955,7 @@ export class PipelineRunner {
       chapterNumber,
       finalWordCount,
       lengthSpec,
+      book.language,
     );
     const lengthTelemetry = this.buildLengthTelemetry({
       lengthSpec,
@@ -1831,9 +2056,9 @@ export class PipelineRunner {
       degradedIssues,
       tokenUsage: totalUsage,
       loadChapterIndex: () => this.state.loadChapterIndex(bookId),
-      saveChapter: () => writer.saveChapter(bookDir, persistenceOutput, gp.numericalSystem, pipelineLang),
+      saveChapter: () => writer.saveChapter(bookDir, persistenceOutput, gp.numericalSystem, displayLang),
       saveTruthFiles: async () => {
-        await writer.saveNewTruthFiles(bookDir, persistenceOutput, pipelineLang);
+        await writer.saveNewTruthFiles(bookDir, persistenceOutput, displayLang);
         await this.syncLegacyStructuredStateFromMarkdown(bookDir, chapterNumber, persistenceOutput);
         this.logStage(stageLanguage, { zh: "同步记忆索引", en: "syncing memory indexes" });
         await this.syncNarrativeMemoryIndex(bookId);
@@ -1844,7 +2069,7 @@ export class PipelineRunner {
         bookDir,
         chapterNumber,
         issues,
-        language: stageLanguage,
+        language: displayLang,
       }).catch(() => undefined),
       snapshotState: () => this.state.snapshotState(bookId, chapterNumber),
       syncCurrentStateFactHistory: () => this.syncCurrentStateFactHistory(bookId, chapterNumber),
@@ -1921,7 +2146,8 @@ export class PipelineRunner {
 
     this.logStage(stageLanguage, { zh: "修复章节状态结算", en: "repairing chapter state settlement" });
     const { profile: gp } = await this.loadGenreProfile(book.genre);
-    const pipelineLang = book.language ?? gp.language;
+    const pipelineLang: LengthLanguage = (book.language ?? gp.language) === "en" ? "en" : "zh";
+    const displayLang = this.resolveBookDisplayLanguage(book, gp.language);
     const content = await this.readChapterContent(bookDir, targetChapter);
     const storyDir = join(bookDir, "story");
     const [oldState, oldHooks] = await Promise.all([
@@ -1979,8 +2205,8 @@ export class PipelineRunner {
       throw new Error(`State repair still failed for chapter ${targetChapter}.`);
     }
 
-    await writer.saveChapter(bookDir, repairedOutput, gp.numericalSystem, pipelineLang);
-    await writer.saveNewTruthFiles(bookDir, repairedOutput, pipelineLang);
+    await writer.saveChapter(bookDir, repairedOutput, gp.numericalSystem, displayLang);
+    await writer.saveNewTruthFiles(bookDir, repairedOutput, displayLang);
     await this.syncLegacyStructuredStateFromMarkdown(bookDir, targetChapter, repairedOutput);
     await this.syncNarrativeMemoryIndex(bookId);
     await this.state.snapshotState(bookId, targetChapter);
@@ -2039,7 +2265,8 @@ export class PipelineRunner {
 
     this.logStage(stageLanguage, { zh: "根据已编辑正文同步真相文件与索引", en: "syncing truth files and indexes from edited chapter body" });
     const { profile: gp } = await this.loadGenreProfile(book.genre);
-    const pipelineLang = book.language ?? gp.language;
+    const pipelineLang: LengthLanguage = (book.language ?? gp.language) === "en" ? "en" : "zh";
+    const displayLang = this.resolveBookDisplayLanguage(book, gp.language);
     const content = await this.readChapterContent(bookDir, targetChapter);
     const storyDir = join(bookDir, "story");
     const [oldState, oldHooks] = await Promise.all([
@@ -2117,8 +2344,8 @@ export class PipelineRunner {
       throw new Error(`Chapter sync still failed for chapter ${targetChapter}.`);
     }
 
-    await writer.saveChapter(bookDir, syncedOutput, gp.numericalSystem, pipelineLang);
-    await writer.saveNewTruthFiles(bookDir, syncedOutput, pipelineLang);
+    await writer.saveChapter(bookDir, syncedOutput, gp.numericalSystem, displayLang);
+    await writer.saveNewTruthFiles(bookDir, syncedOutput, displayLang);
     await this.syncLegacyStructuredStateFromMarkdown(bookDir, targetChapter, syncedOutput);
     await this.syncNarrativeMemoryIndex(bookId);
     await this.state.snapshotState(bookId, targetChapter);
@@ -2505,7 +2732,7 @@ ${matrix}`,
       const book = await this.state.loadBookConfig(input.bookId);
       const bookDir = this.state.bookDir(input.bookId);
       const { profile: gp } = await this.loadGenreProfile(book.genre);
-      const resolvedLanguage = book.language ?? gp.language;
+      const resolvedLanguage: LengthLanguage = (book.language ?? gp.language) === "en" ? "en" : "zh";
 
       const startFrom = input.resumeFrom ?? 1;
 
@@ -2534,7 +2761,7 @@ ${matrix}`,
           bookDir,
           foundation,
           gp.numericalSystem,
-          resolvedLanguage,
+          book.language ?? gp.language,
         );
         await this.resetImportReplayTruthFiles(bookDir, resolvedLanguage);
         await this.state.saveChapterIndex(input.bookId, []);
@@ -2562,7 +2789,7 @@ ${matrix}`,
       }));
       const analyzer = new ChapterAnalyzerAgent(this.agentCtxFor("chapter-analyzer", input.bookId));
       const writer = new WriterAgent(this.agentCtxFor("writer", input.bookId));
-      const countingMode = resolveLengthCountingMode(book.language ?? gp.language);
+      const countingMode = resolveLengthCountingMode(resolvedLanguage);
       let totalWords = 0;
       let importedCount = 0;
 
@@ -2842,6 +3069,7 @@ ${matrix}`,
     chapterContent: string;
     lengthSpec: LengthSpec;
     chapterIntent?: string;
+    language?: LengthLanguage;
   }): Promise<{
     content: string;
     wordCount: number;
@@ -2872,9 +3100,10 @@ ${matrix}`,
     // Safety net: if normalizer output is less than 25% of original, it was too destructive.
     // Reject and keep original content.
     if (normalized.finalCount < writerCount * 0.25) {
-      this.logWarn(this.languageFromLengthSpec(params.lengthSpec), {
+      this.logWarn(params.language ?? this.languageFromLengthSpec(params.lengthSpec), {
         zh: `字数归一化被拒绝：第${params.chapterNumber}章 ${writerCount} -> ${normalized.finalCount}（砍了${Math.round((1 - normalized.finalCount / writerCount) * 100)}%，超过安全阈值）`,
         en: `Length normalization rejected for chapter ${params.chapterNumber}: ${writerCount} -> ${normalized.finalCount} (cut ${Math.round((1 - normalized.finalCount / writerCount) * 100)}%, exceeds safety threshold)`,
+        ko: `분량 정규화 거부: ${params.chapterNumber}장 ${writerCount} -> ${normalized.finalCount} (${Math.round((1 - normalized.finalCount / writerCount) * 100)}% 감소, 안전 한도 초과)`,
       });
       return {
         content: params.chapterContent,
@@ -2883,9 +3112,10 @@ ${matrix}`,
       };
     }
 
-    this.logInfo(this.languageFromLengthSpec(params.lengthSpec), {
+    this.logInfo(params.language ?? this.languageFromLengthSpec(params.lengthSpec), {
       zh: `审计前字数归一化：第${params.chapterNumber}章 ${writerCount} -> ${normalized.finalCount}`,
       en: `Length normalization before audit for chapter ${params.chapterNumber}: ${writerCount} -> ${normalized.finalCount}`,
+      ko: `감사 전 분량 정규화: ${params.chapterNumber}장 ${writerCount} -> ${normalized.finalCount}`,
     });
 
     return {
@@ -3149,9 +3379,15 @@ ${matrix}`,
     chapterNumber: number,
     finalCount: number,
     lengthSpec: LengthSpec,
+    language?: string,
   ): string[] {
     if (!isOutsideHardRange(finalCount, lengthSpec)) {
       return [];
+    }
+    if (language === "ko") {
+      return [
+        `${chapterNumber}장은 한 번의 분량 정규화 후에도 허용 범위(${lengthSpec.hardMin}-${lengthSpec.hardMax})를 벗어났습니다. 실제 분량: ${finalCount}.`,
+      ];
     }
     return [
       this.localize(this.languageFromLengthSpec(lengthSpec), {
@@ -3190,7 +3426,7 @@ ${matrix}`,
     readonly bookDir: string;
     readonly chapterNumber: number;
     readonly issues: ReadonlyArray<AuditIssue>;
-    readonly language: LengthLanguage;
+    readonly language: LengthLanguage | "ko";
   }): Promise<void> {
     const storyDir = join(params.bookDir, "story");
     const driftPath = join(storyDir, "audit_drift.md");
@@ -3211,16 +3447,19 @@ ${matrix}`,
       this.localize(params.language, {
         zh: "# 审计纠偏",
         en: "# Audit Drift",
+        ko: "# 감사 보정",
       }),
       "",
       this.localize(params.language, {
         zh: "## 审计纠偏（自动生成，下一章写作前参照）",
         en: "## Audit Drift Correction",
+        ko: "## 감사 보정 (자동 생성, 다음 장 작성 전 참고)",
       }),
       "",
       this.localize(params.language, {
         zh: `> 第${params.chapterNumber}章审计发现以下问题，下一章写作时必须避免：`,
         en: `> Chapter ${params.chapterNumber} audit found the following issues to avoid in the next chapter:`,
+        ko: `> ${params.chapterNumber}장 감사에서 다음 문제가 발견되었습니다. 다음 장 작성 시 피하세요:`,
       }),
       ...params.issues.map((issue) => `> - [${issue.severity}] ${issue.category}: ${issue.description}`),
       "",
@@ -3233,8 +3472,10 @@ ${matrix}`,
     const headers = [
       "## 审计纠偏（自动生成，下一章写作前参照）",
       "## Audit Drift Correction",
+      "## 감사 보정 (자동 생성, 다음 장 작성 전 참고)",
       "# 审计纠偏",
       "# Audit Drift",
+      "# 감사 보정",
     ];
 
     let cutIndex = -1;
@@ -3327,13 +3568,14 @@ ${matrix}`,
       params.book.genre,
       params.auditOptions,
     );
-    const aiTells = analyzeAITells(params.chapterContent, params.language);
-    const sensitiveResult = analyzeSensitiveWords(params.chapterContent, undefined, params.language);
+    const auditRuleLanguage = params.language === "ko" ? "zh" : params.language;
+    const aiTells = analyzeAITells(params.chapterContent, auditRuleLanguage);
+    const sensitiveResult = analyzeSensitiveWords(params.chapterContent, undefined, auditRuleLanguage);
     const longSpanFatigue = await analyzeLongSpanFatigue({
       bookDir: params.bookDir,
       chapterNumber: params.chapterNumber,
       chapterContent: params.chapterContent,
-      language: params.language,
+      language: auditRuleLanguage,
     });
     const hasBlockedWords = sensitiveResult.found.some((f) => f.severity === "block");
     const issues: ReadonlyArray<AuditIssue> = [
