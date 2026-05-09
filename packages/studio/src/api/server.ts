@@ -11,6 +11,7 @@ import {
   computeAnalytics,
   loadProjectConfig,
   loadProjectSession,
+  processProjectInteractionInput,
   processProjectInteractionRequest,
   resolveSessionActiveBook,
   listBookSessions,
@@ -1859,6 +1860,34 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
         ? { ...session, activeBookId }
         : session,
       activeBookId,
+    });
+  });
+
+  app.post("/api/v1/interaction/draft", async (c) => {
+    const body = await c.req.json<{ instruction?: unknown }>().catch((): { instruction?: unknown } => ({}));
+    const instruction = typeof body.instruction === "string" ? body.instruction.trim() : "";
+    if (!instruction) {
+      throw new ApiError(400, "INVALID_DRAFT_INSTRUCTION", "instruction is required");
+    }
+
+    const config = await loadCurrentProjectConfig({ requireApiKey: false });
+    const pipeline = new PipelineRunner(await buildPipelineConfig({ currentConfig: config }));
+    const tools = createInteractionToolsFromDeps(pipeline, state);
+    const result = await processProjectInteractionInput({
+      projectRoot: root,
+      input: instruction,
+      tools,
+    });
+    const activeBookId = await resolveSessionActiveBook(root, result.session);
+
+    return c.json({
+      response: result.responseText,
+      session: activeBookId && result.session.activeBookId !== activeBookId
+        ? { ...result.session, activeBookId }
+        : result.session,
+      activeBookId,
+      request: result.request,
+      details: result.details,
     });
   });
 

@@ -2736,4 +2736,57 @@ describe("createStudioServer daemon lifecycle", () => {
       }),
     });
   });
+
+  it("updates the shared creation draft through the dedicated draft endpoint", async () => {
+    processProjectInteractionInputMock.mockResolvedValue({
+      request: { intent: "develop_book", language: "ko" },
+      responseText: "초안을 업데이트했습니다.",
+      session: {
+        sessionId: "session-draft-update",
+        projectRoot: root,
+        automationMode: "semi",
+        creationDraft: {
+          concept: "코지 판타지",
+          title: "마법사의 정원",
+          genre: "ko-cozy",
+          missingFields: [],
+          readyToCreate: true,
+        },
+        messages: [],
+        events: [],
+      },
+      details: {
+        creationDraft: {
+          title: "마법사의 정원",
+          genre: "ko-cozy",
+        },
+      },
+    });
+    resolveSessionActiveBookMock.mockResolvedValue(undefined);
+
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const response = await app.request("http://localhost/api/v1/interaction/draft", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ instruction: "/new 코지 판타지 초안을 만들어줘" }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(processProjectInteractionInputMock).toHaveBeenCalledWith(expect.objectContaining({
+      projectRoot: root,
+      input: "/new 코지 판타지 초안을 만들어줘",
+      tools: expect.any(Object),
+    }));
+    await expect(response.json()).resolves.toMatchObject({
+      response: "초안을 업데이트했습니다.",
+      session: {
+        creationDraft: {
+          title: "마법사의 정원",
+          genre: "ko-cozy",
+        },
+      },
+    });
+  });
 });

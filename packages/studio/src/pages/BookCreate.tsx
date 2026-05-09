@@ -612,6 +612,7 @@ interface WaitForBookReadyOptions {
 const DEFAULT_BOOK_READY_MAX_ATTEMPTS = 120;
 const DEFAULT_BOOK_READY_DELAY_MS = 250;
 const CREATION_DRAFT_SYNC_INTERVAL_MS = 2500;
+const DRAFT_REQUEST_TIMEOUT_MS = 180_000;
 
 interface BookCreateSessionOptions {
   readonly fetchSession?: (sessionId: string) => Promise<SessionResponse>;
@@ -619,6 +620,14 @@ interface BookCreateSessionOptions {
   readonly getStoredSessionId?: () => string | null;
   readonly setStoredSessionId?: (sessionId: string) => void;
   readonly clearStoredSessionId?: () => void;
+}
+
+interface DraftResponse {
+  readonly response?: string;
+  readonly session?: {
+    readonly activeBookId?: string;
+    readonly creationDraft?: BookCreationDraft;
+  };
 }
 
 let pendingDefaultBookCreateSessionId: Promise<string> | null = null;
@@ -894,6 +903,27 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
     });
   };
 
+  const runDraftInstruction = async (instruction: string): Promise<DraftResponse> => {
+    const koreanModePrompt = "한국어 모드: 모든 응답, 작품 설정, 장르 선택, 제목, 개요, 본문 지시는 자연스러운 한국어로 처리하세요. 새 작품에는 가능한 경우 ko-* 한국어 장르 템플릿을 우선 사용하세요.";
+    const localizedInstruction = uiLang !== "ko"
+      ? instruction
+      : instruction.startsWith("/new ")
+        ? `/new ${koreanModePrompt}\n\n${instruction.slice(5)}`
+        : `${koreanModePrompt}\n\n${instruction}`;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), DRAFT_REQUEST_TIMEOUT_MS);
+    try {
+      return await fetchJson<DraftResponse>("/interaction/draft", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ instruction: localizedInstruction }),
+        signal: controller.signal,
+      });
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  };
+
   const handleDraftSubmit = async () => {
     const fallbackGenre = !selectedGenre && genreChoices.length > 0
       ? genreChoices[Math.floor(Math.random() * genreChoices.length)]
@@ -915,15 +945,7 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
     setSubmitting(true);
     setError(null);
     try {
-      const data = await runAgentInstruction(instruction);
-      const createdBookId = data.session?.activeBookId;
-      if (createdBookId) {
-        setStatus(data.response ?? null);
-        setDraft(undefined);
-        await waitForBookReady(createdBookId, { language: projectLang });
-        nav.toBook(createdBookId);
-        return;
-      }
+      const data = await runDraftInstruction(instruction);
       setInput("");
       setStatus(data.response ?? null);
       const parsedDraft = extractCreationDraftFromAssistantText({
@@ -941,7 +963,12 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
         setForm((current) => applyCreationDraftToFormState(current, nextDraft, platformChoices));
       }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      const message = cause instanceof Error ? cause.message : String(cause);
+      setError(
+        cause instanceof DOMException && cause.name === "AbortError"
+          ? (projectLang === "ko" ? "초안 작성 요청이 너무 오래 걸려 중단했습니다. 모델 연결 상태를 확인한 뒤 다시 시도해 주세요." : message)
+          : message,
+      );
     } finally {
       setSubmitting(false);
     }
