@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import type { BookCreationDraft } from "@actalk/inkos-core";
-import { BookPlus, CheckCircle2, RotateCcw, Sparkles } from "lucide-react";
 import { fetchJson, useApi } from "../hooks/use-api";
 import type { Theme } from "../hooks/use-theme";
 import type { TFunction } from "../hooks/use-i18n";
 import { useColors } from "../hooks/use-colors";
+import { BookCreateAssistantPanel } from "./book-create/BookCreateAssistantPanel";
+import { BookCreateBasicForm } from "./book-create/BookCreateBasicForm";
+import { BookCreateDraftSummaryPanel } from "./book-create/BookCreateDraftSummaryPanel";
 import {
   CREATION_DRAFT_SYNC_INTERVAL_MS,
   PAGE_COPY,
@@ -288,204 +290,42 @@ export function BookCreate({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunc
       )}
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.25fr)_minmax(300px,0.75fr)]">
-        <section className="rounded-lg border border-border/60 bg-card/80 p-5 space-y-5">
-          <div className="space-y-1">
-            <div className="text-[11px] uppercase text-muted-foreground font-bold">
-              {copy.formHeading}
-            </div>
-            <p className="text-xs text-muted-foreground leading-6">{copy.formHint}</p>
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            <label className="space-y-2">
-              <span className="text-xs font-medium text-muted-foreground">{copy.titleLabel}</span>
-              <input
-                value={form.title}
-                onChange={(event) => updateForm({ title: event.target.value })}
-                className={`w-full ${c.input} rounded-md px-3 py-2.5 focus:outline-none text-sm`}
-                placeholder={copy.titlePlaceholder}
-              />
-            </label>
-            <label className="space-y-2">
-              <span className="text-xs font-medium text-muted-foreground">{copy.genreLabel}</span>
-              <input
-                value={form.genre}
-                onChange={(event) => updateForm({ genre: event.target.value })}
-                className={`w-full ${c.input} rounded-md px-3 py-2.5 focus:outline-none text-sm`}
-                placeholder={copy.genrePlaceholder}
-              />
-            </label>
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-3">
-            <label className="space-y-2">
-              <span className="text-xs font-medium text-muted-foreground">{copy.platformLabel}</span>
-              <select
-                value={form.platform}
-                onChange={(event) => updateForm({ platform: event.target.value })}
-                className={`w-full ${c.input} rounded-md px-3 py-2.5 focus:outline-none text-sm bg-background`}
-              >
-                {platformChoices.map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </select>
-            </label>
-            <label className="space-y-2">
-              <span className="text-xs font-medium text-muted-foreground">{copy.targetChaptersLabel}</span>
-              <input
-                type="number"
-                min={1}
-                value={form.targetChapters}
-                onChange={(event) => updateForm({ targetChapters: event.target.value })}
-                className={`w-full ${c.input} rounded-md px-3 py-2.5 focus:outline-none text-sm`}
-              />
-            </label>
-            <label className="space-y-2">
-              <span className="text-xs font-medium text-muted-foreground">{copy.chapterWordCountLabel}</span>
-              <input
-                type="number"
-                min={1000}
-                value={form.chapterWordCount}
-                onChange={(event) => updateForm({ chapterWordCount: event.target.value })}
-                className={`w-full ${c.input} rounded-md px-3 py-2.5 focus:outline-none text-sm`}
-              />
-            </label>
-          </div>
-
-          <label className="space-y-2 block">
-            <span className="text-xs font-medium text-muted-foreground">{copy.briefLabel}</span>
-            <textarea
-              value={form.brief}
-              onChange={(event) => updateForm({ brief: event.target.value })}
-              rows={9}
-              className={`w-full ${c.input} rounded-md px-3 py-3 focus:outline-none text-sm leading-7 resize-y`}
-              placeholder={copy.briefPlaceholder}
-            />
-          </label>
-
-          {creating && (
-            <div className="grid gap-2 sm:grid-cols-3">
-              {copy.creationSteps.map((step) => (
-                <div key={step} className="flex items-center gap-2 rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-primary">
-                  <CheckCircle2 size={14} />
-                  <span>{step}</span>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <button
-            onClick={handleFormCreate}
-            disabled={!canSubmitForm || creating || submitting}
-            className={`inline-flex items-center gap-2 px-5 py-3 ${c.btnPrimary} rounded-md disabled:opacity-50 font-medium text-sm`}
-          >
-            <BookPlus size={16} />
-            {creating ? copy.creatingBook : copy.createBook}
-          </button>
-        </section>
+        <BookCreateBasicForm
+          canSubmitForm={canSubmitForm}
+          colors={c}
+          copy={copy}
+          creating={creating}
+          form={form}
+          onCreate={handleFormCreate}
+          platformChoices={platformChoices}
+          submitting={submitting}
+          updateForm={updateForm}
+        />
 
         <aside className="space-y-4">
-          <section className="rounded-lg border border-border/60 bg-card/80 p-5 space-y-4">
-            <div className="space-y-1">
-              <div className="text-[11px] uppercase text-muted-foreground font-bold">
-                {copy.assistantHeading}
-              </div>
-              <p className="text-xs text-muted-foreground leading-6">{copy.assistantHint}</p>
-            </div>
+          <BookCreateAssistantPanel
+            colors={c}
+            copy={copy}
+            creating={creating}
+            draft={draft}
+            input={input}
+            onDiscard={handleDiscard}
+            onInputChange={setInput}
+            onSubmit={handleDraftSubmit}
+            submitting={submitting}
+          />
 
-            <textarea
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              rows={7}
-              className={`w-full ${c.input} rounded-md px-3 py-3 focus:outline-none text-sm leading-7 resize-y`}
-              placeholder={draft ? copy.promptPlaceholderFollowup : copy.promptPlaceholder}
-            />
-
-            <div className="flex flex-wrap gap-2">
-              <button
-                onClick={handleDraftSubmit}
-                disabled={submitting || creating || !input.trim()}
-                className={`inline-flex items-center gap-2 px-3 py-2 ${c.btnPrimary} rounded-md disabled:opacity-50 font-medium text-xs`}
-              >
-                <Sparkles size={14} />
-                {submitting ? copy.submitting : copy.submit}
-              </button>
-              <button
-                onClick={handleDiscard}
-                disabled={!draft || submitting || creating}
-                className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-border text-muted-foreground hover:text-foreground hover:border-foreground/20 disabled:opacity-50 font-medium text-xs"
-              >
-                <RotateCcw size={14} />
-                {copy.discard}
-              </button>
-            </div>
-          </section>
-
-          <section className="rounded-lg border border-border/60 bg-card/80 p-5 space-y-4">
-            <div className="space-y-1">
-              <div className="text-[11px] uppercase text-muted-foreground font-bold">
-                {copy.draftHeading}
-              </div>
-              <p className="text-xs text-muted-foreground leading-6">{copy.syncedHint}</p>
-            </div>
-
-            {loadingDraft ? (
-              <div className="text-sm text-muted-foreground">{projectLang === "zh" ? "读取草案中…" : "Loading draft…"}</div>
-            ) : draft ? (
-              <div className="space-y-4">
-                {summaryRows.length > 0 ? (
-                  <div className="space-y-2">
-                    {summaryRows.map((row) => (
-                      <div key={row.key} className="rounded-md border border-border/50 bg-background/70 px-3 py-2">
-                        <div className="text-[10px] uppercase text-muted-foreground font-semibold">{row.label}</div>
-                        <div className="mt-1 text-sm leading-6 whitespace-pre-wrap">{row.value}</div>
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
-
-                {draft.missingFields.length > 0 ? (
-                  <div className="space-y-2">
-                    <div className="text-xs font-medium text-foreground">{copy.missingHeading}</div>
-                    <div className="flex flex-wrap gap-2">
-                      {draft.missingFields.map((field) => (
-                        <span
-                          key={field}
-                          className="rounded-md border border-border/70 bg-secondary/50 px-2 py-1 text-xs text-muted-foreground"
-                        >
-                          {field}
-                        </span>
-                      ))}
-                    </div>
-                    <p className="text-xs text-muted-foreground leading-6">{copy.missingHint}</p>
-                  </div>
-                ) : null}
-
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    onClick={applyDraftToForm}
-                    className="px-3 py-2 rounded-md border border-border bg-secondary text-secondary-foreground font-medium text-xs"
-                  >
-                    {copy.applyDraft}
-                  </button>
-                  <button
-                    onClick={handleCreate}
-                    disabled={!canCreateFromDraft(draft) || creating || submitting}
-                    className="px-3 py-2 rounded-md border border-border text-muted-foreground hover:text-foreground hover:border-foreground/20 disabled:opacity-50 font-medium text-xs"
-                  >
-                    {creating ? copy.creating : copy.create}
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="rounded-md border border-dashed border-border/70 bg-background/50 px-4 py-5">
-                <div className="font-medium">{copy.idleTitle}</div>
-                <p className="mt-2 text-sm text-muted-foreground leading-7">
-                  {copy.helperBody}
-                </p>
-              </div>
-            )}
-          </section>
+          <BookCreateDraftSummaryPanel
+            copy={copy}
+            creating={creating}
+            draft={draft}
+            loadingDraft={loadingDraft}
+            onApplyDraft={applyDraftToForm}
+            onCreate={handleCreate}
+            projectLang={projectLang}
+            submitting={submitting}
+            summaryRows={summaryRows}
+          />
         </aside>
       </div>
     </div>
