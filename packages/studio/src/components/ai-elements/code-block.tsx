@@ -22,12 +22,10 @@ import {
   useState,
 } from "react";
 import type {
-  BundledLanguage,
-  BundledTheme,
-  HighlighterGeneric,
+  HighlighterCore,
+  LanguageRegistration,
   ThemedToken,
 } from "shiki";
-import { createHighlighter } from "shiki";
 
 // Shiki uses bitflags for font styles: 1=italic, 2=bold, 4=underline
 // oxlint-disable-next-line eslint(no-bitwise)
@@ -110,7 +108,7 @@ const LineSpan = ({
 // Types
 type CodeBlockProps = HTMLAttributes<HTMLDivElement> & {
   code: string;
-  language: BundledLanguage;
+  language: string;
   showLineNumbers?: boolean;
 };
 
@@ -129,11 +127,57 @@ const CodeBlockContext = createContext<CodeBlockContextType>({
   code: "",
 });
 
-// Highlighter cache (singleton per language)
-const highlighterCache = new Map<
-  string,
-  Promise<HighlighterGeneric<BundledLanguage, BundledTheme>>
->();
+type ShikiLanguageLoader = () => Promise<{ default: LanguageRegistration[] }>;
+
+const LANGUAGE_LOADERS: Record<string, ShikiLanguageLoader> = {
+  bash: () => import("shiki/langs/shellscript.mjs"),
+  css: () => import("shiki/langs/css.mjs"),
+  diff: () => import("shiki/langs/diff.mjs"),
+  html: () => import("shiki/langs/html.mjs"),
+  javascript: () => import("shiki/langs/js.mjs"),
+  json: () => import("shiki/langs/json.mjs"),
+  jsx: () => import("shiki/langs/jsx.mjs"),
+  markdown: () => import("shiki/langs/md.mjs"),
+  python: () => import("shiki/langs/python.mjs"),
+  shellscript: () => import("shiki/langs/shellscript.mjs"),
+  sql: () => import("shiki/langs/sql.mjs"),
+  tsx: () => import("shiki/langs/tsx.mjs"),
+  typescript: () => import("shiki/langs/ts.mjs"),
+  xml: () => import("shiki/langs/xml.mjs"),
+  yaml: () => import("shiki/langs/yaml.mjs"),
+};
+
+const LANGUAGE_ALIASES: Record<string, string> = {
+  cjs: "javascript",
+  htm: "html",
+  js: "javascript",
+  md: "markdown",
+  mjs: "javascript",
+  py: "python",
+  sh: "shellscript",
+  ts: "typescript",
+  yml: "yaml",
+};
+
+const normalizeLanguage = (language: string): string => {
+  const normalized = language.trim().toLowerCase();
+  return LANGUAGE_ALIASES[normalized] ?? normalized;
+};
+
+const highlighterPromise = Promise.all([
+  import("shiki/core"),
+  import("shiki/engine/javascript"),
+  import("shiki/themes/github-dark.mjs"),
+  import("shiki/themes/github-light.mjs"),
+]).then(([core, engine, githubDark, githubLight]) =>
+  core.createHighlighterCore({
+    engine: engine.createJavaScriptRegexEngine(),
+    themes: [githubLight.default, githubDark.default],
+    langs: [],
+  }),
+);
+
+const languageLoadCache = new Map<string, Promise<void>>();
 
 // Token cache
 const tokensCache = new Map<string, TokenizedCode>();
@@ -141,27 +185,30 @@ const tokensCache = new Map<string, TokenizedCode>();
 // Subscribers for async token updates
 const subscribers = new Map<string, Set<(result: TokenizedCode) => void>>();
 
-const getTokensCacheKey = (code: string, language: BundledLanguage) => {
+const getTokensCacheKey = (code: string, language: string) => {
   const start = code.slice(0, 100);
   const end = code.length > 100 ? code.slice(-100) : "";
   return `${language}:${code.length}:${start}:${end}`;
 };
 
-const getHighlighter = (
-  language: BundledLanguage
-): Promise<HighlighterGeneric<BundledLanguage, BundledTheme>> => {
-  const cached = highlighterCache.get(language);
-  if (cached) {
-    return cached;
+const ensureLanguageLoaded = (highlighter: HighlighterCore, language: string): Promise<void> => {
+  const normalized = normalizeLanguage(language);
+  if (!LANGUAGE_LOADERS[normalized] || highlighter.getLoadedLanguages().includes(normalized)) {
+    return Promise.resolve();
   }
 
-  const highlighterPromise = createHighlighter({
-    langs: [language],
-    themes: ["github-light", "github-dark"],
-  });
+  const cached = languageLoadCache.get(normalized);
+  if (cached) return cached;
 
-  highlighterCache.set(language, highlighterPromise);
-  return highlighterPromise;
+  const promise = LANGUAGE_LOADERS[normalized]().then((module) => highlighter.loadLanguage(...module.default));
+  languageLoadCache.set(normalized, promise);
+  return promise;
+};
+
+const getHighlighter = async (language: string): Promise<HighlighterCore> => {
+  const highlighter = await highlighterPromise;
+  await ensureLanguageLoaded(highlighter, language);
+  return highlighter;
 };
 
 // Create raw tokens for immediate display while highlighting loads
@@ -183,7 +230,7 @@ const createRawTokens = (code: string): TokenizedCode => ({
 // Synchronous highlight with callback for async results
 export const highlightCode = (
   code: string,
-  language: BundledLanguage,
+  language: string,
   // oxlint-disable-next-line eslint-plugin-promise(prefer-await-to-callbacks)
   callback?: (result: TokenizedCode) => void
 ): TokenizedCode | null => {
@@ -208,7 +255,8 @@ export const highlightCode = (
     // oxlint-disable-next-line eslint-plugin-promise(prefer-await-to-then)
     .then((highlighter) => {
       const availableLangs = highlighter.getLoadedLanguages();
-      const langToUse = availableLangs.includes(language) ? language : "text";
+      const normalizedLanguage = normalizeLanguage(language);
+      const langToUse = availableLangs.includes(normalizedLanguage) ? normalizedLanguage : "text";
 
       const result = highlighter.codeToTokens(code, {
         lang: langToUse,
@@ -377,7 +425,7 @@ export const CodeBlockContent = ({
   showLineNumbers = false,
 }: {
   code: string;
-  language: BundledLanguage;
+  language: string;
   showLineNumbers?: boolean;
 }) => {
   // Memoized raw tokens for immediate display

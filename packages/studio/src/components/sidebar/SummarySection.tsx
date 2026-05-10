@@ -1,15 +1,10 @@
 import { useEffect } from "react";
 import { Streamdown } from "streamdown";
-import { cjk } from "@streamdown/cjk";
-import { code } from "@streamdown/code";
-import { math } from "@streamdown/math";
-import { mermaid } from "@streamdown/mermaid";
 import { useChatStore } from "../../store/chat";
 import type { BookSummary } from "../../store/chat";
 import { fetchJson } from "../../hooks/use-api";
 import { SidebarCard } from "./SidebarCard";
-
-const streamdownPlugins = { cjk, code, math, mermaid };
+import { useStreamdownPlugins } from "../ai-elements/use-streamdown-plugins";
 
 const SIDEBAR_MD_CLASS =
   "text-xs text-muted-foreground leading-relaxed " +
@@ -47,6 +42,9 @@ export function SummarySection({ bookId }: SummarySectionProps) {
   const summary = useChatStore((s) => s.bookSummary);
   const setBookSummary = useChatStore((s) => s.setBookSummary);
   const bookDataVersion = useChatStore((s) => s.bookDataVersion);
+  const worldPlugins = useStreamdownPlugins(summary?.world ?? "");
+  const protagonistPlugins = useStreamdownPlugins(summary?.protagonist ?? "");
+  const castPlugins = useStreamdownPlugins(summary?.cast ?? "");
 
   useEffect(() => {
     setBookSummary(null);
@@ -63,7 +61,7 @@ export function SummarySection({ bookId }: SummarySectionProps) {
     <>
       {summary.world && (
         <SidebarCard title="世界观">
-          <Streamdown className={SIDEBAR_MD_CLASS} plugins={streamdownPlugins}>
+          <Streamdown className={SIDEBAR_MD_CLASS} plugins={worldPlugins}>
             {summary.world}
           </Streamdown>
         </SidebarCard>
@@ -71,13 +69,13 @@ export function SummarySection({ bookId }: SummarySectionProps) {
       {(summary.protagonist || summary.cast) && (
         <SidebarCard title="角色">
           {summary.protagonist && (
-            <Streamdown className={SIDEBAR_MD_CLASS} plugins={streamdownPlugins}>
+            <Streamdown className={SIDEBAR_MD_CLASS} plugins={protagonistPlugins}>
               {summary.protagonist}
             </Streamdown>
           )}
           {summary.cast && (
             <div className={summary.protagonist ? "mt-2" : undefined}>
-              <Streamdown className={SIDEBAR_MD_CLASS} plugins={streamdownPlugins}>
+              <Streamdown className={SIDEBAR_MD_CLASS} plugins={castPlugins}>
                 {summary.cast}
               </Streamdown>
             </div>
