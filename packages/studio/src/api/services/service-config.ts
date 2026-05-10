@@ -11,6 +11,19 @@ import {
 } from "@actalk/inkos-core";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import {
+  filterTextChatModels,
+  isCustomServiceId,
+  isTextChatModelId,
+  serviceConfigKey,
+} from "./service-config-models.js";
+
+export {
+  filterTextChatModels,
+  isCustomServiceId,
+  isTextChatModelId,
+  serviceConfigKey,
+} from "./service-config-models.js";
 
 export interface ServiceConfigEntry {
   service: string;
@@ -47,35 +60,6 @@ export interface ServiceProbeResult {
   baseUrl?: string;
   modelsSource?: "api" | "fallback";
   error?: string;
-}
-
-const NON_TEXT_MODEL_ID_PARTS = [
-  "image",
-  "embedding",
-  "embed",
-  "rerank",
-  "tts",
-  "speech",
-  "audio",
-  "moderation",
-] as const;
-
-export function isTextChatModelId(modelId: string): boolean {
-  const normalized = modelId.trim().toLowerCase();
-  if (!normalized) return false;
-  return !NON_TEXT_MODEL_ID_PARTS.some((part) => normalized.includes(part));
-}
-
-export function filterTextChatModels<T extends { readonly id: string }>(models: ReadonlyArray<T>): T[] {
-  return models.filter((model) => isTextChatModelId(model.id));
-}
-
-export function isCustomServiceId(serviceId: string): boolean {
-  return serviceId === "custom" || serviceId.startsWith("custom:");
-}
-
-export function serviceConfigKey(entry: ServiceConfigEntry): string {
-  return entry.service === "custom" ? `custom:${entry.name ?? "Custom"}` : entry.service;
 }
 
 function normalizeServiceEntry(serviceId: string, value: Record<string, unknown>): ServiceConfigEntry {
