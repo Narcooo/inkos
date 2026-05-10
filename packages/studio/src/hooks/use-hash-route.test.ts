@@ -15,8 +15,16 @@ describe("hash route", () => {
       expect(parseHash("#/book/my-novel")).toEqual({ page: "book", bookId: "my-novel" });
     });
 
+    it("parses plural books route as a compatibility alias", () => {
+      expect(parseHash("#/books/my-novel")).toEqual({ page: "book", bookId: "my-novel" });
+    });
+
     it("parses book settings route", () => {
       expect(parseHash("#/book/my-novel/settings")).toEqual({ page: "book-settings", bookId: "my-novel" });
+    });
+
+    it("parses plural books settings route as a compatibility alias", () => {
+      expect(parseHash("#/books/my-novel/settings")).toEqual({ page: "book-settings", bookId: "my-novel" });
     });
 
     it("decodes encoded bookId", () => {
@@ -25,6 +33,10 @@ describe("hash route", () => {
 
     it("parses book/new as book-create", () => {
       expect(parseHash("#/book/new")).toEqual({ page: "book-create" });
+    });
+
+    it("parses books/new as book-create compatibility alias", () => {
+      expect(parseHash("#/books/new")).toEqual({ page: "book-create" });
     });
 
     it("parses config as services (redirect)", () => {

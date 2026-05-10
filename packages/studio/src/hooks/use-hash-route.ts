@@ -23,7 +23,7 @@ function parseHash(hash: string): HashRoute {
 
   if (!path || path === "/") return { page: "dashboard" };
   if (path === "config" || path === "services") return { page: "services" };
-  if (path === "book/new") return { page: "book-create" };
+  if (path === "book/new" || path === "books/new") return { page: "book-create" };
   if (path === "truth") return { page: "truth", bookId: "" };
   if (path === "daemon") return { page: "daemon" };
   if (path === "logs") return { page: "logs" };
@@ -36,13 +36,13 @@ function parseHash(hash: string): HashRoute {
   const serviceMatch = path.match(/^services\/([^/]+)$/);
   if (serviceMatch) return { page: "service-detail", serviceId: decodeURIComponent(serviceMatch[1]) };
 
-  const bookSettingsMatch = path.match(/^book\/([^/]+)\/settings$/);
+  const bookSettingsMatch = path.match(/^books?\/([^/]+)\/settings$/);
   if (bookSettingsMatch) return { page: "book-settings", bookId: decodeURIComponent(bookSettingsMatch[1]) };
 
   const truthMatch = path.match(/^truth\/([^/]+)$/);
   if (truthMatch) return { page: "truth", bookId: decodeURIComponent(truthMatch[1]) };
 
-  const bookMatch = path.match(/^book\/([^/]+)$/);
+  const bookMatch = path.match(/^books?\/([^/]+)$/);
   if (bookMatch) return { page: "book", bookId: decodeURIComponent(bookMatch[1]) };
 
   return { page: "dashboard" };
