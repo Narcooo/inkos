@@ -237,7 +237,7 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
     getAllEndpoints: getAllEndpointsMock,
     probeModelsFromUpstream: probeModelsFromUpstreamMock,
     fetchWithProxy: vi.fn((input: Parameters<typeof fetch>[0], init?: RequestInit) => fetch(input, init)),
-    GLOBAL_ENV_PATH: join(tmpdir(), "inkos-global.env"),
+    GLOBAL_ENV_PATH: TEST_GLOBAL_ENV_PATH,
   };
 });
 
@@ -274,6 +274,10 @@ function cloneProjectConfig() {
 }
 
 export let root: string;
+const TEST_GLOBAL_ENV_PATH = join(
+  tmpdir(),
+  `inkos-global-${process.pid}-${Math.random().toString(36).slice(2)}.env`,
+);
 
 beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), "inkos-studio-server-"));
@@ -440,7 +444,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
     await rm(root, { recursive: true, force: true });
-    await rm(join(tmpdir(), "inkos-global.env"), { force: true });
+    await rm(TEST_GLOBAL_ENV_PATH, { force: true });
 });
 
 
@@ -487,5 +491,6 @@ export {
   getAllEndpointsMock,
   probeModelsFromUpstreamMock,
   projectConfig,
-  cloneProjectConfig
+  cloneProjectConfig,
+  TEST_GLOBAL_ENV_PATH
 };
