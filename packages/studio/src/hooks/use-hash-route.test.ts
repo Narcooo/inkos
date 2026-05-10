@@ -35,6 +35,12 @@ describe("hash route", () => {
       expect(parseHash("#/services")).toEqual({ page: "services" });
     });
 
+    it("parses top-level tool routes", () => {
+      expect(parseHash("#/genres")).toEqual({ page: "genres" });
+      expect(parseHash("#/logs")).toEqual({ page: "logs" });
+      expect(parseHash("#/doctor")).toEqual({ page: "doctor" });
+    });
+
     it("parses service-detail", () => {
       expect(parseHash("#/services/openai")).toEqual({ page: "service-detail", serviceId: "openai" });
     });
@@ -85,9 +91,14 @@ describe("hash route", () => {
       expect(decodeURIComponent(hash)).toContain("自定义");
     });
 
-    it("non-hash pages return empty string", () => {
-      expect(routeToHash({ page: "daemon" })).toBe("");
-      expect(routeToHash({ page: "logs" })).toBe("");
+    it("top-level tool routes keep the URL in sync", () => {
+      expect(routeToHash({ page: "daemon" })).toBe("#/daemon");
+      expect(routeToHash({ page: "logs" })).toBe("#/logs");
+      expect(routeToHash({ page: "genres" })).toBe("#/genres");
+      expect(routeToHash({ page: "style" })).toBe("#/style");
+      expect(routeToHash({ page: "import" })).toBe("#/import");
+      expect(routeToHash({ page: "radar" })).toBe("#/radar");
+      expect(routeToHash({ page: "doctor" })).toBe("#/doctor");
     });
   });
 });
