@@ -1,3 +1,5 @@
+import type { MessagePart } from "../store/chat/types";
+
 export interface ChatPageModelInfo {
   readonly id: string;
   readonly name?: string;
@@ -13,6 +15,10 @@ export interface ChatPageModelPreference {
   readonly model?: string | null;
   readonly service?: string | null;
 }
+export type ChatPageAssistantRenderItem =
+  | { kind: "thinking"; index: number; part: Extract<MessagePart, { type: "thinking" }> }
+  | { kind: "text"; index: number; part: Extract<MessagePart, { type: "text" }> }
+  | { kind: "tools"; startIndex: number; parts: Array<Extract<MessagePart, { type: "tool" }>> };
 
 const BOOK_CREATE_SESSION_KEY = "inkos.book-create.session-id";
 
@@ -44,6 +50,33 @@ export function filterModelGroups(
       ),
     }))
     .filter((group) => group.models.length > 0);
+}
+
+export function groupAssistantMessageParts(
+  parts: ReadonlyArray<MessagePart>,
+): ChatPageAssistantRenderItem[] {
+  const items: ChatPageAssistantRenderItem[] = [];
+
+  for (let index = 0; index < parts.length; index++) {
+    const part = parts[index];
+    if (part.type === "thinking") {
+      items.push({ kind: "thinking", index, part });
+      continue;
+    }
+    if (part.type === "text") {
+      items.push({ kind: "text", index, part });
+      continue;
+    }
+
+    const last = items[items.length - 1];
+    if (last?.kind === "tools") {
+      last.parts.push(part);
+    } else {
+      items.push({ kind: "tools", startIndex: index, parts: [part] });
+    }
+  }
+
+  return items;
 }
 
 export function pickModelSelection(

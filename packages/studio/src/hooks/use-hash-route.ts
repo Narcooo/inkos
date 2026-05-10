@@ -23,15 +23,26 @@ function parseHash(hash: string): HashRoute {
 
   if (!path || path === "/") return { page: "dashboard" };
   if (path === "config" || path === "services") return { page: "services" };
-  if (path === "book/new") return { page: "book-create" };
+  if (path === "book/new" || path === "books/new") return { page: "book-create" };
+  if (path === "truth") return { page: "truth", bookId: "" };
+  if (path === "daemon") return { page: "daemon" };
+  if (path === "logs") return { page: "logs" };
+  if (path === "genres") return { page: "genres" };
+  if (path === "style") return { page: "style" };
+  if (path === "import") return { page: "import" };
+  if (path === "radar") return { page: "radar" };
+  if (path === "doctor") return { page: "doctor" };
 
   const serviceMatch = path.match(/^services\/([^/]+)$/);
   if (serviceMatch) return { page: "service-detail", serviceId: decodeURIComponent(serviceMatch[1]) };
 
-  const bookSettingsMatch = path.match(/^book\/([^/]+)\/settings$/);
+  const bookSettingsMatch = path.match(/^books?\/([^/]+)\/settings$/);
   if (bookSettingsMatch) return { page: "book-settings", bookId: decodeURIComponent(bookSettingsMatch[1]) };
 
-  const bookMatch = path.match(/^book\/([^/]+)$/);
+  const truthMatch = path.match(/^truth\/([^/]+)$/);
+  if (truthMatch) return { page: "truth", bookId: decodeURIComponent(truthMatch[1]) };
+
+  const bookMatch = path.match(/^books?\/([^/]+)$/);
   if (bookMatch) return { page: "book", bookId: decodeURIComponent(bookMatch[1]) };
 
   return { page: "dashboard" };
@@ -45,13 +56,36 @@ function routeToHash(route: HashRoute): string {
     case "book-create": return "#/book/new";
     case "services": return "#/services";
     case "service-detail": return `#/services/${encodeURIComponent(route.serviceId)}`;
+    case "truth": return route.bookId ? `#/truth/${encodeURIComponent(route.bookId)}` : "#/truth";
+    case "daemon": return "#/daemon";
+    case "logs": return "#/logs";
+    case "genres": return "#/genres";
+    case "style": return "#/style";
+    case "import": return "#/import";
+    case "radar": return "#/radar";
+    case "doctor": return "#/doctor";
     default: return "";
   }
 }
 
 export { parseHash, routeToHash }; // for testing
 
-const HASH_PAGES = new Set(["dashboard", "book", "book-settings", "book-create", "services", "service-detail"]);
+const HASH_PAGES = new Set([
+  "dashboard",
+  "book",
+  "book-settings",
+  "book-create",
+  "services",
+  "service-detail",
+  "truth",
+  "daemon",
+  "logs",
+  "genres",
+  "style",
+  "import",
+  "radar",
+  "doctor",
+]);
 
 export function useHashRoute() {
   const [route, setRouteState] = useState<HashRoute>(() => parseHash(window.location.hash));

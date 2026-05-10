@@ -1,8 +1,7 @@
 /*
-  InkOS Studio — Atmospheric Literary Workbench
-  Fonts: Instrument Serif (Headings/Literary), DM Sans (UI), JetBrains Mono (Data)
+  InkOS Studio — iOS-inspired Liquid Workbench
+  System UI, translucent surfaces, hairline borders, compact controls.
 */
-@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500&display=swap');
 
 @import "tailwindcss";
 
@@ -37,101 +36,97 @@
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
 
-  --font-serif: 'Instrument Serif', Georgia, serif;
-  --font-sans: 'DM Sans', system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', monospace;
+  --font-serif: ui-serif, "New York", "Iowan Old Style", Georgia, serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
 
   --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
   --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
   --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
-  --shadow-soft: 0 2px 15px -3px oklch(0 0 0 / 0.07), 0 4px 6px -4px oklch(0 0 0 / 0.05);
-  --shadow-3d: 0 10px 30px -10px oklch(0 0 0 / 0.15), 0 4px 10px -5px oklch(0 0 0 / 0.1);
-  --shadow-3d-hover: 0 20px 40px -15px oklch(0 0 0 / 0.2), 0 8px 16px -8px oklch(0 0 0 / 0.15);
+  --shadow-soft: 0 10px 35px -22px oklch(0.2 0.03 250 / 0.26), 0 1px 1px oklch(1 0 0 / 0.45) inset;
+  --shadow-3d: 0 18px 55px -34px oklch(0.2 0.04 250 / 0.36), 0 1px 1px oklch(1 0 0 / 0.55) inset;
+  --shadow-3d-hover: 0 26px 70px -42px oklch(0.2 0.04 250 / 0.44), 0 1px 1px oklch(1 0 0 / 0.65) inset;
 }
 
-/* ── Light Mode: Warm Parchment & Ink ── */
+/* ── Light Mode: Liquid Frost ── */
 :root {
-  --radius: 0.6rem;
+  --radius: 1rem;
 
-  /* Background: Warm, aged paper with subtle radial light */
-  --background: oklch(0.985 0.005 80);
-  --background-radial: radial-gradient(circle at 50% 0%, oklch(0.995 0.002 85) 0%, oklch(0.985 0.005 80) 100%);
-  --foreground: oklch(0.13 0.02 60);
+  --background: oklch(0.975 0.012 240);
+  --background-radial:
+    radial-gradient(circle at 12% 10%, oklch(0.88 0.09 224 / 0.42) 0%, transparent 30%),
+    radial-gradient(circle at 86% 8%, oklch(0.92 0.08 168 / 0.38) 0%, transparent 27%),
+    radial-gradient(circle at 76% 86%, oklch(0.91 0.08 26 / 0.28) 0%, transparent 30%),
+    linear-gradient(135deg, oklch(0.988 0.006 250), oklch(0.958 0.018 235) 52%, oklch(0.975 0.014 180));
+  --foreground: oklch(0.18 0.025 250);
 
-  /* Cards: Crisp sheets on paper */
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.15 0.015 60);
+  --card: oklch(1 0 0 / 0.72);
+  --card-foreground: oklch(0.18 0.025 250);
 
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.15 0.015 60);
+  --popover: oklch(1 0 0 / 0.86);
+  --popover-foreground: oklch(0.18 0.025 250);
 
-  /* Primary: Deep Oxblood / Ink */
-  --primary: oklch(0.45 0.12 25);
-  --primary-foreground: oklch(0.98 0.006 76);
+  --primary: oklch(0.58 0.18 245);
+  --primary-foreground: oklch(0.99 0.004 250);
 
-  /* Secondary: Soft paper shadow */
-  --secondary: oklch(0.94 0.01 76);
-  --secondary-foreground: oklch(0.25 0.015 60);
+  --secondary: oklch(0.95 0.015 245 / 0.68);
+  --secondary-foreground: oklch(0.28 0.035 250);
 
-  /* Muted: Faded ink */
-  --muted: oklch(0.94 0.008 76);
-  --muted-foreground: oklch(0.38 0.02 60);
+  --muted: oklch(0.94 0.014 245 / 0.64);
+  --muted-foreground: oklch(0.48 0.035 250);
 
-  /* Accent: Subtle gold leaf */
-  --accent: oklch(0.92 0.02 85);
-  --accent-foreground: oklch(0.25 0.05 60);
+  --accent: oklch(0.91 0.07 182 / 0.62);
+  --accent-foreground: oklch(0.25 0.065 205);
 
-  --destructive: oklch(0.55 0.18 25);
+  --destructive: oklch(0.58 0.2 25);
   --destructive-foreground: oklch(0.98 0 0);
 
-  --border: oklch(0.84 0.01 76);
-  --input: oklch(0.92 0.005 76);
-  --ring: oklch(0.45 0.12 25);
+  --border: oklch(0.84 0.025 245 / 0.66);
+  --input: oklch(0.96 0.01 245 / 0.74);
+  --ring: oklch(0.64 0.17 238);
 }
 
-/* ── Dark Mode: Obsidian & Candlelight ── */
+/* ── Dark Mode: Liquid Graphite ── */
 .dark {
-  /* Background: Deep obsidian with soft top glow */
-  --background: oklch(0.12 0.01 250);
-  --background-radial: radial-gradient(circle at 50% 0%, oklch(0.16 0.015 250) 0%, oklch(0.12 0.01 250) 100%);
-  --foreground: oklch(0.97 0.005 250);
+  --background: oklch(0.16 0.018 250);
+  --background-radial:
+    radial-gradient(circle at 16% 12%, oklch(0.43 0.13 248 / 0.35) 0%, transparent 31%),
+    radial-gradient(circle at 82% 10%, oklch(0.44 0.11 178 / 0.25) 0%, transparent 28%),
+    radial-gradient(circle at 76% 84%, oklch(0.42 0.12 28 / 0.22) 0%, transparent 30%),
+    linear-gradient(135deg, oklch(0.19 0.018 252), oklch(0.12 0.018 260) 58%, oklch(0.16 0.015 218));
+  --foreground: oklch(0.96 0.008 250);
 
-  /* Cards: Floating graphite */
-  --card: oklch(0.18 0.015 250);
+  --card: oklch(0.24 0.018 250 / 0.66);
   --card-foreground: oklch(0.95 0.005 250);
 
-  --popover: oklch(0.18 0.015 250);
+  --popover: oklch(0.22 0.018 250 / 0.9);
   --popover-foreground: oklch(0.95 0.005 250);
 
-  /* Primary: Warm Amber / Candlelight */
-  --primary: oklch(0.78 0.14 85);
-  --primary-foreground: oklch(0.12 0.01 250);
+  --primary: oklch(0.74 0.15 242);
+  --primary-foreground: oklch(0.11 0.018 250);
 
-  /* Secondary: Dark slate */
-  --secondary: oklch(0.22 0.02 250);
+  --secondary: oklch(0.27 0.018 250 / 0.62);
   --secondary-foreground: oklch(0.92 0.005 250);
 
-  /* Muted: Dimmed graphite */
-  --muted: oklch(0.22 0.015 250);
-  --muted-foreground: oklch(0.78 0.005 250);
+  --muted: oklch(0.27 0.018 250 / 0.58);
+  --muted-foreground: oklch(0.74 0.012 250);
 
-  /* Accent: Muted gold */
-  --accent: oklch(0.28 0.04 85);
-  --accent-foreground: oklch(0.95 0.06 85);
+  --accent: oklch(0.34 0.08 188 / 0.58);
+  --accent-foreground: oklch(0.92 0.05 188);
 
   --destructive: oklch(0.55 0.2 25);
   --destructive-foreground: oklch(0.98 0 0);
 
-  --border: oklch(0.30 0.02 250);
-  --input: oklch(0.25 0.02 250);
-  --ring: oklch(0.78 0.14 85);
+  --border: oklch(0.55 0.02 250 / 0.28);
+  --input: oklch(0.26 0.02 250 / 0.72);
+  --ring: oklch(0.74 0.15 242);
 }
 
 body {
   font-family: var(--font-sans);
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 450;
-  line-height: 1.6;
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   background: var(--background-radial);
@@ -148,7 +143,7 @@ input[type="checkbox"], input[type="radio"] { cursor: pointer; }
 
 /* Button hover micro-feedback */
 button:not(:disabled):active {
-  transform: scale(0.97);
+  transform: scale(0.985);
   transition: transform 0.1s ease;
 }
 
@@ -159,20 +154,20 @@ body::before {
   inset: 0;
   pointer-events: none;
   z-index: 50;
-  opacity: 0.035;
+  opacity: 0.025;
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
   mix-blend-mode: overlay;
 }
 
-/* Serif headings with literary character */
+/* Product UI typography */
 h1, h2, h3, h4 {
-  font-family: var(--font-serif);
-  letter-spacing: -0.02em;
-  font-weight: 500;
+  font-family: var(--font-sans);
+  letter-spacing: 0;
+  font-weight: 650;
 }
 
-h1 { font-size: 2.25rem; font-style: italic; }
-h2 { font-size: 1.75rem; }
+h1 { font-size: 2.15rem; }
+h2 { font-size: 1.55rem; }
 h3 { font-size: 1.25rem; }
 
 /* Focus indicator */
@@ -218,16 +213,17 @@ h3 { font-size: 1.25rem; }
 
 /* ── Premium Layout Utilities ── */
 .glass-panel {
-  backdrop-blur: 16px;
-  background-color: color-mix(in oklch, var(--card) 70%, transparent);
-  border: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+  backdrop-filter: blur(28px) saturate(1.35);
+  -webkit-backdrop-filter: blur(28px) saturate(1.35);
+  background-color: color-mix(in oklch, var(--card) 78%, transparent);
+  border: 1px solid color-mix(in oklch, var(--border) 70%, transparent);
   box-shadow: var(--shadow-3d);
 }
 
 .paper-sheet {
   background-color: var(--card);
   border: 1px solid var(--border);
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-soft);
   transition: box-shadow 0.3s cubic-bezier(0.16, 1, 0.3, 1),
               border-color 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
@@ -235,6 +231,107 @@ h3 { font-size: 1.25rem; }
 .paper-sheet:hover {
   box-shadow: var(--shadow-3d-hover);
   border-color: var(--primary);
+}
+
+.ios-app-shell {
+  position: relative;
+  background: var(--background-radial);
+}
+
+.ios-app-shell::before,
+.ios-app-shell::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+  border-radius: 999px;
+  filter: blur(14px);
+  opacity: 0.8;
+}
+
+.ios-app-shell::before {
+  width: 42rem;
+  height: 42rem;
+  left: -18rem;
+  top: -20rem;
+  background: radial-gradient(circle, oklch(0.73 0.16 236 / 0.25), transparent 62%);
+}
+
+.ios-app-shell::after {
+  width: 38rem;
+  height: 38rem;
+  right: -18rem;
+  bottom: -20rem;
+  background: radial-gradient(circle, oklch(0.78 0.14 168 / 0.18), transparent 62%);
+}
+
+.ios-glass {
+  backdrop-filter: blur(30px) saturate(1.35);
+  -webkit-backdrop-filter: blur(30px) saturate(1.35);
+  background:
+    linear-gradient(135deg, oklch(1 0 0 / 0.64), oklch(1 0 0 / 0.32)),
+    color-mix(in oklch, var(--card) 72%, transparent);
+  border: 1px solid color-mix(in oklch, var(--border) 76%, transparent);
+  box-shadow: var(--shadow-3d);
+}
+
+.dark .ios-glass {
+  background:
+    linear-gradient(135deg, oklch(1 0 0 / 0.08), oklch(1 0 0 / 0.025)),
+    color-mix(in oklch, var(--card) 76%, transparent);
+}
+
+.ios-card {
+  border-radius: 1.35rem;
+  background:
+    linear-gradient(145deg, oklch(1 0 0 / 0.74), oklch(1 0 0 / 0.38)),
+    color-mix(in oklch, var(--card) 78%, transparent);
+  border: 1px solid color-mix(in oklch, var(--border) 72%, transparent);
+  box-shadow: var(--shadow-soft);
+  backdrop-filter: blur(24px) saturate(1.2);
+  -webkit-backdrop-filter: blur(24px) saturate(1.2);
+}
+
+.dark .ios-card {
+  background:
+    linear-gradient(145deg, oklch(1 0 0 / 0.08), oklch(1 0 0 / 0.025)),
+    color-mix(in oklch, var(--card) 78%, transparent);
+}
+
+.ios-button-primary {
+  background: linear-gradient(135deg, oklch(0.64 0.17 242), oklch(0.62 0.14 198));
+  color: white;
+  box-shadow: 0 16px 32px -22px oklch(0.58 0.18 242 / 0.75), 0 1px 1px oklch(1 0 0 / 0.4) inset;
+}
+
+.ios-button-secondary {
+  background: color-mix(in oklch, var(--card) 72%, transparent);
+  border: 1px solid color-mix(in oklch, var(--border) 75%, transparent);
+  box-shadow: 0 1px 1px oklch(1 0 0 / 0.5) inset;
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.ios-pill {
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--card) 66%, transparent);
+  border: 1px solid color-mix(in oklch, var(--border) 70%, transparent);
+  box-shadow: 0 1px 1px oklch(1 0 0 / 0.5) inset;
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.ios-nav-item {
+  border: 1px solid transparent;
+}
+
+.ios-nav-item-active {
+  background: linear-gradient(135deg, oklch(1 0 0 / 0.62), oklch(1 0 0 / 0.25));
+  border-color: color-mix(in oklch, var(--border) 78%, transparent);
+  box-shadow: 0 10px 28px -22px oklch(0.2 0.04 250 / 0.4), 0 1px 1px oklch(1 0 0 / 0.55) inset;
+}
+
+.dark .ios-nav-item-active {
+  background: linear-gradient(135deg, oklch(1 0 0 / 0.12), oklch(1 0 0 / 0.035));
 }
 
 /* ── ChatPanel Animations ── */

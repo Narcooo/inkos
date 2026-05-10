@@ -3,9 +3,11 @@ import {
   clearBookCreateSessionId,
   filterModelGroups,
   getBookCreateSessionId,
+  groupAssistantMessageParts,
   pickModelSelection,
   setBookCreateSessionId,
 } from "./chat-page-state";
+import type { MessagePart } from "../store/chat/types";
 
 describe("book-create session localStorage helpers", () => {
   const storage = new Map<string, string>();
@@ -102,6 +104,60 @@ describe("filterModelGroups", () => {
           { id: "gpt-4o", name: "gpt-4o" },
         ],
       },
+    ]);
+  });
+});
+
+describe("groupAssistantMessageParts", () => {
+  it("keeps thinking and text parts in chronological order", () => {
+    const parts: MessagePart[] = [
+      { type: "thinking", content: "plan", streaming: false },
+      { type: "text", content: "answer" },
+    ];
+
+    expect(groupAssistantMessageParts(parts)).toEqual([
+      { kind: "thinking", index: 0, part: parts[0] },
+      { kind: "text", index: 1, part: parts[1] },
+    ]);
+  });
+
+  it("groups consecutive tool parts and starts a new group after text", () => {
+    const firstTool = {
+      type: "tool",
+      execution: {
+        id: "tool-1",
+        tool: "read",
+        label: "Read",
+        status: "completed",
+        startedAt: 1,
+      },
+    } satisfies MessagePart;
+    const secondTool = {
+      type: "tool",
+      execution: {
+        id: "tool-2",
+        tool: "grep",
+        label: "Search",
+        status: "completed",
+        startedAt: 2,
+      },
+    } satisfies MessagePart;
+    const thirdTool = {
+      type: "tool",
+      execution: {
+        id: "tool-3",
+        tool: "edit",
+        label: "Edit",
+        status: "running",
+        startedAt: 3,
+      },
+    } satisfies MessagePart;
+    const text = { type: "text", content: "done" } satisfies MessagePart;
+
+    expect(groupAssistantMessageParts([firstTool, secondTool, text, thirdTool])).toEqual([
+      { kind: "tools", startIndex: 0, parts: [firstTool, secondTool] },
+      { kind: "text", index: 2, part: text },
+      { kind: "tools", startIndex: 3, parts: [thirdTool] },
     ]);
   });
 });

@@ -1,25 +1,8 @@
-import { useState, useEffect } from "react";
+import { lazy, Suspense, useState, useEffect } from "react";
 import { useHashRoute } from "./hooks/use-hash-route";
 import type { HashRoute } from "./hooks/use-hash-route";
 import { Sidebar } from "./components/Sidebar";
-import { Dashboard } from "./pages/Dashboard";
-import { ChatPage } from "./pages/ChatPage";
-import { BookCreate } from "./pages/BookCreate";
-import { BookDetail } from "./pages/BookDetail";
-import { ChapterReader } from "./pages/ChapterReader";
-import { Analytics } from "./pages/Analytics";
-import { ServiceListPage } from "./pages/ServiceListPage";
-import { ServiceDetailPage } from "./pages/ServiceDetailPage";
-import { TruthFiles } from "./pages/TruthFiles";
-import { DaemonControl } from "./pages/DaemonControl";
-import { LogViewer } from "./pages/LogViewer";
-import { GenreManager } from "./pages/GenreManager";
-import { StyleManager } from "./pages/StyleManager";
-import { ImportManager } from "./pages/ImportManager";
-import { RadarView } from "./pages/RadarView";
-import { DoctorView } from "./pages/DoctorView";
 import { LanguageSelector } from "./pages/LanguageSelector";
-import { BookSidebar, BookSidebarToggle } from "./components/chat/BookSidebar";
 import { useSSE } from "./hooks/use-sse";
 import { useSessionEvents } from "./hooks/use-session-events";
 import { useTheme } from "./hooks/use-theme";
@@ -27,6 +10,25 @@ import { useI18n } from "./hooks/use-i18n";
 import { postApi, putApi, useApi } from "./hooks/use-api";
 import { Sun, Moon } from "lucide-react";
 import { House } from "lucide-react";
+
+const Dashboard = lazy(() => import("./pages/Dashboard").then((module) => ({ default: module.Dashboard })));
+const ChatPage = lazy(() => import("./pages/ChatPage").then((module) => ({ default: module.ChatPage })));
+const BookCreate = lazy(() => import("./pages/BookCreate").then((module) => ({ default: module.BookCreate })));
+const BookDetail = lazy(() => import("./pages/BookDetail").then((module) => ({ default: module.BookDetail })));
+const ChapterReader = lazy(() => import("./pages/ChapterReader").then((module) => ({ default: module.ChapterReader })));
+const Analytics = lazy(() => import("./pages/Analytics").then((module) => ({ default: module.Analytics })));
+const ServiceListPage = lazy(() => import("./pages/ServiceListPage").then((module) => ({ default: module.ServiceListPage })));
+const ServiceDetailPage = lazy(() => import("./pages/ServiceDetailPage").then((module) => ({ default: module.ServiceDetailPage })));
+const TruthFiles = lazy(() => import("./pages/TruthFiles").then((module) => ({ default: module.TruthFiles })));
+const DaemonControl = lazy(() => import("./pages/DaemonControl").then((module) => ({ default: module.DaemonControl })));
+const LogViewer = lazy(() => import("./pages/LogViewer").then((module) => ({ default: module.LogViewer })));
+const GenreManager = lazy(() => import("./pages/GenreManager").then((module) => ({ default: module.GenreManager })));
+const StyleManager = lazy(() => import("./pages/StyleManager").then((module) => ({ default: module.StyleManager })));
+const ImportManager = lazy(() => import("./pages/ImportManager").then((module) => ({ default: module.ImportManager })));
+const RadarView = lazy(() => import("./pages/RadarView").then((module) => ({ default: module.RadarView })));
+const DoctorView = lazy(() => import("./pages/DoctorView").then((module) => ({ default: module.DoctorView })));
+const BookSidebar = lazy(() => import("./components/chat/BookSidebar").then((module) => ({ default: module.BookSidebar })));
+const BookSidebarToggle = lazy(() => import("./components/chat/BookSidebar").then((module) => ({ default: module.BookSidebarToggle })));
 
 export type { HashRoute as Route } from "./hooks/use-hash-route";
 
@@ -37,6 +39,14 @@ export function deriveActiveBookId(route: HashRoute): string | undefined {
 
 export function isStandaloneBookCreateRoute(route: HashRoute): boolean {
   return route.page === "book-create";
+}
+
+function RouteLoading() {
+  return (
+    <div className="grid min-h-full place-items-center">
+      <div className="h-10 w-10 animate-spin rounded-full border-4 border-primary/20 border-t-primary" />
+    </div>
+  );
 }
 
 export function App() {
@@ -114,34 +124,34 @@ export function App() {
   }
 
   return (
-    <div className="h-screen bg-background text-foreground flex overflow-hidden font-sans">
+    <div className="h-screen ios-app-shell text-foreground flex overflow-hidden font-sans p-2 gap-2 lg:p-3 lg:gap-3">
       {/* Left Sidebar */}
       <Sidebar nav={nav} activePage={activePage} sse={sse} t={t} />
 
       {/* Center Content */}
-      <div className="flex-1 flex flex-col min-w-0 bg-background/30 backdrop-blur-sm">
+      <div className="relative z-10 flex-1 flex flex-col min-w-0 ios-glass rounded-[28px] overflow-hidden">
         {/* Header Strip */}
-        <header className="h-14 shrink-0 flex items-center justify-between px-8 border-b border-border/40">
+        <header className="h-16 shrink-0 flex items-center justify-between px-3 border-b border-border/35 lg:px-5">
           <div className="flex items-center gap-2">
              <button
                onClick={nav.toDashboard}
-               className="inline-flex items-center gap-2 rounded-lg border border-border/50 bg-card/70 px-3 py-1.5 text-sm font-semibold text-foreground hover:bg-secondary/50 transition-colors"
+               className="ios-pill inline-flex items-center gap-2 whitespace-nowrap px-3.5 py-2 text-sm font-semibold text-foreground hover:bg-card/80 transition-colors"
              >
                <House size={14} />
-               <span>首页</span>
-               <span className="text-muted-foreground/70">/</span>
-               <span className="font-serif">InkOS Studio</span>
+               <span className="hidden sm:inline">首页</span>
+               <span className="hidden text-muted-foreground/60 sm:inline">/</span>
+               <span>InkOS</span>
              </button>
           </div>
 
           <div className="flex items-center gap-3">
-            <div className="flex gap-0.5 bg-muted/50 rounded-md p-0.5">
+            <div className="ios-pill flex gap-0.5 p-1">
               <button
                 onClick={async () => {
                   await putApi("/project", { language: "zh" });
                   refetchProject();
                 }}
-                className={`text-xs px-2 py-0.5 rounded ${currentLang === "zh" ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}
+                className={`text-xs px-2.5 py-1 rounded-full transition-colors ${currentLang === "zh" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
               >
                 中
               </button>
@@ -150,7 +160,7 @@ export function App() {
                   await putApi("/project", { language: "en" });
                   refetchProject();
                 }}
-                className={`text-xs px-2 py-0.5 rounded ${currentLang === "en" ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}
+                className={`text-xs px-2.5 py-1 rounded-full transition-colors ${currentLang === "en" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
               >
                 EN
               </button>
@@ -158,7 +168,7 @@ export function App() {
 
             <button
               onClick={() => setTheme(isDark ? "light" : "dark")}
-              className="text-muted-foreground hover:text-foreground transition-colors"
+              className="ios-pill inline-flex h-9 w-9 items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
             >
               {isDark ? <Sun size={14} /> : <Moon size={14} />}
             </button>
@@ -167,6 +177,7 @@ export function App() {
 
         {/* Main Content Area */}
         <main className="flex-1 relative overflow-y-auto scroll-smooth">
+          <Suspense fallback={<RouteLoading />}>
           {route.page === "dashboard" && (
             <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
               <Dashboard nav={nav} sse={sse} theme={theme} t={t} />
@@ -206,7 +217,7 @@ export function App() {
             </div>
           )}
           {route.page === "services" && (
-            <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
+            <div className="min-h-full px-3 py-3 md:px-4 md:py-4 fade-in">
               <ServiceListPage nav={nav} />
             </div>
           )}
@@ -255,6 +266,7 @@ export function App() {
               <DoctorView nav={nav} theme={theme} t={t} />
             </div>
           )}
+          </Suspense>
         </main>
       </div>
     </div>
