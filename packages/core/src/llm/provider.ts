@@ -440,6 +440,8 @@ function isTransientLLMTransportError(error: unknown): boolean {
     "socket hang up",
     "other side closed",
     "network socket disconnected",
+    "aborted",
+    "The operation was aborted",
   ].some((needle) => text.includes(needle));
 }
 
@@ -790,6 +792,7 @@ async function chatCompletionViaCustomOpenAICompatible(
       method: "POST",
       headers,
       body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(180_000),
     }, client.proxyUrl);
     if (!response.ok) {
       throw wrapLLMError(new Error(await readErrorResponse(response)), errorCtx);
@@ -877,6 +880,7 @@ async function chatCompletionViaCustomOpenAICompatible(
     method: "POST",
     headers,
     body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(180_000),
   }, client.proxyUrl);
   if (!response.ok) {
     const detail = await readErrorResponse(response);
