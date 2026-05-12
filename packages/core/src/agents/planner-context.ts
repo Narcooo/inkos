@@ -119,11 +119,23 @@ export function formatRecentSummaries(
  * Option A: temporarily compose current_arc prose from subplot_board.md
  * active rows + emotional_arcs.md recent rows. Phase 8 will replace this
  * source with a dedicated tier2_current_arc.md file.
+ *
+ * volumeOutlineRaw is optional — pacing constraints from the volume_map's
+ * "## 节奏原则" section are appended so the planner always sees them.
+ *
+ * characterMatrixRaw is optional — current character states are appended
+ * for persona-consistency verification.
+ *
+ * chapterSummariesRaw is optional — cadence fatigue detection results are
+ * appended for cross-chapter pacing awareness.
  */
 export function composeCurrentArcProse(
   subplotBoardRaw: string,
   emotionalArcsRaw: string,
   chapterNumber: number,
+  volumeOutlineRaw?: string,
+  characterMatrixRaw?: string,
+  chapterSummariesRaw?: string,
 ): string {
   const activeSubplots = extractActiveSubplotLines(subplotBoardRaw);
   const recentArcs = extractRecentEmotionalArcLines(emotionalArcsRaw, chapterNumber, 3);
@@ -135,10 +147,117 @@ export function composeCurrentArcProse(
   if (recentArcs.length > 0) {
     parts.push("近期情感线：\n" + recentArcs.map((line) => `- ${line}`).join("\n"));
   }
+  // Append volume pacing constraints when available.
+  const pacingBlock = composeVolumePacingSegment(volumeOutlineRaw);
+  if (pacingBlock) {
+    parts.push(`## 节奏约束（来自卷纲）\n${pacingBlock}\n以上节奏规则是硬约束，本章 memo 和 writer 必须遵守。`);
+  }
+  // Append character state block when available.
+  const charBlock = composeCharacterStateBlock(characterMatrixRaw);
+  if (charBlock) {
+    parts.push(charBlock);
+  }
   if (parts.length === 0) {
     return "（暂无 arc 数据——可能是新书起始阶段）";
   }
-  return parts.join("\n\n");
+  const prose = parts.join("\n\n");
+  // Append cadence brief at the end — separate from the main arc prose
+  // so the planner sees it as a distinct advisory section.
+  const cadenceBlock = buildCadenceBrief(chapterSummariesRaw, chapterNumber, 5);
+  if (cadenceBlock) {
+    return prose + "\n\n" + cadenceBlock;
+  }
+  return prose;
+}
+
+/**
+ * Extract pacing constraints from the "## 节奏原则" section of the
+ * volume_map markdown. Returns the section verbatim or "" if absent.
+ */
+function composeVolumePacingSegment(volumeOutlineRaw?: string): string {
+  if (!volumeOutlineRaw) return "";
+  const trimmed = volumeOutlineRaw.trim();
+  if (!trimmed) return "";
+  // Match "## 节奏原则" or "## 节奏约束" or "## Pacing" / "### Pacing"
+  const sectionRx = /^##\s+(?:节奏原则|节奏约束|Pacing)\s*\n([\s\S]*?)(?=^##\s|\n*$)/m;
+  const match = trimmed.match(sectionRx);
+  if (match) return match[1].trim();
+  return "";
+}
+
+/**
+ * Extract character current-state + relationship info from character_matrix.md
+ * (markdown table or ## Name + key-value list). Returns a concise block for
+ * the planner to verify persona consistency.
+ */
+function composeCharacterStateBlock(characterMatrixRaw?: string): string {
+  if (!characterMatrixRaw) return "";
+  const trimmed = characterMatrixRaw.trim();
+  if (!trimmed) return "";
+  // Two formats: markdown table or "## Name" sections.
+  const characters: Array<{ name: string; position?: string; relations?: string; known?: string }> = [];
+  let currentChar: (typeof characters)[number] | null = null;
+  for (const line of trimmed.split("\n")) {
+    const sectionMatch = line.match(/^##\s+(.+)/);
+    if (sectionMatch) {
+      // "## 角色名 (定位)" or just "## 角色名"
+      const namePart = sectionMatch[1].trim();
+      const posMatch = namePart.match(/^(.+?)\s*[（(](.+?)[）)]\s*$/);
+      if (currentChar) characters.push(currentChar);
+      currentChar = {
+        name: posMatch ? posMatch[1].trim() : namePart,
+        position: posMatch ? posMatch[2].trim() : undefined,
+      };
+      continue;
+    }
+    if (!currentChar) continue;
+    // Key-value pairs: "- 定位：xxx" or "定位：xxx" or "- 关系：xxx"
+    const posLine = line.match(/^[-*]?\s*(?:定位|position|role)\s*[:：]\s*(.+)/i);
+    if (posLine) { currentChar.position = posLine[1].trim(); continue; }
+    const relLine = line.match(/^[-*]?\s*(?:关系|relation)\s*[:：]\s*(.+)/i);
+    if (relLine) { currentChar.relations = relLine[1].trim(); continue; }
+    const knownLine = line.match(/^[-*]?\s*(?:当前|current|已知|known)\s*[:：]\s*(.+)/i);
+    if (knownLine) { currentChar.known = knownLine[1].trim(); continue; }
+  }
+  if (currentChar) characters.push(currentChar);
+  if (characters.length === 0) return "";
+  const entries = characters.map((c) => {
+    const roleTag = c.position ? `[${c.position}]` : "";
+    const rel = c.relations ? ` | 关系: ${c.relations}` : "";
+    return `- ${roleTag} ${c.name}${rel}`;
+  });
+  return `## 当前角色状态\n${entries.join("\n")}\n\n`;
+}
+
+/**
+ * Build a cadence brief from chapter_summaries.md (markdown table) for the
+ * planner. Extracts mood and chapter-type from the last N chapters to warn
+ * about monotony before the planner writes the memo.
+ */
+function buildCadenceBrief(chapterSummariesRaw?: string, chapterNumber?: number, windowSize = 5): string {
+  if (!chapterSummariesRaw || !chapterNumber) return "";
+  const trimmed = chapterSummariesRaw.trim();
+  if (!trimmed) return "";
+  const rows = parseMarkdownTableRows(trimmed)
+    .filter((row) => /^\d+$/.test(row[0] ?? ""))
+    .filter((row) => parseInt(row[0]!, 10) < chapterNumber)
+    .sort((a, b) => parseInt(a[0]!, 10) - parseInt(b[0]!, 10));
+  if (rows.length < 2) return "";
+  const recent = rows.slice(-windowSize);
+  const moods = recent.map((r) => r[6] ?? "");
+  const types = recent.map((r) => r[7] ?? "");
+  const moodFlags = moods.filter((m) => /压|冷|紧张|high.*tension|stress/i.test(m)).length;
+  const allSameMood = new Set(moods.map((m) => m.replace(/[、，,/\s].*$/, "").trim())).size <= 1;
+  const moodWarning = moodFlags >= 3 || allSameMood
+    ? "⚠️ 最近多章情绪趋同，建议本章安排情绪释放（暖/温情/日常喘息）"
+    : "";
+  const typeStreak = types.length >= 3 && new Set(types.slice(-3)).size <= 1;
+  const typeWarning = typeStreak
+    ? `⚠️ 最近3章类型均为"${types.slice(-1)[0]}"，建议本章切换章节功能`
+    : "";
+  const warnings = [moodWarning, typeWarning].filter(Boolean);
+  if (warnings.length === 0) return "";
+  return `最近${recent.length}章情绪序列: ${moods.join(" → ")}\n最近${recent.length}章类型序列: ${types.join(" → ")}\n${warnings.join("\n")}\n`;
 }
 
 function extractActiveSubplotLines(raw: string): string[] {

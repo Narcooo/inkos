@@ -218,7 +218,7 @@ export class PlannerAgent extends BaseAgent {
         ? input.previousEndingExcerpt.trim()
         : noPriorChapter,
       recentSummaries: formatRecentSummaries(input.chapterSummariesRaw, input.chapterNumber, 3),
-      currentArcProse: composeCurrentArcProse(subplotBoard, emotionalArcs, input.chapterNumber),
+      currentArcProse: composeCurrentArcProse(subplotBoard, emotionalArcs, input.chapterNumber, seedMaterials.volumeOutline, characterMatrix, seedMaterials.chapterSummariesRaw),
       protagonistMatrixRow: extractProtagonistRow(characterMatrix),
       opponentRows: extractOpponentRows(characterMatrix, 3),
       collaboratorRows: extractCollaboratorRows(characterMatrix, 3),
