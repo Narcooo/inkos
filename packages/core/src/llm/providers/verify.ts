@@ -35,11 +35,22 @@ async function probe(
     return { ok: false, models: 0, error: "无 baseUrl 可探测（custom / newapi / higress 需要用户填）" };
   }
   try {
-    const url = probeBaseUrl.replace(/\/$/, "") + "/models";
-    const res = await fetchWithProxy(url, {
+    // 尝试标准 OpenAI 路径 /v1/models，如果 404 则回退到 /models
+    let url = probeBaseUrl.replace(/\/$/, "") + "/v1/models";
+    let res = await fetchWithProxy(url, {
       headers: { Authorization: `Bearer ${apiKey}` },
       signal: AbortSignal.timeout(10_000),
     }, proxyUrl);
+    
+    // 如果 /v1/models 404，尝试旧版路径 /models
+    if (!res.ok && res.status === 404) {
+      url = probeBaseUrl.replace(/\/$/, "") + "/models";
+      res = await fetchWithProxy(url, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+        signal: AbortSignal.timeout(10_000),
+      }, proxyUrl);
+    }
+    
     if (!res.ok) {
       return { ok: false, models: 0, error: `HTTP ${res.status} ${res.statusText}` };
     }
