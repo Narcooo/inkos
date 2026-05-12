@@ -295,6 +295,21 @@ inkos compose chapter 吞天魔帝
 
 模型输出上限由 provider bank 的模型卡管理；`llm.extra` / `INKOS_LLM_EXTRA_*` 中的保留键（max_tokens、temperature、model、messages、stream 等）会被自动过滤，防止意外覆盖核心请求参数。
 
+### 调试日志（Agent Chat Log）
+
+`inkos.json` 中配置 `chatLogDirs` 可为不同 agent 开启 chat 请求/响应的文件日志：
+
+```json
+{
+  "chatLogDirs": {
+    "writer": "C:\\my-novel\\.logs\\writer",
+    "planner": "C:\\my-novel\\.logs\\planner"
+  }
+}
+```
+
+生成的日志文件命名格式为 `chat-log-{agentName}-{ISO timestamp}-{random}.log`，内容包括请求头（model/provider/temperature/maxTokens/messageCount）、每条 prompt 的角色和内容、以及响应内容与 token 用量统计。如果配置的文件夹不存在，InkOS 会自动递归创建。可用于调试 prompt 效果、审计 LLM 行为或分析 token 消耗。
+
 ---
 
 ## 工作原理

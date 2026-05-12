@@ -233,6 +233,21 @@ inkos compose chapter my-book
 
 ユーザー設定の `INKOS_LLM_MAX_TOKENS` がすべてのAPI呼び出しのグローバルキャップとして機能。`llm.extra` の予約キー（max_tokens、temperatureなど）は自動的に除去され、意図しないオーバーライドを防止。
 
+### エージェントチャットログ
+
+`inkos.json` に `chatLogDirs` を設定すると、異なるエージェントのchatリクエスト/レスポンスをファイルに記録できます：
+
+```json
+{
+  "chatLogDirs": {
+    "writer": "C:\\my-novel\\.logs\\writer",
+    "planner": "C:\\my-novel\\.logs\\planner"
+  }
+}
+```
+
+各chat呼び出しごとに `chat-log-{agentName}-{ISO timestamp}-{random}.log` という名前のログファイルが生成されます。ログにはリクエストヘッダー（model/provider/temperature/maxTokens/messageCount）、各prompt messageのroleとcontent、レスポンス内容とtoken使用量が含まれます。対象のフォルダが存在しない場合、InkOSは自動的に再帰的に作成します。プロンプトの効果検証、LLM動作の監査、token消費量の分析に便利です。
+
 ---
 
 ## 仕組み

@@ -247,6 +247,21 @@ The hook system uses Zod schema validation — `lastAdvancedChapter` must be an 
 
 User-configured `INKOS_LLM_MAX_TOKENS` now acts as a global cap on all API calls. Reserved keys in `llm.extra` (max_tokens, temperature, etc.) are automatically stripped to prevent accidental overrides.
 
+### Agent Chat Log
+
+Configure `chatLogDirs` in `inkos.json` to enable per-agent chat request/response file logging:
+
+```json
+{
+  "chatLogDirs": {
+    "writer": "C:\\my-novel\\.logs\\writer",
+    "planner": "C:\\my-novel\\.logs\\planner"
+  }
+}
+```
+
+Each chat call produces a log file named `chat-log-{agentName}-{ISO timestamp}-{random}.log`. The log includes a request header (model/provider/temperature/maxTokens/messageCount), every prompt message with role and content, plus the response content and token usage. InkOS automatically creates the target directory recursively if it does not exist. Useful for debugging prompt effectiveness, auditing LLM behavior, or analyzing token consumption.
+
 ---
 
 ## How It Works
