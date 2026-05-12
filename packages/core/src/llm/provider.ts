@@ -792,7 +792,7 @@ async function chatCompletionViaCustomOpenAICompatible(
       method: "POST",
       headers,
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(180_000),
+      signal: AbortSignal.timeout(600_000),
     }, client.proxyUrl);
     if (!response.ok) {
       throw wrapLLMError(new Error(await readErrorResponse(response)), errorCtx);
@@ -880,7 +880,7 @@ async function chatCompletionViaCustomOpenAICompatible(
     method: "POST",
     headers,
     body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(180_000),
+    signal: AbortSignal.timeout(600_000),
   }, client.proxyUrl);
   if (!response.ok) {
     const detail = await readErrorResponse(response);
