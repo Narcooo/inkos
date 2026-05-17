@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Eye, EyeOff, Loader2, Plus, Search, X } from "lucide-react";
 import { GROUP_LABELS, GROUP_ORDER, GROUP_SHORT_LABELS } from "../constants/service-groups";
 import { fetchJson, putApi, useApi } from "../hooks/use-api";
@@ -79,15 +79,16 @@ function DefaultModelConfigCard() {
     [services],
   );
 
+  const initialized = useRef(false);
+
   // 初始化：从 API 读取当前配置
   useEffect(() => {
-    if (data && !provider && !model) {
-      const p = data.provider ?? "";
-      const m = data.model ?? "";
-      setProvider(p);
-      setModel(m);
+    if (data && !initialized.current) {
+      initialized.current = true;
+      setProvider(data.provider ?? "");
+      setModel(data.model ?? "");
     }
-  }, [data, provider, model]);
+  }, [data]);
 
   // 切换服务商时重置模型为该服务商的第一个模型
   const handleProviderChange = (nextProvider: string) => {
