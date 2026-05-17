@@ -66,7 +66,7 @@ interface CoverConfigPayload {
 }
 
 function DefaultModelConfigCard() {
-  const { data, refetch } = useApi<{ model?: string; provider?: string }>("/project");
+  const { data, refetch } = useApi<{ model?: string; provider?: string; service?: string }>("/project");
   const services = useServiceStore((s) => s.services);
   const modelsByService = useServiceStore((s) => s.modelsByService);
   const [provider, setProvider] = useState("");
@@ -85,7 +85,9 @@ function DefaultModelConfigCard() {
   useEffect(() => {
     if (data && !initialized.current) {
       initialized.current = true;
-      setProvider(data.provider ?? "");
+      // 优先用 service 字段初始化（这是持久化的主键），provider 是派生值
+      const p = data.service ?? data.provider ?? "";
+      setProvider(p);
       setModel(data.model ?? "");
     }
   }, [data]);
@@ -104,7 +106,7 @@ function DefaultModelConfigCard() {
     setStatus("saving");
     setMessage("");
     try {
-      await putApi("/project", { provider, model });
+      await putApi("/project", { provider, model, service: provider });
       setStatus("saved");
       setMessage("项目默认模型已保存");
       refetch();

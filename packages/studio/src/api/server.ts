@@ -1866,6 +1866,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       languageExplicit,
       model: currentConfig.llm.model,
       provider: currentConfig.llm.provider,
+      service: currentConfig.llm.service,
       baseUrl: currentConfig.llm.baseUrl,
       stream: currentConfig.llm.stream,
       temperature: currentConfig.llm.temperature,
@@ -1919,6 +1920,9 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       }
       if (updates.model !== undefined && typeof updates.model === "string") {
         existing.llm.model = updates.model;
+      }
+      if (updates.service !== undefined && typeof updates.service === "string") {
+        existing.llm.service = updates.service;
       }
       if (updates.temperature !== undefined) {
         existing.llm.temperature = updates.temperature;
