@@ -1,4 +1,4 @@
-import { BaseAgent } from "./base.js";
+import { BaseAgent, applyPromptOverride } from "./base.js";
 import type { LengthNormalizeMode, LengthSpec } from "../models/length-governance.js";
 import { countChapterLength, chooseNormalizeMode, isOutsideHardRange, isOutsideSoftRange } from "../utils/length-metrics.js";
 
@@ -42,7 +42,7 @@ export class LengthNormalizerAgent extends BaseAgent {
       };
     }
 
-    const systemPrompt = this.buildSystemPrompt(mode);
+    const systemPrompt = applyPromptOverride(this.buildSystemPrompt(mode), this.ctx.promptOverride);
     const userPrompt = this.buildUserPrompt(input, originalCount, mode);
     const response = await this.chat(
       [

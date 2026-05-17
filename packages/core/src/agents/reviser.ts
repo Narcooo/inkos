@@ -1,4 +1,4 @@
-import { BaseAgent } from "./base.js";
+import { BaseAgent, applyPromptOverride } from "./base.js";
 import type { GenreProfile } from "../models/genre-profile.js";
 import type { BookRules } from "../models/book-rules.js";
 import type { LengthSpec } from "../models/length-governance.js";
@@ -214,9 +214,12 @@ export class ReviserAgent extends BaseAgent {
       : characterMatrix;
 
     const autoOutputMode = mode === "auto" ? resolveAutoOutputMode(issues) : "allow-full";
-    const systemPrompt = mode === "auto"
-      ? this.buildAutoSystemPrompt({ langPrefix, gp, protagonistBlock, numericalRule, lengthGuardrail, resolvedLanguage, lengthSpec: options?.lengthSpec, autoOutputMode })
-      : this.buildLegacySystemPrompt({ langPrefix, gp, protagonistBlock, numericalRule, lengthGuardrail, mode, resolvedLanguage });
+    const systemPrompt = applyPromptOverride(
+      mode === "auto"
+        ? this.buildAutoSystemPrompt({ langPrefix, gp, protagonistBlock, numericalRule, lengthGuardrail, resolvedLanguage, lengthSpec: options?.lengthSpec, autoOutputMode })
+        : this.buildLegacySystemPrompt({ langPrefix, gp, protagonistBlock, numericalRule, lengthGuardrail, mode, resolvedLanguage }),
+      this.ctx.promptOverride,
+    );
 
     const ledgerBlock = gp.numericalSystem
       ? `\n## 资源账本\n${ledger}`

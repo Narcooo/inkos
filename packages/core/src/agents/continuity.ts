@@ -1,4 +1,4 @@
-import { BaseAgent } from "./base.js";
+import { BaseAgent, applyPromptOverride } from "./base.js";
 import type { GenreProfile } from "../models/genre-profile.js";
 import type { BookRules } from "../models/book-rules.js";
 import type { FanficMode } from "../models/book.js";
@@ -532,6 +532,7 @@ overall_score 评分校准：
 - 65-74：多处影响阅读体验的问题，节奏或连续性有断裂
 - < 65：结构性问题，需要大幅重写
 综合评分，不要因为单一小问题大幅拉低分数。`;
+    const effectiveSystemPrompt = applyPromptOverride(systemPrompt, this.ctx.promptOverride);
 
     const ledgerBlock = gp.numericalSystem
       ? isEnglish
@@ -633,7 +634,7 @@ ${hooksBlock}${volumeSummariesBlock}${subplotBlock}${emotionalBlock}${matrixBloc
 ${chapterContent}`;
 
     const chatMessages = [
-      { role: "system" as const, content: systemPrompt },
+      { role: "system" as const, content: effectiveSystemPrompt },
       { role: "user" as const, content: userPrompt },
     ];
     const chatOptions = { temperature: options?.temperature ?? 0.3 };

@@ -16,7 +16,9 @@ export type HashRoute =
   | { page: "style" }
   | { page: "import" }
   | { page: "radar" }
-  | { page: "doctor" };
+  | { page: "doctor" }
+  | { page: "agent-config" }
+  | { page: "agent-prompt-detail"; agentKey: string };
 
 function parseHash(hash: string): HashRoute {
   const path = hash.replace(/^#\/?/, "");
@@ -34,6 +36,10 @@ function parseHash(hash: string): HashRoute {
   const bookMatch = path.match(/^book\/([^/]+)$/);
   if (bookMatch) return { page: "book", bookId: decodeURIComponent(bookMatch[1]) };
 
+  if (path === "agent-config") return { page: "agent-config" };
+  const agentPromptMatch = path.match(/^agent-config\/([^/]+)$/);
+  if (agentPromptMatch) return { page: "agent-prompt-detail", agentKey: decodeURIComponent(agentPromptMatch[1]) };
+
   return { page: "dashboard" };
 }
 
@@ -45,13 +51,15 @@ function routeToHash(route: HashRoute): string {
     case "book-create": return "#/book/new";
     case "services": return "#/services";
     case "service-detail": return `#/services/${encodeURIComponent(route.serviceId)}`;
+    case "agent-config": return "#/agent-config";
+    case "agent-prompt-detail": return `#/agent-config/${encodeURIComponent(route.agentKey)}`;
     default: return "";
   }
 }
 
 export { parseHash, routeToHash }; // for testing
 
-const HASH_PAGES = new Set(["dashboard", "book", "book-settings", "book-create", "services", "service-detail"]);
+const HASH_PAGES = new Set(["dashboard", "book", "book-settings", "book-create", "services", "service-detail", "agent-config", "agent-prompt-detail"]);
 
 export function useHashRoute() {
   const [route, setRouteState] = useState<HashRoute>(() => parseHash(window.location.hash));

@@ -1,4 +1,4 @@
-import { BaseAgent } from "./base.js";
+import { BaseAgent, applyPromptOverride } from "./base.js";
 import type { ChapterMemo } from "../models/input-governance.js";
 
 export interface PolishChapterInput {
@@ -44,9 +44,10 @@ export class PolisherAgent extends BaseAgent {
         : `\n\n## 章节备忘（润色不得偏离此目标）\ngoal：${input.chapterMemo.goal}\n\n${input.chapterMemo.body}`
       : "";
 
-    const systemPrompt = isEnglish
-      ? buildEnglishSystemPrompt()
-      : buildChineseSystemPrompt();
+    const systemPrompt = applyPromptOverride(
+      isEnglish ? buildEnglishSystemPrompt() : buildChineseSystemPrompt(),
+      this.ctx.promptOverride,
+    );
 
     const userPrompt = isEnglish
       ? `Polish chapter ${input.chapterNumber}. Return the polished chapter in full, nothing else — no JSON, no headers, no commentary.${memoBlock}\n\n## Chapter Under Polish\n${input.chapterContent}`

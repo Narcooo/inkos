@@ -47,6 +47,11 @@ import {
   type ProjectConfig,
   type LogSink,
   type LogEntry,
+  buildWriterSystemPrompt,
+  getPlannerMemoSystemPrompt,
+  buildLengthSpec,
+  type BookConfig,
+  type GenreProfile,
 } from "@actalk/inkos-core";
 import { access, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
@@ -2866,6 +2871,103 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     const { writeFile: writeFileFs } = await import("node:fs/promises");
     await writeFileFs(configPath, JSON.stringify(raw, null, 2), "utf-8");
     return c.json({ ok: true });
+  });
+
+  // --- Prompt overrides ---
+
+  app.get("/api/v1/project/prompt-overrides", async (c) => {
+    const raw = JSON.parse(await readFile(join(root, "inkos.json"), "utf-8"));
+    return c.json({ overrides: raw.promptOverrides ?? {} });
+  });
+
+  app.put("/api/v1/project/prompt-overrides", async (c) => {
+    const { overrides } = await c.req.json<{
+      overrides: Record<string, { mode: "full" | "append"; content: string }>;
+    }>();
+    const configPath = join(root, "inkos.json");
+    const raw = JSON.parse(await readFile(configPath, "utf-8"));
+    raw.promptOverrides = overrides;
+    const { writeFile: writeFileFs } = await import("node:fs/promises");
+    await writeFileFs(configPath, JSON.stringify(raw, null, 2), "utf-8");
+    return c.json({ ok: true });
+  });
+
+  // --- Agent default prompt ---
+
+  app.get("/api/v1/project/agent/:agentKey/default-prompt", async (c) => {
+    const agentKey = c.req.param("agentKey");
+    const config = await loadProjectConfig(root);
+    const language = config.language ?? "zh";
+
+    let prompt: string | null = null;
+
+    switch (agentKey) {
+      case "Planner":
+        prompt = getPlannerMemoSystemPrompt(language as "zh" | "en");
+        break;
+      // Writer 需要运行时参数，构造一个 minimal book 返回核心写作框架，
+      // 然后用占位符替换掉具体值，避免用户误以为"示例书籍"就是实际内容
+      case "Writer": {
+        const minimalBook: BookConfig = {
+          id: "demo",
+          title: "示例书籍",
+          platform: "other",
+          genre: "urban-fantasy",
+          status: "active",
+          targetChapters: 200,
+          chapterWordCount: 3000,
+          language,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        const minimalGenre: GenreProfile = {
+          name: "都市奇幻",
+          id: "urban-fantasy",
+          language,
+          chapterTypes: ["日常", "战斗", "探索"],
+          fatigueWords: [],
+          numericalSystem: false,
+          powerScaling: false,
+          eraResearch: false,
+          pacingRule: "",
+          satisfactionTypes: [],
+          auditDimensions: [],
+        };
+        const isEnglish = language === "en";
+        const lengthSpec = buildLengthSpec(minimalBook.chapterWordCount, isEnglish ? "en" : "zh");
+        prompt = buildWriterSystemPrompt(
+          minimalBook,
+          minimalGenre,
+          null,   // bookRules
+          "",     // bookRulesBody
+          "",     // genreBody
+          "",     // styleGuide
+          "",     // styleFingerprint
+          undefined, // chapterNumber
+          "creative", // mode
+          undefined, // fanficContext
+          language,
+          "legacy",
+          lengthSpec,
+        );
+
+        // 将具体值替换为占位符，运行时会被真实值填充
+        prompt = prompt
+          .replaceAll(minimalGenre.name, "[题材]")
+          .replaceAll(minimalBook.platform, "[平台]")
+          .replaceAll(String(minimalBook.chapterWordCount), "[每章字数]")
+          .replaceAll(String(lengthSpec.softMin), "[字数下限]")
+          .replaceAll(String(lengthSpec.softMax), "[字数上限]")
+          .replaceAll(String(lengthSpec.hardMin), "[字数下限]")
+          .replaceAll(String(lengthSpec.hardMax), "[字数上限]");
+        break;
+      }
+      default:
+        prompt = null;
+        break;
+    }
+
+    return c.json({ prompt });
   });
 
   // --- Notify channels ---

@@ -1,4 +1,4 @@
-import { BaseAgent } from "./base.js";
+import { BaseAgent, applyPromptOverride } from "./base.js";
 import type { BookConfig } from "../models/book.js";
 import type { GenreProfile } from "../models/genre-profile.js";
 import type { BookRules } from "../models/book-rules.js";
@@ -218,11 +218,14 @@ export class WriterAgent extends BaseAgent {
       : undefined;
 
     // ── Phase 1: Creative writing (temperature 0.7) ──
-    const creativeSystemPrompt = buildWriterSystemPrompt(
-      book, genreProfile, bookRules, bookRulesBody, genreBody, styleGuide, styleFingerprint,
-      chapterNumber, "creative", fanficContext, resolvedLanguage,
-      input.chapterMemo ? "governed" : "legacy",
-      resolvedLengthSpec,
+    const creativeSystemPrompt = applyPromptOverride(
+      buildWriterSystemPrompt(
+        book, genreProfile, bookRules, bookRulesBody, genreBody, styleGuide, styleFingerprint,
+        chapterNumber, "creative", fanficContext, resolvedLanguage,
+        input.chapterMemo ? "governed" : "legacy",
+        resolvedLengthSpec,
+      ),
+      this.ctx.promptOverride,
     );
 
     const creativeUserPrompt = input.chapterMemo && input.contextPackage && input.ruleStack

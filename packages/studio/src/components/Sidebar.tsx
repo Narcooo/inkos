@@ -35,6 +35,7 @@ import {
   MoreHorizontal,
   Pencil,
   Trash2,
+  Brain,
 } from "lucide-react";
 
 interface BookSummary {
@@ -50,6 +51,7 @@ interface Nav {
   toBook: (id: string) => void;
   toBookCreate: () => void;
   toServices: () => void;
+  toAgentConfig: () => void;
   toDaemon: () => void;
   toLogs: () => void;
   toGenres: () => void;
@@ -328,6 +330,12 @@ export function Sidebar({ nav, activePage, sse, t }: {
               icon={<Settings size={16} />}
               active={activePage === "services"}
               onClick={nav.toServices}
+            />
+            <SidebarItem
+              label={t("nav.agentConfig")}
+              icon={<Brain size={16} />}
+              active={activePage === "agent-config"}
+              onClick={nav.toAgentConfig}
             />
 {/*            <SidebarItem
               label={t("nav.daemon")}

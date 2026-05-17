@@ -1,4 +1,4 @@
-import { BaseAgent } from "./base.js";
+import { BaseAgent, applyPromptOverride } from "./base.js";
 
 export interface ValidationWarning {
   readonly category: string;
@@ -51,7 +51,8 @@ export class StateValidatorAgent extends BaseAgent {
       ? "Respond in English."
       : "用中文回答。";
 
-    const systemPrompt = `You are a continuity validator for a novel writing system. ${langInstruction}
+    const systemPrompt = applyPromptOverride(
+      `You are a continuity validator for a novel writing system. ${langInstruction}
 
 Given the chapter text and the CHANGES made to truth files (state card + hooks pool), check for contradictions:
 
@@ -82,7 +83,9 @@ IMPORTANT: Output FAIL ONLY for hard contradictions — facts that directly conf
 - Missing details that the state card didn't capture
 - Reasonable extrapolations from text
 - Hook management differences that don't contradict text
-These should be warnings with PASS, not FAIL.`;
+These should be warnings with PASS, not FAIL.`,
+      this.ctx.promptOverride,
+    );
 
     const authorityBlock = this.buildAuthorityContextBlock(authorityContext);
 
