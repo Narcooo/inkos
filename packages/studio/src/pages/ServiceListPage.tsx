@@ -343,8 +343,12 @@ export function ServiceListPage({ nav }: { nav: Nav }) {
   const services = useServiceStore((s) => s.services);
   const loading = useServiceStore((s) => s.servicesLoading);
   const fetchServices = useServiceStore((s) => s.fetchServices);
+  const fetchBankModels = useServiceStore((s) => s.fetchBankModels);
+  const fetchCustomModels = useServiceStore((s) => s.fetchCustomModels);
 
   useEffect(() => { void fetchServices(); }, [fetchServices]);
+  useEffect(() => { void fetchBankModels(); }, [fetchBankModels]);
+  useEffect(() => { void fetchCustomModels(); }, [fetchCustomModels]);
 
   const [query, setQuery] = useState("");
   const [selectedGroups, setSelectedGroups] = useState<Set<EndpointGroup>>(new Set());
