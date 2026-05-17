@@ -194,6 +194,13 @@ const strings = {
   "genre.rulesMd": { zh: "规则（Markdown）", en: "Rules (Markdown)" },
 
   // Config extras
+  "config.defaultModel": { zh: "项目默认模型", en: "Default Project Model" },
+  "config.defaultModelDesc": { zh: "用于市场雷达、Agent 未单独配置模型时的默认选择", en: "Default for Radar and Agents without per-model overrides" },
+  "config.selectProvider": { zh: "选择服务商", en: "Select Provider" },
+  "config.selectModel": { zh: "选择模型", en: "Select Model" },
+  "config.saveSuccess": { zh: "保存成功", en: "Saved successfully" },
+  "config.saveError": { zh: "保存失败", en: "Save failed" },
+  "config.saving": { zh: "保存中…", en: "Saving…" },
   "config.modelRouting": { zh: "模型路由", en: "Model Routing" },
   "config.agent": { zh: "代理", en: "Agent" },
   "config.baseUrl": { zh: "基础 URL", en: "Base URL" },

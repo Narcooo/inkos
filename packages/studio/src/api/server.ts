@@ -1914,6 +1914,12 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       const raw = await readFile(configPath, "utf-8");
       const existing = JSON.parse(raw);
       // Merge LLM settings
+      if (updates.provider !== undefined && typeof updates.provider === "string") {
+        existing.llm.provider = updates.provider;
+      }
+      if (updates.model !== undefined && typeof updates.model === "string") {
+        existing.llm.model = updates.model;
+      }
       if (updates.temperature !== undefined) {
         existing.llm.temperature = updates.temperature;
       }

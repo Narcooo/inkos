@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Check, Eye, EyeOff, Loader2, Plus, Search, X } from "lucide-react";
 import { GROUP_LABELS, GROUP_ORDER, GROUP_SHORT_LABELS } from "../constants/service-groups";
-import { fetchJson } from "../hooks/use-api";
+import { fetchJson, putApi, useApi } from "../hooks/use-api";
 import { useServiceStore } from "../store/service";
 import type { EndpointGroup, ServiceInfo } from "../store/service";
 import { ServiceQuickLinks, getServiceQuickLinks } from "../components/ServiceQuickLinks";
@@ -63,6 +63,114 @@ interface CoverConfigPayload {
   readonly service: string | null;
   readonly model: string | null;
   readonly providers: readonly CoverProviderInfo[];
+}
+
+function DefaultModelConfigCard() {
+  const { data, refetch } = useApi<{ model?: string; provider?: string }>("/project");
+  const services = useServiceStore((s) => s.services);
+  const modelsByService = useServiceStore((s) => s.modelsByService);
+  const [provider, setProvider] = useState("");
+  const [model, setModel] = useState("");
+  const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [message, setMessage] = useState("");
+
+  const connectedServices = useMemo(
+    () => services.filter((s) => s.connected),
+    [services],
+  );
+
+  // 初始化：从 API 读取当前配置
+  useEffect(() => {
+    if (data && !provider && !model) {
+      const p = data.provider ?? "";
+      const m = data.model ?? "";
+      setProvider(p);
+      setModel(m);
+    }
+  }, [data, provider, model]);
+
+  // 切换服务商时重置模型为该服务商的第一个模型
+  const handleProviderChange = (nextProvider: string) => {
+    setProvider(nextProvider);
+    const svcModels = modelsByService[nextProvider] ?? [];
+    setModel(svcModels[0]?.id ?? "");
+    setStatus("idle");
+    setMessage("");
+  };
+
+  const handleSave = async () => {
+    if (!provider || !model) return;
+    setStatus("saving");
+    setMessage("");
+    try {
+      await putApi("/project", { provider, model });
+      setStatus("saved");
+      setMessage("项目默认模型已保存");
+      refetch();
+    } catch (error) {
+      setStatus("error");
+      setMessage(error instanceof Error ? error.message : "保存失败");
+    }
+  };
+
+  const currentModels = modelsByService[provider] ?? [];
+
+  return (
+    <section className="rounded-xl border border-border/50 bg-card/50 p-4 space-y-3">
+      <div>
+        <h2 className="text-sm font-medium text-foreground">项目默认模型</h2>
+        <p className="mt-1 text-xs text-muted-foreground/70">
+          用于市场雷达、Agent 未单独配置模型时的默认选择
+        </p>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-2">
+        <label className="space-y-1.5">
+          <span className="block text-xs font-medium text-muted-foreground/70">服务商</span>
+          <select
+            value={provider}
+            onChange={(e) => handleProviderChange(e.target.value)}
+            className="w-full rounded-lg border border-border/60 bg-background px-3 py-2 text-sm"
+          >
+            <option value="">选择服务商</option>
+            {connectedServices.map((s) => (
+              <option key={s.service} value={s.service}>{s.label}</option>
+            ))}
+          </select>
+        </label>
+        <label className="space-y-1.5">
+          <span className="block text-xs font-medium text-muted-foreground/70">模型</span>
+          <select
+            value={model}
+            onChange={(e) => { setModel(e.target.value); setStatus("idle"); }}
+            disabled={!provider}
+            className="w-full rounded-lg border border-border/60 bg-background px-3 py-2 text-sm disabled:opacity-50"
+          >
+            <option value="">选择模型</option>
+            {currentModels.map((m) => (
+              <option key={m.id} value={m.id}>{m.id}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3">
+        <button
+          onClick={handleSave}
+          disabled={status === "saving" || !provider || !model}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3.5 py-2 text-xs text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+        >
+          {status === "saving" && <Loader2 size={12} className="animate-spin" />}
+          保存默认模型
+        </button>
+        {message && (
+          <span className={`text-xs ${status === "error" ? "text-destructive" : "text-emerald-500"}`}>
+            {message}
+          </span>
+        )}
+      </div>
+    </section>
+  );
 }
 
 function CoverConfigCard() {
@@ -319,6 +427,8 @@ export function ServiceListPage({ nav }: { nav: Nav }) {
       </div>
 
       <h1 className="font-serif text-2xl">服务商管理</h1>
+
+      <DefaultModelConfigCard />
 
       <CoverConfigCard />
 
