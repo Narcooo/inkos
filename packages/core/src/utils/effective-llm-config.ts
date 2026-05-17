@@ -465,7 +465,8 @@ function modelBelongsToService(service: string, model: string): boolean {
 }
 
 function serviceAllowsUnlistedModels(service: string): boolean {
-  return service === "ollama";
+  // Gateway providers (empty model lists) allow any user-specified model
+  return service === "ollama" || service === "newapi" || service === "higress";
 }
 
 function serviceEntryKey(entry: ServiceConfigEntry): string {

@@ -43,6 +43,8 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
 
   const svc = services.find((s) => s.service === serviceId);
   const isCustom = serviceId === "custom" || serviceId.startsWith("custom:");
+  // newapi/higress 等网关类服务也需要填写 Base URL
+  const needsBaseUrl = isCustom || serviceId === "newapi" || serviceId === "higress";
   const persistedCustomName = serviceId.startsWith("custom:") ? decodeURIComponent(serviceId.slice("custom:".length)) : "";
 
   // -- Local form state --
@@ -54,6 +56,7 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
   const [apiFormat, setApiFormat] = useState<"chat" | "responses">("chat");
   const [stream, setStream] = useState(true);
   const [detectedModel, setDetectedModel] = useState<string>("");
+  const [model, setModel] = useState("");
   const [detectedConfig, setDetectedConfig] = useState<DetectedConfig | null>(null);
   const [verifiedProbe, setVerifiedProbe] = useState<VerifiedProbe | null>(null);
 
@@ -62,18 +65,30 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
 
   useEffect(() => {
     let cancelled = false;
-    void fetchJson<{ services: Array<Record<string, unknown>> }>("/services/config")
+    void fetchJson<Record<string, unknown>>("/services/config")
       .then((data) => {
         if (cancelled) return;
-        const matched = matchServiceConfigEntryForDetail(data.services ?? [], serviceId);
+        const services = (data.services as Array<Record<string, unknown>>) ?? [];
+        const matched = matchServiceConfigEntryForDetail(services, serviceId);
         if (!matched) return;
         if (isCustom) {
           setCustomName(String(matched.name ?? persistedCustomName));
+        }
+        if (needsBaseUrl) {
           setBaseUrl(String(matched.baseUrl ?? ""));
         }
         if (typeof matched.temperature === "number") setTemperature(String(matched.temperature));
         if (matched.apiFormat === "chat" || matched.apiFormat === "responses") setApiFormat(matched.apiFormat);
         if (typeof matched.stream === "boolean") setStream(matched.stream);
+        if (typeof matched.defaultModel === "string") setModel(matched.defaultModel);
+        // Also check top-level defaultModel when service matches
+        if (!matched.defaultModel && typeof data.defaultModel === "string" && data.service === serviceId) {
+          setModel(data.defaultModel as string);
+        }
+        // For non-custom services, check top-level model if service matches
+        if (!isCustom && typeof data.model === "string" && data.service === serviceId) {
+          setModel(data.model as string);
+        }
       })
       .catch(() => {});
     return () => { cancelled = true; };
@@ -119,6 +134,21 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
     svc?.connected,
   ]);
 
+  // Load models on mount for connected services
+  useEffect(() => {
+    if (!svc?.connected) return;
+    let cancelled = false;
+    void fetchJson<{ models: ModelInfo[] }>(`/services/${encodeURIComponent(serviceId)}/models`)
+      .then((data) => {
+        if (cancelled) return;
+        if (data.models?.length > 0) {
+          setStoreModels(effectiveServiceId, data.models);
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [effectiveServiceId, serviceId, setStoreModels, svc?.connected]);
+
   if (loading) return <DetailSkeleton />;
 
   // -- Derived state --
@@ -133,7 +163,7 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
       setStatus({ state: "error", message: "请先输入 API Key" });
       return;
     }
-    if (isCustom && !baseUrl.trim()) {
+    if (needsBaseUrl && !baseUrl.trim()) {
       setStatus({ state: "error", message: "请先填写 Base URL" });
       return;
     }
@@ -144,16 +174,17 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
         apiKey: trimmedKey,
         apiFormat,
         stream,
-        ...(isCustom ? { baseUrl: baseUrl.trim() } : {}),
+        ...(needsBaseUrl ? { baseUrl: baseUrl.trim() } : {}),
+        ...(model.trim() ? { preferredModel: model.trim() } : {}),
       });
       if (result.ok) {
         const models = result.models ?? [];
         const verifiedApiFormat = result.detected?.apiFormat ?? apiFormat;
         const verifiedStream = typeof result.detected?.stream === "boolean" ? result.detected.stream : stream;
-        const verifiedBaseUrl = isCustom ? (result.detected?.baseUrl ?? baseUrl.trim()) : "";
+        const verifiedBaseUrl = needsBaseUrl ? (result.detected?.baseUrl ?? baseUrl.trim()) : "";
         if (result.detected?.apiFormat) setApiFormat(result.detected.apiFormat);
         if (typeof result.detected?.stream === "boolean") setStream(result.detected.stream);
-        if (isCustom && result.detected?.baseUrl) setBaseUrl(result.detected.baseUrl);
+        if (needsBaseUrl && result.detected?.baseUrl) setBaseUrl(result.detected.baseUrl);
         setDetectedModel(result.selectedModel ?? "");
         setDetectedConfig(result.detected ?? null);
         setVerifiedProbe({
@@ -194,7 +225,7 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
   const handleSave = async () => {
     const trimmedKey = apiKey.trim();
     setApiKey(trimmedKey);
-    if (isCustom && !baseUrl.trim()) {
+    if (needsBaseUrl && !baseUrl.trim()) {
       setStatus({ state: "error", message: "请先填写 Base URL" });
       return;
     }
@@ -204,6 +235,7 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
         effectiveServiceId,
         serviceId,
         isCustom,
+        needsBaseUrl,
         resolvedCustomName,
         apiKey: trimmedKey,
         baseUrl,
@@ -216,7 +248,7 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
       if (result.status.state === "connected") {
         if (result.detectedConfig?.apiFormat) setApiFormat(result.detectedConfig.apiFormat);
         if (typeof result.detectedConfig?.stream === "boolean") setStream(result.detectedConfig.stream);
-        if (isCustom && result.detectedConfig?.baseUrl) setBaseUrl(result.detectedConfig.baseUrl);
+        if (needsBaseUrl && result.detectedConfig?.baseUrl) setBaseUrl(result.detectedConfig.baseUrl);
         setDetectedModel(result.detectedModel);
         setDetectedConfig(result.detectedConfig);
         setStoreModels(effectiveServiceId, result.status.models);
@@ -255,13 +287,15 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
       <ServiceQuickLinks serviceId={serviceId} />
 
       <div className="space-y-5">
-        {/* Custom fields */}
-        {isCustom && (
+        {/* Base URL for gateway services (custom, newapi, higress) */}
+        {needsBaseUrl && (
         <div className="grid grid-cols-2 gap-4">
+            {isCustom && (
             <Field label="服务名称">
               <input type="text" value={customName} onChange={(e) => setCustomName(e.target.value)}
                 placeholder="例如：本地 Ollama" className="w-full rounded-lg border border-border/60 bg-background px-3 py-2 text-sm" />
             </Field>
+            )}
             <Field label="Base URL">
               <input type="text" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)}
                 placeholder="https://api.example.com/v1" className="w-full rounded-lg border border-border/60 bg-background px-3 py-2 text-sm font-mono" />
@@ -283,6 +317,18 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
             </button>
           </div>
         </Field>
+
+        {/* Model input for gateway services */}
+        {needsBaseUrl && (
+          <Field label="模型名称">
+            <input
+              type="text" value={model}
+              onChange={(e) => setModel(e.target.value)}
+              placeholder="例如：gpt-4o、qwen-plus"
+              className="w-full rounded-lg border border-border/60 bg-background px-3 py-2 text-sm font-mono"
+            />
+          </Field>
+        )}
 
         {/* Actions + feedback */}
         <div className="flex items-center gap-2">
