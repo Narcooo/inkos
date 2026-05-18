@@ -1,4 +1,4 @@
-import { BaseAgent } from "./base.js";
+import { BaseAgent, applyPromptOverride } from "./base.js";
 import type { BookConfig } from "../models/book.js";
 import type { GenreProfile } from "../models/genre-profile.js";
 import type { ContextPackage, RuleStack } from "../models/input-governance.js";
@@ -108,12 +108,15 @@ export class ChapterAnalyzerAgent extends BaseAgent {
       ? this.buildReducedControlBlock(input.chapterIntent, input.contextPackage, input.ruleStack, resolvedLanguage)
       : "";
 
-    const systemPrompt = this.buildSystemPrompt(
-      book,
-      genreProfile,
-      genreBody,
-      bookRulesBody,
-      resolvedLanguage,
+    const systemPrompt = applyPromptOverride(
+      this.buildSystemPrompt(
+        book,
+        genreProfile,
+        genreBody,
+        bookRulesBody,
+        resolvedLanguage,
+      ),
+      this.ctx.promptOverride,
     );
 
     const userPrompt = this.buildUserPrompt({

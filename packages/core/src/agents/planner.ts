@@ -1,6 +1,6 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { BaseAgent } from "./base.js";
+import { BaseAgent, applyPromptOverride } from "./base.js";
 import type { BookConfig } from "../models/book.js";
 import { readBookRules as readAuthoritativeBookRules } from "./rules-reader.js";
 import {
@@ -235,7 +235,10 @@ export class PlannerAgent extends BaseAgent {
       language,
     });
 
-    const systemPrompt = getPlannerMemoSystemPrompt(language);
+    const systemPrompt = applyPromptOverride(
+      getPlannerMemoSystemPrompt(language),
+      this.ctx.promptOverride,
+    );
 
     let currentUserMessage = userMessage;
     let lastError: PlannerParseError | undefined;

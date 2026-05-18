@@ -17,6 +17,8 @@ import { StyleManager } from "./pages/StyleManager";
 import { ImportManager } from "./pages/ImportManager";
 import { RadarView } from "./pages/RadarView";
 import { DoctorView } from "./pages/DoctorView";
+import { AgentConfigPage } from "./pages/AgentConfigPage";
+import { AgentPromptDetailPage } from "./pages/AgentPromptDetailPage";
 import { LanguageSelector } from "./pages/LanguageSelector";
 import { BookSidebar, BookSidebarToggle } from "./components/chat/BookSidebar";
 import { useSSE } from "./hooks/use-sse";
@@ -73,6 +75,8 @@ export function App() {
       setRoute({ page: "chapter", bookId, chapterNumber }),
     toAnalytics: (bookId: string) => setRoute({ page: "analytics", bookId }),
     toServices: () => setRoute({ page: "services" }),
+    toAgentConfig: () => setRoute({ page: "agent-config" }),
+    toAgentPromptDetail: (agentKey: string) => setRoute({ page: "agent-prompt-detail", agentKey }),
     toServiceDetail: (id: string) => setRoute({ page: "service-detail", serviceId: id }),
     toTruth: (bookId: string) => setRoute({ page: "truth", bookId }),
     toDaemon: () => setRoute({ page: "daemon" }),
@@ -217,6 +221,16 @@ export function App() {
           {route.page === "service-detail" && (
             <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
               <ServiceDetailPage serviceId={route.serviceId} nav={nav} />
+            </div>
+          )}
+          {route.page === "agent-config" && (
+            <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
+              <AgentConfigPage nav={nav} t={t} />
+            </div>
+          )}
+          {route.page === "agent-prompt-detail" && (
+            <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
+              <AgentPromptDetailPage agentKey={route.agentKey} nav={nav} t={t} />
             </div>
           )}
           {route.page === "truth" && (

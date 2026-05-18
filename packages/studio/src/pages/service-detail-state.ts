@@ -47,6 +47,7 @@ export async function probeServiceForDetail(
     readonly apiFormat: "chat" | "responses";
     readonly stream: boolean;
     readonly baseUrl?: string;
+    readonly preferredModel?: string;
   },
   deps?: { readonly fetchJsonImpl?: JsonFetcher },
 ): Promise<ServiceProbeResponse> {
@@ -107,6 +108,7 @@ export async function saveServiceConfig(args: {
   readonly effectiveServiceId: string;
   readonly serviceId: string;
   readonly isCustom: boolean;
+  readonly needsBaseUrl?: boolean;
   readonly resolvedCustomName: string;
   readonly apiKey: string;
   readonly baseUrl: string;
@@ -125,6 +127,7 @@ export async function saveServiceConfig(args: {
   const trimmedKey = args.apiKey.trim();
   const trimmedBaseUrl = args.baseUrl.trim();
 
+  const needsBaseUrl = args.needsBaseUrl ?? args.isCustom;
   if (!trimmedKey && !args.isCustom) {
     return {
       status: { state: "error", message: "请先输入 API Key" },
@@ -132,7 +135,7 @@ export async function saveServiceConfig(args: {
       detectedConfig: null,
     };
   }
-  if (args.isCustom && !trimmedBaseUrl) {
+  if (needsBaseUrl && !trimmedBaseUrl) {
     return {
       status: { state: "error", message: "请先填写 Base URL" },
       detectedModel: "",
@@ -164,7 +167,8 @@ export async function saveServiceConfig(args: {
         apiKey: trimmedKey,
         apiFormat: args.apiFormat,
         stream: args.stream,
-        ...(args.isCustom ? { baseUrl: trimmedBaseUrl } : {}),
+        ...(needsBaseUrl ? { baseUrl: trimmedBaseUrl } : {}),
+        ...(args.detectedModel ? { preferredModel: args.detectedModel } : {}),
       }, { fetchJsonImpl });
     } catch (error) {
       return {
@@ -187,7 +191,7 @@ export async function saveServiceConfig(args: {
   const detectedConfig = probe.detected ?? null;
   const savedApiFormat = detectedConfig?.apiFormat ?? args.apiFormat;
   const savedStream = typeof detectedConfig?.stream === "boolean" ? detectedConfig.stream : args.stream;
-  const savedBaseUrl = args.isCustom ? (detectedConfig?.baseUrl ?? trimmedBaseUrl) : undefined;
+  const savedBaseUrl = needsBaseUrl ? (detectedConfig?.baseUrl ?? trimmedBaseUrl) : undefined;
 
   await fetchJsonImpl(`/services/${encodeURIComponent(args.effectiveServiceId)}/secret`, {
     method: "PUT",
@@ -207,8 +211,8 @@ export async function saveServiceConfig(args: {
           temperature: parseFloat(args.temperature),
           apiFormat: savedApiFormat,
           stream: savedStream,
-          ...(args.isCustom ? {
-            name: args.resolvedCustomName,
+          ...(needsBaseUrl ? {
+            ...(args.isCustom ? { name: args.resolvedCustomName } : {}),
             baseUrl: savedBaseUrl,
           } : {}),
         },

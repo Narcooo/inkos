@@ -1,4 +1,4 @@
-import { BaseAgent } from "./base.js";
+import { BaseAgent, applyPromptOverride } from "./base.js";
 import type { BookConfig, FanficMode } from "../models/book.js";
 import type { GenreProfile } from "../models/genre-profile.js";
 import { readGenreProfile } from "./rules-reader.js";
@@ -135,9 +135,12 @@ export class ArchitectAgent extends BaseAgent {
     const powerBlock = gp.powerScaling ? "- 有明确的战力等级体系" : "";
     const eraBlock = gp.eraResearch ? "- 需要年代考据支撑（在 book_rules 中设置 eraConstraints）" : "";
 
-    const systemPrompt = resolvedLanguage === "en"
-      ? this.buildEnglishFoundationPrompt(book, gp, genreBody, contextBlock, reviewFeedbackBlock, numericalBlock, powerBlock, eraBlock)
-      : this.buildChineseFoundationPrompt(book, gp, genreBody, contextBlock, reviewFeedbackBlock, numericalBlock, powerBlock, eraBlock);
+    const systemPrompt = applyPromptOverride(
+      resolvedLanguage === "en"
+        ? this.buildEnglishFoundationPrompt(book, gp, genreBody, contextBlock, reviewFeedbackBlock, numericalBlock, powerBlock, eraBlock)
+        : this.buildChineseFoundationPrompt(book, gp, genreBody, contextBlock, reviewFeedbackBlock, numericalBlock, powerBlock, eraBlock),
+      this.ctx.promptOverride,
+    );
 
     const langPrefix = resolvedLanguage === "en"
       ? `【LANGUAGE OVERRIDE】ALL output (story_frame, volume_map, roles, book_rules, pending_hooks) MUST be written in English. Character names, place names, and all prose must be in English. The === SECTION: === tags remain unchanged. Do NOT emit rhythm_principles or current_state sections — rhythm principles live inside the last paragraph of volume_map; environment/era anchors (when relevant) are woven into story_frame's world-tonal-ground paragraph.\n\n`
@@ -970,8 +973,9 @@ Naturally extend the existing arc. Advance existing conflicts, pay off planted h
           : `## 续写方向
 自然延续已有叙事弧线。推进现有冲突、兑现已埋伏笔、引入有机新变数。`);
 
-    const systemPrompt = resolvedLanguage === "en"
-      ? `You are a professional novel architect. Reverse-engineer a prose-density foundation from the source chapters and write the continuation path.${contextBlock}${reviewFeedbackBlock}
+    const systemPrompt = applyPromptOverride(
+      resolvedLanguage === "en"
+        ? `You are a professional novel architect. Reverse-engineer a prose-density foundation from the source chapters and write the continuation path.${contextBlock}${reviewFeedbackBlock}
 
 ## Book metadata
 - Title: ${book.title}
@@ -1011,7 +1015,9 @@ ${continuationDirective}
 ## 输出契约
 合并后的 5 段 === SECTION: === 结构：story_frame / volume_map / roles / book_rules / pending_hooks。**不要输出 rhythm_principles 或 current_state 两个 section**——节奏原则合并进 volume_map 尾段，角色初始状态合并进 roles.当前现状，初始钩子写在 pending_hooks startChapter=0 行；环境/时代锚（只有年代文 / 历史同人 / 都市重生等真实年份题材需要）织进 story_frame.世界观底色，其他题材直接省略。
 
-所有 prose 必须从资料包中推导，不得臆造。若资料包声明为压缩包，把章节目录和正文摘录当作基础设定证据；完整章节会在后续回放阶段逐章进入 truth files。volume_map 中，已有章节作为"回顾段"（一段散文），续写部分写到章级 prose。伏笔识别以资料包提供的证据为准，尽量完整。`;
+所有 prose 必须从资料包中推导，不得臆造。若资料包声明为压缩包，把章节目录和正文摘录当作基础设定证据；完整章节会在后续回放阶段逐章进入 truth files。volume_map 中，已有章节作为"回顾段"（一段散文），续写部分写到章级 prose。伏笔识别以资料包提供的证据为准，尽量完整。`,
+      this.ctx.promptOverride,
+    );
 
     const userMessage = resolvedLanguage === "en"
       ? `Generate the complete foundation for an imported ${gp.name} novel titled "${book.title}". Write everything in English.\n\n${chaptersText}`
@@ -1042,7 +1048,8 @@ ${continuationDirective}
       cp: "以配对角色的关系线为主线规划卷纲。每卷必须有关系推进节点。",
     };
 
-    const systemPrompt = `你是专业同人架构师。基于原作正典为同人生成散文密度的基础设定。
+    const systemPrompt = applyPromptOverride(
+      `你是专业同人架构师。基于原作正典为同人生成散文密度的基础设定。
 
 ## 同人模式：${fanficMode}
 ${MODE_INSTRUCTIONS[fanficMode]}
@@ -1069,7 +1076,9 @@ ${genreBody}
 - book_rules 的 fanficMode 必须设为 "${fanficMode}"
 - book_rules 只输出 YAML frontmatter，散文写进 story_frame.世界观底色
 - 主角弧线只写在 roles/主要角色/<主角>.md，不在 story_frame 重复
-- 所有 outline 必须是散文密度`;
+- 所有 outline 必须是散文密度`,
+      this.ctx.promptOverride,
+    );
 
     const response = await this.chat([
       { role: "system", content: systemPrompt },

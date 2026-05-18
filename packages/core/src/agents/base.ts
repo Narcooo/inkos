@@ -3,6 +3,12 @@ import { chatCompletion } from "../llm/provider.js";
 import { searchWeb, fetchUrl } from "../utils/web-search.js";
 import type { Logger } from "../utils/logger.js";
 
+/** Prompt 覆盖配置 */
+export interface PromptOverride {
+  readonly mode: "full" | "append";
+  readonly content: string;
+}
+
 export interface AgentContext {
   readonly client: LLMClient;
   readonly model: string;
@@ -10,6 +16,21 @@ export interface AgentContext {
   readonly bookId?: string;
   readonly logger?: Logger;
   readonly onStreamProgress?: OnStreamProgress;
+  /** 该 Agent 的 prompt 覆盖配置（来自 inkos.json promptOverrides） */
+  readonly promptOverride?: PromptOverride;
+}
+
+/**
+ * 应用 prompt 覆盖：完全替换或追加到默认 prompt
+ */
+export function applyPromptOverride(
+  defaultPrompt: string,
+  override: PromptOverride | undefined,
+): string {
+  if (!override) return defaultPrompt;
+  if (override.mode === "full") return override.content.trim();
+  // append 模式：追加到默认 prompt 后
+  return `${defaultPrompt.trim()}\n\n${override.content.trim()}`;
 }
 
 export abstract class BaseAgent {

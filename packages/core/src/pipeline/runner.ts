@@ -228,6 +228,8 @@ export interface PipelineConfig {
   readonly radarSources?: ReadonlyArray<RadarSource>;
   readonly externalContext?: string;
   readonly modelOverrides?: Record<string, string | AgentLLMOverride>;
+  /** 每个 Agent 的 prompt 覆盖配置 */
+  readonly promptOverrides?: Record<string, { readonly mode: "full" | "append"; readonly content: string }>;
   readonly inputGovernanceMode?: InputGovernanceMode;
   readonly logger?: Logger;
   readonly onStreamProgress?: OnStreamProgress;
@@ -578,6 +580,7 @@ export class PipelineRunner {
       bookId,
       logger: this.config.logger?.child(agent),
       onStreamProgress: this.config.onStreamProgress,
+      promptOverride: this.config.promptOverrides?.[agent],
     };
   }
 

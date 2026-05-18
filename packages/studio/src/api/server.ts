@@ -32,6 +32,7 @@ import {
   listModelsForService,
   isApiKeyOptionalForEndpoint,
   getAllEndpoints,
+  getEndpoint,
   probeModelsFromUpstream,
   fetchWithProxy,
   chatCompletion,
@@ -46,6 +47,11 @@ import {
   type ProjectConfig,
   type LogSink,
   type LogEntry,
+  buildWriterSystemPrompt,
+  getPlannerMemoSystemPrompt,
+  buildLengthSpec,
+  type BookConfig,
+  type GenreProfile,
 } from "@actalk/inkos-core";
 import { access, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
@@ -521,17 +527,20 @@ async function readEnvConfigStatus(root: string): Promise<EnvConfigStatus> {
 async function resolveConfiguredServiceBaseUrl(root: string, serviceId: string, inlineBaseUrl?: string): Promise<string | undefined> {
   if (inlineBaseUrl?.trim()) return inlineBaseUrl.trim();
 
-  if (!isCustomServiceId(serviceId)) {
-    return resolveServicePreset(serviceId)?.baseUrl;
+  // 预设已有 baseUrl 的非网关服务直接使用预设
+  const presetBaseUrl = resolveServicePreset(serviceId)?.baseUrl;
+  if (presetBaseUrl && !isCustomServiceId(serviceId) && serviceId !== "newapi" && serviceId !== "higress") {
+    return presetBaseUrl;
   }
 
+  // custom/newapi/higress 等网关服务需要查配置文件
   try {
     const config = await loadRawConfig(root);
     const services = normalizeServiceConfig((config.llm as Record<string, unknown> | undefined)?.services);
     const matched = services.find((entry) => serviceConfigKey(entry) === serviceId);
-    return matched?.baseUrl;
+    return matched?.baseUrl || (presetBaseUrl || undefined);
   } catch {
-    return undefined;
+    return presetBaseUrl;
   }
 }
 
@@ -1624,11 +1633,12 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   app.post("/api/v1/services/:service/test", async (c) => {
     const service = c.req.param("service");
-    const { apiKey, baseUrl, apiFormat, stream } = await c.req.json<{
+    const { apiKey, baseUrl, apiFormat, stream, preferredModel } = await c.req.json<{
       apiKey: string;
       baseUrl?: string;
       apiFormat?: "chat" | "responses";
       stream?: boolean;
+      preferredModel?: string;
     }>();
 
     const resolvedBaseUrl = await resolveConfiguredServiceBaseUrl(root, service, baseUrl);
@@ -1657,6 +1667,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       baseUrl: resolvedBaseUrl,
       preferredApiFormat: apiFormat,
       preferredStream: stream,
+      preferredModel,
       proxyUrl: typeof llm.proxyUrl === "string" ? llm.proxyUrl : undefined,
     });
 
@@ -1723,6 +1734,8 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   app.get("/api/v1/services/models", async (c) => {
     const secrets = await loadSecrets(root);
+
+    // Bank endpoints with preset models
     const endpoints = getAllEndpoints()
       .filter((ep) => ep.id !== "custom" && Boolean(secrets.services[ep.id]?.apiKey));
 
@@ -1740,7 +1753,31 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
         })),
     }));
 
-    return c.json({ groups });
+    // Gateway services (newapi, higress): probe live models when baseUrl is configured
+    const gatewayServices = ["newapi", "higress"];
+    const gatewayGroups = await Promise.all(
+      gatewayServices
+        .filter((svc) => Boolean(secrets.services[svc]?.apiKey))
+        .map(async (svc) => {
+          const baseUrl = await resolveConfiguredServiceBaseUrl(root, svc);
+          if (!baseUrl) return null;
+          const ep = getEndpoint(svc);
+          const probed = await probeModelsFromUpstream(baseUrl, secrets.services[svc].apiKey, 10_000);
+          const textModels = filterTextChatModels(probed);
+          return {
+            service: svc,
+            label: ep?.label ?? svc,
+            models: textModels.map((m) => ({
+              id: m.id,
+              name: m.name,
+              ...(m.contextWindow > 0 ? { contextWindow: m.contextWindow } : {}),
+            })),
+          };
+        }),
+    );
+
+    const result = [...groups, ...gatewayGroups.filter((g): g is NonNullable<typeof g> => g !== null)];
+    return c.json({ groups: result });
   });
 
   app.get("/api/v1/services/models/custom", async (c) => {
@@ -1798,10 +1835,12 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     }
 
     // B13: 走 listModelsForService 走 live probe + bank 交叉，返回带元数据的 models
+    // 网关类服务（custom/newapi/higress）baseUrl 为空，需要传 resolvedBaseUrl 才能探测
+    const needsLiveBaseUrl = isCustomServiceId(service) || service === "newapi" || service === "higress";
     const enriched = await listModelsForService(
       isCustomServiceId(service) ? "custom" : service,
       apiKey,
-      isCustomServiceId(service) ? resolvedBaseUrl ?? undefined : undefined,
+      needsLiveBaseUrl ? (resolvedBaseUrl ?? undefined) : undefined,
     );
     const models = filterTextChatModels(enriched).map((m) => ({
       id: m.id,
@@ -1827,6 +1866,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       languageExplicit,
       model: currentConfig.llm.model,
       provider: currentConfig.llm.provider,
+      service: currentConfig.llm.service,
       baseUrl: currentConfig.llm.baseUrl,
       stream: currentConfig.llm.stream,
       temperature: currentConfig.llm.temperature,
@@ -1875,6 +1915,15 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       const raw = await readFile(configPath, "utf-8");
       const existing = JSON.parse(raw);
       // Merge LLM settings
+      if (updates.provider !== undefined && typeof updates.provider === "string") {
+        existing.llm.provider = updates.provider;
+      }
+      if (updates.model !== undefined && typeof updates.model === "string") {
+        existing.llm.model = updates.model;
+      }
+      if (updates.service !== undefined && typeof updates.service === "string") {
+        existing.llm.service = updates.service;
+      }
       if (updates.temperature !== undefined) {
         existing.llm.temperature = updates.temperature;
       }
@@ -2832,6 +2881,103 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     const { writeFile: writeFileFs } = await import("node:fs/promises");
     await writeFileFs(configPath, JSON.stringify(raw, null, 2), "utf-8");
     return c.json({ ok: true });
+  });
+
+  // --- Prompt overrides ---
+
+  app.get("/api/v1/project/prompt-overrides", async (c) => {
+    const raw = JSON.parse(await readFile(join(root, "inkos.json"), "utf-8"));
+    return c.json({ overrides: raw.promptOverrides ?? {} });
+  });
+
+  app.put("/api/v1/project/prompt-overrides", async (c) => {
+    const { overrides } = await c.req.json<{
+      overrides: Record<string, { mode: "full" | "append"; content: string }>;
+    }>();
+    const configPath = join(root, "inkos.json");
+    const raw = JSON.parse(await readFile(configPath, "utf-8"));
+    raw.promptOverrides = overrides;
+    const { writeFile: writeFileFs } = await import("node:fs/promises");
+    await writeFileFs(configPath, JSON.stringify(raw, null, 2), "utf-8");
+    return c.json({ ok: true });
+  });
+
+  // --- Agent default prompt ---
+
+  app.get("/api/v1/project/agent/:agentKey/default-prompt", async (c) => {
+    const agentKey = c.req.param("agentKey");
+    const config = await loadProjectConfig(root);
+    const language = config.language ?? "zh";
+
+    let prompt: string | null = null;
+
+    switch (agentKey) {
+      case "Planner":
+        prompt = getPlannerMemoSystemPrompt(language as "zh" | "en");
+        break;
+      // Writer 需要运行时参数，构造一个 minimal book 返回核心写作框架，
+      // 然后用占位符替换掉具体值，避免用户误以为"示例书籍"就是实际内容
+      case "Writer": {
+        const minimalBook: BookConfig = {
+          id: "demo",
+          title: "示例书籍",
+          platform: "other",
+          genre: "urban-fantasy",
+          status: "active",
+          targetChapters: 200,
+          chapterWordCount: 3000,
+          language,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        const minimalGenre: GenreProfile = {
+          name: "都市奇幻",
+          id: "urban-fantasy",
+          language,
+          chapterTypes: ["日常", "战斗", "探索"],
+          fatigueWords: [],
+          numericalSystem: false,
+          powerScaling: false,
+          eraResearch: false,
+          pacingRule: "",
+          satisfactionTypes: [],
+          auditDimensions: [],
+        };
+        const isEnglish = language === "en";
+        const lengthSpec = buildLengthSpec(minimalBook.chapterWordCount, isEnglish ? "en" : "zh");
+        prompt = buildWriterSystemPrompt(
+          minimalBook,
+          minimalGenre,
+          null,   // bookRules
+          "",     // bookRulesBody
+          "",     // genreBody
+          "",     // styleGuide
+          "",     // styleFingerprint
+          undefined, // chapterNumber
+          "creative", // mode
+          undefined, // fanficContext
+          language,
+          "legacy",
+          lengthSpec,
+        );
+
+        // 将具体值替换为占位符，运行时会被真实值填充
+        prompt = prompt
+          .replaceAll(minimalGenre.name, "[题材]")
+          .replaceAll(minimalBook.platform, "[平台]")
+          .replaceAll(String(minimalBook.chapterWordCount), "[每章字数]")
+          .replaceAll(String(lengthSpec.softMin), "[字数下限]")
+          .replaceAll(String(lengthSpec.softMax), "[字数上限]")
+          .replaceAll(String(lengthSpec.hardMin), "[字数下限]")
+          .replaceAll(String(lengthSpec.hardMax), "[字数上限]");
+        break;
+      }
+      default:
+        prompt = null;
+        break;
+    }
+
+    return c.json({ prompt });
   });
 
   // --- Notify channels ---

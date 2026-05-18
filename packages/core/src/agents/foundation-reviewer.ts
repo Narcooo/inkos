@@ -1,4 +1,4 @@
-import { BaseAgent } from "./base.js";
+import { BaseAgent, applyPromptOverride } from "./base.js";
 import type { ArchitectOutput } from "./architect.js";
 
 export interface FoundationReviewResult {
@@ -38,9 +38,12 @@ export class FoundationReviewerAgent extends BaseAgent {
       ? this.originalDimensions(params.language)
       : this.derivativeDimensions(params.language, params.mode);
 
-    const systemPrompt = params.language === "en"
-      ? this.buildEnglishReviewPrompt(dimensions, canonBlock, styleBlock)
-      : this.buildChineseReviewPrompt(dimensions, canonBlock, styleBlock);
+    const systemPrompt = applyPromptOverride(
+      params.language === "en"
+        ? this.buildEnglishReviewPrompt(dimensions, canonBlock, styleBlock)
+        : this.buildChineseReviewPrompt(dimensions, canonBlock, styleBlock),
+      this.ctx.promptOverride,
+    );
 
     const userPrompt = this.buildFoundationExcerpt(params.foundation, params.language);
 

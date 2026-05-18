@@ -115,6 +115,11 @@ export const ProjectConfigSchema = z.object({
     reviewRetries: 2,
   }),
   modelOverrides: z.record(z.string(), ModelOverrideValueSchema).optional(),
+  /** 每个 Agent 的 prompt 覆盖配置 */
+  promptOverrides: z.record(z.string(), z.object({
+    mode: z.enum(["full", "append"]),
+    content: z.string().min(1),
+  })).optional(),
   inputGovernanceMode: InputGovernanceModeSchema.default("v2"),
   daemon: z.object({
     schedule: z.object({

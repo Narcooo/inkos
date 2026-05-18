@@ -1,4 +1,4 @@
-import { BaseAgent } from "./base.js";
+import { BaseAgent, applyPromptOverride } from "./base.js";
 import type { Platform, Genre } from "../models/book.js";
 import type { RadarSource, PlatformRankings } from "./radar-source.js";
 import { FanqieRadarSource, QidianRadarSource } from "./radar-source.js";
@@ -57,7 +57,8 @@ export class RadarAgent extends BaseAgent {
     const rankings = await Promise.all(this.sources.map((s) => s.fetch()));
     const rankingsText = formatRankingsForPrompt(rankings);
 
-    const systemPrompt = `你是一个专业的网络小说市场分析师。下面是从各平台实时抓取的排行榜数据，请基于这些真实数据分析市场趋势。
+    const systemPrompt = applyPromptOverride(
+      `你是一个专业的网络小说市场分析师。下面是从各平台实时抓取的排行榜数据，请基于这些真实数据分析市场趋势。
 
 ## 实时排行榜数据
 
@@ -84,7 +85,9 @@ ${rankingsText}
   "marketSummary": "整体市场概述（基于真实榜单数据）"
 }
 
-推荐数量：3-5个，按 confidence 降序排列。`;
+推荐数量：3-5个，按 confidence 降序排列。`,
+      this.ctx.promptOverride,
+    );
 
     const response = await this.chat(
       [
