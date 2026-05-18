@@ -66,7 +66,10 @@ interface CoverConfigPayload {
 }
 
 function DefaultModelConfigCard() {
-  const { data, refetch } = useApi<{ model?: string; provider?: string; service?: string }>("/project");
+  // 使用 /services/config 直接读写原始 inkos.json 中的 service / defaultModel；
+  // /project 接口会经过 resolveEffectiveLLMConfig 处理，会把 "custom:XXX" 重写为 "custom"
+  // 并用 defaultModel 覆盖 model，导致自定义服务商保存的值在加载时丢失。
+  const { data, refetch } = useApi<{ service?: string | null; defaultModel?: string | null }>("/services/config");
   const services = useServiceStore((s) => s.services);
   const modelsByService = useServiceStore((s) => s.modelsByService);
   const [provider, setProvider] = useState("");
@@ -81,14 +84,11 @@ function DefaultModelConfigCard() {
 
   const initialized = useRef(false);
 
-  // 初始化：从 API 读取当前配置
   useEffect(() => {
     if (data && !initialized.current) {
       initialized.current = true;
-      // 优先用 service 字段初始化（这是持久化的主键），provider 是派生值
-      const p = data.service ?? data.provider ?? "";
-      setProvider(p);
-      setModel(data.model ?? "");
+      setProvider(data.service ?? "");
+      setModel(data.defaultModel ?? "");
     }
   }, [data]);
 
@@ -106,7 +106,7 @@ function DefaultModelConfigCard() {
     setStatus("saving");
     setMessage("");
     try {
-      await putApi("/project", { provider, model, service: provider });
+      await putApi("/services/config", { service: provider, defaultModel: model });
       setStatus("saved");
       setMessage("项目默认模型已保存");
       refetch();
