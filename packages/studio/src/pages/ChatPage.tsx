@@ -25,6 +25,8 @@ import {
   ArrowUp,
   ChevronDown,
   Check,
+  AlertTriangle,
+  RefreshCw,
 } from "lucide-react";
 import { Shimmer } from "../components/ai-elements/shimmer";
 import {
@@ -41,6 +43,18 @@ import {
   setBookCreateSessionId,
   setProjectChatSessionId,
 } from "./chat-page-state";
+
+interface FailoverEvent {
+  type: "model:failover";
+  timestamp: number;
+  switched: boolean;
+  previousService: string;
+  previousModel: string;
+  newService: string;
+  newModel: string;
+  reason: string;
+  requiresUserAction: boolean;
+}
 
 // -- Types --
 
@@ -66,7 +80,7 @@ interface ServiceConfigPayload {
 
 // -- Component --
 
-export function ChatPage({ activeBookId, mode = activeBookId ? "book" : "book-create", nav, theme, t, sse: _sse }: ChatPageProps) {
+export function ChatPage({ activeBookId, mode = activeBookId ? "book" : "book-create", nav, theme, t, sse }: ChatPageProps) {
   // -- Store selectors --
   const messages = useChatStore(chatSelectors.activeMessages);
   const activeSessionId = useChatStore((s) => s.activeSessionId);
@@ -85,9 +99,66 @@ export function ChatPage({ activeBookId, mode = activeBookId ? "book" : "book-cr
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [failoverEvent, setFailoverEvent] = useState<FailoverEvent | null>(null);
+  const [switchingModel, setSwitchingModel] = useState(false);
 
   const isZh = t("nav.connected") === "\u5DF2\u8FDE\u63A5";
   const hasBook = Boolean(activeBookId);
+
+  // Listen for failover events from SSE
+  useEffect(() => {
+    const latestFailover = sse.messages
+      .filter((msg) => msg.event === "model:failover")
+      .pop();
+    if (latestFailover && (latestFailover.data as FailoverEvent).requiresUserAction) {
+      setFailoverEvent(latestFailover.data as FailoverEvent);
+    }
+  }, [sse.messages]);
+
+  const handleSwitchToNextModel = async () => {
+    if (!failoverEvent) return;
+    console.log(`[chat-page] handleSwitchToNextModel called`);
+    console.log(`[chat-page] failoverEvent:`, failoverEvent);
+    setSwitchingModel(true);
+    try {
+      const config = await fetchJson<{ fallbacks: Array<{ service: string; model?: string }> }>("/failover/config");
+      console.log(`[chat-page] failover config:`, config);
+      
+      const fallbacks = config.fallbacks;
+      if (fallbacks.length === 0) {
+        console.log(`[chat-page] No fallbacks configured`);
+        return;
+      }
+
+      let nextFallback = fallbacks[0];
+      if (failoverEvent.previousService && failoverEvent.previousModel) {
+        const currentIndex = fallbacks.findIndex(
+          (f) => f.service === failoverEvent.previousService && f.model === failoverEvent.previousModel
+        );
+        if (currentIndex >= 0 && currentIndex < fallbacks.length - 1) {
+          nextFallback = fallbacks[currentIndex + 1];
+        }
+      }
+
+      console.log(`[chat-page] Selected next fallback:`, nextFallback);
+      
+      if (nextFallback) {
+        setSelectedModel(nextFallback.model ?? "", nextFallback.service);
+        setFailoverEvent(null);
+        console.log(`[chat-page] Model switched successfully`);
+      } else {
+        console.log(`[chat-page] No fallback found`);
+      }
+    } catch (error) {
+      console.error("Failed to switch model:", error);
+    } finally {
+      setSwitchingModel(false);
+    }
+  };
+
+  const handleDismissFailover = () => {
+    setFailoverEvent(null);
+  };
 
   // Derived: is the assistant currently streaming/thinking/executing tools?
   const isStreaming = useMemo(() => {
@@ -278,7 +349,44 @@ export function ChatPage({ activeBookId, mode = activeBookId ? "book" : "book-cr
 
   return (
     <div className="flex flex-col h-full flex-1 min-w-0">
-      {/* Message scroll area */}
+      {failoverEvent && (
+        <div className="mx-auto max-w-4xl px-4 pt-3 w-full">
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
+            <div className="flex items-start gap-2">
+              <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-500" />
+              <div className="flex-1 space-y-1">
+                <p className="text-sm font-medium">
+                  {isZh ? "模型配额已达上限" : "Model quota exceeded"}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {isZh ? "当前模型" : "Current model"}: {failoverEvent.previousService}/{failoverEvent.previousModel}
+                </p>
+                <p className="text-xs text-muted-foreground/60">{failoverEvent.reason}</p>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleSwitchToNextModel}
+                  disabled={switchingModel}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+                >
+                  {switchingModel ? (
+                    <Loader2 size={12} className="animate-spin" />
+                  ) : (
+                    <RefreshCw size={12} />
+                  )}
+                  {isZh ? "切换备用模型" : "Switch to backup"}
+                </button>
+                <button
+                  onClick={handleDismissFailover}
+                  className="rounded-lg border border-border/60 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary/50"
+                >
+                  {isZh ? "忽略" : "Dismiss"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}      {/* Message scroll area */}
       <div
         ref={scrollRef}
         className="chat-message-scroll flex-1 overflow-y-auto [scrollbar-gutter:stable] px-4 py-6"

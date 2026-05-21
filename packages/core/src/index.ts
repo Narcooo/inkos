@@ -273,6 +273,17 @@ export {
 export { resolveServiceModel, type ResolvedModel } from "./llm/service-resolver.js";
 export { loadSecrets, saveSecrets, getServiceApiKey, type SecretsFile } from "./llm/secrets.js";
 export {
+  ModelFailoverManager,
+  createFailoverManager,
+  isQuotaError,
+  type FailoverServiceEntry,
+  type ModelFailoverConfig,
+  type FailoverState,
+  type FailoverResult,
+  type FailoverSSEEvent,
+  createDefaultFailoverConfig,
+} from "./llm/model-failover-manager.js";
+export {
   COVER_PROVIDER_PRESETS,
   coverSecretKey,
   resolveCoverProviderPreset,

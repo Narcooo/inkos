@@ -32,6 +32,7 @@ import {
   listModelsForService,
   isApiKeyOptionalForEndpoint,
   getAllEndpoints,
+  getEndpoint,
   probeModelsFromUpstream,
   fetchWithProxy,
   chatCompletion,
@@ -41,11 +42,16 @@ import {
   Scheduler,
   coverSecretKey,
   resolveCoverProviderPreset,
+  createFailoverManager,
+  isQuotaError,
   type ResolvedModel,
   type PipelineConfig,
   type ProjectConfig,
   type LogSink,
   type LogEntry,
+  type FailoverResult,
+  type ModelFailoverConfig,
+  type LLMClient,
 } from "@actalk/inkos-core";
 import { access, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
@@ -709,6 +715,31 @@ async function saveRawConfig(root: string, config: Record<string, unknown>): Pro
   await writeFile(join(root, "inkos.json"), JSON.stringify(config, null, 2), "utf-8");
 }
 
+async function resolveEffectiveLLMConfigForService(
+  root: string,
+  service: string,
+  model: string,
+): Promise<{ service: string; model: string; apiKey: string; baseUrl?: string; apiFormat?: "chat" | "responses"; stream?: boolean } | null> {
+  try {
+    const secrets = await loadSecrets(root);
+    const serviceKey = service.startsWith("custom:") ? service : service;
+    const apiKey = secrets.services[serviceKey]?.apiKey ?? "";
+
+    const preset = resolveServicePreset(service);
+    const endpoint = getEndpoint(service);
+
+    const baseUrl = preset?.baseUrl ?? endpoint?.baseUrl ?? "";
+    const apiFormat = endpoint?.api?.startsWith("openai-responses") || preset?.api?.startsWith("openai-responses")
+      ? "responses" as const
+      : "chat" as const;
+    const stream = preset ? true : (endpoint ? true : true);
+
+    return { service, model, apiKey, baseUrl, apiFormat, stream };
+  } catch {
+    return null;
+  }
+}
+
 async function readEnvConfigSummary(path: string): Promise<EnvConfigSummary> {
   try {
     const raw = await readFile(path, "utf-8");
@@ -1164,6 +1195,11 @@ async function probeServiceCapabilities(args: {
         proxyUrl: args.proxyUrl,
         apiFormat: plan.apiFormat,
         stream: plan.stream,
+        failover: {
+          enabled: false,
+          mode: "manual",
+          fallbacks: [],
+        },
       } as ProjectConfig["llm"]);
 
       try {
@@ -1291,6 +1327,107 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
         }
       : sseSink;
     const logger = createLogger({ tag: "studio", sinks: [scopedSseSink, consoleSink] });
+
+    const onFailover = async (error: unknown): Promise<{ client: LLMClient; model: string } | null> => {
+      console.log(`[studio] ========== onFailover callback triggered ==========`);
+      console.log(`[studio] Current LLM: ${currentConfig.llm.service}/${currentConfig.llm.model}`);
+      
+      const failoverConfig = (currentConfig.llm as Record<string, unknown>)?.failover as Record<string, unknown> | undefined;
+      console.log(`[studio] Failover config: ${JSON.stringify(failoverConfig)}`);
+      
+      if (!failoverConfig?.enabled) {
+        console.log(`[studio] Failover not enabled, returning null`);
+        return null;
+      }
+
+      const mode = (failoverConfig.mode as "auto" | "manual") ?? "manual";
+      console.log(`[studio] Failover mode: ${mode}`);
+
+      console.log(`[studio] Creating FailoverManager...`);
+      const failoverManager = createFailoverManager(
+        {
+          enabled: Boolean(failoverConfig.enabled),
+          mode,
+          fallbacks: Array.isArray(failoverConfig.fallbacks) ? failoverConfig.fallbacks : [],
+          maxAutoSwitches: typeof failoverConfig.maxAutoSwitches === "number" ? failoverConfig.maxAutoSwitches : 3,
+          retryDelayMs: typeof failoverConfig.retryDelayMs === "number" ? failoverConfig.retryDelayMs : 5000,
+        } as ModelFailoverConfig,
+        currentConfig.llm.service,
+        currentConfig.llm.model,
+      );
+
+      if (mode === "manual") {
+        console.log(`[studio] Manual mode: checking if manual switch is required...`);
+        
+        if (failoverManager.requiresManualSwitch(error)) {
+          console.log(`[studio] Manual switch required: broadcasting SSE event to frontend...`);
+          
+          const sseEvent = {
+            type: "model:failover" as const,
+            timestamp: Date.now(),
+            switched: false,
+            previousService: currentConfig.llm.service,
+            previousModel: currentConfig.llm.model,
+            newService: "",
+            newModel: "",
+            reason: error instanceof Error ? error.message : String(error),
+            requiresUserAction: true,
+            sessionId: overrides?.sessionIdForSSE,
+          };
+          
+          broadcast("model:failover", sseEvent);
+          console.log(`[studio] Manual failover event sent: requiresUserAction=true`);
+          console.log(`[studio] ========== onFailover callback ended (manual mode) ==========`);
+          
+          return null;
+        }
+      }
+
+      if (!failoverManager.canAutoSwitch()) {
+        console.log(`[studio] FailoverManager.canAutoSwitch() returned false`);
+        return null;
+      }
+
+      console.log(`[studio] Calling switchToFallback...`);
+      const result = await failoverManager.switchToFallback(root, error);
+      if (!result) {
+        console.log(`[studio] switchToFallback returned null`);
+        return null;
+      }
+
+      console.log(`[studio] switchToFallback successful: ${result.newService}/${result.newModel}`);
+      
+      console.log(`[studio] Resolving effective config for ${result.newService}...`);
+      const newConfig = await resolveEffectiveLLMConfigForService(root, result.newService, result.newModel);
+      if (!newConfig) {
+        console.log(`[studio] resolveEffectiveLLMConfigForService returned null`);
+        return null;
+      }
+
+      console.log(`[studio] Broadcasting failover event...`);
+      const sseEvent = failoverManager.createSSEEvent(result, currentConfig.llm.service, currentConfig.llm.model);
+      broadcast("model:failover", {
+        ...sseEvent,
+        sessionId: overrides?.sessionIdForSSE,
+      });
+
+      console.log(`[studio] Creating new LLM client for ${newConfig.service}/${newConfig.model}...`);
+      const newClient = createLLMClient({
+        ...currentConfig.llm,
+        service: newConfig.service,
+        model: newConfig.model,
+        apiKey: newConfig.apiKey,
+        baseUrl: newConfig.baseUrl ?? "",
+        ...(newConfig.apiFormat ? { apiFormat: newConfig.apiFormat } : {}),
+        ...(typeof newConfig.stream === "boolean" ? { stream: newConfig.stream } : {}),
+      } as ProjectConfig["llm"]);
+
+      console.log(`[studio] ✅ Failover completed successfully`);
+      console.log(`[studio] ========== onFailover callback completed ==========`);
+
+      return { client: newClient, model: newConfig.model };
+    };
+
     return {
       client: overrides?.client ?? createLLMClient(currentConfig.llm),
       model: overrides?.model ?? currentConfig.llm.model,
@@ -1311,6 +1448,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
         });
       },
       externalContext: overrides?.externalContext,
+      onFailover,
     };
   }
 
@@ -1697,30 +1835,32 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
   app.get("/api/v1/services", async (c) => {
     const secrets = await loadSecrets(root);
     const endpoints = getAllEndpoints().filter((ep) => ep.id !== "custom");
+    const config = await loadRawConfig(root);
+    const llm = (config.llm as Record<string, unknown> | undefined) ?? {};
+    const storedServices = normalizeServiceConfig(llm.services);
 
-    // Fast: only check connection status from secrets, no external API calls.
     const services = endpoints.map((ep) => ({
       service: ep.id,
       label: ep.label,
       group: ep.group,
       connected: Boolean(secrets.services[ep.id]?.apiKey),
+      models: ep.models.map((m) => ({ id: m.id, enabled: m.enabled })),
     })).sort(compareServiceListItems);
 
-    // Add custom services from inkos.json
-    try {
-      const config = await loadRawConfig(root);
-      for (const svc of normalizeServiceConfig((config.llm as Record<string, unknown> | undefined)?.services)) {
-        if (svc.service === "custom") {
-          const secretKey = `custom:${svc.name}`;
-          services.push({
-            service: secretKey,
-            label: svc.name ?? "Custom",
-            group: undefined,
-            connected: Boolean(secrets.services[secretKey]?.apiKey),
-          });
-        }
+    for (const svc of storedServices) {
+      if (svc.service === "custom") {
+        const secretKey = `custom:${svc.name}`;
+        services.push({
+          service: secretKey,
+          label: svc.name ?? "Custom",
+          group: undefined,
+          connected: Boolean(secrets.services[secretKey]?.apiKey),
+          models: "models" in svc && Array.isArray(svc.models)
+            ? svc.models.map((m) => ({ id: m, enabled: true }))
+            : [],
+        });
       }
-    } catch { /* no config file */ }
+    }
 
     return c.json({ services });
   });
@@ -1767,6 +1907,57 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     syncTopLevelLlmMirror(llm);
     await saveRawConfig(root, config);
     return c.json({ ok: true });
+  });
+
+  app.get("/api/v1/failover/config", async (c) => {
+    const config = await loadRawConfig(root);
+    const llm = (config.llm as Record<string, unknown> | undefined) ?? {};
+    const failover = (llm.failover as Record<string, unknown> | undefined) ?? {};
+    return c.json({
+      enabled: Boolean(failover.enabled),
+      mode: (failover.mode as "auto" | "manual") ?? "manual",
+      fallbacks: Array.isArray(failover.fallbacks) ? failover.fallbacks : [],
+      maxAutoSwitches: typeof failover.maxAutoSwitches === "number" ? failover.maxAutoSwitches : 3,
+      retryDelayMs: typeof failover.retryDelayMs === "number" ? failover.retryDelayMs : 5000,
+    });
+  });
+
+  app.put("/api/v1/failover/config", async (c) => {
+    const body = await c.req.json<{
+      enabled?: boolean;
+      mode?: "auto" | "manual";
+      fallbacks?: Array<{ service: string; model?: string; name?: string }>;
+      maxAutoSwitches?: number;
+      retryDelayMs?: number;
+    }>();
+    const config = await loadRawConfig(root);
+    config.llm = config.llm ?? {};
+    const llm = config.llm as Record<string, unknown>;
+    llm.failover = {
+      enabled: body.enabled ?? false,
+      mode: body.mode ?? "manual",
+      fallbacks: body.fallbacks ?? [],
+      maxAutoSwitches: body.maxAutoSwitches ?? 3,
+      retryDelayMs: body.retryDelayMs ?? 5000,
+    };
+    syncTopLevelLlmMirror(llm);
+    await saveRawConfig(root, config);
+    return c.json({ ok: true });
+  });
+
+  app.get("/api/v1/failover/state", async (c) => {
+    const config = await loadRawConfig(root);
+    const llm = (config.llm as Record<string, unknown> | undefined) ?? {};
+    const currentService = (llm.service as string) ?? "custom";
+    const currentModel = (llm.model as string) ?? (llm.defaultModel as string) ?? "unknown";
+    const failover = (llm.failover as Record<string, unknown> | undefined) ?? {};
+    return c.json({
+      currentService,
+      currentModel,
+      enabled: Boolean(failover.enabled),
+      mode: (failover.mode as "auto" | "manual") ?? "manual",
+      fallbacks: Array.isArray(failover.fallbacks) ? failover.fallbacks : [],
+    });
   });
 
   app.get("/api/v1/cover/config", async (c) => {
@@ -2753,6 +2944,106 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
       if (!result.responseText) {
         if (result.errorMessage) {
+          const failoverConfig = (config.llm as Record<string, unknown>)?.failover as Record<string, unknown> | undefined;
+          console.log(`[studio] Agent failed: ${result.errorMessage}`);
+          console.log(`[studio] Failover config:`, failoverConfig);
+
+          if (failoverConfig?.enabled && isQuotaError(result.errorMessage)) {
+            console.log("[studio] Quota error detected, attempting failover");
+            const failoverManager = createFailoverManager(
+              {
+                enabled: Boolean(failoverConfig.enabled),
+                mode: (failoverConfig.mode as "auto" | "manual") ?? "manual",
+                fallbacks: Array.isArray(failoverConfig.fallbacks) ? failoverConfig.fallbacks : [],
+                maxAutoSwitches: typeof failoverConfig.maxAutoSwitches === "number" ? failoverConfig.maxAutoSwitches : 3,
+                retryDelayMs: typeof failoverConfig.retryDelayMs === "number" ? failoverConfig.retryDelayMs : 5000,
+              } as ModelFailoverConfig,
+              reqService ?? config.llm.service,
+              reqModel ?? config.llm.model,
+            );
+
+            if (failoverManager.canAutoSwitch()) {
+              try {
+                const failoverResult = await failoverManager.switchToFallback(root, new Error(result.errorMessage));
+                if (failoverResult) {
+                  const sseEvent = failoverManager.createSSEEvent(failoverResult, reqService ?? config.llm.service, reqModel ?? config.llm.model);
+                  broadcast("model:failover", {
+                    ...sseEvent,
+                    sessionId: streamSessionId,
+                  });
+
+                  const newConfig = await resolveEffectiveLLMConfigForService(root, failoverResult.newService, failoverResult.newModel);
+                  if (newConfig) {
+                    const retryClient = createLLMClient({
+                      ...config.llm,
+                      service: newConfig.service,
+                      model: newConfig.model,
+                      apiKey: newConfig.apiKey,
+                      baseUrl: newConfig.baseUrl ?? "",
+                      ...(newConfig.apiFormat ? { apiFormat: newConfig.apiFormat } : {}),
+                      ...(typeof newConfig.stream === "boolean" ? { stream: newConfig.stream } : {}),
+                    } as ProjectConfig["llm"]);
+
+                    const retryResult = await runAgentSession(
+                      {
+                        model: { provider: newConfig.service, modelId: newConfig.model },
+                        apiKey: newConfig.apiKey,
+                        pipeline: new PipelineRunner(await buildPipelineConfig({
+                          client: retryClient,
+                          model: newConfig.model,
+                          currentConfig: config,
+                          sessionIdForSSE: bookSession.sessionId,
+                        })),
+                        projectRoot: root,
+                        bookId: agentBookId,
+                        sessionId: bookSession.sessionId,
+                        language: config.language ?? "zh",
+                        onEvent: (event) => {
+                          if (event.type === "message_update") {
+                            const ame = event.assistantMessageEvent;
+                            if (ame.type === "text_delta") {
+                              broadcast("draft:delta", { sessionId: streamSessionId, text: ame.delta });
+                            } else if (ame.type === "thinking_delta") {
+                              broadcast("thinking:delta", { sessionId: streamSessionId, text: (ame as any).delta });
+                            } else if (ame.type === "thinking_start") {
+                              broadcast("thinking:start", { sessionId: streamSessionId });
+                            } else if (ame.type === "thinking_end") {
+                              broadcast("thinking:end", { sessionId: streamSessionId });
+                            }
+                          }
+                        },
+                      },
+                      instruction,
+                      bookSession.messages,
+                    );
+
+                    if (retryResult.responseText) {
+                      await refreshBookSessionFromTranscript();
+                      await finalizeCreatedBook();
+                      broadcast("agent:complete", { instruction, activeBookId, sessionId: bookSession.sessionId });
+                      return c.json({
+                        response: retryResult.responseText,
+                        session: {
+                          sessionId: bookSession.sessionId,
+                          ...(bookSession.bookId ? { activeBookId: bookSession.bookId } : {}),
+                        },
+                        failover: {
+                          switched: true,
+                          previousService: reqService ?? config.llm.service,
+                          previousModel: reqModel ?? config.llm.model,
+                          newService: failoverResult.newService,
+                          newModel: failoverResult.newModel,
+                        },
+                      });
+                    }
+                  }
+                }
+              } catch (failoverError) {
+                console.warn("[studio] Failover attempt failed:", failoverError);
+              }
+            }
+          }
+
           if (resolveCreatedBookIdFromToolExecs(collectedToolExecs)) {
             await finalizeCreatedBook();
           }

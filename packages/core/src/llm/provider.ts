@@ -18,6 +18,7 @@ import { resolveServicePreset } from "./service-presets.js";
 import { getEndpoint } from "./providers/index.js";
 import { lookupModel } from "./providers/lookup.js";
 import { fetchWithProxy } from "../utils/proxy-fetch.js";
+import { isQuotaError } from "./model-failover-manager.js";
 import { isApiKeyOptionalForEndpoint } from "../utils/llm-endpoint-auth.js";
 
 
@@ -1009,9 +1010,9 @@ export async function chatCompletion(
     readonly webSearch?: boolean;
     readonly onStreamProgress?: OnStreamProgress;
     readonly onTextDelta?: (text: string) => void;
+    readonly onFailover?: (error: unknown) => Promise<{ client: LLMClient; model: string } | null>;
   },
 ): Promise<LLMResponse> {
-  // C1 (v2.0.0)：删除 maxTokensCap 机制。per-call 显式传的 maxTokens 永远不被裁剪。
   const resolved = {
     temperature: clampTemperatureForModel(
       client.service,
@@ -1025,27 +1026,62 @@ export async function chatCompletion(
   const onTextDelta = options?.onTextDelta;
   const errorCtx = { baseUrl: client._piModel?.baseUrl ?? "(unknown)", model, service: client.service };
 
-  try {
-    return await withTransientLLMRetry(
-      async () => {
-        if (shouldUseNativeCustomTransport(client)) {
-          return chatCompletionViaCustomOpenAICompatible(client, model, messages, resolved, onStreamProgress, onTextDelta);
+  let currentClient = client;
+  let currentModel = model;
+  let attempt = 0;
+  const maxAttempts = options?.onFailover ? 2 : 1;
+
+  console.log(`[llm] chatCompletion started: service=${currentClient.service}, model=${currentModel}, attempts=${maxAttempts}`);
+
+  while (attempt < maxAttempts) {
+    console.log(`[llm] Attempt ${attempt + 1}/${maxAttempts}: calling LLM...`);
+    try {
+      const result = await withTransientLLMRetry(
+        async () => {
+          if (shouldUseNativeCustomTransport(currentClient)) {
+            console.log(`[llm] Using custom transport for ${currentClient.service}`);
+            return chatCompletionViaCustomOpenAICompatible(currentClient, currentModel, messages, resolved, onStreamProgress, onTextDelta);
+          }
+          console.log(`[llm] Using pi-ai transport for ${currentClient.service}`);
+          return chatCompletionViaPiAi(currentClient, currentModel, messages, resolved, onStreamProgress, onTextDelta);
+        },
+        { enabled: !onTextDelta },
+      );
+      console.log(`[llm] LLM call successful: service=${currentClient.service}, model=${currentModel}`);
+      return result;
+    } catch (error) {
+      if (error instanceof PartialResponseError) {
+        console.log(`[llm] Partial response received: ${error.partialContent.length} chars`);
+        return {
+          content: error.partialContent,
+          usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+        };
+      }
+
+      const errorText = error instanceof Error ? error.message : String(error);
+      console.log(`[llm] LLM call failed (attempt ${attempt + 1}): ${errorText.slice(0, 100)}`);
+
+      if (attempt < maxAttempts - 1 && options?.onFailover && isQuotaError(error)) {
+        console.log(`[llm] Quota error detected, attempting failover...`);
+        const failoverResult = await options.onFailover(error);
+        if (failoverResult) {
+          console.log(`[llm] Failover successful: ${currentClient.service}/${currentModel} -> ${failoverResult.client.service}/${failoverResult.model}`);
+          currentClient = failoverResult.client;
+          currentModel = failoverResult.model;
+          attempt++;
+          continue;
+        } else {
+          console.log(`[llm] Failover returned null, proceeding with error`);
         }
-        return chatCompletionViaPiAi(client, model, messages, resolved, onStreamProgress, onTextDelta);
-      },
-      // Retrying after UI text deltas have been emitted can duplicate visible text.
-      { enabled: !onTextDelta },
-    );
-  } catch (error) {
-    // Stream interrupted but partial content is usable — return truncated response
-    if (error instanceof PartialResponseError) {
-      return {
-        content: error.partialContent,
-        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
-      };
+      }
+
+      console.log(`[llm] Throwing error after ${attempt + 1} attempts`);
+      throw wrapLLMError(error, errorCtx);
     }
-    throw wrapLLMError(error, errorCtx);
   }
+
+  console.log(`[llm] Max retry attempts (${maxAttempts}) exceeded`);
+  throw wrapLLMError(new Error("Max retry attempts exceeded"), errorCtx);
 }
 
 // === Tool-calling Chat (used by agent loop) ===
@@ -1058,22 +1094,57 @@ export async function chatWithTools(
   options?: {
     readonly temperature?: number;
     readonly maxTokens?: number;
+    readonly onFailover?: (error: unknown) => Promise<{ client: LLMClient; model: string } | null>;
   },
 ): Promise<ChatWithToolsResult> {
   const errorCtx = { baseUrl: client._piModel?.baseUrl ?? "(unknown)", model, service: client.service };
-  try {
-    const resolved = {
-      temperature: clampTemperatureForModel(
-        client.service,
-        model,
-        options?.temperature ?? client.defaults.temperature,
-      ),
-      maxTokens: options?.maxTokens ?? client.defaults.maxTokens,
-    };
-    return await chatWithToolsViaPiAi(client, model, messages, tools, resolved);
-  } catch (error) {
-    throw wrapLLMError(error, errorCtx);
+  const resolved = {
+    temperature: clampTemperatureForModel(
+      client.service,
+      model,
+      options?.temperature ?? client.defaults.temperature,
+    ),
+    maxTokens: options?.maxTokens ?? client.defaults.maxTokens,
+  };
+
+  let currentClient = client;
+  let currentModel = model;
+  let attempt = 0;
+  const maxAttempts = options?.onFailover ? 2 : 1;
+
+  console.log(`[llm] chatWithTools started: service=${currentClient.service}, model=${currentModel}, tools=${tools.length}, attempts=${maxAttempts}`);
+
+  while (attempt < maxAttempts) {
+    console.log(`[llm] Attempt ${attempt + 1}/${maxAttempts}: calling LLM with tools...`);
+    try {
+      const result = await chatWithToolsViaPiAi(currentClient, currentModel, messages, tools, resolved);
+      console.log(`[llm] LLM tools call successful: service=${currentClient.service}, model=${currentModel}`);
+      return result;
+    } catch (error) {
+      const errorText = error instanceof Error ? error.message : String(error);
+      console.log(`[llm] LLM tools call failed (attempt ${attempt + 1}): ${errorText.slice(0, 100)}`);
+
+      if (attempt < maxAttempts - 1 && options?.onFailover && isQuotaError(error)) {
+        console.log(`[llm] Quota error detected, attempting failover...`);
+        const failoverResult = await options.onFailover(error);
+        if (failoverResult) {
+          console.log(`[llm] Failover successful: ${currentClient.service}/${currentModel} -> ${failoverResult.client.service}/${failoverResult.model}`);
+          currentClient = failoverResult.client;
+          currentModel = failoverResult.model;
+          attempt++;
+          continue;
+        } else {
+          console.log(`[llm] Failover returned null, proceeding with error`);
+        }
+      }
+
+      console.log(`[llm] Throwing error after ${attempt + 1} attempts`);
+      throw wrapLLMError(error, errorCtx);
+    }
   }
+
+  console.log(`[llm] Max retry attempts (${maxAttempts}) exceeded`);
+  throw wrapLLMError(new Error("Max retry attempts exceeded"), errorCtx);
 }
 
 // === pi-ai Unified Implementation ===

@@ -15,6 +15,22 @@ const LLMCoverConfigSchema = z.object({
   model: z.string().min(1),
 }).optional();
 
+const FailoverFallbackEntrySchema = z.object({
+  service: z.string().min(1),
+  model: z.string().min(1).optional(),
+  name: z.string().min(1).optional(),
+});
+
+export const ModelFailoverConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  mode: z.enum(["auto", "manual"]).default("manual"),
+  fallbacks: z.array(FailoverFallbackEntrySchema).default([]),
+  maxAutoSwitches: z.number().int().min(1).max(10).default(3).optional(),
+  retryDelayMs: z.number().int().min(1000).default(5000).optional(),
+}).default({ enabled: false, mode: "manual", fallbacks: [] });
+
+export type ModelFailoverConfig = z.infer<typeof ModelFailoverConfigSchema>;
+
 // C1 (v2.0.0 breaking): 删除 maxTokens / maxTokensCap 字段。
 // 每个模型的真实 maxOutput 来自 providers/<name>.ts 的 InkosModel.maxOutput；
 // 老配置里写的 maxTokens / maxTokensCap 会被 zod strip 静默丢弃（不报错）。
@@ -35,6 +51,7 @@ export const LLMConfigSchema = z.object({
   services: z.array(LLMServiceEntrySchema).optional(),
   defaultModel: z.string().min(1).optional(),
   cover: LLMCoverConfigSchema,
+  failover: ModelFailoverConfigSchema,
 });
 
 export type LLMConfig = z.infer<typeof LLMConfigSchema>;

@@ -232,6 +232,7 @@ export interface PipelineConfig {
   readonly inputGovernanceMode?: InputGovernanceMode;
   readonly logger?: Logger;
   readonly onStreamProgress?: OnStreamProgress;
+  readonly onFailover?: (error: unknown) => Promise<{ client: LLMClient; model: string } | null>;
 }
 
 export interface TokenUsageSummary {
@@ -564,6 +565,11 @@ export class PipelineRunner {
         thinkingBudget: base?.thinkingBudget ?? 0,
         apiFormat,
         stream,
+        failover: base?.failover ?? {
+          enabled: false,
+          mode: "manual",
+          fallbacks: [],
+        },
       });
       this.agentClients.set(cacheKey, client);
     }
@@ -579,6 +585,7 @@ export class PipelineRunner {
       bookId,
       logger: this.config.logger?.child(agent),
       onStreamProgress: this.config.onStreamProgress,
+      onFailover: this.config.onFailover,
     };
   }
 

@@ -53,6 +53,7 @@ export const STUDIO_SSE_EVENTS = [
   "log",
   "llm:progress",
   "ping",
+  "model:failover",
 ] as const;
 
 export function useSSE(url = "/api/v1/events") {
