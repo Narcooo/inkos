@@ -4,11 +4,9 @@
 
 ### 更新日志
 
-1.添加了自动模型切换（主要是为了model scope的免费额度）
+1. 添加了自动模型切换（主要是为了 model scope 的免费额度）
 
-2.导出为word文档
-
-3.自定义agent提示词
+2. 自定义 agent 提示词
 
 ***
 
@@ -528,7 +526,6 @@ inkos up --service moonshot --model kimi-k2.5 --api-key-env MOONSHOT_API_KEY
 
 ## 路线图
 
-- [x] ~~`packages/studio`~~ ~~Web UI 工作台（Vite + React + Hono）~~ — 已发布，`inkos studio` 启动
 - [ ] 互动小说（分支叙事 + 读者选择）
 - [ ] 局部干预（重写半章 + 级联更新后续 truth 文件）
 - [ ] 自定义 agent 插件系统
@@ -543,6 +540,139 @@ pnpm install
 pnpm dev          # 监听模式
 pnpm test         # 运行测试
 pnpm typecheck    # 类型检查
+```
+
+## 从零开始：开发者使用指南
+
+如果你想从源码运行和开发 InkOS（而不是通过 `npm install -g` 安装），请按以下步骤操作：
+
+### 环境要求
+
+- Node.js >= 20
+- pnpm >= 9
+
+### 第一步：安装依赖
+
+```bash
+cd inkos                     # 进入本项目根目录
+pnpm install                 # 安装所有依赖
+pnpm build                   # 编译 core、cli、studio
+```
+
+### 第二步：创建小说项目
+
+InkOS Studio 需要一个小说项目目录（包含 `inkos.json`）才能运行。在仓库外任意位置创建：
+
+```bash
+# 在仓库外创建项目（例如 D:\my-novel 或 ~/my-novel）
+mkdir my-novel
+cd my-novel
+
+# 用 CLI 初始化项目（如果已全局安装 inkos）
+inkos init
+
+# 或者手动创建最简 inkos.json：
+```
+
+`my-novel/inkos.json` 最简内容：
+
+```json
+{
+  "name": "my-novel",
+  "version": "0.1.0",
+  "language": "zh",
+  "llm": {
+    "provider": "openai",
+    "service": "custom",
+    "configSource": "studio",
+    "baseUrl": "",
+    "model": "",
+    "apiFormat": "chat",
+    "stream": true
+  },
+  "notify": [],
+  "inputGovernanceMode": "v2",
+  "daemon": {
+    "schedule": {
+      "radarCron": "0 */6 * * *",
+      "writeCron": "*/15 * * * *"
+    },
+    "maxConcurrentBooks": 3
+  }
+}
+```
+
+项目目录结构：
+
+```
+my-novel/
+├── inkos.json       # 项目配置
+├── .env             # 可选，LLM 环境变量
+├── books/           # 书籍数据
+└── radar/           # 市场雷达扫描结果
+```
+
+### 第三步：配置 Studio 指向你的项目
+
+编辑 `packages/studio/scripts/dev.js`，将 `INKOS_PROJECT_ROOT` 改为你的项目路径：
+
+```js
+INKOS_PROJECT_ROOT: "D:\\my-novel",  // Windows
+// 或
+INKOS_PROJECT_ROOT: "/home/user/my-novel",  // macOS/Linux
+```
+
+### 第四步：启动 Studio
+
+```bash
+# 回到项目根目录
+cd inkos
+
+# 启动 Studio（前端 + 后端）
+pnpm dev
+# 或仅启动 studio 包
+pnpm --filter @actalk/inkos-studio dev
+```
+
+- 前端：http://localhost:4567
+- 后端 API：http://localhost:4569
+
+### 第五步：配置 LLM 服务
+
+打开浏览器访问 http://localhost:4567，进入「模型配置」页面：
+
+1. 选择服务商（Google Gemini、Moonshot、MiniMax、智谱、百炼或自定义端点）
+2. 粘贴 API Key，点击「测试连接」
+3. 选择可用模型，保存配置
+
+### 第六步：创建并开始写作
+
+在 Studio 中点击「创建新书」，或使用 CLI：
+
+```bash
+# 进入你的小说项目目录
+cd my-novel
+
+# 使用全局安装的 CLI（如果装了）
+inkos book create --title "我的小说" --genre xuanhuan
+```
+
+也可以直接在 Studio 界面完成建书、写作、审阅全流程。
+
+### 常用开发命令
+
+```bash
+pnpm dev                      # 所有包监听模式
+pnpm build                    # 全部编译
+pnpm test                     # 运行所有测试
+pnpm typecheck                # 类型检查
+
+pnpm --filter @actalk/inkos-core dev     # 仅 core
+pnpm --filter @actalk/inkos dev          # 仅 cli
+pnpm --filter @actalk/inkos-studio dev   # 仅 studio
+
+pnpm --filter @actalk/inkos-core test    # 仅 core 测试
+pnpm --filter @actalk/inkos test         # 仅 cli 测试
 ```
 
 ## Star History
