@@ -3782,7 +3782,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       const { readFile } = await import("node:fs/promises");
       const { join } = await import("node:path");
       const { StateManager } = await import("@actalk/inkos-core");
-      const state = new StateManager(process.cwd());
+      const state = new StateManager(root);
       const bookDir = state.bookDir(id);
       const styleProfilePath = join(bookDir, "story", "style_profile.json");
       const content = await readFile(styleProfilePath, "utf-8");
@@ -3805,7 +3805,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       const { writeFile, mkdir } = await import("node:fs/promises");
       const { join } = await import("node:path");
       const { StateManager } = await import("@actalk/inkos-core");
-      const state = new StateManager(process.cwd());
+      const state = new StateManager(root);
       const bookDir = state.bookDir(id);
       const storyDir = join(bookDir, "story");
       await mkdir(storyDir, { recursive: true });

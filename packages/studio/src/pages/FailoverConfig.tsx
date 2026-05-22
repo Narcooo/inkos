@@ -299,7 +299,12 @@ export function FailoverConfigPanel() {
                           </p>
                         )}
                         {svcModels.map((model) => {
-                          const isSelected = selectedModels.includes(model.id);
+                          const fallbackIndex = config.fallbacks.findIndex(
+                            (f) => f.service === svc.service && f.model === model.id
+                          );
+                          const isSelected = fallbackIndex >= 0;
+                          const switchOrder = isSelected ? fallbackIndex + 1 : null;
+
                           return (
                             <label
                               key={model.id}
@@ -311,7 +316,12 @@ export function FailoverConfigPanel() {
                                 onChange={(e) => handleModelToggle(svc.service, model.id, e.target.checked)}
                                 className="h-3.5 w-3.5 rounded border-border/60 accent-primary"
                               />
-                              <span className="text-xs font-mono">{model.id}</span>
+                              <span className="text-xs font-mono flex-1">{model.id}</span>
+                              {switchOrder && (
+                                <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-primary text-[10px] font-bold text-primary-foreground">
+                                  #{switchOrder}
+                                </span>
+                              )}
                             </label>
                           );
                         })}
