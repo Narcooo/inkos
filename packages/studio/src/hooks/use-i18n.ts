@@ -136,6 +136,20 @@ const strings = {
   "style.selectBook": { zh: "选择书籍...", en: "Select book..." },
   "style.importGuide": { zh: "导入文风指南", en: "Import Style Guide" },
   "style.emptyHint": { zh: "粘贴文本并点击分析查看文风档案", en: "Paste text and click Analyze to see style profile" },
+  "style.profile": { zh: "文风档案", en: "Style Profile" },
+  "style.profileTitle": { zh: "文风档案", en: "Style Profile" },
+  "style.edit": { zh: "编辑", en: "Edit" },
+  "style.unnamed": { zh: "未命名", en: "Unnamed" },
+  "style.noProfile": { zh: "暂无文风档案。请先导入文风指南。", en: "No style profile. Import a style guide first." },
+  "style.minParagraph": { zh: "最小段落长度", en: "Min Paragraph Length" },
+  "style.maxParagraph": { zh: "最大段落长度", en: "Max Paragraph Length" },
+  "style.addPattern": { zh: "添加模式...", en: "Add pattern..." },
+  "style.addFeature": { zh: "添加特征...", en: "Add feature..." },
+  "style.analyzedAt": { zh: "分析时间", en: "Analyzed at" },
+  "common.saving": { zh: "保存中...", en: "Saving..." },
+
+  // Book Detail extras
+  "book.styleProfile": { zh: "文风档案", en: "Style Profile" },
 
   // Import
   "import.title": { zh: "导入工具", en: "Import Tools" },

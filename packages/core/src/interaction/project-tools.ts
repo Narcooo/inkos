@@ -81,6 +81,7 @@ type InstrumentablePipelineLike = PipelineLike & {
     logger?: Logger;
     client?: LLMClient;
     model?: string;
+    onFailover?: (error: unknown) => Promise<{ client: LLMClient; model: string } | null>;
   };
 };
 
@@ -150,7 +151,7 @@ export function buildChapterFileLookup(files: ReadonlyArray<string>): ReadonlyMa
 }
 
 async function exportBookToPath(state: StateLike, bookId: string, options: {
-  readonly format?: "txt" | "md" | "epub";
+  readonly format?: "txt" | "md" | "epub" | "docx";
   readonly approvedOnly?: boolean;
   readonly outputPath?: string;
 }) {
@@ -506,7 +507,10 @@ export function createInteractionToolsFromDeps(
           { role: "user", content: userContent },
         ],
         [CREATE_BOOK_TOOL],
-        { temperature: 0.4 },
+        {
+          temperature: 0.4,
+          onFailover: instrumentedPipeline.config.onFailover,
+        },
       );
 
       // Extract tool call if present

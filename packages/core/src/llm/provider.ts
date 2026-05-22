@@ -18,7 +18,7 @@ import { resolveServicePreset } from "./service-presets.js";
 import { getEndpoint } from "./providers/index.js";
 import { lookupModel } from "./providers/lookup.js";
 import { fetchWithProxy } from "../utils/proxy-fetch.js";
-import { isQuotaError } from "./model-failover-manager.js";
+import { isQuotaError, isToolCallError } from "./model-failover-manager.js";
 import { isApiKeyOptionalForEndpoint } from "../utils/llm-endpoint-auth.js";
 
 
@@ -1061,8 +1061,9 @@ export async function chatCompletion(
       const errorText = error instanceof Error ? error.message : String(error);
       console.log(`[llm] LLM call failed (attempt ${attempt + 1}): ${errorText.slice(0, 100)}`);
 
-      if (attempt < maxAttempts - 1 && options?.onFailover && isQuotaError(error)) {
-        console.log(`[llm] Quota error detected, attempting failover...`);
+      if (attempt < maxAttempts - 1 && options?.onFailover && (isQuotaError(error) || isToolCallError(error))) {
+        const errorType = isQuotaError(error) ? "Quota" : "Tool call";
+        console.log(`[llm] ${errorType} error detected, attempting failover...`);
         const failoverResult = await options.onFailover(error);
         if (failoverResult) {
           console.log(`[llm] Failover successful: ${currentClient.service}/${currentModel} -> ${failoverResult.client.service}/${failoverResult.model}`);
@@ -1124,8 +1125,9 @@ export async function chatWithTools(
       const errorText = error instanceof Error ? error.message : String(error);
       console.log(`[llm] LLM tools call failed (attempt ${attempt + 1}): ${errorText.slice(0, 100)}`);
 
-      if (attempt < maxAttempts - 1 && options?.onFailover && isQuotaError(error)) {
-        console.log(`[llm] Quota error detected, attempting failover...`);
+      if (attempt < maxAttempts - 1 && options?.onFailover && (isQuotaError(error) || isToolCallError(error))) {
+        const errorType = isQuotaError(error) ? "Quota" : "Tool call";
+        console.log(`[llm] ${errorType} error detected, attempting failover...`);
         const failoverResult = await options.onFailover(error);
         if (failoverResult) {
           console.log(`[llm] Failover successful: ${currentClient.service}/${currentModel} -> ${failoverResult.client.service}/${failoverResult.model}`);

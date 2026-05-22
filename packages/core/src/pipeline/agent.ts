@@ -310,7 +310,9 @@ export async function runAgentLoop(
   let lastAssistantMessage = "";
 
   for (let turn = 0; turn < maxTurns; turn++) {
-    const result = await chatWithTools(config.client, config.model, messages, TOOLS);
+    const result = await chatWithTools(config.client, config.model, messages, TOOLS, {
+      onFailover: config.onFailover,
+    });
 
     // Push assistant message to history
     messages.push({

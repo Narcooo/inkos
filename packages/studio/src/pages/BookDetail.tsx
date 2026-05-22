@@ -50,13 +50,14 @@ interface BookData {
 }
 
 type ReviseMode = "spot-fix" | "polish" | "rewrite" | "rework" | "anti-detect";
-type ExportFormat = "txt" | "md" | "epub";
+type ExportFormat = "txt" | "md" | "epub" | "docx";
 type BookStatus = "active" | "paused" | "outlining" | "completed" | "dropped";
 
 interface Nav {
   toDashboard: () => void;
   toChapter: (bookId: string, num: number) => void;
   toAnalytics: (bookId: string) => void;
+  toStyleProfile: (bookId: string) => void;
   toTruth: (bookId: string) => void;
 }
 
@@ -417,6 +418,13 @@ export function BookDetail({
             <BarChart2 size={14} />
             {t("book.analytics")}
           </button>
+          <button
+            onClick={() => nav.toStyleProfile(bookId)}
+            className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-secondary/50 text-muted-foreground rounded-lg hover:text-foreground hover:bg-secondary transition-all border border-border/50"
+          >
+            <Wand2 size={14} />
+            {t("book.styleProfile")}
+          </button>
           <div className="flex items-center gap-2">
             <select
               value={exportFormat}
@@ -426,6 +434,7 @@ export function BookDetail({
               <option value="txt">TXT</option>
               <option value="md">MD</option>
               <option value="epub">EPUB</option>
+              <option value="docx">DOCX</option>
             </select>
             <label className="flex items-center gap-1.5 text-xs font-bold text-muted-foreground cursor-pointer select-none">
               <input

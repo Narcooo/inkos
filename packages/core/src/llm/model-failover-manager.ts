@@ -89,6 +89,25 @@ export function isQuotaError(error: unknown): boolean {
   return quotaPatterns.some((pattern) => lower.includes(pattern));
 }
 
+export function isToolCallError(error: unknown): boolean {
+  const text = collectErrorText(error);
+  const lower = text.toLowerCase();
+
+  if (text.includes("400")) {
+    const toolCallPatterns = [
+      "tool call is not supported",
+      "does not support tools",
+      "tool call not supported",
+      "tools are not supported",
+      "function calling is not supported",
+    ];
+
+    return toolCallPatterns.some((pattern) => lower.includes(pattern));
+  }
+
+  return false;
+}
+
 function collectErrorText(error: unknown, depth = 0): string {
   if (depth > 4 || error === null || error === undefined) return "";
   const parts = [String(error)];
@@ -163,6 +182,13 @@ export class ModelFailoverManager {
     return isQuota;
   }
 
+  shouldFailover(error: unknown): boolean {
+    const isQuota = this.isQuotaErrorForCurrentService(error);
+    const isToolError = isToolCallError(error);
+    console.log(`[failover] Should failover: quota=${isQuota}, toolError=${isToolError}`);
+    return isQuota || isToolError;
+  }
+
   canAutoSwitch(): boolean {
     const { enabled, mode, maxAutoSwitches, retryDelayMs } = this.state.config;
     const { switchedCount, lastSwitchAt } = this.state;
@@ -225,9 +251,9 @@ export class ModelFailoverManager {
     console.log(`[failover] Current state: service=${this.state.currentService}, model=${this.state.currentModel}, switchedCount=${this.state.switchedCount}`);
     console.log(`[failover] Triggering error: ${collectErrorText(error).slice(0, 150)}`);
 
-    if (!this.isQuotaErrorForCurrentService(error)) {
-      console.warn("[failover] Skipping failover: error is not a quota error");
-      console.log(`[failover] ========== Failover attempt ended (not quota error) ==========`);
+    if (!this.shouldFailover(error)) {
+      console.warn("[failover] Skipping failover: error is not a quota or tool error");
+      console.log(`[failover] ========== Failover attempt ended (not failover error) ==========`);
       return null;
     }
 

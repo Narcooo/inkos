@@ -107,7 +107,7 @@ export const FoundationConfigSchema = z.object({
 export type FoundationConfig = z.infer<typeof FoundationConfigSchema>;
 
 export const WritingConfigSchema = z.object({
-  reviewRetries: z.number().int().min(0).max(10).default(1),
+  reviewRetries: z.number().int().min(0).max(10).default(2),
 });
 
 export type WritingConfig = z.infer<typeof WritingConfigSchema>;

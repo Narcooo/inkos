@@ -728,12 +728,17 @@ async function resolveEffectiveLLMConfigForService(
     const preset = resolveServicePreset(service);
     const endpoint = getEndpoint(service);
 
-    const baseUrl = preset?.baseUrl ?? endpoint?.baseUrl ?? "";
+    console.log(`[studio] resolveEffectiveLLMConfigForService: service=${service}, model=${model}`);
+    const resolvedBaseUrl = await resolveConfiguredServiceBaseUrl(root, service);
+    console.log(`[studio] resolveEffectiveLLMConfigForService: resolvedBaseUrl=${resolvedBaseUrl}, preset.baseUrl=${preset?.baseUrl}, endpoint?.baseUrl=${endpoint?.baseUrl}`);
+    
+    const baseUrl = resolvedBaseUrl ?? preset?.baseUrl ?? endpoint?.baseUrl ?? "";
     const apiFormat = endpoint?.api?.startsWith("openai-responses") || preset?.api?.startsWith("openai-responses")
       ? "responses" as const
       : "chat" as const;
     const stream = preset ? true : (endpoint ? true : true);
 
+    console.log(`[studio] resolveEffectiveLLMConfigForService: result baseUrl=${baseUrl}, apiKey=${apiKey ? 'yes' : 'no'}`);
     return { service, model, apiKey, baseUrl, apiFormat, stream };
   } catch {
     return null;
@@ -799,7 +804,9 @@ async function resolveConfiguredServiceBaseUrl(root: string, serviceId: string, 
   try {
     const config = await loadRawConfig(root);
     const services = normalizeServiceConfig((config.llm as Record<string, unknown> | undefined)?.services);
+    console.log(`[studio] resolveConfiguredServiceBaseUrl: serviceId=${serviceId}, services=${JSON.stringify(services.map(s => ({ key: serviceConfigKey(s), baseUrl: s.baseUrl })))}`);
     const matched = services.find((entry) => serviceConfigKey(entry) === serviceId);
+    console.log(`[studio] resolveConfiguredServiceBaseUrl: matched=${matched ? JSON.stringify({ baseUrl: matched.baseUrl }) : 'null'}`);
     return matched?.baseUrl;
   } catch {
     return undefined;
@@ -1328,26 +1335,15 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       : sseSink;
     const logger = createLogger({ tag: "studio", sinks: [scopedSseSink, consoleSink] });
 
-    const onFailover = async (error: unknown): Promise<{ client: LLMClient; model: string } | null> => {
-      console.log(`[studio] ========== onFailover callback triggered ==========`);
-      console.log(`[studio] Current LLM: ${currentConfig.llm.service}/${currentConfig.llm.model}`);
-      
-      const failoverConfig = (currentConfig.llm as Record<string, unknown>)?.failover as Record<string, unknown> | undefined;
-      console.log(`[studio] Failover config: ${JSON.stringify(failoverConfig)}`);
-      
-      if (!failoverConfig?.enabled) {
-        console.log(`[studio] Failover not enabled, returning null`);
-        return null;
-      }
+    const failoverConfig = (currentConfig.llm as Record<string, unknown>)?.failover as Record<string, unknown> | undefined;
+    let failoverManager: ReturnType<typeof createFailoverManager> | null = null;
 
-      const mode = (failoverConfig.mode as "auto" | "manual") ?? "manual";
-      console.log(`[studio] Failover mode: ${mode}`);
-
-      console.log(`[studio] Creating FailoverManager...`);
-      const failoverManager = createFailoverManager(
+    if (failoverConfig?.enabled) {
+      console.log(`[studio] Initializing FailoverManager for session`);
+      failoverManager = createFailoverManager(
         {
           enabled: Boolean(failoverConfig.enabled),
-          mode,
+          mode: (failoverConfig.mode as "auto" | "manual") ?? "manual",
           fallbacks: Array.isArray(failoverConfig.fallbacks) ? failoverConfig.fallbacks : [],
           maxAutoSwitches: typeof failoverConfig.maxAutoSwitches === "number" ? failoverConfig.maxAutoSwitches : 3,
           retryDelayMs: typeof failoverConfig.retryDelayMs === "number" ? failoverConfig.retryDelayMs : 5000,
@@ -1355,6 +1351,19 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
         currentConfig.llm.service,
         currentConfig.llm.model,
       );
+    }
+
+    const onFailover = async (error: unknown): Promise<{ client: LLMClient; model: string } | null> => {
+      console.log(`[studio] ========== onFailover callback triggered ==========`);
+      console.log(`[studio] Current LLM: ${currentConfig.llm.service}/${currentConfig.llm.model}`);
+
+      const mode = (failoverConfig?.mode as "auto" | "manual") ?? "manual";
+      console.log(`[studio] Failover mode: ${mode}`);
+
+      if (!failoverManager) {
+        console.log(`[studio] FailoverManager not initialized, returning null`);
+        return null;
+      }
 
       if (mode === "manual") {
         console.log(`[studio] Manual mode: checking if manual switch is required...`);
@@ -2794,6 +2803,17 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       }
 
       // Run pi-agent session
+      let rawConfig: Record<string, unknown> = {};
+      try {
+        rawConfig = JSON.parse(await readFile(join(root, "inkos.json"), "utf-8"));
+      } catch {
+        // File not found or parse error - use empty config
+      }
+      const agentPrompts = (rawConfig.agentPrompts as Record<string, unknown> | undefined) ?? {};
+      const customSystemPrompt = agentBookId
+        ? (agentPrompts.writing as string | undefined) ?? (agentPrompts.writingEn as string | undefined) ?? null
+        : (agentPrompts.newBook as string | undefined) ?? (agentPrompts.newBookEn as string | undefined) ?? null;
+
       const collectedToolExecs: CollectedToolExec[] = [];
       const result = await runAgentSession(
         {
@@ -2804,6 +2824,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
           bookId: agentBookId,
           sessionId: bookSession.sessionId,
           language: config.language ?? "zh",
+          customSystemPrompt,
           onEvent: (event) => {
             if (event.type === "message_update") {
               const ame = event.assistantMessageEvent;
@@ -3286,7 +3307,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
     try {
       const artifact = await buildExportArtifact(state, id, {
-        format: format as "txt" | "md" | "epub",
+        format: format as "txt" | "md" | "epub" | "docx",
         approvedOnly,
       });
       const responseBody = typeof artifact.payload === "string"
@@ -3314,13 +3335,13 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       const pipeline = new PipelineRunner(await buildPipelineConfig());
       const tools = createInteractionToolsFromDeps(pipeline, state);
       const bookDir = state.bookDir(id);
-      const outputPath = join(bookDir, `${id}.${fmt === "epub" ? "epub" : fmt}`);
+      const outputPath = join(bookDir, `${id}.${fmt === "epub" ? "epub" : fmt === "docx" ? "docx" : fmt}`);
       const result = await processProjectInteractionRequest({
         projectRoot: root,
         request: {
           intent: "export_book",
           bookId: id,
-          format: fmt as "txt" | "md" | "epub",
+          format: fmt as "txt" | "md" | "epub" | "docx",
           approvedOnly,
           outputPath,
         },
@@ -3398,6 +3419,39 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     const configPath = join(root, "inkos.json");
     const raw = JSON.parse(await readFile(configPath, "utf-8"));
     raw.notify = channels;
+    const { writeFile: writeFileFs } = await import("node:fs/promises");
+    await writeFileFs(configPath, JSON.stringify(raw, null, 2), "utf-8");
+    return c.json({ ok: true });
+  });
+
+  // --- Agent prompts config ---
+
+  app.get("/api/v1/project/agent-prompts", async (c) => {
+    const raw = JSON.parse(await readFile(join(root, "inkos.json"), "utf-8"));
+    const agentPrompts = (raw.agentPrompts as Record<string, unknown> | undefined) ?? {};
+    return c.json({
+      newBook: (agentPrompts.newBook as string | undefined) ?? null,
+      newBookEn: (agentPrompts.newBookEn as string | undefined) ?? null,
+      writing: (agentPrompts.writing as string | undefined) ?? null,
+      writingEn: (agentPrompts.writingEn as string | undefined) ?? null,
+    });
+  });
+
+  app.put("/api/v1/project/agent-prompts", async (c) => {
+    const body = await c.req.json<{
+      newBook?: string | null;
+      newBookEn?: string | null;
+      writing?: string | null;
+      writingEn?: string | null;
+    }>();
+    const configPath = join(root, "inkos.json");
+    const raw = JSON.parse(await readFile(configPath, "utf-8"));
+    raw.agentPrompts = raw.agentPrompts ?? {};
+    const ap = raw.agentPrompts as Record<string, unknown>;
+    if (body.newBook !== undefined) ap.newBook = body.newBook;
+    if (body.newBookEn !== undefined) ap.newBookEn = body.newBookEn;
+    if (body.writing !== undefined) ap.writing = body.writing;
+    if (body.writingEn !== undefined) ap.writingEn = body.writingEn;
     const { writeFile: writeFileFs } = await import("node:fs/promises");
     await writeFileFs(configPath, JSON.stringify(raw, null, 2), "utf-8");
     return c.json({ ok: true });
@@ -3716,6 +3770,49 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       return c.json({ ok: true, result });
     } catch (e) {
       broadcast("style:error", { bookId: id, error: String(e) });
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
+  // --- Style Get/Update for Book ---
+
+  app.get("/api/v1/books/:id/style", async (c) => {
+    const id = c.req.param("id");
+    try {
+      const { readFile } = await import("node:fs/promises");
+      const { join } = await import("node:path");
+      const { StateManager } = await import("@actalk/inkos-core");
+      const state = new StateManager(process.cwd());
+      const bookDir = state.bookDir(id);
+      const styleProfilePath = join(bookDir, "story", "style_profile.json");
+      const content = await readFile(styleProfilePath, "utf-8");
+      const profile = JSON.parse(content);
+      return c.json({ profile });
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") {
+        return c.json({ error: "Style profile not found. Import a style guide first." }, 404);
+      }
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
+  app.put("/api/v1/books/:id/style", async (c) => {
+    const id = c.req.param("id");
+    const { profile } = await c.req.json<{ profile: Record<string, unknown> }>();
+    if (!profile) return c.json({ error: "profile is required" }, 400);
+
+    try {
+      const { writeFile, mkdir } = await import("node:fs/promises");
+      const { join } = await import("node:path");
+      const { StateManager } = await import("@actalk/inkos-core");
+      const state = new StateManager(process.cwd());
+      const bookDir = state.bookDir(id);
+      const storyDir = join(bookDir, "story");
+      await mkdir(storyDir, { recursive: true });
+      const styleProfilePath = join(storyDir, "style_profile.json");
+      await writeFile(styleProfilePath, JSON.stringify(profile, null, 2), "utf-8");
+      return c.json({ ok: true });
+    } catch (e) {
       return c.json({ error: String(e) }, 500);
     }
   });
