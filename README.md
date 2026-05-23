@@ -6,7 +6,7 @@
 
 1. 添加了自动模型切换（主要是为了 model scope 的免费额度）
 2. 自定义 agent 提示词
-3. 添加了去ai味功能（来自[去 AI 味）](https://github.com/LifelongLazyLearner/qu-ai-wei)）
+3. 添加了去ai味功能（来自[去 AI 味](https://github.com/LifelongLazyLearner/qu-ai-wei)）
 
 ***
 
