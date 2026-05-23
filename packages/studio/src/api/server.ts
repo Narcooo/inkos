@@ -3298,6 +3298,171 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     }
   });
 
+  // --- Remove AI Taste (Humanize) ---
+
+  app.post("/api/v1/books/:id/humanize/:chapter", async (c) => {
+    const startTime = Date.now();
+    const id = c.req.param("id");
+    const chapterNum = parseInt(c.req.param("chapter"), 10);
+    const bookDir = state.bookDir(id);
+    const body = await c.req
+      .json<{ style?: "conservative" | "aggressive"; register?: string }>()
+      .catch(() => ({ style: "conservative", register: undefined }));
+
+    console.log(`[Humanize] ====== 开始处理 ======`);
+    console.log(`[Humanize] 书籍 ID: ${id}`);
+    console.log(`[Humanize] 章节号：${chapterNum}`);
+    console.log(`[Humanize] 处理风格：${body.style ?? "conservative"}`);
+    console.log(`[Humanize] 指定语体：${body.register ?? "自动检测"}`);
+    
+    broadcast("humanize:start", { bookId: id, chapter: chapterNum });
+    
+    try {
+      // Step 1: 加载书籍配置
+      console.log(`[Humanize] Step 1: 加载书籍配置...`);
+      const book = await state.loadBookConfig(id);
+      console.log(`[Humanize] ✓ 书籍配置加载成功`);
+      console.log(`  - 书名：${book.title}`);
+      console.log(`  - 语言：${book.language}`);
+      console.log(`  - 类型：${book.genre}`);
+      
+      // Step 2: 查找章节文件
+      console.log(`[Humanize] Step 2: 查找章节文件...`);
+      const chaptersDir = join(bookDir, "chapters");
+      const files = await readdir(chaptersDir);
+      const paddedNum = String(chapterNum).padStart(4, "0");
+      const match = files.find((f) => f.startsWith(paddedNum) && f.endsWith(".md"));
+      
+      if (!match) {
+        console.log(`[Humanize] ✗ 章节文件未找到 (搜索模式：${paddedNum}*.md)`);
+        return c.json({ error: "Chapter not found" }, 404);
+      }
+      console.log(`[Humanize] ✓ 找到章节文件：${match}`);
+      
+      // Step 3: 读取章节内容
+      console.log(`[Humanize] Step 3: 读取章节内容...`);
+      const chapterPath = join(chaptersDir, match);
+      const content = await readFile(chapterPath, "utf-8");
+      console.log(`[Humanize] ✓ 章节内容读取成功`);
+      console.log(`  - 文件路径：${chapterPath}`);
+      console.log(`  - 内容长度：${content.length} 字符`);
+      console.log(`  - 预估字数：${Math.round(content.length / 2)} 字`);
+      
+      // Step 4: 创建 Agent
+      console.log(`[Humanize] Step 4: 创建 AI 味去除 Agent...`);
+      const { AITasteRemoverAgent, createLogger, createStderrSink } = await import("@actalk/inkos-core");
+      const pipeline = new PipelineRunner(await buildPipelineConfig());
+      
+      // Get LLM config from pipeline
+      const llmClient = pipeline.config?.client;
+      const llmModel = pipeline.config?.model;
+      
+      console.log(`[Humanize] LLM 配置检查:`);
+      console.log(`  - Client: ${llmClient ? llmClient.provider : "未配置"}`);
+      console.log(`  - Model: ${llmModel ?? "未配置"}`);
+      
+      if (!llmClient || !llmModel) {
+        console.log(`[Humanize] ✗ LLM 未配置，终止处理`);
+        throw new Error("LLM not configured. Please configure LLM in settings first.");
+      }
+      console.log(`[Humanize] ✓ LLM 配置验证通过`);
+      
+      console.log(`[Humanize] 初始化 AITasteRemoverAgent...`);
+      // Create logger with proper sink
+      const logger = createLogger({
+        tag: "AITasteRemover",
+        sinks: [createStderrSink({ minLevel: "info", enableColors: true })],
+      });
+      
+      const agent = new AITasteRemoverAgent({
+        client: llmClient,
+        model: llmModel,
+        projectRoot: root,
+        bookId: id,
+        logger,
+      });
+      console.log(`[Humanize] ✓ Agent 创建成功`);
+      
+      // Step 5: 执行去 AI 味处理
+      console.log(`[Humanize] Step 5: 执行去 AI 味处理...`);
+      console.log(`[Humanize] 输入参数:`);
+      console.log(`  - targetStyle: ${body.style ?? "conservative"}`);
+      console.log(`  - register: ${body.register ?? "自动检测"}`);
+      console.log(`  - language: ${book.language === "en" ? "en" : "zh"}`);
+      
+      const result = await agent.removeAITaste({
+        content,
+        targetStyle: body.style ?? "conservative",
+        register: body.register as any,
+        language: book.language === "en" ? "en" : "zh",
+      });
+      
+      console.log(`[Humanize] ✓ 处理完成`);
+      console.log(`[Humanize] ====== 处理结果 ======`);
+      console.log(`  - 门检结果：${result.gateCheckResult.type}`);
+      console.log(`  - 门检行动：${result.gateCheckResult.action}`);
+      console.log(`  - 检测语体：${result.registerDetected}`);
+      console.log(`  - 发现 AI 模式：${result.patternsFound.length} 条`);
+      console.log(`  - 原文长度：${content.length} 字符`);
+      console.log(`  - 修改后长度：${result.revisedContent.length} 字符`);
+      console.log(`  - 长度变化：${result.revisedContent.length - content.length} 字符`);
+      console.log(`  - 修改比例：${((1 - result.revisedContent.length / content.length) * 100).toFixed(2)}%`);
+      
+      if (result.patternsFound.length > 0) {
+        console.log(`[Humanize] 检测到的 AI 模式:`);
+        result.patternsFound.forEach((pattern, i) => {
+          console.log(`  ${i + 1}. ${pattern.category} - ${pattern.pattern} (${pattern.severity})`);
+        });
+      }
+      
+      if (result.gateCheckResult.type === "human") {
+        console.log(`[Humanize] ⚠ 检测到真人写作痕迹，未做修改`);
+        console.log(`[Humanize] 证据:`);
+        result.gateCheckResult.evidence.forEach((e, i) => {
+          console.log(`  ${i + 1}. ${e}`);
+        });
+      } else {
+        console.log(`[Humanize] 打磨报告:`);
+        console.log(`  - 动词强化：${result.polishReport.verbStrengthen}`);
+        console.log(`  - 节奏重塑：${result.polishReport.rhythmReshaping}`);
+        console.log(`  - 填充词删除：${result.polishReport.fillerRemoval.length} 个`);
+        console.log(`  - 抽象换具体：${result.polishReport.abstractionToConcrete}`);
+        console.log(`  - 语序归位：${result.polishReport.wordOrderFix}`);
+        console.log(`  - 语体匹配：${result.polishReport.registerMatch}`);
+      }
+      
+      // Step 6: 保存修改后的内容
+      console.log(`[Humanize] Step 6: 保存修改后的内容...`);
+      await writeFile(chapterPath, result.revisedContent, "utf-8");
+      console.log(`[Humanize] ✓ 内容保存成功`);
+      
+      // Step 7: 广播完成事件
+      console.log(`[Humanize] Step 7: 广播完成事件...`);
+      broadcast("humanize:complete", { 
+        bookId: id, 
+        chapter: chapterNum,
+        gateCheck: result.gateCheckResult,
+        register: result.registerDetected,
+      });
+      console.log(`[Humanize] ✓ 事件广播成功`);
+      
+      console.log(`[Humanize] ====== 处理结束 ======`);
+      console.log(`[Humanize] 总耗时：${((Date.now() - startTime) / 1000).toFixed(2)}秒`);
+      
+      return c.json(result);
+    } catch (e) {
+      console.log(`[Humanize] ✗ 处理失败`);
+      console.log(`[Humanize] 错误类型：${e.constructor?.name ?? "Error"}`);
+      console.log(`[Humanize] 错误信息：${e instanceof Error ? e.message : String(e)}`);
+      if (e instanceof Error && e.stack) {
+        console.log(`[Humanize] 堆栈跟踪:`);
+        console.log(e.stack);
+      }
+      broadcast("humanize:error", { bookId: id, error: String(e) });
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
   // --- Export ---
 
   app.get("/api/v1/books/:id/export", async (c) => {

@@ -3,6 +3,7 @@ import {
   Search,
   FileOutput,
   TrendingUp,
+  Wand2,
 } from "lucide-react";
 
 export interface QuickActionsProps {
@@ -33,6 +34,13 @@ const CHIPS: ReadonlyArray<ChipDef> = [
     labelEn: "Audit",
     commandZh: "审计",
     commandEn: "audit",
+  },
+  {
+    icon: <Wand2 size={12} />,
+    labelZh: "去 AI 味",
+    labelEn: "Humanize",
+    commandZh: "去 AI 味",
+    commandEn: "humanize",
   },
   {
     icon: <FileOutput size={12} />,

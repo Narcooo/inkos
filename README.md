@@ -5,8 +5,8 @@
 ### 更新日志
 
 1. 添加了自动模型切换（主要是为了 model scope 的免费额度）
-
 2. 自定义 agent 提示词
+3. 添加了去ai味功能（来自[去 AI 味）](https://github.com/LifelongLazyLearner/qu-ai-wei)）
 
 ***
 
@@ -634,12 +634,12 @@ pnpm dev
 pnpm --filter @actalk/inkos-studio dev
 ```
 
-- 前端：http://localhost:4567
-- 后端 API：http://localhost:4569
+- 前端：<http://localhost:4567>
+- 后端 API：<http://localhost:4569>
 
 ### 第五步：配置 LLM 服务
 
-打开浏览器访问 http://localhost:4567，进入「模型配置」页面：
+打开浏览器访问 <http://localhost:4567，进入「模型配置」页面：>
 
 1. 选择服务商（Google Gemini、Moonshot、MiniMax、智谱、百炼或自定义端点）
 2. 粘贴 API Key，点击「测试连接」

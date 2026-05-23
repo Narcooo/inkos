@@ -309,6 +309,7 @@ export { buildWriterSystemPrompt, buildGoldenOpeningDiscipline } from "./agents/
 export { analyzeAITells, type AITellResult, type AITellIssue } from "./agents/ai-tells.js";
 export { analyzeSensitiveWords, type SensitiveWordResult, type SensitiveWordMatch } from "./agents/sensitive-words.js";
 export { detectAIContent, type DetectionResult } from "./agents/detector.js";
+export { AITasteRemoverAgent, type RemoveAITasteInput, type RemoveAITasteOutput, type RegisterType, type GateCheckResult, type AIPattern, type PolishReport } from "./agents/ai-taste-remover.js";
 export { analyzeStyle } from "./agents/style-analyzer.js";
 export { analyzeDetectionInsights } from "./agents/detection-insights.js";
 export { validatePostWrite, detectParagraphLengthDrift, detectParagraphShapeWarnings, detectDuplicateTitle, type PostWriteViolation } from "./agents/post-write-validator.js";
