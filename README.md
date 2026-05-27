@@ -1,10 +1,20 @@
-<p align="center">
-  <img src="assets/logo.svg" width="120" height="120" alt="InkOS Logo">
-  <img src="assets/inkos-text.svg" width="240" height="65" alt="InkOS">
+# 此为enderboy的版本
+
+***
+
+### 更新日志
+
+1. 添加了自动模型切换（主要是为了 model scope 的免费额度）
+2. 自定义 agent 提示词
+3. 添加了去ai味功能（来自[去 AI 味](https://github.com/LifelongLazyLearner/qu-ai-wei)）
+
+***
+
+<p align="center"> <img src="assets/logo.svg" width="120" height="120" alt="InkOS Logo"> <img src="assets/inkos-text.svg" width="240" height="65" alt="InkOS">
+
 </p>
 
 <h1 align="center">Autonomous Novel Writing AI Agent<br><sub>自动化小说写作 AI Agent</sub></h1>
-
 <p align="center">
   <a href="https://www.npmjs.com/package/@actalk/inkos"><img src="https://img.shields.io/npm/v/@actalk/inkos.svg?color=cb3837&logo=npm" alt="npm version"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL%20v3-blue.svg" alt="License: AGPL-3.0"></a>
@@ -17,7 +27,7 @@
   <a href="README.en.md">English</a> | 中文 | <a href="README.ja.md">日本語</a>
 </p>
 
----
+***
 
 AI Agent 自主写小说——写、审、改，全程接管。覆盖玄幻、仙侠、都市、科幻等多种风格，支持续写、番外、同人、仿写等创作形式。人工审核门控确保你始终掌控全局。已发布为 [OpenClaw](https://clawhub.ai/narcooo/inkos) skill。
 
@@ -73,6 +83,7 @@ inkos interact --json --message "继续当前书，但把节奏再收紧一点"
 ```
 
 这条入口直接走和项目 TUI 相同的交互执行内核，因此 OpenClaw、TUI、Studio 共用同一套控制脑。返回的 JSON 包含：
+
 - 解析后的 request
 - assistant 文本回复
 - 更新后的 interaction session
@@ -188,11 +199,11 @@ inkos doctor
 
 `doctor` 会显示当前 effective config mode、service/model/API Key 来源，并尝试 API 连通性。常见模式：
 
-| 模式 | 含义 |
-|------|------|
+| 模式               | 含义                                        |
+| ---------------- | ----------------------------------------- |
 | `studio-project` | Studio 运行时：只使用 Studio/project 配置和 secrets |
-| `cli-project` | CLI 运行时：以 Studio 配置为基础，再叠加 env 和 CLI 参数 |
-| `legacy-env` | 旧 env 模式：兼容老项目的纯 `.env` 配置 |
+| `cli-project`    | CLI 运行时：以 Studio 配置为基础，再叠加 env 和 CLI 参数   |
+| `legacy-env`     | 旧 env 模式：兼容老项目的纯 `.env` 配置                |
 
 如果服务测试失败，优先检查服务商、模型和协议是否匹配。Google Gemini 的 AI Studio API Key 可用于 Gemini OpenAI-compatible endpoint；InkOS 会自动禁用 Google 不支持的 OpenAI `store` 参数。MiniMax / MiniMax CodingPlan 默认走官方 OpenAI-compatible `/v1/chat/completions`，并优先使用可工作的非流式 transport，避免流式返回 usage 但无正文的问题。
 
@@ -265,7 +276,7 @@ inkos short run \
   <img src="assets/screenshot-terminal.png" width="700" alt="终端截图">
 </p>
 
----
+***
 
 ## 核心特性
 
@@ -334,9 +345,9 @@ inkos compose chapter 吞天魔帝
 
 伏笔系统使用 Zod schema 校验——`lastAdvancedChapter` 必须是整数，`status` 只能是 open/progressing/deferred/resolved。LLM 输出的 JSON delta 在写入前经过 `applyRuntimeStateDelta` 做 immutable 更新 + `validateRuntimeState` 结构校验。坏数据直接拒绝，不会滚雪球。
 
-模型输出上限由 provider bank 的模型卡管理；`llm.extra` / `INKOS_LLM_EXTRA_*` 中的保留键（max_tokens、temperature、model、messages、stream 等）会被自动过滤，防止意外覆盖核心请求参数。
+模型输出上限由 provider bank 的模型卡管理；`llm.extra` / `INKOS_LLM_EXTRA_*` 中的保留键（max\_tokens、temperature、model、messages、stream 等）会被自动过滤，防止意外覆盖核心请求参数。
 
----
+***
 
 ## 工作原理
 
@@ -346,18 +357,18 @@ inkos compose chapter 吞天魔帝
   <img src="assets/screenshot-pipeline.png" width="800" alt="管线流程图">
 </p>
 
-| Agent | 职责 |
-|-------|------|
-| **雷达 Radar** | 扫描平台趋势和读者偏好，指导故事方向（可插拔，可跳过） |
-| **规划师 Planner** | 读取作者意图 + 当前焦点 + 记忆检索结果，产出本章意图（must-keep / must-avoid） |
-| **编排师 Composer** | 从全量真相文件中按相关性选择上下文，编译规则栈和运行时产物 |
-| **建筑师 Architect** | 建书、导入或番外初始化时生成基础设定：故事框架、规则、角色与长期控制文件 |
-| **写手 Writer** | 基于编排后的精简上下文生成正文（字数治理 + 对话引导） |
-| **观察者 Observer** | 从正文中过度提取 9 类事实（角色、位置、资源、关系、情感、信息、伏笔、时间、物理状态） |
-| **反射器 Reflector** | 输出 JSON delta（而非全量 markdown），由代码层做 Zod schema 校验后 immutable 写入 |
-| **归一化器 Normalizer** | 仅在正文明显偏离 hard range 时单 pass 压缩/扩展 |
-| **连续性审计员 Auditor** | 对照 7 个真相文件验证草稿，33 维度检查 |
-| **修订者 Reviser** | 修复审计发现的关键问题；默认最多自动修订一次，可通过 `writing.reviewRetries` 调整，其他问题标记给人工审核 |
+| Agent               | 职责                                                                |
+| ------------------- | ----------------------------------------------------------------- |
+| **雷达 Radar**        | 扫描平台趋势和读者偏好，指导故事方向（可插拔，可跳过）                                       |
+| **规划师 Planner**     | 读取作者意图 + 当前焦点 + 记忆检索结果，产出本章意图（must-keep / must-avoid）             |
+| **编排师 Composer**    | 从全量真相文件中按相关性选择上下文，编译规则栈和运行时产物                                     |
+| **建筑师 Architect**   | 建书、导入或番外初始化时生成基础设定：故事框架、规则、角色与长期控制文件                              |
+| **写手 Writer**       | 基于编排后的精简上下文生成正文（字数治理 + 对话引导）                                      |
+| **观察者 Observer**    | 从正文中过度提取 9 类事实（角色、位置、资源、关系、情感、信息、伏笔、时间、物理状态）                      |
+| **反射器 Reflector**   | 输出 JSON delta（而非全量 markdown），由代码层做 Zod schema 校验后 immutable 写入    |
+| **归一化器 Normalizer** | 仅在正文明显偏离 hard range 时单 pass 压缩/扩展                                 |
+| **连续性审计员 Auditor**  | 对照 7 个真相文件验证草稿，33 维度检查                                            |
+| **修订者 Reviser**     | 修复审计发现的关键问题；默认最多自动修订一次，可通过 `writing.reviewRetries` 调整，其他问题标记给人工审核 |
 
 如果审计不通过，默认管线只做一次"修订 → 再审计"；仍未解决的问题会保留在结果和状态里，交给人工或后续命令继续处理。需要更强自动闭环时，可以运行 `inkos config set writing.reviewRetries 3` 把修订轮数调高。
 
@@ -365,15 +376,15 @@ inkos compose chapter 吞天魔帝
 
 每本书维护 7 个真相文件作为唯一事实来源：
 
-| 文件 | 用途 |
-|------|------|
-| `current_state.md` | 世界状态：角色位置、关系网络、已知信息、情感弧线 |
-| `particle_ledger.md` | 资源账本：物品、金钱、物资数量及衰减追踪 |
-| `pending_hooks.md` | 未闭合伏笔：铺垫、对读者的承诺、未解决冲突 |
+| 文件                     | 用途                       |
+| ---------------------- | ------------------------ |
+| `current_state.md`     | 世界状态：角色位置、关系网络、已知信息、情感弧线 |
+| `particle_ledger.md`   | 资源账本：物品、金钱、物资数量及衰减追踪     |
+| `pending_hooks.md`     | 未闭合伏笔：铺垫、对读者的承诺、未解决冲突    |
 | `chapter_summaries.md` | 各章摘要：出场人物、关键事件、状态变化、伏笔动态 |
-| `subplot_board.md` | 支线进度板：A/B/C 线状态、停滞检测 |
-| `emotional_arcs.md` | 情感弧线：按角色追踪情绪变化和成长 |
-| `character_matrix.md` | 角色交互矩阵：相遇记录、信息边界 |
+| `subplot_board.md`     | 支线进度板：A/B/C 线状态、停滞检测     |
+| `emotional_arcs.md`    | 情感弧线：按角色追踪情绪变化和成长        |
+| `character_matrix.md`  | 角色交互矩阵：相遇记录、信息边界         |
 
 连续性审计员对照这些文件检查每一章草稿。如果角色"记起"了从未亲眼见过的事，或者拿出了两章前已经丢失的武器，审计员会捕捉到。
 
@@ -400,7 +411,7 @@ Node 22+ 环境下自动启用 SQLite 时序记忆数据库（`story/memory.db`�
 
 ### 创作规则体系
 
-写手 agent 内置 ~25 条通用创作规则（人物塑造、叙事技法、逻辑自洽、语言约束、去 AI 味），适用于所有题材。
+写手 agent 内置 \~25 条通用创作规则（人物塑造、叙事技法、逻辑自洽、语言约束、去 AI 味），适用于所有题材。
 
 在此基础上，每个题材有专属规则（禁忌、语言约束、节奏、审计维度），每本书有独立的 `book_rules.md`（主角人设、数值上限、自定义禁令）、`story_bible.md`（世界观设定）、`author_intent.md`（长期方向）和 `current_focus.md`（近期关注点）。`volume_outline.md` 仍然是默认规划，但在 v2 输入治理模式下不再天然压过当前任务意图。
 
@@ -445,7 +456,7 @@ inkos agent "写下一章，重点写师徒矛盾"
 inkos agent "先扫描市场趋势，然后根据结果创建一本新书"
 ```
 
-内置 18 个工具（write_draft、plan_chapter、compose_chapter、audit_chapter、revise_chapter、scan_market、create_book、update_author_intent、update_current_focus、get_book_status、read_truth_files、list_books、write_full_pipeline、web_fetch、import_style、import_canon、import_chapters、write_truth_file），LLM 通过 tool-use 决定调用顺序。推荐的 Agent 工作流是：先调整控制面，再 `plan` / `compose`，最后决定写草稿还是跑完整管线。
+内置 18 个工具（write\_draft、plan\_chapter、compose\_chapter、audit\_chapter、revise\_chapter、scan\_market、create\_book、update\_author\_intent、update\_current\_focus、get\_book\_status、read\_truth\_files、list\_books、write\_full\_pipeline、web\_fetch、import\_style、import\_canon、import\_chapters、write\_truth\_file），LLM 通过 tool-use 决定调用顺序。推荐的 Agent 工作流是：先调整控制面，再 `plan` / `compose`，最后决定写草稿还是跑完整管线。
 
 ## 实测数据
 
@@ -455,56 +466,56 @@ inkos agent "先扫描市场趋势，然后根据结果创建一本新书"
   <img src="assets/screenshot-chapters.png" width="800" alt="生产数据">
 </p>
 
-| 指标 | 数据 |
-|------|------|
-| 已完成章节 | 31 章 |
-| 总字数 | 452,191 字 |
-| 平均章字数 | ~14,500 字 |
-| 审计通过率 | 100% |
-| 资源追踪项 | 48 个 |
-| 活跃伏笔 | 20 条 |
-| 已回收伏笔 | 10 条 |
+| 指标    | 数据         |
+| ----- | ---------- |
+| 已完成章节 | 31 章       |
+| 总字数   | 452,191 字  |
+| 平均章字数 | \~14,500 字 |
+| 审计通过率 | 100%       |
+| 资源追踪项 | 48 个       |
+| 活跃伏笔  | 20 条       |
+| 已回收伏笔 | 10 条       |
 
 ## 命令参考
 
-| 命令 | 说明 |
-|------|------|
-| `inkos init [name]` | 初始化项目（省略 name 在当前目录初始化） |
-| `inkos book create` | 创建新书（`--genre`、`--platform`、`--chapter-words`、`--target-chapters`、`--brief <file>` 传入创作简报） |
-| `inkos book update [id]` | 修改书设置（`--chapter-words`、`--target-chapters`、`--status`） |
-| `inkos book list` | 列出所有书籍 |
-| `inkos book delete <id>` | 删除书籍及全部数据（`--force` 跳过确认） |
-| `inkos genre list/show/copy/create` | 查看、复制、创建题材 |
-| `inkos plan chapter [id]` | 生成下一章的 `intent.md`（`--context` / `--context-file` 传入当前指令） |
-| `inkos compose chapter [id]` | 生成下一章的 `context.json`、`rule-stack.yaml`、`trace.json` |
-| `inkos write next [id]` | 完整管线写下一章（`--words` 覆盖字数，`--count` 连写，`-q` 静默模式） |
-| `inkos write rewrite [id] <n>` | 重写第 N 章（恢复状态快照，`--force` 跳过确认，`--words` 覆盖字数） |
-| `inkos draft [id]` | 只写草稿（`--words` 覆盖字数，`-q` 静默模式） |
-| `inkos audit [id] [n]` | 审计指定章节 |
-| `inkos revise [id] [n]` | 修订指定章节 |
-| `inkos agent <instruction>` | 自然语言 Agent 模式 |
-| `inkos review list [id]` | 审阅草稿 |
-| `inkos review approve-all [id]` | 批量通过 |
-| `inkos status [id]` | 项目状态 |
-| `inkos export [id]` | 导出书籍（`--format txt/md/epub`、`--output <path>`、`--approved-only`） |
-| `inkos radar scan` | 扫描平台趋势 |
-| `inkos fanfic init` | 从原作素材创建同人书（`--from`、`--mode canon/au/ooc/cp`） |
-| `inkos config set-global` | 设置 CLI / daemon / 部署环境的全局 LLM env（`~/.inkos/.env`） |
-| `inkos config show-global` | 查看全局配置 |
-| `inkos config set/show` | 查看/更新项目配置 |
-| `inkos config set-model <agent> <model>` | 为指定 agent 设置模型覆盖（`--base-url`、`--provider`、`--api-key-env` 支持多 Provider 路由） |
-| `inkos config remove-model <agent>` | 移除 agent 模型覆盖（回退到默认） |
-| `inkos config show-models` | 查看当前模型路由 |
-| `inkos doctor` | 诊断配置问题（显示 effective config mode、来源、API 连通性和提供商兼容性提示） |
-| `inkos detect [id] [n]` | AIGC 检测（`--all` 全部章节，`--stats` 统计） |
-| `inkos style analyze <file>` | 分析参考文本提取文风指纹 |
-| `inkos style import <file> [id]` | 导入文风指纹到指定书 |
-| `inkos import canon [id] --from <parent>` | 导入正传正典到番外书 |
-| `inkos import chapters [id] --from <path>` | 导入已有章节续写（`--split`、`--resume-from`） |
-| `inkos analytics [id]` / `inkos stats [id]` | 书籍数据分析（审计通过率、高频问题、章节排名、token 用量） |
-| `inkos update` | 更新到最新版本 |
-| `inkos studio` / `inkos` | 启动 Web 工作台（`-p` 指定端口，默认 4567；Studio 使用服务页配置，不使用 env 覆盖） |
-| `inkos up / down` | 启动/停止守护进程（`-q` 静默模式，自动写入 `inkos.log`） |
+| 命令                                          | 说明                                                                                         |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `inkos init [name]`                         | 初始化项目（省略 name 在当前目录初始化）                                                                    |
+| `inkos book create`                         | 创建新书（`--genre`、`--platform`、`--chapter-words`、`--target-chapters`、`--brief <file>` 传入创作简报） |
+| `inkos book update [id]`                    | 修改书设置（`--chapter-words`、`--target-chapters`、`--status`）                                    |
+| `inkos book list`                           | 列出所有书籍                                                                                     |
+| `inkos book delete <id>`                    | 删除书籍及全部数据（`--force` 跳过确认）                                                                  |
+| `inkos genre list/show/copy/create`         | 查看、复制、创建题材                                                                                 |
+| `inkos plan chapter [id]`                   | 生成下一章的 `intent.md`（`--context` / `--context-file` 传入当前指令）                                  |
+| `inkos compose chapter [id]`                | 生成下一章的 `context.json`、`rule-stack.yaml`、`trace.json`                                       |
+| `inkos write next [id]`                     | 完整管线写下一章（`--words` 覆盖字数，`--count` 连写，`-q` 静默模式）                                            |
+| `inkos write rewrite [id] <n>`              | 重写第 N 章（恢复状态快照，`--force` 跳过确认，`--words` 覆盖字数）                                              |
+| `inkos draft [id]`                          | 只写草稿（`--words` 覆盖字数，`-q` 静默模式）                                                             |
+| `inkos audit [id] [n]`                      | 审计指定章节                                                                                     |
+| `inkos revise [id] [n]`                     | 修订指定章节                                                                                     |
+| `inkos agent <instruction>`                 | 自然语言 Agent 模式                                                                              |
+| `inkos review list [id]`                    | 审阅草稿                                                                                       |
+| `inkos review approve-all [id]`             | 批量通过                                                                                       |
+| `inkos status [id]`                         | 项目状态                                                                                       |
+| `inkos export [id]`                         | 导出书籍（`--format txt/md/epub`、`--output <path>`、`--approved-only`）                           |
+| `inkos radar scan`                          | 扫描平台趋势                                                                                     |
+| `inkos fanfic init`                         | 从原作素材创建同人书（`--from`、`--mode canon/au/ooc/cp`）                                              |
+| `inkos config set-global`                   | 设置 CLI / daemon / 部署环境的全局 LLM env（`~/.inkos/.env`）                                         |
+| `inkos config show-global`                  | 查看全局配置                                                                                     |
+| `inkos config set/show`                     | 查看/更新项目配置                                                                                  |
+| `inkos config set-model <agent> <model>`    | 为指定 agent 设置模型覆盖（`--base-url`、`--provider`、`--api-key-env` 支持多 Provider 路由）                |
+| `inkos config remove-model <agent>`         | 移除 agent 模型覆盖（回退到默认）                                                                       |
+| `inkos config show-models`                  | 查看当前模型路由                                                                                   |
+| `inkos doctor`                              | 诊断配置问题（显示 effective config mode、来源、API 连通性和提供商兼容性提示）                                       |
+| `inkos detect [id] [n]`                     | AIGC 检测（`--all` 全部章节，`--stats` 统计）                                                         |
+| `inkos style analyze <file>`                | 分析参考文本提取文风指纹                                                                               |
+| `inkos style import <file> [id]`            | 导入文风指纹到指定书                                                                                 |
+| `inkos import canon [id] --from <parent>`   | 导入正传正典到番外书                                                                                 |
+| `inkos import chapters [id] --from <path>`  | 导入已有章节续写（`--split`、`--resume-from`）                                                        |
+| `inkos analytics [id]` / `inkos stats [id]` | 书籍数据分析（审计通过率、高频问题、章节排名、token 用量）                                                           |
+| `inkos update`                              | 更新到最新版本                                                                                    |
+| `inkos studio` / `inkos`                    | 启动 Web 工作台（`-p` 指定端口，默认 4567；Studio 使用服务页配置，不使用 env 覆盖）                                    |
+| `inkos up / down`                           | 启动/停止守护进程（`-q` 静默模式，自动写入 `inkos.log`）                                                      |
 
 `[id]` 参数在项目只有一本书时可省略，自动检测。所有命令支持 `--json` 输出结构化数据。`draft` / `write next` / `plan chapter` / `compose chapter` 支持 `--context` 传入创作指导，`--words` 覆盖每章目标字数。`book create` 支持 `--brief <file>` 传入创作简报（你的脑洞/设定文档），Architect 会基于此生成设定而非凭空创作。`plan chapter` 会调用 LLM 生成章节意图；`compose chapter` 不要求在线 LLM，可在配置 API Key 之前先检查输入治理结果。
 
@@ -517,7 +528,6 @@ inkos up --service moonshot --model kimi-k2.5 --api-key-env MOONSHOT_API_KEY
 
 ## 路线图
 
-- [x] ~~`packages/studio` Web UI 工作台（Vite + React + Hono）~~ — 已发布，`inkos studio` 启动
 - [ ] 互动小说（分支叙事 + 读者选择）
 - [ ] 局部干预（重写半章 + 级联更新后续 truth 文件）
 - [ ] 自定义 agent 插件系统
@@ -532,6 +542,139 @@ pnpm install
 pnpm dev          # 监听模式
 pnpm test         # 运行测试
 pnpm typecheck    # 类型检查
+```
+
+## 从零开始：开发者使用指南
+
+如果你想从源码运行和开发 InkOS（而不是通过 `npm install -g` 安装），请按以下步骤操作：
+
+### 环境要求
+
+- Node.js >= 20
+- pnpm >= 9
+
+### 第一步：安装依赖
+
+```bash
+cd inkos                     # 进入本项目根目录
+pnpm install                 # 安装所有依赖
+pnpm build                   # 编译 core、cli、studio
+```
+
+### 第二步：创建小说项目
+
+InkOS Studio 需要一个小说项目目录（包含 `inkos.json`）才能运行。在仓库外任意位置创建：
+
+```bash
+# 在仓库外创建项目（例如 D:\my-novel 或 ~/my-novel）
+mkdir my-novel
+cd my-novel
+
+# 用 CLI 初始化项目（如果已全局安装 inkos）
+inkos init
+
+# 或者手动创建最简 inkos.json：
+```
+
+`my-novel/inkos.json` 最简内容：
+
+```json
+{
+  "name": "my-novel",
+  "version": "0.1.0",
+  "language": "zh",
+  "llm": {
+    "provider": "openai",
+    "service": "custom",
+    "configSource": "studio",
+    "baseUrl": "",
+    "model": "",
+    "apiFormat": "chat",
+    "stream": true
+  },
+  "notify": [],
+  "inputGovernanceMode": "v2",
+  "daemon": {
+    "schedule": {
+      "radarCron": "0 */6 * * *",
+      "writeCron": "*/15 * * * *"
+    },
+    "maxConcurrentBooks": 3
+  }
+}
+```
+
+项目目录结构：
+
+```
+my-novel/
+├── inkos.json       # 项目配置
+├── .env             # 可选，LLM 环境变量
+├── books/           # 书籍数据
+└── radar/           # 市场雷达扫描结果
+```
+
+### 第三步：配置 Studio 指向你的项目
+
+编辑 `packages/studio/scripts/dev.js`，将 `INKOS_PROJECT_ROOT` 改为你的项目路径：
+
+```js
+INKOS_PROJECT_ROOT: "D:\\my-novel",  // Windows
+// 或
+INKOS_PROJECT_ROOT: "/home/user/my-novel",  // macOS/Linux
+```
+
+### 第四步：启动 Studio
+
+```bash
+# 回到项目根目录
+cd inkos
+
+# 启动 Studio（前端 + 后端）
+pnpm dev
+# 或仅启动 studio 包
+pnpm --filter @actalk/inkos-studio dev
+```
+
+- 前端：<http://localhost:4567>
+- 后端 API：<http://localhost:4569>
+
+### 第五步：配置 LLM 服务
+
+打开浏览器访问 <http://localhost:4567，进入「模型配置」页面：>
+
+1. 选择服务商（Google Gemini、Moonshot、MiniMax、智谱、百炼或自定义端点）
+2. 粘贴 API Key，点击「测试连接」
+3. 选择可用模型，保存配置
+
+### 第六步：创建并开始写作
+
+在 Studio 中点击「创建新书」，或使用 CLI：
+
+```bash
+# 进入你的小说项目目录
+cd my-novel
+
+# 使用全局安装的 CLI（如果装了）
+inkos book create --title "我的小说" --genre xuanhuan
+```
+
+也可以直接在 Studio 界面完成建书、写作、审阅全流程。
+
+### 常用开发命令
+
+```bash
+pnpm dev                      # 所有包监听模式
+pnpm build                    # 全部编译
+pnpm test                     # 运行所有测试
+pnpm typecheck                # 类型检查
+
+pnpm --filter @actalk/inkos-core dev     # 仅 core
+pnpm --filter @actalk/inkos dev          # 仅 cli
+pnpm --filter @actalk/inkos-studio dev   # 仅 studio
+
+pnpm --filter @actalk/inkos-core test    # 仅 core 测试
+pnpm --filter @actalk/inkos test         # 仅 cli 测试
 ```
 
 ## Star History

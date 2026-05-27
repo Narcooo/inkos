@@ -52,6 +52,8 @@ export interface AgentSessionConfig {
   allowSystemFileRead?: boolean;
   /** Optional listener for streaming events (for SSE forwarding). */
   onEvent?: (event: AgentEvent) => void;
+  /** Optional custom system prompt override (from agentPrompts config). */
+  customSystemPrompt?: string | null;
 }
 
 export interface AgentSessionResult {
@@ -76,6 +78,7 @@ interface CachedAgent {
   modelIdentity: string;
   apiKey: string | undefined;
   allowSystemFileRead: boolean;
+  customSystemPrompt: string | null | undefined;
   lastCommittedSeq: number;
   lastActive: number;
 }
@@ -542,6 +545,7 @@ async function runAgentSessionUnlocked(
     const apiKeyChanged = cached.apiKey !== config.apiKey;
     const readPermissionChanged = cached.allowSystemFileRead !== allowSystemFileRead;
     const transcriptChanged = cached.lastCommittedSeq !== currentCommittedSeq;
+    const customPromptChanged = cached.customSystemPrompt !== config.customSystemPrompt;
 
     if (
       modelChanged ||
@@ -550,7 +554,8 @@ async function runAgentSessionUnlocked(
       languageChanged ||
       apiKeyChanged ||
       readPermissionChanged ||
-      transcriptChanged
+      transcriptChanged ||
+      customPromptChanged
     ) {
       agentCache.delete(cacheKey);
       cached = undefined;
@@ -570,7 +575,7 @@ async function runAgentSessionUnlocked(
     const agent = new Agent({
       initialState: {
         model,
-        systemPrompt: buildAgentSystemPrompt(bookId, language),
+        systemPrompt: config.customSystemPrompt || buildAgentSystemPrompt(bookId, language),
         tools: createAgentToolsForMode({ pipeline, bookId, projectRoot, allowSystemFileRead }),
         messages: initialAgentMessages,
       },
@@ -592,6 +597,7 @@ async function runAgentSessionUnlocked(
       modelIdentity: requestedModelIdentity,
       apiKey: config.apiKey,
       allowSystemFileRead,
+      customSystemPrompt: config.customSystemPrompt,
       lastCommittedSeq: currentCommittedSeq ?? await latestCommittedSeq(projectRoot, sessionId),
       lastActive: Date.now(),
     };

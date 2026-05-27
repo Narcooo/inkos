@@ -10,6 +10,7 @@ export interface AgentContext {
   readonly bookId?: string;
   readonly logger?: Logger;
   readonly onStreamProgress?: OnStreamProgress;
+  readonly onFailover?: (error: unknown) => Promise<{ client: LLMClient; model: string } | null>;
 }
 
 export abstract class BaseAgent {
@@ -30,6 +31,7 @@ export abstract class BaseAgent {
     return chatCompletion(this.ctx.client, this.ctx.model, messages, {
       ...options,
       onStreamProgress: this.ctx.onStreamProgress,
+      onFailover: this.ctx.onFailover,
     });
   }
 
@@ -48,6 +50,7 @@ export abstract class BaseAgent {
         ...options,
         webSearch: true,
         onStreamProgress: this.ctx.onStreamProgress,
+        onFailover: this.ctx.onFailover,
       });
     }
 

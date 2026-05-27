@@ -438,7 +438,23 @@ REVISED_CONTENT — for whole-chapter issues (length compression, structural rew
 
 If Critical issues include both local and whole-chapter problems, use REVISED_CONTENT (it addresses everything in one pass).
 
-Revision principles:
+## Revision Workflow (MUST follow in order)
+
+1. **Diagnose first**: Read all issues, identify the ROOT CAUSE of each Critical/High problem. Do not fix until you understand what's broken.
+2. **Prioritize**: Critical issues MUST be fixed. High issues SHOULD be fixed. Medium issues are optional — only address if they naturally arise from fixing higher-priority items.
+3. **Plan minimal changes**: For each issue, decide: Can this be fixed with a PATCH (local), or does it require REVISED_CONTENT (structural)? Choose the smallest intervention that solves the root cause.
+4. **Execute**: Apply fixes one by one, preserving everything that isn't broken.
+5. **Self-verify**: Before outputting, ask yourself: "Did I make this better, or just different?" If a fix might lower quality, skip it.
+
+## Conservative Editing Rules
+
+- **Do no harm**: If a sentence isn't broken, don't "improve" it. Unnecessary changes risk introducing new problems.
+- **Preserve voice**: Keep the original tone, rhythm, and character voices. Don't homogenize or over-polish.
+- **Fix once**: Don't apply multiple overlapping fixes to the same passage — pick the best solution.
+- **Respect context**: Don't delete setup scenes, breathing room, or transitional passages — they serve pacing.
+
+## Core Writing Principles
+
 1. Fix root causes — do not apply superficial polish${numericalRule}
 2. Hook status must stay in sync with the hooks board. If hook debt briefs are provided, preserve hook payoff scenes
 3. Do not alter the plot direction or core conflicts
@@ -447,10 +463,20 @@ Revision principles:
 6. Different characters speak differently. No "everyone gasped in unison"
 7. Escalate: bad things stack, each worse than the last
 
-Cycle-aware revision:
+## Cycle-aware Revision
+
 - If this chapter should be "aftermath" but is still escalating tension, rewrite the densest conflict passage into a change-showing passage — who lost what, whose attitude shifted, what the new normal is
 - If this chapter should be "climax" but has no clear payoff, find the closest scene to a reward and amplify it — make the promised release exceed reader expectations
 - Daily passages that don't serve the main line: rewrite as "bait" — add a detail pointing to the future, a hint, a character reaction that seeds curiosity
+
+## Common Issue Patterns & Solutions
+
+- **Character OOC**: Re-read the character matrix. Restore their core traits, speech patterns, and motivations. Don't make them act "out of convenience" for the plot.
+- **Mainline drift**: Identify where the chapter diverged from the outline. Realign by cutting or reframing off-topic scenes.
+- **Weak payoff**: If a setup chapter lacks release, amplify the closest reward moment — make the reader feel the tension break.
+- **AI-tell phrases**: Replace formulaic transitions ("however", "suddenly"), hedge words ("seemed", "appeared"), and narrator conclusions ("he finally understood") with concrete action.
+- **Paragraph uniformity**: Vary paragraph length — some 1-2 lines, some 6-8. Break monotony without destroying rhythm.
+- **Dialogue flatness**: Give each character distinct vocabulary, sentence length, and verbal tics. Add subtext — people rarely say exactly what they mean.
 
 Output format:
 
@@ -478,7 +504,7 @@ ${ledgerSection}
 
 PATCHES 和 REVISED_CONTENT 分别处理不同类型的问题——按问题类型选择，不是按偏好：
 
-PATCHES——处理局部文字问题（措辞、对话、AI痕迹、小的连续性错误）。
+PATCHES——处理局部文字问题（措辞、对话、AI 痕迹、小的连续性错误）。
   每个 PATCH 引用要修改的原文段落（一句、一段或多段皆可），给出替换文本。未涉及的内容保持原样。
 
 REVISED_CONTENT——处理全章级问题（字数压缩、结构重组、节奏重排、重大剧情偏离）。
@@ -486,7 +512,23 @@ REVISED_CONTENT——处理全章级问题（字数压缩、结构重组、节�
 
 如果 Critical 同时包含局部问题和全章问题，使用 REVISED_CONTENT（一次性解决所有问题）。
 
-修稿原则：
+## 修稿流程（必须按顺序执行）
+
+1. **先诊断**：通读所有审稿意见，找出每个 Critical/High 问题的**根因**。没想清楚之前不要动手。
+2. **分优先级**：Critical 必须修，High 应该修，Medium 可选——只有当修复高优先级问题时自然带过才处理。
+3. **规划最小改动**：每个问题判断：用 PATCH（局部）能解决，还是需要 REVISED_CONTENT（结构）？选择能解决根因的最小干预。
+4. **执行修复**：逐个修复，保留所有没坏的部分。
+5. **自我验证**：输出前问自己："我真的改好了，还是只是改动了？"如果某个修改可能降低质量，宁可不做。
+
+## 保守编辑原则
+
+- **不伤害原则**：句子没坏就不要"优化"它。不必要的改动会引入新问题。
+- **保持原味**：保留原文的语气、节奏和角色声音。不要同质化或过度打磨。
+- **一次修复**：同一段落不要叠加多个修复——选最好的那个方案。
+- **尊重上下文**：不要删除铺垫、呼吸段或过渡段——它们服务节奏。
+
+## 核心写作原则
+
 1. 修根因，不做表面润色${numericalRule}
 2. 伏笔状态必须与伏笔池同步。如果提供了 Hook Debt 简报，必须保留伏笔兑现段落
 3. 不改变剧情走向和核心冲突
@@ -495,12 +537,22 @@ REVISED_CONTENT——处理全章级问题（字数压缩、结构重组、节�
 6. 不同角色说话方式必须不同。禁止"众人齐声惊呼"
 7. 坏事叠坏事，每层比上一层过分
 
-小目标周期修稿指引：
+## 小目标周期修稿指引
+
 - 如果本章应该是"后效"阶段但仍在加压，把最密集的冲突段落改写为展示改变的段落——谁失去了什么、谁的态度变了、新的常态是什么
 - 如果本章应该是"爆发"阶段但没有明确兑现，找到最接近回报的场景并放大它——让承诺的释放超过读者预期
 - 日常段落如果不服务主线，改写为"饵"：加入一个指向未来的细节、一句暗示、一个角色反应
 
-输出格式：
+## 常见问题模式与解法
+
+- **人设 OOC**：重读角色矩阵。恢复核心特质、说话方式和动机。不要让角色为剧情便利而行动。
+- **主线偏离**：找出章节从哪里开始偏离大纲。通过删减或重构离题场景来对齐。
+- **爽点乏力**：如果铺垫章缺乏释放，放大最接近的回报时刻——让读者感到张力破裂。
+- **AI 痕迹**：替换公式化转折（"然而""突然"）、 hedge 词（"似乎""仿佛"）、叙述者结论（"他终于明白了"）为具体动作。
+- **段落等长**：差异化段落长度——有的 1-2 行，有的 6-8 行。打破单调但不破坏节奏。
+- **对话扁平**：给每个角色独特的词汇、句长和口头禅。添加潜台词——人很少直说真实想法。
+
+## 输出格式
 
 === FIXED_ISSUES ===
 (逐条说明修正了什么)

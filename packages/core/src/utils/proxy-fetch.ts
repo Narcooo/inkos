@@ -30,7 +30,7 @@ export function buildProxyFetchInit(
   if (!proxyUrl) return init;
   return {
     ...init,
-    dispatcher: new ProxyAgent(proxyUrl),
+    dispatcher: new ProxyAgent(proxyUrl) as unknown as import("undici-types").Dispatcher,
   };
 }
 

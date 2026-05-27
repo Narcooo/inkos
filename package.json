@@ -38,5 +38,9 @@
       "@mariozechner/pi-ai": "0.67.1",
       "@mariozechner/pi-agent-core": "0.67.1"
     }
+  },
+  "dependencies": {
+    "docx": "^9.6.1",
+    "typescript": "^5.9.3"
   }
 }

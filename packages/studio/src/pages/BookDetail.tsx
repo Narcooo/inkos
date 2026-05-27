@@ -24,7 +24,8 @@ import {
   RefreshCw,
   Sparkles,
   Trash2,
-  Save
+  Save,
+  Sparkles as SparklesIcon,
 } from "lucide-react";
 
 interface ChapterMeta {
@@ -50,13 +51,14 @@ interface BookData {
 }
 
 type ReviseMode = "spot-fix" | "polish" | "rewrite" | "rework" | "anti-detect";
-type ExportFormat = "txt" | "md" | "epub";
+type ExportFormat = "txt" | "md" | "epub" | "docx";
 type BookStatus = "active" | "paused" | "outlining" | "completed" | "dropped";
 
 interface Nav {
   toDashboard: () => void;
   toChapter: (bookId: string, num: number) => void;
   toAnalytics: (bookId: string) => void;
+  toStyleProfile: (bookId: string) => void;
   toTruth: (bookId: string) => void;
 }
 
@@ -102,6 +104,7 @@ export function BookDetail({
   const [rewritingChapters, setRewritingChapters] = useState<ReadonlyArray<number>>([]);
   const [revisingChapters, setRevisingChapters] = useState<ReadonlyArray<number>>([]);
   const [syncingChapters, setSyncingChapters] = useState<ReadonlyArray<number>>([]);
+  const [humanizingChapters, setHumanizingChapters] = useState<ReadonlyArray<number>>([]);
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsWordCount, setSettingsWordCount] = useState<number | null>(null);
   const [settingsTargetChapters, setSettingsTargetChapters] = useState<number | null>(null);
@@ -240,6 +243,22 @@ export function BookDetail({
       alert(e instanceof Error ? e.message : "Sync failed");
     } finally {
       setSyncingChapters((prev) => prev.filter((n) => n !== chapterNum));
+    }
+  };
+
+  const handleHumanize = async (chapterNum: number, style: "conservative" | "aggressive" = "conservative") => {
+    setHumanizingChapters((prev) => [...prev, chapterNum]);
+    try {
+      await fetchJson(`/books/${bookId}/humanize/${chapterNum}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ style }),
+      });
+      refetch();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Humanize failed");
+    } finally {
+      setHumanizingChapters((prev) => prev.filter((n) => n !== chapterNum));
     }
   };
 
@@ -417,6 +436,13 @@ export function BookDetail({
             <BarChart2 size={14} />
             {t("book.analytics")}
           </button>
+          <button
+            onClick={() => nav.toStyleProfile(bookId)}
+            className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-secondary/50 text-muted-foreground rounded-lg hover:text-foreground hover:bg-secondary transition-all border border-border/50"
+          >
+            <Wand2 size={14} />
+            {t("book.styleProfile")}
+          </button>
           <div className="flex items-center gap-2">
             <select
               value={exportFormat}
@@ -426,6 +452,7 @@ export function BookDetail({
               <option value="txt">TXT</option>
               <option value="md">MD</option>
               <option value="epub">EPUB</option>
+              <option value="docx">DOCX</option>
             </select>
             <label className="flex items-center gap-1.5 text-xs font-bold text-muted-foreground cursor-pointer select-none">
               <input
@@ -598,6 +625,16 @@ export function BookDetail({
                         {syncingChapters.includes(ch.number)
                           ? <div className="w-3.5 h-3.5 border-2 border-muted-foreground/20 border-t-muted-foreground rounded-full animate-spin" />
                           : <RefreshCw size={14} />}
+                      </button>
+                      <button
+                        onClick={() => handleHumanize(ch.number)}
+                        disabled={humanizingChapters.includes(ch.number)}
+                        className="p-2 rounded-lg bg-purple-500/10 text-purple-600 hover:bg-purple-500 hover:text-white transition-all shadow-sm disabled:opacity-50"
+                        title="去 AI 味"
+                      >
+                        {humanizingChapters.includes(ch.number)
+                          ? <div className="w-3.5 h-3.5 border-2 border-purple-600/20 border-t-purple-600 rounded-full animate-spin" />
+                          : <SparklesIcon size={14} />}
                       </button>
                       <select
                         disabled={revisingChapters.includes(ch.number)}

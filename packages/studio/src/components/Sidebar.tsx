@@ -37,6 +37,7 @@ import {
   MoreHorizontal,
   Pencil,
   Trash2,
+  MessageCircle,
 } from "lucide-react";
 
 interface BookSummary {
@@ -60,6 +61,7 @@ interface Nav {
   toImport: () => void;
   toRadar: () => void;
   toDoctor: () => void;
+  toAgentPrompts: () => void;
 }
 
 export function Sidebar({ nav, activePage, sse, t }: {
@@ -510,6 +512,12 @@ export function Sidebar({ nav, activePage, sse, t }: {
               icon={<Stethoscope size={16} />}
               active={activePage === "doctor"}
               onClick={nav.toDoctor}
+            />
+            <SidebarItem
+              label="Agent 提示词"
+              icon={<MessageCircle size={16} />}
+              active={activePage === "agent-prompts"}
+              onClick={nav.toAgentPrompts}
             />
           </div>
         </div>

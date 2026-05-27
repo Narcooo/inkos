@@ -1,6 +1,7 @@
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { EPub } from "epub-gen-memory";
+import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, PageBreak } from "docx";
 
 export interface ExportStateLike {
   readonly bookDir: (bookId: string) => string;
@@ -17,7 +18,7 @@ export interface ExportArtifact {
   readonly fileName: string;
   readonly chaptersExported: number;
   readonly totalWords: number;
-  readonly format: "txt" | "md" | "epub";
+  readonly format: "txt" | "md" | "epub" | "docx";
   readonly contentType: string;
   readonly payload: string | Buffer;
 }
@@ -59,7 +60,7 @@ export async function buildExportArtifact(
   state: ExportStateLike,
   bookId: string,
   options: {
-    readonly format?: "txt" | "md" | "epub";
+    readonly format?: "txt" | "md" | "epub" | "docx";
     readonly approvedOnly?: boolean;
     readonly outputPath?: string;
   },
@@ -108,6 +109,95 @@ export async function buildExportArtifact(
     };
   }
 
+  if (format === "docx") {
+    const docChildren: Paragraph[] = [];
+
+    // Add title page
+    docChildren.push(
+      new Paragraph({
+        children: [
+          new TextRun({
+            text: book.title,
+            bold: true,
+            size: 48,
+          }),
+        ],
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 400 },
+      })
+    );
+
+    for (const chapter of chapters) {
+      const match = chapterFiles.get(chapter.number);
+      if (!match) {
+        continue;
+      }
+      const markdown = await readFile(join(chaptersDir, match), "utf-8");
+      const { title, html } = markdownToSimpleHtml(markdown);
+
+      // Add chapter title
+      docChildren.push(
+        new Paragraph({
+          children: [
+            new TextRun({
+              text: title,
+              bold: true,
+              size: 36,
+            }),
+          ],
+          heading: HeadingLevel.HEADING_1,
+          spacing: { before: 400, after: 200 },
+        })
+      );
+
+      // Add chapter content
+      const paragraphs = html.split("</p>").filter(Boolean);
+      for (const para of paragraphs) {
+        const cleanText = para.replace(/<p>/g, "").trim();
+        if (cleanText) {
+          docChildren.push(
+            new Paragraph({
+              children: [
+                new TextRun({
+                  text: cleanText,
+                  size: 24,
+                }),
+              ],
+              spacing: { after: 200 },
+            })
+          );
+        }
+      }
+
+      // Page break after each chapter
+      docChildren.push(
+        new Paragraph({
+          children: [new PageBreak()],
+        })
+      );
+    }
+
+    const doc = new Document({
+      sections: [
+        {
+          properties: {},
+          children: docChildren,
+        },
+      ],
+    });
+
+    return {
+      outputPath,
+      fileName: `${bookId}.docx`,
+      chaptersExported: chapters.length,
+      totalWords,
+      format,
+      contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      payload: await Packer.toBuffer(doc),
+    };
+  }
+
+  // txt / md
   const parts: string[] = [];
   parts.push(format === "md" ? `# ${book.title}\n\n---\n` : `${book.title}\n\n`);
   for (const chapter of chapters) {
@@ -134,7 +224,7 @@ export async function writeExportArtifact(
   state: ExportStateLike,
   bookId: string,
   options: {
-    readonly format?: "txt" | "md" | "epub";
+    readonly format?: "txt" | "md" | "epub" | "docx";
     readonly approvedOnly?: boolean;
     readonly outputPath?: string;
   },

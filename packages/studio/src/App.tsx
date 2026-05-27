@@ -14,10 +14,12 @@ import { DaemonControl } from "./pages/DaemonControl";
 import { LogViewer } from "./pages/LogViewer";
 import { GenreManager } from "./pages/GenreManager";
 import { StyleManager } from "./pages/StyleManager";
+import { StyleProfileView } from "./pages/StyleProfileView";
 import { ImportManager } from "./pages/ImportManager";
 import { RadarView } from "./pages/RadarView";
 import { DoctorView } from "./pages/DoctorView";
 import { LanguageSelector } from "./pages/LanguageSelector";
+import { AgentPromptConfig } from "./pages/AgentPromptConfig";
 import { BookSidebar, BookSidebarToggle } from "./components/chat/BookSidebar";
 import { useSSE } from "./hooks/use-sse";
 import { useSessionEvents } from "./hooks/use-session-events";
@@ -73,6 +75,7 @@ export function App() {
     toChapter: (bookId: string, chapterNumber: number) =>
       setRoute({ page: "chapter", bookId, chapterNumber }),
     toAnalytics: (bookId: string) => setRoute({ page: "analytics", bookId }),
+    toStyleProfile: (bookId: string) => setRoute({ page: "style-profile", bookId }),
     toServices: () => setRoute({ page: "services" }),
     toServiceDetail: (id: string) => setRoute({ page: "service-detail", serviceId: id }),
     toTruth: (bookId: string) => setRoute({ page: "truth", bookId }),
@@ -83,6 +86,7 @@ export function App() {
     toImport: () => setRoute({ page: "import" }),
     toRadar: () => setRoute({ page: "radar" }),
     toDoctor: () => setRoute({ page: "doctor" }),
+    toAgentPrompts: () => setRoute({ page: "agent-prompts" }),
   };
 
   const activeBookId = deriveActiveBookId(route);
@@ -223,6 +227,11 @@ export function App() {
               <Analytics bookId={route.bookId} nav={nav} theme={theme} t={t} />
             </div>
           )}
+          {route.page === "style-profile" && (
+            <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
+              <StyleProfileView bookId={route.bookId} nav={nav} theme={theme} t={t} />
+            </div>
+          )}
           {route.page === "services" && (
             <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
               <ServiceListPage nav={nav} />
@@ -271,6 +280,11 @@ export function App() {
           {route.page === "doctor" && (
             <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
               <DoctorView nav={nav} theme={theme} t={t} />
+            </div>
+          )}
+          {route.page === "agent-prompts" && (
+            <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
+              <AgentPromptConfig nav={nav} />
             </div>
           )}
         </main>

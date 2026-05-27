@@ -32,6 +32,7 @@ import {
   listModelsForService,
   isApiKeyOptionalForEndpoint,
   getAllEndpoints,
+  getEndpoint,
   probeModelsFromUpstream,
   fetchWithProxy,
   chatCompletion,
@@ -41,11 +42,16 @@ import {
   Scheduler,
   coverSecretKey,
   resolveCoverProviderPreset,
+  createFailoverManager,
+  isQuotaError,
   type ResolvedModel,
   type PipelineConfig,
   type ProjectConfig,
   type LogSink,
   type LogEntry,
+  type FailoverResult,
+  type ModelFailoverConfig,
+  type LLMClient,
 } from "@actalk/inkos-core";
 import { access, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
@@ -709,6 +715,36 @@ async function saveRawConfig(root: string, config: Record<string, unknown>): Pro
   await writeFile(join(root, "inkos.json"), JSON.stringify(config, null, 2), "utf-8");
 }
 
+async function resolveEffectiveLLMConfigForService(
+  root: string,
+  service: string,
+  model: string,
+): Promise<{ service: string; model: string; apiKey: string; baseUrl?: string; apiFormat?: "chat" | "responses"; stream?: boolean } | null> {
+  try {
+    const secrets = await loadSecrets(root);
+    const serviceKey = service.startsWith("custom:") ? service : service;
+    const apiKey = secrets.services[serviceKey]?.apiKey ?? "";
+
+    const preset = resolveServicePreset(service);
+    const endpoint = getEndpoint(service);
+
+    console.log(`[studio] resolveEffectiveLLMConfigForService: service=${service}, model=${model}`);
+    const resolvedBaseUrl = await resolveConfiguredServiceBaseUrl(root, service);
+    console.log(`[studio] resolveEffectiveLLMConfigForService: resolvedBaseUrl=${resolvedBaseUrl}, preset.baseUrl=${preset?.baseUrl}, endpoint?.baseUrl=${endpoint?.baseUrl}`);
+    
+    const baseUrl = resolvedBaseUrl ?? preset?.baseUrl ?? endpoint?.baseUrl ?? "";
+    const apiFormat = endpoint?.api?.startsWith("openai-responses") || preset?.api?.startsWith("openai-responses")
+      ? "responses" as const
+      : "chat" as const;
+    const stream = preset ? true : (endpoint ? true : true);
+
+    console.log(`[studio] resolveEffectiveLLMConfigForService: result baseUrl=${baseUrl}, apiKey=${apiKey ? 'yes' : 'no'}`);
+    return { service, model, apiKey, baseUrl, apiFormat, stream };
+  } catch {
+    return null;
+  }
+}
+
 async function readEnvConfigSummary(path: string): Promise<EnvConfigSummary> {
   try {
     const raw = await readFile(path, "utf-8");
@@ -768,7 +804,9 @@ async function resolveConfiguredServiceBaseUrl(root: string, serviceId: string, 
   try {
     const config = await loadRawConfig(root);
     const services = normalizeServiceConfig((config.llm as Record<string, unknown> | undefined)?.services);
+    console.log(`[studio] resolveConfiguredServiceBaseUrl: serviceId=${serviceId}, services=${JSON.stringify(services.map(s => ({ key: serviceConfigKey(s), baseUrl: s.baseUrl })))}`);
     const matched = services.find((entry) => serviceConfigKey(entry) === serviceId);
+    console.log(`[studio] resolveConfiguredServiceBaseUrl: matched=${matched ? JSON.stringify({ baseUrl: matched.baseUrl }) : 'null'}`);
     return matched?.baseUrl;
   } catch {
     return undefined;
@@ -1164,6 +1202,11 @@ async function probeServiceCapabilities(args: {
         proxyUrl: args.proxyUrl,
         apiFormat: plan.apiFormat,
         stream: plan.stream,
+        failover: {
+          enabled: false,
+          mode: "manual",
+          fallbacks: [],
+        },
       } as ProjectConfig["llm"]);
 
       try {
@@ -1291,6 +1334,109 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
         }
       : sseSink;
     const logger = createLogger({ tag: "studio", sinks: [scopedSseSink, consoleSink] });
+
+    const failoverConfig = (currentConfig.llm as Record<string, unknown>)?.failover as Record<string, unknown> | undefined;
+    let failoverManager: ReturnType<typeof createFailoverManager> | null = null;
+
+    if (failoverConfig?.enabled) {
+      console.log(`[studio] Initializing FailoverManager for session`);
+      failoverManager = createFailoverManager(
+        {
+          enabled: Boolean(failoverConfig.enabled),
+          mode: (failoverConfig.mode as "auto" | "manual") ?? "manual",
+          fallbacks: Array.isArray(failoverConfig.fallbacks) ? failoverConfig.fallbacks : [],
+          maxAutoSwitches: typeof failoverConfig.maxAutoSwitches === "number" ? failoverConfig.maxAutoSwitches : 3,
+          retryDelayMs: typeof failoverConfig.retryDelayMs === "number" ? failoverConfig.retryDelayMs : 5000,
+        } as ModelFailoverConfig,
+        currentConfig.llm.service,
+        currentConfig.llm.model,
+      );
+    }
+
+    const onFailover = async (error: unknown): Promise<{ client: LLMClient; model: string } | null> => {
+      console.log(`[studio] ========== onFailover callback triggered ==========`);
+      console.log(`[studio] Current LLM: ${currentConfig.llm.service}/${currentConfig.llm.model}`);
+
+      const mode = (failoverConfig?.mode as "auto" | "manual") ?? "manual";
+      console.log(`[studio] Failover mode: ${mode}`);
+
+      if (!failoverManager) {
+        console.log(`[studio] FailoverManager not initialized, returning null`);
+        return null;
+      }
+
+      if (mode === "manual") {
+        console.log(`[studio] Manual mode: checking if manual switch is required...`);
+        
+        if (failoverManager.requiresManualSwitch(error)) {
+          console.log(`[studio] Manual switch required: broadcasting SSE event to frontend...`);
+          
+          const sseEvent = {
+            type: "model:failover" as const,
+            timestamp: Date.now(),
+            switched: false,
+            previousService: currentConfig.llm.service,
+            previousModel: currentConfig.llm.model,
+            newService: "",
+            newModel: "",
+            reason: error instanceof Error ? error.message : String(error),
+            requiresUserAction: true,
+            sessionId: overrides?.sessionIdForSSE,
+          };
+          
+          broadcast("model:failover", sseEvent);
+          console.log(`[studio] Manual failover event sent: requiresUserAction=true`);
+          console.log(`[studio] ========== onFailover callback ended (manual mode) ==========`);
+          
+          return null;
+        }
+      }
+
+      if (!failoverManager.canAutoSwitch()) {
+        console.log(`[studio] FailoverManager.canAutoSwitch() returned false`);
+        return null;
+      }
+
+      console.log(`[studio] Calling switchToFallback...`);
+      const result = await failoverManager.switchToFallback(root, error);
+      if (!result) {
+        console.log(`[studio] switchToFallback returned null`);
+        return null;
+      }
+
+      console.log(`[studio] switchToFallback successful: ${result.newService}/${result.newModel}`);
+      
+      console.log(`[studio] Resolving effective config for ${result.newService}...`);
+      const newConfig = await resolveEffectiveLLMConfigForService(root, result.newService, result.newModel);
+      if (!newConfig) {
+        console.log(`[studio] resolveEffectiveLLMConfigForService returned null`);
+        return null;
+      }
+
+      console.log(`[studio] Broadcasting failover event...`);
+      const sseEvent = failoverManager.createSSEEvent(result, currentConfig.llm.service, currentConfig.llm.model);
+      broadcast("model:failover", {
+        ...sseEvent,
+        sessionId: overrides?.sessionIdForSSE,
+      });
+
+      console.log(`[studio] Creating new LLM client for ${newConfig.service}/${newConfig.model}...`);
+      const newClient = createLLMClient({
+        ...currentConfig.llm,
+        service: newConfig.service,
+        model: newConfig.model,
+        apiKey: newConfig.apiKey,
+        baseUrl: newConfig.baseUrl ?? "",
+        ...(newConfig.apiFormat ? { apiFormat: newConfig.apiFormat } : {}),
+        ...(typeof newConfig.stream === "boolean" ? { stream: newConfig.stream } : {}),
+      } as ProjectConfig["llm"]);
+
+      console.log(`[studio] ✅ Failover completed successfully`);
+      console.log(`[studio] ========== onFailover callback completed ==========`);
+
+      return { client: newClient, model: newConfig.model };
+    };
+
     return {
       client: overrides?.client ?? createLLMClient(currentConfig.llm),
       model: overrides?.model ?? currentConfig.llm.model,
@@ -1311,6 +1457,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
         });
       },
       externalContext: overrides?.externalContext,
+      onFailover,
     };
   }
 
@@ -1697,30 +1844,32 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
   app.get("/api/v1/services", async (c) => {
     const secrets = await loadSecrets(root);
     const endpoints = getAllEndpoints().filter((ep) => ep.id !== "custom");
+    const config = await loadRawConfig(root);
+    const llm = (config.llm as Record<string, unknown> | undefined) ?? {};
+    const storedServices = normalizeServiceConfig(llm.services);
 
-    // Fast: only check connection status from secrets, no external API calls.
     const services = endpoints.map((ep) => ({
       service: ep.id,
       label: ep.label,
       group: ep.group,
       connected: Boolean(secrets.services[ep.id]?.apiKey),
+      models: ep.models.map((m) => ({ id: m.id, enabled: m.enabled })),
     })).sort(compareServiceListItems);
 
-    // Add custom services from inkos.json
-    try {
-      const config = await loadRawConfig(root);
-      for (const svc of normalizeServiceConfig((config.llm as Record<string, unknown> | undefined)?.services)) {
-        if (svc.service === "custom") {
-          const secretKey = `custom:${svc.name}`;
-          services.push({
-            service: secretKey,
-            label: svc.name ?? "Custom",
-            group: undefined,
-            connected: Boolean(secrets.services[secretKey]?.apiKey),
-          });
-        }
+    for (const svc of storedServices) {
+      if (svc.service === "custom") {
+        const secretKey = `custom:${svc.name}`;
+        services.push({
+          service: secretKey,
+          label: svc.name ?? "Custom",
+          group: undefined,
+          connected: Boolean(secrets.services[secretKey]?.apiKey),
+          models: "models" in svc && Array.isArray(svc.models)
+            ? svc.models.map((m) => ({ id: m, enabled: true }))
+            : [],
+        });
       }
-    } catch { /* no config file */ }
+    }
 
     return c.json({ services });
   });
@@ -1767,6 +1916,57 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     syncTopLevelLlmMirror(llm);
     await saveRawConfig(root, config);
     return c.json({ ok: true });
+  });
+
+  app.get("/api/v1/failover/config", async (c) => {
+    const config = await loadRawConfig(root);
+    const llm = (config.llm as Record<string, unknown> | undefined) ?? {};
+    const failover = (llm.failover as Record<string, unknown> | undefined) ?? {};
+    return c.json({
+      enabled: Boolean(failover.enabled),
+      mode: (failover.mode as "auto" | "manual") ?? "manual",
+      fallbacks: Array.isArray(failover.fallbacks) ? failover.fallbacks : [],
+      maxAutoSwitches: typeof failover.maxAutoSwitches === "number" ? failover.maxAutoSwitches : 3,
+      retryDelayMs: typeof failover.retryDelayMs === "number" ? failover.retryDelayMs : 5000,
+    });
+  });
+
+  app.put("/api/v1/failover/config", async (c) => {
+    const body = await c.req.json<{
+      enabled?: boolean;
+      mode?: "auto" | "manual";
+      fallbacks?: Array<{ service: string; model?: string; name?: string }>;
+      maxAutoSwitches?: number;
+      retryDelayMs?: number;
+    }>();
+    const config = await loadRawConfig(root);
+    config.llm = config.llm ?? {};
+    const llm = config.llm as Record<string, unknown>;
+    llm.failover = {
+      enabled: body.enabled ?? false,
+      mode: body.mode ?? "manual",
+      fallbacks: body.fallbacks ?? [],
+      maxAutoSwitches: body.maxAutoSwitches ?? 3,
+      retryDelayMs: body.retryDelayMs ?? 5000,
+    };
+    syncTopLevelLlmMirror(llm);
+    await saveRawConfig(root, config);
+    return c.json({ ok: true });
+  });
+
+  app.get("/api/v1/failover/state", async (c) => {
+    const config = await loadRawConfig(root);
+    const llm = (config.llm as Record<string, unknown> | undefined) ?? {};
+    const currentService = (llm.service as string) ?? "custom";
+    const currentModel = (llm.model as string) ?? (llm.defaultModel as string) ?? "unknown";
+    const failover = (llm.failover as Record<string, unknown> | undefined) ?? {};
+    return c.json({
+      currentService,
+      currentModel,
+      enabled: Boolean(failover.enabled),
+      mode: (failover.mode as "auto" | "manual") ?? "manual",
+      fallbacks: Array.isArray(failover.fallbacks) ? failover.fallbacks : [],
+    });
   });
 
   app.get("/api/v1/cover/config", async (c) => {
@@ -2603,6 +2803,17 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       }
 
       // Run pi-agent session
+      let rawConfig: Record<string, unknown> = {};
+      try {
+        rawConfig = JSON.parse(await readFile(join(root, "inkos.json"), "utf-8"));
+      } catch {
+        // File not found or parse error - use empty config
+      }
+      const agentPrompts = (rawConfig.agentPrompts as Record<string, unknown> | undefined) ?? {};
+      const customSystemPrompt = agentBookId
+        ? (agentPrompts.writing as string | undefined) ?? (agentPrompts.writingEn as string | undefined) ?? null
+        : (agentPrompts.newBook as string | undefined) ?? (agentPrompts.newBookEn as string | undefined) ?? null;
+
       const collectedToolExecs: CollectedToolExec[] = [];
       const result = await runAgentSession(
         {
@@ -2613,6 +2824,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
           bookId: agentBookId,
           sessionId: bookSession.sessionId,
           language: config.language ?? "zh",
+          customSystemPrompt,
           onEvent: (event) => {
             if (event.type === "message_update") {
               const ame = event.assistantMessageEvent;
@@ -2753,6 +2965,106 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
       if (!result.responseText) {
         if (result.errorMessage) {
+          const failoverConfig = (config.llm as Record<string, unknown>)?.failover as Record<string, unknown> | undefined;
+          console.log(`[studio] Agent failed: ${result.errorMessage}`);
+          console.log(`[studio] Failover config:`, failoverConfig);
+
+          if (failoverConfig?.enabled && isQuotaError(result.errorMessage)) {
+            console.log("[studio] Quota error detected, attempting failover");
+            const failoverManager = createFailoverManager(
+              {
+                enabled: Boolean(failoverConfig.enabled),
+                mode: (failoverConfig.mode as "auto" | "manual") ?? "manual",
+                fallbacks: Array.isArray(failoverConfig.fallbacks) ? failoverConfig.fallbacks : [],
+                maxAutoSwitches: typeof failoverConfig.maxAutoSwitches === "number" ? failoverConfig.maxAutoSwitches : 3,
+                retryDelayMs: typeof failoverConfig.retryDelayMs === "number" ? failoverConfig.retryDelayMs : 5000,
+              } as ModelFailoverConfig,
+              reqService ?? config.llm.service,
+              reqModel ?? config.llm.model,
+            );
+
+            if (failoverManager.canAutoSwitch()) {
+              try {
+                const failoverResult = await failoverManager.switchToFallback(root, new Error(result.errorMessage));
+                if (failoverResult) {
+                  const sseEvent = failoverManager.createSSEEvent(failoverResult, reqService ?? config.llm.service, reqModel ?? config.llm.model);
+                  broadcast("model:failover", {
+                    ...sseEvent,
+                    sessionId: streamSessionId,
+                  });
+
+                  const newConfig = await resolveEffectiveLLMConfigForService(root, failoverResult.newService, failoverResult.newModel);
+                  if (newConfig) {
+                    const retryClient = createLLMClient({
+                      ...config.llm,
+                      service: newConfig.service,
+                      model: newConfig.model,
+                      apiKey: newConfig.apiKey,
+                      baseUrl: newConfig.baseUrl ?? "",
+                      ...(newConfig.apiFormat ? { apiFormat: newConfig.apiFormat } : {}),
+                      ...(typeof newConfig.stream === "boolean" ? { stream: newConfig.stream } : {}),
+                    } as ProjectConfig["llm"]);
+
+                    const retryResult = await runAgentSession(
+                      {
+                        model: { provider: newConfig.service, modelId: newConfig.model },
+                        apiKey: newConfig.apiKey,
+                        pipeline: new PipelineRunner(await buildPipelineConfig({
+                          client: retryClient,
+                          model: newConfig.model,
+                          currentConfig: config,
+                          sessionIdForSSE: bookSession.sessionId,
+                        })),
+                        projectRoot: root,
+                        bookId: agentBookId,
+                        sessionId: bookSession.sessionId,
+                        language: config.language ?? "zh",
+                        onEvent: (event) => {
+                          if (event.type === "message_update") {
+                            const ame = event.assistantMessageEvent;
+                            if (ame.type === "text_delta") {
+                              broadcast("draft:delta", { sessionId: streamSessionId, text: ame.delta });
+                            } else if (ame.type === "thinking_delta") {
+                              broadcast("thinking:delta", { sessionId: streamSessionId, text: (ame as any).delta });
+                            } else if (ame.type === "thinking_start") {
+                              broadcast("thinking:start", { sessionId: streamSessionId });
+                            } else if (ame.type === "thinking_end") {
+                              broadcast("thinking:end", { sessionId: streamSessionId });
+                            }
+                          }
+                        },
+                      },
+                      instruction,
+                      bookSession.messages,
+                    );
+
+                    if (retryResult.responseText) {
+                      await refreshBookSessionFromTranscript();
+                      await finalizeCreatedBook();
+                      broadcast("agent:complete", { instruction, activeBookId, sessionId: bookSession.sessionId });
+                      return c.json({
+                        response: retryResult.responseText,
+                        session: {
+                          sessionId: bookSession.sessionId,
+                          ...(bookSession.bookId ? { activeBookId: bookSession.bookId } : {}),
+                        },
+                        failover: {
+                          switched: true,
+                          previousService: reqService ?? config.llm.service,
+                          previousModel: reqModel ?? config.llm.model,
+                          newService: failoverResult.newService,
+                          newModel: failoverResult.newModel,
+                        },
+                      });
+                    }
+                  }
+                }
+              } catch (failoverError) {
+                console.warn("[studio] Failover attempt failed:", failoverError);
+              }
+            }
+          }
+
           if (resolveCreatedBookIdFromToolExecs(collectedToolExecs)) {
             await finalizeCreatedBook();
           }
@@ -2986,6 +3298,171 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     }
   });
 
+  // --- Remove AI Taste (Humanize) ---
+
+  app.post("/api/v1/books/:id/humanize/:chapter", async (c) => {
+    const startTime = Date.now();
+    const id = c.req.param("id");
+    const chapterNum = parseInt(c.req.param("chapter"), 10);
+    const bookDir = state.bookDir(id);
+    const body = await c.req
+      .json<{ style?: "conservative" | "aggressive"; register?: string }>()
+      .catch(() => ({ style: "conservative", register: undefined }));
+
+    console.log(`[Humanize] ====== 开始处理 ======`);
+    console.log(`[Humanize] 书籍 ID: ${id}`);
+    console.log(`[Humanize] 章节号：${chapterNum}`);
+    console.log(`[Humanize] 处理风格：${body.style ?? "conservative"}`);
+    console.log(`[Humanize] 指定语体：${body.register ?? "自动检测"}`);
+    
+    broadcast("humanize:start", { bookId: id, chapter: chapterNum });
+    
+    try {
+      // Step 1: 加载书籍配置
+      console.log(`[Humanize] Step 1: 加载书籍配置...`);
+      const book = await state.loadBookConfig(id);
+      console.log(`[Humanize] ✓ 书籍配置加载成功`);
+      console.log(`  - 书名：${book.title}`);
+      console.log(`  - 语言：${book.language}`);
+      console.log(`  - 类型：${book.genre}`);
+      
+      // Step 2: 查找章节文件
+      console.log(`[Humanize] Step 2: 查找章节文件...`);
+      const chaptersDir = join(bookDir, "chapters");
+      const files = await readdir(chaptersDir);
+      const paddedNum = String(chapterNum).padStart(4, "0");
+      const match = files.find((f) => f.startsWith(paddedNum) && f.endsWith(".md"));
+      
+      if (!match) {
+        console.log(`[Humanize] ✗ 章节文件未找到 (搜索模式：${paddedNum}*.md)`);
+        return c.json({ error: "Chapter not found" }, 404);
+      }
+      console.log(`[Humanize] ✓ 找到章节文件：${match}`);
+      
+      // Step 3: 读取章节内容
+      console.log(`[Humanize] Step 3: 读取章节内容...`);
+      const chapterPath = join(chaptersDir, match);
+      const content = await readFile(chapterPath, "utf-8");
+      console.log(`[Humanize] ✓ 章节内容读取成功`);
+      console.log(`  - 文件路径：${chapterPath}`);
+      console.log(`  - 内容长度：${content.length} 字符`);
+      console.log(`  - 预估字数：${Math.round(content.length / 2)} 字`);
+      
+      // Step 4: 创建 Agent
+      console.log(`[Humanize] Step 4: 创建 AI 味去除 Agent...`);
+      const { AITasteRemoverAgent, createLogger, createStderrSink } = await import("@actalk/inkos-core");
+      const pipeline = new PipelineRunner(await buildPipelineConfig());
+      
+      // Get LLM config from pipeline
+      const llmClient = pipeline.config?.client;
+      const llmModel = pipeline.config?.model;
+      
+      console.log(`[Humanize] LLM 配置检查:`);
+      console.log(`  - Client: ${llmClient ? llmClient.provider : "未配置"}`);
+      console.log(`  - Model: ${llmModel ?? "未配置"}`);
+      
+      if (!llmClient || !llmModel) {
+        console.log(`[Humanize] ✗ LLM 未配置，终止处理`);
+        throw new Error("LLM not configured. Please configure LLM in settings first.");
+      }
+      console.log(`[Humanize] ✓ LLM 配置验证通过`);
+      
+      console.log(`[Humanize] 初始化 AITasteRemoverAgent...`);
+      // Create logger with proper sink
+      const logger = createLogger({
+        tag: "AITasteRemover",
+        sinks: [createStderrSink({ minLevel: "info", enableColors: true })],
+      });
+      
+      const agent = new AITasteRemoverAgent({
+        client: llmClient,
+        model: llmModel,
+        projectRoot: root,
+        bookId: id,
+        logger,
+      });
+      console.log(`[Humanize] ✓ Agent 创建成功`);
+      
+      // Step 5: 执行去 AI 味处理
+      console.log(`[Humanize] Step 5: 执行去 AI 味处理...`);
+      console.log(`[Humanize] 输入参数:`);
+      console.log(`  - targetStyle: ${body.style ?? "conservative"}`);
+      console.log(`  - register: ${body.register ?? "自动检测"}`);
+      console.log(`  - language: ${book.language === "en" ? "en" : "zh"}`);
+      
+      const result = await agent.removeAITaste({
+        content,
+        targetStyle: body.style ?? "conservative",
+        register: body.register as any,
+        language: book.language === "en" ? "en" : "zh",
+      });
+      
+      console.log(`[Humanize] ✓ 处理完成`);
+      console.log(`[Humanize] ====== 处理结果 ======`);
+      console.log(`  - 门检结果：${result.gateCheckResult.type}`);
+      console.log(`  - 门检行动：${result.gateCheckResult.action}`);
+      console.log(`  - 检测语体：${result.registerDetected}`);
+      console.log(`  - 发现 AI 模式：${result.patternsFound.length} 条`);
+      console.log(`  - 原文长度：${content.length} 字符`);
+      console.log(`  - 修改后长度：${result.revisedContent.length} 字符`);
+      console.log(`  - 长度变化：${result.revisedContent.length - content.length} 字符`);
+      console.log(`  - 修改比例：${((1 - result.revisedContent.length / content.length) * 100).toFixed(2)}%`);
+      
+      if (result.patternsFound.length > 0) {
+        console.log(`[Humanize] 检测到的 AI 模式:`);
+        result.patternsFound.forEach((pattern, i) => {
+          console.log(`  ${i + 1}. ${pattern.category} - ${pattern.pattern} (${pattern.severity})`);
+        });
+      }
+      
+      if (result.gateCheckResult.type === "human") {
+        console.log(`[Humanize] ⚠ 检测到真人写作痕迹，未做修改`);
+        console.log(`[Humanize] 证据:`);
+        result.gateCheckResult.evidence.forEach((e, i) => {
+          console.log(`  ${i + 1}. ${e}`);
+        });
+      } else {
+        console.log(`[Humanize] 打磨报告:`);
+        console.log(`  - 动词强化：${result.polishReport.verbStrengthen}`);
+        console.log(`  - 节奏重塑：${result.polishReport.rhythmReshaping}`);
+        console.log(`  - 填充词删除：${result.polishReport.fillerRemoval.length} 个`);
+        console.log(`  - 抽象换具体：${result.polishReport.abstractionToConcrete}`);
+        console.log(`  - 语序归位：${result.polishReport.wordOrderFix}`);
+        console.log(`  - 语体匹配：${result.polishReport.registerMatch}`);
+      }
+      
+      // Step 6: 保存修改后的内容
+      console.log(`[Humanize] Step 6: 保存修改后的内容...`);
+      await writeFile(chapterPath, result.revisedContent, "utf-8");
+      console.log(`[Humanize] ✓ 内容保存成功`);
+      
+      // Step 7: 广播完成事件
+      console.log(`[Humanize] Step 7: 广播完成事件...`);
+      broadcast("humanize:complete", { 
+        bookId: id, 
+        chapter: chapterNum,
+        gateCheck: result.gateCheckResult,
+        register: result.registerDetected,
+      });
+      console.log(`[Humanize] ✓ 事件广播成功`);
+      
+      console.log(`[Humanize] ====== 处理结束 ======`);
+      console.log(`[Humanize] 总耗时：${((Date.now() - startTime) / 1000).toFixed(2)}秒`);
+      
+      return c.json(result);
+    } catch (e) {
+      console.log(`[Humanize] ✗ 处理失败`);
+      console.log(`[Humanize] 错误类型：${e.constructor?.name ?? "Error"}`);
+      console.log(`[Humanize] 错误信息：${e instanceof Error ? e.message : String(e)}`);
+      if (e instanceof Error && e.stack) {
+        console.log(`[Humanize] 堆栈跟踪:`);
+        console.log(e.stack);
+      }
+      broadcast("humanize:error", { bookId: id, error: String(e) });
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
   // --- Export ---
 
   app.get("/api/v1/books/:id/export", async (c) => {
@@ -2995,7 +3472,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
     try {
       const artifact = await buildExportArtifact(state, id, {
-        format: format as "txt" | "md" | "epub",
+        format: format as "txt" | "md" | "epub" | "docx",
         approvedOnly,
       });
       const responseBody = typeof artifact.payload === "string"
@@ -3023,13 +3500,13 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       const pipeline = new PipelineRunner(await buildPipelineConfig());
       const tools = createInteractionToolsFromDeps(pipeline, state);
       const bookDir = state.bookDir(id);
-      const outputPath = join(bookDir, `${id}.${fmt === "epub" ? "epub" : fmt}`);
+      const outputPath = join(bookDir, `${id}.${fmt === "epub" ? "epub" : fmt === "docx" ? "docx" : fmt}`);
       const result = await processProjectInteractionRequest({
         projectRoot: root,
         request: {
           intent: "export_book",
           bookId: id,
-          format: fmt as "txt" | "md" | "epub",
+          format: fmt as "txt" | "md" | "epub" | "docx",
           approvedOnly,
           outputPath,
         },
@@ -3107,6 +3584,39 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     const configPath = join(root, "inkos.json");
     const raw = JSON.parse(await readFile(configPath, "utf-8"));
     raw.notify = channels;
+    const { writeFile: writeFileFs } = await import("node:fs/promises");
+    await writeFileFs(configPath, JSON.stringify(raw, null, 2), "utf-8");
+    return c.json({ ok: true });
+  });
+
+  // --- Agent prompts config ---
+
+  app.get("/api/v1/project/agent-prompts", async (c) => {
+    const raw = JSON.parse(await readFile(join(root, "inkos.json"), "utf-8"));
+    const agentPrompts = (raw.agentPrompts as Record<string, unknown> | undefined) ?? {};
+    return c.json({
+      newBook: (agentPrompts.newBook as string | undefined) ?? null,
+      newBookEn: (agentPrompts.newBookEn as string | undefined) ?? null,
+      writing: (agentPrompts.writing as string | undefined) ?? null,
+      writingEn: (agentPrompts.writingEn as string | undefined) ?? null,
+    });
+  });
+
+  app.put("/api/v1/project/agent-prompts", async (c) => {
+    const body = await c.req.json<{
+      newBook?: string | null;
+      newBookEn?: string | null;
+      writing?: string | null;
+      writingEn?: string | null;
+    }>();
+    const configPath = join(root, "inkos.json");
+    const raw = JSON.parse(await readFile(configPath, "utf-8"));
+    raw.agentPrompts = raw.agentPrompts ?? {};
+    const ap = raw.agentPrompts as Record<string, unknown>;
+    if (body.newBook !== undefined) ap.newBook = body.newBook;
+    if (body.newBookEn !== undefined) ap.newBookEn = body.newBookEn;
+    if (body.writing !== undefined) ap.writing = body.writing;
+    if (body.writingEn !== undefined) ap.writingEn = body.writingEn;
     const { writeFile: writeFileFs } = await import("node:fs/promises");
     await writeFileFs(configPath, JSON.stringify(raw, null, 2), "utf-8");
     return c.json({ ok: true });
@@ -3425,6 +3935,49 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       return c.json({ ok: true, result });
     } catch (e) {
       broadcast("style:error", { bookId: id, error: String(e) });
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
+  // --- Style Get/Update for Book ---
+
+  app.get("/api/v1/books/:id/style", async (c) => {
+    const id = c.req.param("id");
+    try {
+      const { readFile } = await import("node:fs/promises");
+      const { join } = await import("node:path");
+      const { StateManager } = await import("@actalk/inkos-core");
+      const state = new StateManager(root);
+      const bookDir = state.bookDir(id);
+      const styleProfilePath = join(bookDir, "story", "style_profile.json");
+      const content = await readFile(styleProfilePath, "utf-8");
+      const profile = JSON.parse(content);
+      return c.json({ profile });
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") {
+        return c.json({ error: "Style profile not found. Import a style guide first." }, 404);
+      }
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
+  app.put("/api/v1/books/:id/style", async (c) => {
+    const id = c.req.param("id");
+    const { profile } = await c.req.json<{ profile: Record<string, unknown> }>();
+    if (!profile) return c.json({ error: "profile is required" }, 400);
+
+    try {
+      const { writeFile, mkdir } = await import("node:fs/promises");
+      const { join } = await import("node:path");
+      const { StateManager } = await import("@actalk/inkos-core");
+      const state = new StateManager(root);
+      const bookDir = state.bookDir(id);
+      const storyDir = join(bookDir, "story");
+      await mkdir(storyDir, { recursive: true });
+      const styleProfilePath = join(storyDir, "style_profile.json");
+      await writeFile(styleProfilePath, JSON.stringify(profile, null, 2), "utf-8");
+      return c.json({ ok: true });
+    } catch (e) {
       return c.json({ error: String(e) }, 500);
     }
   });

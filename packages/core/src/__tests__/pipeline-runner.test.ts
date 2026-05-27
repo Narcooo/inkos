@@ -345,6 +345,13 @@ describe("PipelineRunner", () => {
           thinkingBudget: 0,
           apiFormat: "chat",
           stream: false,
+          failover: {
+            enabled: false,
+            mode: "manual",
+            fallbacks: [],
+            maxAutoSwitches: 3,
+            retryDelayMs: 5000,
+          },
         },
         modelOverrides: {
           writer: {

@@ -5,6 +5,7 @@ import { fetchJson } from "../hooks/use-api";
 import { useServiceStore } from "../store/service";
 import type { EndpointGroup, ServiceInfo } from "../store/service";
 import { ServiceQuickLinks, getServiceQuickLinks } from "../components/ServiceQuickLinks";
+import { FailoverConfigPanel } from "./FailoverConfig";
 
 interface Nav {
   toDashboard: () => void;
@@ -321,6 +322,8 @@ export function ServiceListPage({ nav }: { nav: Nav }) {
       <h1 className="font-serif text-2xl">服务商管理</h1>
 
       <CoverConfigCard />
+
+      <FailoverConfigPanel />
 
       <div className="relative">
         <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground/40" />
