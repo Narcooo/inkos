@@ -2,6 +2,112 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
 import { serve } from "@hono/node-server";
+import { deflateRaw } from "node:zlib";
+import { promisify } from "node:util";
+
+const deflateRawAsync = promisify(deflateRaw);
+
+/** 构建最小 ZIP 文件（每个文件使用 deflate 压缩） */
+async function buildZip(files: ReadonlyArray<{ name: string; data: Buffer }>): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  const centralDir: Buffer[] = [];
+  let offset = 0;
+
+  for (const file of files) {
+    const nameBuf = Buffer.from(file.name, "utf-8");
+    const compressed = await deflateRawAsync(file.data, { level: 9 });
+    const crc = crc32(file.data);
+
+    // Local file header
+    const localHeader = Buffer.alloc(30 + nameBuf.length);
+    let pos = 0;
+    localHeader.writeUInt32LE(0x04034b50, pos); pos += 4; // signature
+    localHeader.writeUInt16LE(20, pos); pos += 2;          // version needed
+    localHeader.writeUInt16LE(0x0800, pos); pos += 2;      // flags: UTF-8
+    localHeader.writeUInt16LE(8, pos); pos += 2;           // compression: deflate
+    localHeader.writeUInt16LE(0, pos); pos += 2;           // mod time
+    localHeader.writeUInt16LE(0, pos); pos += 2;           // mod date
+    localHeader.writeUInt32LE(crc, pos); pos += 4;          // CRC-32
+    localHeader.writeUInt32LE(compressed.length, pos); pos += 4;
+    localHeader.writeUInt32LE(file.data.length, pos); pos += 4;
+    localHeader.writeUInt16LE(nameBuf.length, pos); pos += 2;
+    localHeader.writeUInt16LE(0, pos); pos += 2;           // extra field length
+    nameBuf.copy(localHeader, pos);
+
+    chunks.push(localHeader);
+    chunks.push(compressed);
+    const entrySize = localHeader.length + compressed.length;
+
+    // Central directory entry
+    const cdEntry = Buffer.alloc(46 + nameBuf.length);
+    pos = 0;
+    cdEntry.writeUInt32LE(0x02014b50, pos); pos += 4;      // signature
+    cdEntry.writeUInt16LE(20, pos); pos += 2;              // version made by
+    cdEntry.writeUInt16LE(20, pos); pos += 2;              // version needed
+    cdEntry.writeUInt16LE(0x0800, pos); pos += 2;          // flags: UTF-8
+    cdEntry.writeUInt16LE(8, pos); pos += 2;               // compression: deflate
+    cdEntry.writeUInt16LE(0, pos); pos += 2;               // mod time
+    cdEntry.writeUInt16LE(0, pos); pos += 2;               // mod date
+    cdEntry.writeUInt32LE(crc, pos); pos += 4;
+    cdEntry.writeUInt32LE(compressed.length, pos); pos += 4;
+    cdEntry.writeUInt32LE(file.data.length, pos); pos += 4;
+    cdEntry.writeUInt16LE(nameBuf.length, pos); pos += 2;
+    cdEntry.writeUInt16LE(0, pos); pos += 2;               // extra field length
+    cdEntry.writeUInt16LE(0, pos); pos += 2;               // file comment length
+    cdEntry.writeUInt16LE(0, pos); pos += 2;               // disk number start
+    cdEntry.writeUInt16LE(0, pos); pos += 2;               // internal file attributes
+    cdEntry.writeUInt32LE(0, pos); pos += 4;               // external file attributes
+    cdEntry.writeUInt32LE(offset, pos); pos += 4;          // relative offset of local header
+    nameBuf.copy(cdEntry, pos);
+
+    centralDir.push(cdEntry);
+    offset += entrySize;
+  }
+
+  const centralDirBuf = Buffer.concat(centralDir);
+  chunks.push(centralDirBuf);
+
+  // End of central directory record
+  const eocd = Buffer.alloc(22);
+  let epos = 0;
+  eocd.writeUInt32LE(0x06054b50, epos); epos += 4;        // signature
+  eocd.writeUInt16LE(0, epos); epos += 2;                  // disk number
+  eocd.writeUInt16LE(0, epos); epos += 2;                  // disk with central dir
+  eocd.writeUInt16LE(files.length, epos); epos += 2;       // entries on this disk
+  eocd.writeUInt16LE(files.length, epos); epos += 2;       // total entries
+  eocd.writeUInt32LE(centralDirBuf.length, epos); epos += 4;
+  eocd.writeUInt32LE(offset, epos); epos += 4;             // offset of central dir
+  eocd.writeUInt16LE(0, epos);                             // comment length
+  chunks.push(eocd);
+
+  return Buffer.concat(chunks);
+}
+
+/** CRC-32 计算 */
+function crc32(data: Buffer): number {
+  let crc = 0xffffffff;
+  for (let i = 0; i < data.length; i++) {
+    crc ^= data[i];
+    for (let j = 0; j < 8; j++) {
+      crc = (crc & 1) ? (crc >>> 1) ^ 0xedb88320 : crc >>> 1;
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function buildChapterFileLookup(files: ReadonlyArray<string>): ReadonlyMap<number, string> {
+  const lookup = new Map<number, string>();
+  for (const file of files) {
+    if (!file.endsWith(".md") || !/^\d{4}/.test(file)) {
+      continue;
+    }
+    const chapterNumber = parseInt(file.slice(0, 4), 10);
+    if (!lookup.has(chapterNumber)) {
+      lookup.set(chapterNumber, file);
+    }
+  }
+  return lookup;
+}
 import {
   StateManager,
   PipelineRunner,
@@ -2992,8 +3098,48 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     const id = c.req.param("id");
     const format = (c.req.query("format") ?? "txt") as string;
     const approvedOnly = c.req.query("approvedOnly") === "true";
+    const singleFile = c.req.query("singleFile") !== "false";
 
     try {
+      // 分章导出为 ZIP
+      if (!singleFile) {
+        const index = await state.loadChapterIndex(id);
+        const book = await state.loadBookConfig(id);
+        const chapters = approvedOnly
+          ? index.filter((chapter) => chapter.status === "approved")
+          : index;
+
+        if (chapters.length === 0) {
+          return c.json({ error: "No chapters to export." }, 400);
+        }
+
+        const bookDir = state.bookDir(id);
+        const chaptersDir = join(bookDir, "chapters");
+        const chapterFiles = buildChapterFileLookup(await readdir(chaptersDir));
+
+        // 构建 ZIP 文件列表
+        const zipFiles: Array<{ name: string; data: Buffer }> = [];
+        for (const chapter of chapters) {
+          const match = chapterFiles.get(chapter.number);
+          if (match) {
+            const content = await readFile(join(chaptersDir, match), "utf-8");
+            const ext = format === "md" ? "md" : "txt";
+            const safeTitle = (chapter.title || `章节${chapter.number}`).replace(/[<>:"/\\|?*]/g, "_");
+            const fileName = `${String(chapter.number).padStart(4, "0")}-${safeTitle}.${ext}`;
+            zipFiles.push({ name: fileName, data: Buffer.from(content, "utf-8") });
+          }
+        }
+
+        const zipBuffer = await buildZip(zipFiles);
+
+        const zipFileName = `${id}_分章导出.zip`;
+        const encodedFileName = encodeURIComponent(zipFileName).replaceAll("'", "%27").replaceAll("(", "%28").replaceAll(")", "%29");
+        c.header("Content-Type", "application/zip");
+        c.header("Content-Disposition", `attachment; filename*=UTF-8''${encodedFileName}`);
+        return c.body(zipBuffer);
+      }
+
+      // 合并为单一文件导出
       const artifact = await buildExportArtifact(state, id, {
         format: format as "txt" | "md" | "epub",
         approvedOnly,
@@ -3001,13 +3147,13 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       const responseBody = typeof artifact.payload === "string"
         ? artifact.payload
         : new Uint8Array(artifact.payload);
-      return new Response(responseBody, {
-        headers: {
-          "Content-Type": artifact.contentType,
-          "Content-Disposition": `attachment; filename="${artifact.fileName}"`,
-        },
-      });
-    } catch {
+      c.header("Content-Type", artifact.contentType);
+      // RFC 5987 编码处理非 ASCII 文件名
+      const encodedFileName = encodeURIComponent(artifact.fileName).replaceAll("'", "%27").replaceAll("(", "%28").replaceAll(")", "%29");
+      c.header("Content-Disposition", `attachment; filename*=UTF-8''${encodedFileName}`);
+      return c.body(responseBody);
+    } catch (err) {
+      console.error("Export error:", err);
       return c.json({ error: "Export failed" }, 500);
     }
   });

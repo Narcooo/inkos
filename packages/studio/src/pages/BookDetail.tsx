@@ -108,6 +108,7 @@ export function BookDetail({
   const [settingsStatus, setSettingsStatus] = useState<BookStatus | null>(null);
   const [exportFormat, setExportFormat] = useState<ExportFormat>("txt");
   const [exportApprovedOnly, setExportApprovedOnly] = useState(false);
+  const [exportSingleFile, setExportSingleFile] = useState(true);
   const activity = useMemo(() => deriveBookActivity(sse.messages, bookId), [bookId, sse.messages]);
   const writing = writeRequestPending || activity.writing;
   const drafting = draftRequestPending || activity.drafting;
@@ -299,7 +300,7 @@ export function BookDetail({
   const currentTargetChapters = settingsTargetChapters ?? book.targetChapters ?? 0;
   const currentStatus = settingsStatus ?? (book.status as BookStatus);
 
-  const exportHref = `/api/v1/books/${bookId}/export?format=${exportFormat}${exportApprovedOnly ? "&approvedOnly=true" : ""}`;
+  const exportHref = `/api/v1/books/${bookId}/export?format=${exportFormat}${exportApprovedOnly ? "&approvedOnly=true" : ""}${!exportSingleFile ? "&singleFile=false" : ""}`;
 
   return (
     <div className="space-y-8 fade-in">
@@ -427,6 +428,16 @@ export function BookDetail({
               <option value="md">MD</option>
               <option value="epub">EPUB</option>
             </select>
+            <label className={`flex items-center gap-1.5 text-xs font-bold text-muted-foreground select-none ${exportFormat === "epub" ? "opacity-40 cursor-not-allowed" : "cursor-pointer"}`}>
+              <input
+                type="checkbox"
+                checked={exportSingleFile || exportFormat === "epub"}
+                disabled={exportFormat === "epub"}
+                onChange={(e) => setExportSingleFile(e.target.checked)}
+                className="rounded border-border/50"
+              />
+              {t("book.singleFile")}
+            </label>
             <label className="flex items-center gap-1.5 text-xs font-bold text-muted-foreground cursor-pointer select-none">
               <input
                 type="checkbox"
@@ -438,16 +449,48 @@ export function BookDetail({
             </label>
             <button
               onClick={async () => {
-                try {
-                  const data = await fetchJson<{ path?: string; chapters?: number }>(`/books/${bookId}/export-save`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ format: exportFormat, approvedOnly: exportApprovedOnly }),
-                  });
-                  alert(`${t("common.exportSuccess")}\n${data.path}\n(${data.chapters} ${t("dash.chapters")})`);
-                } catch (e) {
-                  alert(e instanceof Error ? e.message : "Export failed");
+                // 优先使用 File System Access API 让用户选择保存位置
+                if ("showSaveFilePicker" in window) {
+                  try {
+                    const isZip = !exportSingleFile && exportFormat !== "epub";
+                    const ext = isZip ? "zip" : exportFormat;
+                    const defaultFileName = `${bookId}.${ext}`;
+
+                    const handle = await (window as any).showSaveFilePicker({
+                      suggestedName: defaultFileName,
+                      types: [isZip ? {
+                        description: "ZIP",
+                        accept: { "application/zip": [".zip"] },
+                      } : {
+                        description: exportFormat.toUpperCase() + " File",
+                        accept: exportFormat === "epub"
+                          ? { "application/epub+zip": [".epub"] }
+                          : exportFormat === "md"
+                            ? { "text/markdown": [".md"] }
+                            : { "text/plain": [".txt"] },
+                      }],
+                    });
+
+                    const response = await fetch(exportHref);
+                    const blob = await response.blob();
+                    const writable = await handle.createWritable();
+                    await writable.write(blob);
+                    await writable.close();
+                    return;
+                  } catch (err) {
+                    // 用户取消选择或 API 失败，回退到默认下载方式
+                    if ((err as Error)?.name !== "AbortError") {
+                      console.warn("Save file picker failed, falling back to default download", err);
+                    }
+                  }
                 }
+
+                // 回退：传统 a 标签下载方式
+                const a = document.createElement("a");
+                a.href = exportHref;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
               }}
               className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-secondary/50 text-muted-foreground rounded-lg hover:text-foreground hover:bg-secondary transition-all border border-border/50"
             >

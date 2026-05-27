@@ -104,6 +104,7 @@ const strings = {
   "book.audit": { zh: "审计", en: "Audit" },
   "book.export": { zh: "导出", en: "Export" },
   "book.approvedOnly": { zh: "仅已通过", en: "Approved Only" },
+  "book.singleFile": { zh: "合并为单一文件", en: "Single File" },
   "book.manuscriptTitle": { zh: "章节标题", en: "Manuscript Title" },
   "book.curate": { zh: "操作", en: "Actions" },
   "book.spotFix": { zh: "精修", en: "Spot Fix" },
