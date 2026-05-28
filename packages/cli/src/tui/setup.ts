@@ -3,6 +3,8 @@
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, basename } from "node:path";
 import readline from "node:readline/promises";
+import { parse as parseEnv } from "dotenv";
+import { CODEX_OAUTH_BASE_URL, CODEX_OAUTH_SERVICE_ID, getCodexOAuthStatus } from "@actalk/inkos-core";
 import {
   c, bold, dim, italic,
   cyan, green, yellow, gray, red,
@@ -12,18 +14,25 @@ import { resolveTuiLocale, type TuiLocale } from "./i18n.js";
 import { GLOBAL_ENV_PATH, loadConfig } from "../utils.js";
 import { ensureProjectGitignore } from "../project-bootstrap.js";
 
-const PROVIDERS = ["openai", "anthropic", "kkaiapi", "custom"] as const;
+const PROVIDERS = ["openai", "anthropic", "kkaiapi", "codexOAuth", "custom"] as const;
 const KKAIAPI_BASE_URL = "https://api.kkaiapi.com/v1";
+const CODEX_OAUTH_DEFAULT_MODEL = "gpt-5.5";
 type SetupProvider = typeof PROVIDERS[number];
 type RuntimeProvider = "openai" | "anthropic" | "custom";
 
+function normalizeSetupProvider(provider: string): SetupProvider {
+  const normalized = provider.trim().toLowerCase();
+  return PROVIDERS.find((candidate) => candidate.toLowerCase() === normalized) ?? "openai";
+}
+
 export function resolveSetupProvider(provider: string, baseUrl: string): RuntimeProvider {
-  const normalizedProvider = PROVIDERS.includes(provider.trim() as SetupProvider)
-    ? provider.trim() as SetupProvider
-    : "openai";
+  const normalizedProvider = normalizeSetupProvider(provider);
   const normalizedUrl = baseUrl.trim().toLowerCase();
   if (normalizedUrl.includes("api.kimi.com/coding")) {
     return "anthropic";
+  }
+  if (normalizedProvider === CODEX_OAUTH_SERVICE_ID) {
+    return "openai";
   }
   if (normalizedProvider === "anthropic" || normalizedProvider === "custom") {
     return normalizedProvider;
@@ -34,10 +43,67 @@ export function resolveSetupProvider(provider: string, baseUrl: string): Runtime
 export function resolveSetupService(provider: string, baseUrl: string): string | undefined {
   const normalizedProvider = provider.trim().toLowerCase();
   const normalizedUrl = baseUrl.trim().toLowerCase();
+  if (normalizedProvider === CODEX_OAUTH_SERVICE_ID.toLowerCase() || normalizedUrl.includes("chatgpt.com/backend-api/codex")) {
+    return CODEX_OAUTH_SERVICE_ID;
+  }
   if (normalizedProvider === "kkaiapi" || normalizedUrl.includes("api.kkaiapi.com")) {
     return "kkaiapi";
   }
   return undefined;
+}
+
+export function resolveSetupBaseUrl(provider: string, baseUrl: string): string {
+  const normalizedProvider = normalizeSetupProvider(provider);
+  if (normalizedProvider === CODEX_OAUTH_SERVICE_ID) {
+    return CODEX_OAUTH_BASE_URL;
+  }
+  if (normalizedProvider === "kkaiapi") {
+    return baseUrl.trim() || KKAIAPI_BASE_URL;
+  }
+  return baseUrl.trim();
+}
+
+export function resolveSetupModel(provider: string, model: string): string {
+  if (normalizeSetupProvider(provider) === CODEX_OAUTH_SERVICE_ID) {
+    return model.trim() || CODEX_OAUTH_DEFAULT_MODEL;
+  }
+  return model.trim();
+}
+
+export function buildSetupEnvContent(options: {
+  readonly provider: string;
+  readonly baseUrl: string;
+  readonly apiKey: string;
+  readonly model: string;
+}): string {
+  const effectiveBaseUrl = resolveSetupBaseUrl(options.provider, options.baseUrl);
+  const finalProvider = resolveSetupProvider(options.provider, effectiveBaseUrl);
+  const finalService = resolveSetupService(options.provider, effectiveBaseUrl);
+  const isCodexOAuth = finalService === CODEX_OAUTH_SERVICE_ID;
+  const envLines = [
+    `INKOS_LLM_PROVIDER=${finalProvider}`,
+    ...(finalService ? [`INKOS_LLM_SERVICE=${finalService}`] : []),
+    `INKOS_LLM_BASE_URL=${effectiveBaseUrl}`,
+    ...(isCodexOAuth ? [] : [`INKOS_LLM_API_KEY=${options.apiKey.trim()}`]),
+    `INKOS_LLM_MODEL=${resolveSetupModel(options.provider, options.model)}`,
+    ...(isCodexOAuth ? [
+      "INKOS_LLM_API_FORMAT=responses",
+      "INKOS_LLM_STREAM=true",
+    ] : []),
+  ];
+  return envLines.join("\n");
+}
+
+export function hasUsableLlmEnv(content: string): boolean {
+  const env = parseEnv(content);
+  const apiKey = env.INKOS_LLM_API_KEY?.trim() ?? "";
+  if (apiKey.length > 0 && !apiKey.includes("your-api-key")) {
+    return true;
+  }
+
+  const service = env.INKOS_LLM_SERVICE?.trim().toLowerCase();
+  const model = env.INKOS_LLM_MODEL?.trim() ?? "";
+  return service === CODEX_OAUTH_SERVICE_ID.toLowerCase() && model.length > 0;
 }
 
 interface SetupResult {
@@ -87,9 +153,9 @@ export function buildInteractiveSetupCopy(locale: TuiLocale): InteractiveSetupCo
         scope: "Save scope",
       },
       hints: {
-        provider: "openai / anthropic / kkaiapi / custom (OpenAI-compatible proxy)",
+        provider: "openai / anthropic / kkaiapi / codexOAuth / custom (OpenAI-compatible proxy)",
         baseUrl: "Your API endpoint",
-        apiKey: "Paste the API key for the selected provider.",
+        apiKey: "Paste an API key, or use the local Codex ChatGPT OAuth login for codexOAuth.",
         model: "e.g. gpt-4o, claude-sonnet-4-20250514, deepseek-chat",
         scope: "global = all projects, project = this directory only",
       },
@@ -117,9 +183,9 @@ export function buildInteractiveSetupCopy(locale: TuiLocale): InteractiveSetupCo
       scope: "保存范围",
     },
     hints: {
-      provider: "openai / anthropic / kkaiapi / custom（兼容 OpenAI 的代理）",
+      provider: "openai / anthropic / kkaiapi / codexOAuth / custom（兼容 OpenAI 的代理）",
       baseUrl: "你的 API 入口地址",
-      apiKey: "粘贴所选服务商的 API Key",
+      apiKey: "粘贴 API Key；codexOAuth 使用本机 Codex ChatGPT OAuth 登录",
       model: "例如 gpt-5.4、claude-sonnet-4-20250514、deepseek-chat",
       scope: "global = 所有项目，project = 仅当前目录",
     },
@@ -189,35 +255,45 @@ export async function interactiveLlmSetup(
     console.log(`  ${c("1", cyan)}  ${c(copy.steps.provider, gray)}`);
     console.log(c(`     ${copy.hints.provider}`, dim));
     const providerInput = await rl.question(`     ${c("❯", cyan)} `);
-    const provider = PROVIDERS.includes(providerInput.trim() as SetupProvider)
-      ? providerInput.trim() as SetupProvider
-      : copy.defaults.provider as SetupProvider;
-    const providerDefaultBaseUrl = provider === "kkaiapi" ? KKAIAPI_BASE_URL : copy.defaults.baseUrl;
+    const provider = providerInput.trim() ? normalizeSetupProvider(providerInput) : copy.defaults.provider as SetupProvider;
+    const isCodexOAuth = provider === CODEX_OAUTH_SERVICE_ID;
+    const providerDefaultBaseUrl = isCodexOAuth ? CODEX_OAUTH_BASE_URL : provider === "kkaiapi" ? KKAIAPI_BASE_URL : copy.defaults.baseUrl;
     console.log(`     ${c("✓", brightGreen)} ${provider}`);
     console.log();
 
     // Base URL
     console.log(`  ${c("2", cyan)}  ${c(copy.steps.baseUrl, gray)}`);
+    if (isCodexOAuth) {
+      console.log(c(`     ${CODEX_OAUTH_BASE_URL}`, dim));
+    }
     console.log(c(`     ${copy.hints.baseUrl}`, dim));
-    const baseUrl = await rl.question(`     ${c("❯", cyan)} `);
-    console.log(`     ${c("✓", brightGreen)} ${baseUrl.trim() || providerDefaultBaseUrl}`);
+    const baseUrl = isCodexOAuth ? "" : await rl.question(`     ${c("❯", cyan)} `);
+    console.log(`     ${c("✓", brightGreen)} ${resolveSetupBaseUrl(provider, baseUrl) || providerDefaultBaseUrl}`);
     console.log();
 
     // API Key
     console.log(`  ${c("3", cyan)}  ${c(copy.steps.apiKey, gray)}`);
     console.log(c(`     ${copy.hints.apiKey}`, dim));
-    const apiKey = await rl.question(`     ${c("❯", cyan)} `);
-    const maskedKey = apiKey.trim().length > 8
-      ? apiKey.trim().slice(0, 4) + "···" + apiKey.trim().slice(-4)
-      : "···";
-    console.log(`     ${c("✓", brightGreen)} ${maskedKey}`);
+    const apiKey = isCodexOAuth ? "" : await rl.question(`     ${c("❯", cyan)} `);
+    if (isCodexOAuth) {
+      const status = await getCodexOAuthStatus();
+      const statusLabel = status.connected
+        ? status.accountId ? `Codex OAuth ${status.accountId}` : "Codex OAuth"
+        : status.message ?? "Run `codex login` and choose ChatGPT.";
+      console.log(`     ${c(status.connected ? "✓" : "!", status.connected ? brightGreen : yellow)} ${statusLabel}`);
+    } else {
+      const maskedKey = apiKey.trim().length > 8
+        ? apiKey.trim().slice(0, 4) + "···" + apiKey.trim().slice(-4)
+        : "···";
+      console.log(`     ${c("✓", brightGreen)} ${maskedKey}`);
+    }
     console.log();
 
     // Model
     console.log(`  ${c("4", cyan)}  ${c(copy.steps.model, gray)}`);
     console.log(c(`     ${copy.hints.model}`, dim));
-    const model = await rl.question(`     ${c("❯", cyan)} `);
-    console.log(`     ${c("✓", brightGreen)} ${model.trim()}`);
+    const model = await rl.question(`     ${c("❯", cyan)} ${isCodexOAuth ? c(`[${CODEX_OAUTH_DEFAULT_MODEL}]`, dim) + " " : ""}`);
+    console.log(`     ${c("✓", brightGreen)} ${resolveSetupModel(provider, model)}`);
     console.log();
 
     // Scope
@@ -225,17 +301,7 @@ export async function interactiveLlmSetup(
     console.log(c(`     ${copy.hints.scope}`, dim));
     const scope = await rl.question(`     ${c("❯", cyan)} ${c(copy.defaults.scope, dim)} `);
     const useGlobal = scope.trim().toLowerCase() !== "project";
-    const effectiveBaseUrl = baseUrl.trim() || (provider === "kkaiapi" ? providerDefaultBaseUrl : "");
-    const finalProvider = resolveSetupProvider(provider, effectiveBaseUrl);
-    const finalService = resolveSetupService(provider, effectiveBaseUrl);
-
-    const envContent = [
-      `INKOS_LLM_PROVIDER=${finalProvider}`,
-      ...(finalService ? [`INKOS_LLM_SERVICE=${finalService}`] : []),
-      `INKOS_LLM_BASE_URL=${effectiveBaseUrl}`,
-      `INKOS_LLM_API_KEY=${apiKey.trim()}`,
-      `INKOS_LLM_MODEL=${model.trim()}`,
-    ].join("\n");
+    const envContent = buildSetupEnvContent({ provider, baseUrl, apiKey, model });
 
     if (useGlobal) {
       const globalDir = join(GLOBAL_ENV_PATH, "..");
@@ -322,8 +388,7 @@ async function hasGlobalConfig(): Promise<boolean> {
 async function checkEnvForKey(envPath: string): Promise<boolean> {
   try {
     const content = await readFile(envPath, "utf-8");
-    const match = content.match(/INKOS_LLM_API_KEY=(.+)/);
-    return !!match && match[1]!.trim().length > 0 && !match[1]!.includes("your-api-key");
+    return hasUsableLlmEnv(content);
   } catch {
     return false;
   }
@@ -371,14 +436,11 @@ export async function detectProjectLanguage(projectRoot: string): Promise<string
 async function parseEnvModel(envPath: string): Promise<ModelInfo | undefined> {
   try {
     const content = await readFile(envPath, "utf-8");
-    const get = (key: string) => {
-      const m = content.match(new RegExp(`^${key}=(.+)$`, "m"));
-      return m?.[1]?.trim() ?? "";
-    };
-    const key = get("INKOS_LLM_API_KEY");
-    if (!key || key.includes("your-api-key")) return undefined;
+    const env = parseEnv(content);
+    if (!hasUsableLlmEnv(content)) return undefined;
+    const get = (key: string) => env[key]?.trim() ?? "";
     return {
-      provider: get("INKOS_LLM_PROVIDER") || "openai",
+      provider: get("INKOS_LLM_SERVICE") || get("INKOS_LLM_PROVIDER") || "openai",
       model: get("INKOS_LLM_MODEL") || "unknown",
       baseUrl: get("INKOS_LLM_BASE_URL") || "",
     };

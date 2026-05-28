@@ -5,6 +5,7 @@ import { loadSecrets } from "../llm/secrets.js";
 import { getEndpoint } from "../llm/providers/index.js";
 import { guessServiceFromBaseUrl, resolveServicePreset, resolveServiceProviderFamily } from "../llm/service-presets.js";
 import { isApiKeyOptionalForEndpoint } from "./llm-endpoint-auth.js";
+import { isCodexOAuthService } from "../llm/codex-oauth.js";
 import { cliOverlayEnv, legacyEnv, studioIgnoredEnv, type LLMEnvLayers, type LLMEnvMap } from "./llm-env.js";
 
 export type LLMConsumer = "studio" | "cli" | "daemon" | "deploy";
@@ -99,7 +100,8 @@ export async function resolveEffectiveLLMConfig(
   const provider = typeof llm.provider === "string" ? llm.provider : undefined;
   const baseUrl = typeof llm.baseUrl === "string" ? llm.baseUrl : undefined;
   const apiKey = typeof llm.apiKey === "string" ? llm.apiKey : "";
-  if (!apiKey && input.requireApiKey !== false && !isApiKeyOptionalForEndpoint({ provider, baseUrl })) {
+  const service = typeof llm.service === "string" ? llm.service : undefined;
+  if (!apiKey && input.requireApiKey !== false && !isCodexOAuthService(service) && !isApiKeyOptionalForEndpoint({ provider, baseUrl })) {
     throw new Error(
       configMode === "studio-project"
         ? "Studio LLM API key not set. Open Studio services and save an API key for the selected service."
@@ -465,7 +467,7 @@ function modelBelongsToService(service: string, model: string): boolean {
 }
 
 function serviceAllowsUnlistedModels(service: string): boolean {
-  return service === "ollama";
+  return service === "ollama" || isCodexOAuthService(service);
 }
 
 function serviceEntryKey(entry: ServiceConfigEntry): string {

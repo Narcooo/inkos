@@ -28,6 +28,7 @@ import {
 } from "../interaction/session-transcript-restore.js";
 import type { TranscriptEvent, TranscriptRole } from "../interaction/session-transcript-schema.js";
 import { assertSafeBookId } from "../utils/book-id.js";
+import { CODEX_OAUTH_BASE_URL, buildCodexOAuthHeaders } from "../llm/codex-oauth.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -142,7 +143,38 @@ function agentModelIdentity(model: Model<Api>): string {
     model.provider,
     model.baseUrl ?? "",
     model.id,
+    JSON.stringify(model.headers ?? {}),
   ].join("::");
+}
+
+function isCodexOAuthModel(model: Model<Api>): boolean {
+  return (model.baseUrl ?? "").replace(/\/+$/u, "") === CODEX_OAUTH_BASE_URL;
+}
+
+async function applyAgentRuntimeAuth(
+  model: Model<Api>,
+  configuredApiKey: string | undefined,
+): Promise<{ model: Model<Api>; apiKey: string | undefined }> {
+  if (!isCodexOAuthModel(model)) {
+    return { model, apiKey: configuredApiKey };
+  }
+
+  const headers = await buildCodexOAuthHeaders();
+  const authorization = headers.Authorization ?? "";
+  const apiKey = authorization.replace(/^Bearer\s+/i, "");
+  const runtimeHeaders = { ...headers };
+  delete runtimeHeaders.Authorization;
+
+  return {
+    apiKey,
+    model: {
+      ...model,
+      headers: {
+        ...(model.headers ?? {}),
+        ...runtimeHeaders,
+      },
+    },
+  };
 }
 
 function sessionQueueKey(projectRoot: string, sessionId: string): string {
@@ -520,7 +552,10 @@ async function runAgentSessionUnlocked(
   // skipped) and we don't want that to (a) throw in path.join or (b) trigger
   // a spurious cache eviction because `null !== undefined`.
   const bookId: string | null = config.bookId ? assertSafeBookId(config.bookId) : null;
-  const model = resolveModel(config.model);
+  const baseModel = resolveModel(config.model);
+  const runtimeAuth = await applyAgentRuntimeAuth(baseModel, config.apiKey);
+  const model = runtimeAuth.model;
+  const effectiveApiKey = runtimeAuth.apiKey;
   const requestedModelIdentity = agentModelIdentity(model);
   const allowSystemFileRead = config.allowSystemFileRead ?? envFlagEnabled(process.env.INKOS_AGENT_ALLOW_SYSTEM_READ, false);
   const cacheKey = agentCacheKey(projectRoot, sessionId);
@@ -539,7 +574,7 @@ async function runAgentSessionUnlocked(
     const projectRootChanged = cached.projectRoot !== projectRoot;
     const bookChanged = cached.bookId !== bookId;
     const languageChanged = cached.language !== language;
-    const apiKeyChanged = cached.apiKey !== config.apiKey;
+    const apiKeyChanged = cached.apiKey !== effectiveApiKey;
     const readPermissionChanged = cached.allowSystemFileRead !== allowSystemFileRead;
     const transcriptChanged = cached.lastCommittedSeq !== currentCommittedSeq;
 
@@ -578,7 +613,7 @@ async function runAgentSessionUnlocked(
       convertToLlm: (messages) => convertAgentMessagesForModel(messages, model),
       streamFn: streamSimple,
       getApiKey: (provider: string) => {
-        if (config.apiKey) return config.apiKey;
+        if (effectiveApiKey) return effectiveApiKey;
         return getEnvApiKey(provider);
       },
     });
@@ -590,7 +625,7 @@ async function runAgentSessionUnlocked(
       bookId,
       language,
       modelIdentity: requestedModelIdentity,
-      apiKey: config.apiKey,
+      apiKey: effectiveApiKey,
       allowSystemFileRead,
       lastCommittedSeq: currentCommittedSeq ?? await latestCommittedSeq(projectRoot, sessionId),
       lastActive: Date.now(),

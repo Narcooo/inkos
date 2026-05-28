@@ -9,6 +9,7 @@
 export type ApiProtocol =
   | "openai-completions"
   | "openai-responses"
+  | "openai-codex-responses"
   | "anthropic-messages"
   | "google-generative-ai";
 
@@ -69,6 +70,7 @@ export interface InkosEndpoint {
   readonly label: string;
   /** UI 分组。custom 不参与分组，其他 endpoint 必填。 */
   readonly group?: EndpointGroup;
+  readonly authKind?: "apiKey" | "codexOAuth";
 
   readonly api: ApiProtocol;
   readonly baseUrl: string;

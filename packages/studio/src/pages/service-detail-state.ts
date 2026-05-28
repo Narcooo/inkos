@@ -12,6 +12,17 @@ export interface ServiceDetailDetectedConfig {
   readonly modelsSource?: "api" | "fallback";
 }
 
+export interface ServiceDetailRuntimeAuthStatus {
+  readonly authKind?: "apiKey" | "codexOAuth";
+  readonly connected?: boolean;
+  readonly authMode?: string;
+  readonly accountId?: string;
+  readonly expiresAt?: string;
+  readonly lastRefresh?: string;
+  readonly authPath?: string;
+  readonly message?: string;
+}
+
 export type ServiceDetailConnectionStatus =
   | { state: "idle" }
   | { state: "testing" }
@@ -74,9 +85,10 @@ export async function rehydrateServiceConnectionStatus(args: {
   readonly status: ServiceDetailConnectionStatus;
   readonly detectedModel: string;
   readonly detectedConfig: ServiceDetailDetectedConfig | null;
+  readonly runtimeAuthStatus: ServiceDetailRuntimeAuthStatus | null;
 }> {
   const fetchJsonImpl = args.fetchJsonImpl ?? fetchJson;
-  const secret = await fetchJsonImpl<{ apiKey?: string }>(
+  const secret = await fetchJsonImpl<{ apiKey?: string } & ServiceDetailRuntimeAuthStatus>(
     `/services/${encodeURIComponent(args.effectiveServiceId)}/secret`,
   );
   const apiKey = String(secret.apiKey ?? "");
@@ -86,6 +98,7 @@ export async function rehydrateServiceConnectionStatus(args: {
     status: { state: "idle" },
     detectedModel: "",
     detectedConfig: null,
+    runtimeAuthStatus: secret.authKind === "codexOAuth" ? secret : null,
   };
 }
 
@@ -106,6 +119,7 @@ export function matchServiceConfigEntryForDetail(
 export async function saveServiceConfig(args: {
   readonly effectiveServiceId: string;
   readonly serviceId: string;
+  readonly authKind?: "apiKey" | "codexOAuth";
   readonly isCustom: boolean;
   readonly resolvedCustomName: string;
   readonly apiKey: string;
@@ -124,8 +138,9 @@ export async function saveServiceConfig(args: {
   const fetchJsonImpl = args.fetchJsonImpl ?? fetchJson;
   const trimmedKey = args.apiKey.trim();
   const trimmedBaseUrl = args.baseUrl.trim();
+  const usesRuntimeAuth = args.authKind === "codexOAuth";
 
-  if (!trimmedKey && !args.isCustom) {
+  if (!trimmedKey && !args.isCustom && !usesRuntimeAuth) {
     return {
       status: { state: "error", message: "请先输入 API Key" },
       detectedModel: "",
@@ -189,11 +204,13 @@ export async function saveServiceConfig(args: {
   const savedStream = typeof detectedConfig?.stream === "boolean" ? detectedConfig.stream : args.stream;
   const savedBaseUrl = args.isCustom ? (detectedConfig?.baseUrl ?? trimmedBaseUrl) : undefined;
 
-  await fetchJsonImpl(`/services/${encodeURIComponent(args.effectiveServiceId)}/secret`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ apiKey: trimmedKey }),
-  });
+  if (!usesRuntimeAuth) {
+    await fetchJsonImpl(`/services/${encodeURIComponent(args.effectiveServiceId)}/secret`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ apiKey: trimmedKey }),
+    });
+  }
 
   await fetchJsonImpl("/services/config", {
     method: "PUT",

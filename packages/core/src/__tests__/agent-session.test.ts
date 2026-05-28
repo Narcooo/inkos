@@ -12,9 +12,15 @@ const EMPTY_USAGE = {
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 };
 
+function jwtWithExp(exp: number): string {
+  const header = Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" })).toString("base64url");
+  const payload = Buffer.from(JSON.stringify({ exp })).toString("base64url");
+  return `${header}.${payload}.`;
+}
+
 const { agentInstances, streamCalls, heldStreamCompletions, heldStreamWaiters } = vi.hoisted(() => ({
   agentInstances: [] as any[],
-  streamCalls: [] as Array<{ model: any; context: any }>,
+  streamCalls: [] as Array<{ model: any; context: any; options?: { apiKey?: string; headers?: Record<string, string> } }>,
   heldStreamCompletions: [] as Array<() => void>,
   heldStreamWaiters: [] as Array<() => void>,
 }));
@@ -67,8 +73,15 @@ vi.mock("@mariozechner/pi-ai", async () => {
     };
   }
 
-  const streamSimple = vi.fn((model: any, context: any) => {
-    streamCalls.push({ model: clone(model), context: clone(context) });
+  const streamSimple = vi.fn((model: any, context: any, options?: { apiKey?: string; headers?: Record<string, string> }) => {
+    streamCalls.push({
+      model: clone(model),
+      context: clone(context),
+      options: {
+        ...(options?.apiKey ? { apiKey: options.apiKey } : {}),
+        ...(options?.headers ? { headers: clone(options.headers) as Record<string, string> } : {}),
+      },
+    });
     const stream = actual.createAssistantMessageEventStream();
     const last = context.messages.at(-1);
     const prompt = lastVisibleUserText(context.messages);
@@ -172,12 +185,58 @@ describe("runAgentSession cache — bookId switch", () => {
 
   afterEach(async () => {
     evictAgentCache("s1");
+    evictAgentCache("s-codex-oauth");
     evictAgentCache("s-cache-seq");
     evictAgentCache("s-error");
     evictAgentCache("s-project-root-cache");
     evictAgentCache("s-interleave-seq");
     await rm(projectRoot, { recursive: true, force: true });
     if (otherProjectRoot) await rm(otherProjectRoot, { recursive: true, force: true });
+  });
+
+  it("passes Codex OAuth runtime credentials to pi-agent sessions", async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), "inkos-agent-codex-home-"));
+    const previousCodexHome = process.env.CODEX_HOME;
+    const accessToken = jwtWithExp(2_000_000_000);
+    try {
+      process.env.CODEX_HOME = codexHome;
+      await writeFile(join(codexHome, "auth.json"), JSON.stringify({
+        auth_mode: "chatgpt",
+        tokens: {
+          access_token: accessToken,
+          account_id: "acct_codex",
+          id_token: jwtWithExp(2_000_000_000),
+          refresh_token: "refresh",
+        },
+      }));
+      const model = {
+        provider: "openai-codex",
+        id: "gpt-5.5",
+        name: "gpt-5.5",
+        api: "openai-codex-responses",
+        baseUrl: "https://chatgpt.com/backend-api/codex",
+        reasoning: false,
+        input: ["text"],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 272_000,
+        maxTokens: 272_000,
+      } as any;
+      const pipeline = {} as any;
+
+      await runAgentSession(
+        { sessionId: "s-codex-oauth", bookId: null, language: "zh", pipeline, projectRoot, model },
+        "hi",
+      );
+
+      expect(streamCalls.at(-1)?.options?.apiKey).toBe(accessToken);
+      expect(streamCalls.at(-1)?.model.headers).toMatchObject({
+        "ChatGPT-Account-ID": "acct_codex",
+      });
+    } finally {
+      if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = previousCodexHome;
+      await rm(codexHome, { recursive: true, force: true });
+    }
   });
 
   it("rebuilds Agent when bookId changes for same sessionId", async () => {

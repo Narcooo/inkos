@@ -233,6 +233,48 @@ describe("chatCompletion via pi-ai", () => {
     expect(opts.maxTokens).toBe(256);
   });
 
+  it("omits temperature for Codex Responses transport", async () => {
+    mockStreamSimple.mockReturnValue(makeTextStream("ok"));
+
+    const client = makeClient(0.5, {
+      service: "codexOAuth",
+      _piModel: {
+        ...MOCK_PI_MODEL,
+        api: "openai-codex-responses",
+        provider: "openai-codex",
+        baseUrl: "https://chatgpt.com/backend-api/codex",
+      },
+    });
+    await chatCompletion(client, "gpt-5.5", [{ role: "user", content: "hi" }], {
+      temperature: 0.8,
+      maxTokens: 256,
+    });
+
+    const opts = mockStreamSimple.mock.calls[0]?.[2] as Record<string, unknown>;
+    expect(opts).not.toHaveProperty("temperature");
+    expect(opts.maxTokens).toBe(256);
+  });
+
+  it("adds default instructions for Codex Responses transport when no system prompt is present", async () => {
+    mockStreamSimple.mockReturnValue(makeTextStream("ok"));
+
+    const client = makeClient(0.5, {
+      service: "codexOAuth",
+      _piModel: {
+        ...MOCK_PI_MODEL,
+        api: "openai-codex-responses",
+        provider: "openai-codex",
+        baseUrl: "https://chatgpt.com/backend-api/codex",
+      },
+    });
+    await chatCompletion(client, "gpt-5.5", [{ role: "user", content: "hi" }], {
+      maxTokens: 16,
+    });
+
+    const context = mockStreamSimple.mock.calls[0]?.[1] as { systemPrompt?: string };
+    expect(context.systemPrompt).toBe("You are a helpful assistant.");
+  });
+
   it("drops non-ByteString headers before calling pi-ai", async () => {
     mockStreamSimple.mockReturnValue(makeTextStream("ok"));
 
@@ -949,5 +991,22 @@ describe("createLLMClient with providers lookup", () => {
     expect(client._piModel?.provider).toBe("google");
     expect(client._piModel?.baseUrl).toBe("https://generativelanguage.googleapis.com/v1beta");
     expect(client._piModel?.compat).toBeUndefined();
+  });
+
+  it("Codex OAuth uses the native openai-codex responses transport", async () => {
+    const { createLLMClient } = await import("../llm/provider.js");
+    const { LLMConfigSchema } = await import("../models/project.js");
+    const client = createLLMClient(LLMConfigSchema.parse({
+      provider: "openai",
+      service: "codexOAuth",
+      model: "gpt-5.5",
+      apiKey: "",
+      baseUrl: "https://chatgpt.com/backend-api/codex",
+      apiFormat: "responses",
+      stream: true,
+    }));
+    expect(client._piModel?.api).toBe("openai-codex-responses");
+    expect(client._piModel?.provider).toBe("openai-codex");
+    expect(client._piModel?.baseUrl).toBe("https://chatgpt.com/backend-api/codex");
   });
 });

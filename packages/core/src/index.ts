@@ -273,6 +273,16 @@ export {
 export { resolveServiceModel, type ResolvedModel } from "./llm/service-resolver.js";
 export { loadSecrets, saveSecrets, getServiceApiKey, type SecretsFile } from "./llm/secrets.js";
 export {
+  CODEX_OAUTH_BASE_URL,
+  CODEX_OAUTH_SERVICE_ID,
+  buildCodexOAuthHeaders,
+  getCodexOAuthStatus,
+  isCodexOAuthService,
+  listCodexOAuthModels,
+  type CodexOAuthModelInfo,
+  type CodexOAuthStatus,
+} from "./llm/codex-oauth.js";
+export {
   COVER_PROVIDER_PRESETS,
   coverSecretKey,
   resolveCoverProviderPreset,

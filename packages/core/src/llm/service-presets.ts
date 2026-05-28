@@ -1,6 +1,7 @@
 import { getEndpoint } from "./providers/index.js";
 import { probeModelsFromUpstream } from "./providers/probe.js";
 import { isApiKeyOptionalForEndpoint } from "../utils/llm-endpoint-auth.js";
+import { isCodexOAuthService, listCodexOAuthModels } from "./codex-oauth.js";
 
 export interface ServicePreset {
   readonly providerFamily: "openai" | "anthropic";
@@ -86,6 +87,7 @@ export function resolveServiceProviderFamily(service: string): "openai" | "anthr
 }
 
 export function resolveServicePiProvider(service: string): string | undefined {
+  if (isCodexOAuthService(service)) return "openai-codex";
   if (service === "google") return "google";
   const preset = resolveServicePreset(service);
   if (!preset) return undefined;
@@ -164,6 +166,15 @@ export async function listModelsForService(
   const provider = getEndpoint(service);
   const preset = SERVICE_PRESETS[service];
   if (!provider && !preset) return [];
+
+  if (isCodexOAuthService(service)) {
+    try {
+      const models = await listCodexOAuthModels();
+      if (models.length > 0) return models;
+    } catch {
+      // fall back to the bundled Codex OAuth model card below
+    }
+  }
 
   const byId = new Map<string, ModelInfo>();
 

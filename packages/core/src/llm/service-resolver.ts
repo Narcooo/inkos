@@ -5,6 +5,7 @@ import { getServiceApiKey } from "./secrets.js";
 import { getEndpoint } from "./providers/index.js";
 import type { InkosEndpoint } from "./providers/types.js";
 import { isApiKeyOptionalForEndpoint } from "../utils/llm-endpoint-auth.js";
+import { isCodexOAuthService } from "./codex-oauth.js";
 
 export interface ResolvedModel {
   model: Model<Api>;
@@ -61,7 +62,7 @@ export async function resolveServiceModel(
   // Resolve API key after baseUrl/provider are known so local/self-hosted endpoints
   // such as Ollama can be used without forcing a fake secret.
   const apiKey = await getServiceApiKey(projectRoot, service);
-  if (!apiKey && !isApiKeyOptionalForEndpoint({ provider: preset?.providerFamily, baseUrl: effectiveBaseUrl })) {
+  if (!apiKey && !isCodexOAuthService(baseService) && !isApiKeyOptionalForEndpoint({ provider: preset?.providerFamily, baseUrl: effectiveBaseUrl })) {
     throw new Error(
       `API key not found for service "${service}". Add it in .inkos/secrets.json or set the environment variable.`,
     );

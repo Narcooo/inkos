@@ -279,6 +279,56 @@ describe("saveServiceConfig", () => {
     ]);
     expect(result.status).toEqual({ state: "connected", models: [{ id: "qwen3.6:35b-a3b" }] });
   });
+
+  it("saves Codex OAuth config without persisting a project secret", async () => {
+    const calls: string[] = [];
+    const bodies: unknown[] = [];
+    const fetchJsonImpl = vi.fn(async (path: string, init?: { body?: string }) => {
+      calls.push(path);
+      if (init?.body) bodies.push(JSON.parse(init.body));
+      if (path === "/services/codexOAuth/test") {
+        return {
+          ok: true,
+          models: [{ id: "gpt-5.5", name: "GPT-5.5" }],
+          selectedModel: "gpt-5.5",
+          detected: { apiFormat: "responses", stream: true },
+        };
+      }
+      if (path === "/services/config") return { ok: true };
+      throw new Error(`unexpected path: ${path}`);
+    });
+
+    const result = await saveServiceConfig({
+      effectiveServiceId: "codexOAuth",
+      serviceId: "codexOAuth",
+      authKind: "codexOAuth",
+      isCustom: false,
+      resolvedCustomName: "",
+      apiKey: "",
+      baseUrl: "",
+      apiFormat: "responses",
+      stream: true,
+      temperature: "1",
+      detectedModel: "",
+      fetchJsonImpl: fetchJsonImpl as never,
+    });
+
+    expect(calls).toEqual([
+      "/services/codexOAuth/test",
+      "/services/config",
+    ]);
+    expect(bodies).toEqual([
+      { apiKey: "", apiFormat: "responses", stream: true },
+      {
+        service: "codexOAuth",
+        defaultModel: "gpt-5.5",
+        services: [
+          { service: "codexOAuth", temperature: 1, apiFormat: "responses", stream: true },
+        ],
+      },
+    ]);
+    expect(result.status).toEqual({ state: "connected", models: [{ id: "gpt-5.5", name: "GPT-5.5" }] });
+  });
 });
 
 describe("deleteServiceConfig", () => {

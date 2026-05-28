@@ -9,7 +9,12 @@ export interface ServiceInfo {
   readonly service: string;
   readonly label: string;
   readonly group?: EndpointGroup;
+  readonly authKind?: "apiKey" | "codexOAuth";
   readonly connected: boolean;
+  readonly accountId?: string;
+  readonly expiresAt?: string;
+  readonly authPath?: string;
+  readonly message?: string;
 }
 
 export interface ModelInfo {

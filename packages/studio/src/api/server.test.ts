@@ -35,6 +35,9 @@ const resolveServiceModelMock = vi.fn();
 const loadSecretsMock = vi.fn();
 const saveSecretsMock = vi.fn();
 const getServiceApiKeyMock = vi.fn();
+const getCodexOAuthStatusMock = vi.fn();
+const listCodexOAuthModelsMock = vi.fn();
+const isCodexOAuthServiceMock = vi.fn((service?: string) => service === "codexOAuth");
 type ServicePresetMock = {
   providerFamily: "openai" | "anthropic";
   baseUrl: string;
@@ -48,6 +51,7 @@ const SERVICE_PRESETS_MOCK: Record<string, ServicePresetMock> = {
   bailian: { providerFamily: "anthropic", baseUrl: "https://dashscope.aliyuncs.com/apps/anthropic", modelsBaseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", knownModels: [] as string[] },
   google: { providerFamily: "openai", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", modelsBaseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", knownModels: [] as string[] },
   kkaiapi: { providerFamily: "openai", baseUrl: "https://api.kkaiapi.com/v1", modelsBaseUrl: "https://api.kkaiapi.com/v1", knownModels: [] as string[] },
+  codexOAuth: { providerFamily: "openai", baseUrl: "https://chatgpt.com/backend-api/codex", modelsBaseUrl: "https://chatgpt.com/backend-api/codex", knownModels: ["gpt-5.5"] },
   ollama: { providerFamily: "openai", baseUrl: "http://localhost:11434/v1", modelsBaseUrl: "http://localhost:11434/v1", knownModels: [] as string[] },
   custom: { providerFamily: "openai", baseUrl: "", knownModels: [] as string[] },
 };
@@ -87,7 +91,7 @@ const endpointIdsByGroup = {
     "volcengine", "wenxin", "xiaomimimo", "zeroone", "zhipu",
   ],
   aggregator: ["kkaiapi", "openrouter", "newapi", "siliconcloud"],
-  local: ["githubCopilot", "ollama"],
+  local: ["codexOAuth", "githubCopilot", "ollama"],
   codingPlan: [
     "astronCodingPlan", "bailianCodingPlan", "glmCodingPlan", "kimiCodingPlan", "kimicode",
     "minimaxCodingPlan", "opencodeCodingPlan", "volcengineCodingPlan",
@@ -101,6 +105,7 @@ const endpointMocks = [
     ...(id === "google" ? { checkModel: "gemini-2.5-flash" } : {}),
     ...(id === "minimax" ? { checkModel: "MiniMax-M2.7" } : {}),
     ...(id === "ollama" ? { checkModel: "llama3.2:3b" } : {}),
+    ...(id === "codexOAuth" ? { authKind: "codexOAuth", checkModel: "gpt-5.5" } : {}),
     ...(id === "volcengine" ? { checkModel: "doubao-lite-32k" } : {}),
     models: [
       { id: `${id}-model`, maxOutput: 4096, contextWindowTokens: 32768, enabled: true },
@@ -240,6 +245,10 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
     loadSecrets: loadSecretsMock,
     saveSecrets: saveSecretsMock,
     getServiceApiKey: getServiceApiKeyMock,
+    CODEX_OAUTH_SERVICE_ID: "codexOAuth",
+    getCodexOAuthStatus: getCodexOAuthStatusMock,
+    listCodexOAuthModels: listCodexOAuthModelsMock,
+    isCodexOAuthService: isCodexOAuthServiceMock,
     listModelsForService: listModelsForServiceMock,
     getAllEndpoints: getAllEndpointsMock,
     probeModelsFromUpstream: probeModelsFromUpstreamMock,
@@ -407,6 +416,9 @@ describe("createStudioServer daemon lifecycle", () => {
     loadSecretsMock.mockReset();
     saveSecretsMock.mockReset();
     getServiceApiKeyMock.mockReset();
+    getCodexOAuthStatusMock.mockReset();
+    listCodexOAuthModelsMock.mockReset();
+    isCodexOAuthServiceMock.mockClear();
     resolveServicePresetMock.mockClear();
     resolveServiceProviderFamilyMock.mockClear();
     resolveServiceModelsBaseUrlMock.mockClear();
@@ -444,6 +456,14 @@ describe("createStudioServer daemon lifecycle", () => {
     loadSecretsMock.mockResolvedValue({ services: {} });
     saveSecretsMock.mockResolvedValue(undefined);
     getServiceApiKeyMock.mockResolvedValue(undefined);
+    getCodexOAuthStatusMock.mockResolvedValue({
+      connected: false,
+      authPath: "/tmp/codex/auth.json",
+      message: "Codex OAuth auth.json not found",
+    });
+    listCodexOAuthModelsMock.mockResolvedValue([
+      { id: "gpt-5.5", name: "GPT-5.5", contextWindow: 272000, maxOutput: 272000 },
+    ]);
   });
 
   afterEach(async () => {
@@ -796,18 +816,89 @@ describe("createStudioServer daemon lifecycle", () => {
     expect(res.status).toBe(200);
     const body = await res.json() as { services: Array<{ service: string; group?: string; connected: boolean }> };
     const bank = body.services.filter((s) => !s.service.startsWith("custom"));
-    expect(bank.length).toBe(37);
+    expect(bank.length).toBe(38);
     expect(bank.every((s) => typeof s.group === "string")).toBe(true);
     expect(bank.filter((s) => s.group === "overseas")).toHaveLength(5);
     expect(bank.filter((s) => s.group === "china")).toHaveLength(18);
     expect(bank.filter((s) => s.group === "aggregator")).toHaveLength(4);
-    expect(bank.filter((s) => s.group === "local")).toHaveLength(2);
+    expect(bank.filter((s) => s.group === "local")).toHaveLength(3);
     expect(bank.filter((s) => s.group === "codingPlan")).toHaveLength(8);
     expect(bank.filter((s) => s.group === "aggregator").map((s) => s.service)[0]).toBe("kkaiapi");
     expect(body.services.find((s) => s.service === "moonshot")?.connected).toBe(true);
     expect(body.services.find((s) => s.service === "custom:内网GPT")).toMatchObject({
       connected: true,
     });
+  });
+
+  it("reports Codex OAuth connection from local runtime auth", async () => {
+    getCodexOAuthStatusMock.mockResolvedValue({
+      connected: true,
+      authMode: "chatgpt-oauth",
+      accountId: "acct_123",
+      expiresAt: "2027-01-15T08:00:00.000Z",
+      lastRefresh: "2026-05-27T00:00:00.000Z",
+      authPath: "/Users/test/.codex/auth.json",
+    });
+
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const res = await app.request("http://localhost/api/v1/services");
+    expect(res.status).toBe(200);
+    const body = await res.json() as { services: Array<Record<string, unknown>> };
+    expect(body.services.find((s) => s.service === "codexOAuth")).toMatchObject({
+      authKind: "codexOAuth",
+      connected: true,
+      accountId: "acct_123",
+      authPath: "/Users/test/.codex/auth.json",
+    });
+  });
+
+  it("uses Codex OAuth runtime auth for status, tests, and models", async () => {
+    getCodexOAuthStatusMock.mockResolvedValue({
+      connected: true,
+      authMode: "chatgpt-oauth",
+      accountId: "acct_123",
+      expiresAt: "2027-01-15T08:00:00.000Z",
+      authPath: "/Users/test/.codex/auth.json",
+    });
+
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const secret = await app.request("http://localhost/api/v1/services/codexOAuth/secret");
+    expect(secret.status).toBe(200);
+    await expect(secret.json()).resolves.toMatchObject({
+      apiKey: "",
+      authKind: "codexOAuth",
+      connected: true,
+      accountId: "acct_123",
+    });
+
+    const test = await app.request("http://localhost/api/v1/services/codexOAuth/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ apiKey: "", apiFormat: "responses", stream: true }),
+    });
+    expect(test.status).toBe(200);
+    await expect(test.json()).resolves.toMatchObject({
+      ok: true,
+      selectedModel: "gpt-5.5",
+      detected: {
+        apiFormat: "responses",
+        stream: true,
+        modelsSource: "api",
+      },
+    });
+
+    const models = await app.request("http://localhost/api/v1/services/codexOAuth/models?refresh=1");
+    expect(models.status).toBe(200);
+    await expect(models.json()).resolves.toEqual({
+      models: [
+        { id: "gpt-5.5", name: "GPT-5.5", maxOutput: 272000, contextWindow: 272000 },
+      ],
+    });
+    expect(listCodexOAuthModelsMock).toHaveBeenCalled();
   });
 
   it("returns connected bank model groups from the local bank", async () => {
@@ -2410,6 +2501,101 @@ describe("createStudioServer daemon lifecycle", () => {
     expect(pipelineConfigs.at(-1)).toEqual(expect.objectContaining({
       writingReviewRetries: 3,
     }));
+  });
+
+  it("passes selected Codex OAuth model into Studio write-next without requiring an API key", async () => {
+    loadProjectConfigMock.mockImplementationOnce(async (_root: string, options?: { requireApiKey?: boolean }) => {
+      expect(options).toMatchObject({ consumer: "studio", requireApiKey: false });
+      return {
+        ...cloneProjectConfig(),
+        llm: {
+          provider: "openai",
+          service: "custom",
+          configSource: "studio",
+          baseUrl: "",
+          model: "",
+          stream: true,
+        },
+      };
+    });
+    resolveServiceModelMock.mockResolvedValueOnce({
+      apiKey: "",
+      model: { id: "gpt-5.5" },
+    });
+
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const response = await app.request("http://localhost/api/v1/books/demo-book/write-next", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ service: "codexOAuth", model: "gpt-5.5" }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(resolveServiceModelMock).toHaveBeenCalledWith(
+      "codexOAuth",
+      "gpt-5.5",
+      root,
+      "https://chatgpt.com/backend-api/codex",
+      undefined,
+    );
+    expect(createLLMClientMock).toHaveBeenCalledWith(expect.objectContaining({
+      service: "codexOAuth",
+      model: "gpt-5.5",
+      apiKey: "",
+      baseUrl: "https://chatgpt.com/backend-api/codex",
+    }));
+    expect(pipelineConfigs.at(-1)).toEqual(expect.objectContaining({
+      model: "gpt-5.5",
+    }));
+  });
+
+  it("uses Codex OAuth for write-next when Studio config key validation fails and runtime auth is connected", async () => {
+    loadProjectConfigMock
+      .mockRejectedValueOnce(
+        new Error("Studio LLM API key not set. Open Studio services and save an API key for the selected service."),
+      )
+      .mockResolvedValueOnce({
+        ...cloneProjectConfig(),
+        llm: {
+          provider: "openai",
+          service: "custom",
+          configSource: "studio",
+          baseUrl: "",
+          model: "",
+          stream: true,
+        },
+      });
+    getCodexOAuthStatusMock.mockResolvedValueOnce({
+      connected: true,
+      authMode: "chatgpt-oauth",
+      accountId: "acct-1",
+      authPath: "/tmp/codex/auth.json",
+    });
+    resolveServiceModelMock.mockResolvedValueOnce({
+      apiKey: "",
+      model: { id: "gpt-5.5" },
+    });
+
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const response = await app.request("http://localhost/api/v1/books/demo-book/write-next", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+
+    expect(response.status).toBe(200);
+    expect(resolveServiceModelMock).toHaveBeenCalledWith(
+      "codexOAuth",
+      "gpt-5.5",
+      root,
+      "https://chatgpt.com/backend-api/codex",
+      undefined,
+    );
+    expect(writeNextChapterMock).toHaveBeenCalledWith("demo-book", undefined);
   });
 
   it("handles explicit chat chapter edits outside the InkOS writing agent", async () => {

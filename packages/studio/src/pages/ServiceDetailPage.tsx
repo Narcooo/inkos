@@ -12,6 +12,7 @@ import {
   type ServiceDetailConnectionStatus as ConnectionStatus,
   type ServiceDetailDetectedConfig as DetectedConfig,
   type ServiceDetailModelInfo as ModelInfo,
+  type ServiceDetailRuntimeAuthStatus as RuntimeAuthStatus,
   type ServiceDetailVerifiedProbe as VerifiedProbe,
 } from "./service-detail-state";
 
@@ -43,6 +44,7 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
 
   const svc = services.find((s) => s.service === serviceId);
   const isCustom = serviceId === "custom" || serviceId.startsWith("custom:");
+  const usesRuntimeAuth = svc?.authKind === "codexOAuth" || serviceId === "codexOAuth";
   const persistedCustomName = serviceId.startsWith("custom:") ? decodeURIComponent(serviceId.slice("custom:".length)) : "";
 
   // -- Local form state --
@@ -56,6 +58,7 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
   const [detectedModel, setDetectedModel] = useState<string>("");
   const [detectedConfig, setDetectedConfig] = useState<DetectedConfig | null>(null);
   const [verifiedProbe, setVerifiedProbe] = useState<VerifiedProbe | null>(null);
+  const [runtimeAuthStatus, setRuntimeAuthStatus] = useState<RuntimeAuthStatus | null>(null);
 
   // -- Unified connection status --
   const [status, setStatus] = useState<ConnectionStatus>({ state: "idle" });
@@ -79,6 +82,12 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
     return () => { cancelled = true; };
   }, [isCustom, persistedCustomName, serviceId]);
 
+  useEffect(() => {
+    if (!usesRuntimeAuth) return;
+    setApiFormat("responses");
+    setStream(true);
+  }, [usesRuntimeAuth]);
+
   const resolvedCustomName = persistedCustomName || customName.trim() || "Custom";
   const effectiveServiceId = isCustom ? `custom:${resolvedCustomName}` : serviceId;
   const label = isCustom ? (customName || persistedCustomName || "自定义服务") : (svc?.label ?? serviceId);
@@ -99,6 +108,7 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
         setApiKey(result.apiKey);
         setDetectedModel(result.detectedModel);
         setDetectedConfig(result.detectedConfig);
+        setRuntimeAuthStatus(result.runtimeAuthStatus);
         setStatus(result.status);
         if (result.status.state === "connected") {
           setStoreModels(effectiveServiceId, result.status.models);
@@ -129,7 +139,7 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
   // -- Handlers --
   const handleTest = async () => {
     const trimmedKey = apiKey.trim();
-    if (!trimmedKey && !isCustom) {
+    if (!trimmedKey && !isCustom && !usesRuntimeAuth) {
       setStatus({ state: "error", message: "请先输入 API Key" });
       return;
     }
@@ -203,6 +213,7 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
       const result = await saveServiceConfig({
         effectiveServiceId,
         serviceId,
+        ...(usesRuntimeAuth ? { authKind: "codexOAuth" as const } : {}),
         isCustom,
         resolvedCustomName,
         apiKey: trimmedKey,
@@ -269,20 +280,37 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
           </div>
         )}
 
-        {/* API Key */}
-        <Field label="API Key">
-          <div className="relative">
-            <input
-              type={showKey ? "text" : "password"} value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)} placeholder="sk-..."
-              className="w-full rounded-lg border border-border/60 bg-background px-3 py-2 pr-10 text-sm font-mono"
-            />
-            <button type="button" onClick={() => setShowKey((v) => !v)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground/50 hover:text-muted-foreground transition-colors">
-              {showKey ? <EyeOff size={14} /> : <Eye size={14} />}
-            </button>
+        {usesRuntimeAuth ? (
+          <div className="rounded-lg border border-border/60 bg-secondary/20 px-3 py-3 text-sm">
+            <div className="flex items-center justify-between gap-3">
+              <span className="font-medium">Codex OAuth</span>
+              <span className={runtimeAuthStatus?.connected ? "text-emerald-500" : "text-muted-foreground"}>
+                {runtimeAuthStatus?.connected ? "已登录" : "未登录"}
+              </span>
+            </div>
+            <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+              {runtimeAuthStatus?.accountId && <p>账号：{runtimeAuthStatus.accountId}</p>}
+              {runtimeAuthStatus?.expiresAt && <p>过期时间：{new Date(runtimeAuthStatus.expiresAt).toLocaleString()}</p>}
+              {runtimeAuthStatus?.authPath && <p className="font-mono break-all">认证文件：{runtimeAuthStatus.authPath}</p>}
+              {runtimeAuthStatus?.message && <p>{runtimeAuthStatus.message}</p>}
+              {!runtimeAuthStatus?.message && !runtimeAuthStatus?.connected && <p>请先在终端运行 codex login。</p>}
+            </div>
           </div>
-        </Field>
+        ) : (
+          <Field label="API Key">
+            <div className="relative">
+              <input
+                type={showKey ? "text" : "password"} value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)} placeholder="sk-..."
+                className="w-full rounded-lg border border-border/60 bg-background px-3 py-2 pr-10 text-sm font-mono"
+              />
+              <button type="button" onClick={() => setShowKey((v) => !v)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground/50 hover:text-muted-foreground transition-colors">
+                {showKey ? <EyeOff size={14} /> : <Eye size={14} />}
+              </button>
+            </div>
+          </Field>
+        )}
 
         {/* Actions + feedback */}
         <div className="flex items-center gap-2">
@@ -323,6 +351,7 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
             <select
               value={apiFormat}
               onChange={(e) => setApiFormat(e.target.value as "chat" | "responses")}
+              disabled={usesRuntimeAuth}
               className="w-full rounded-lg border border-border/60 bg-background px-3 py-2 text-sm"
             >
               <option value="chat">Chat / Completions</option>
@@ -336,6 +365,7 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
                 type="checkbox"
                 checked={stream}
                 onChange={(e) => setStream(e.target.checked)}
+                disabled={usesRuntimeAuth}
               />
               <span>{stream ? "开启" : "关闭"}</span>
             </label>

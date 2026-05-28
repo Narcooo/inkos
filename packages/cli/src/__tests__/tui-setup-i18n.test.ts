@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { buildAutoInitMessages, buildInteractiveSetupCopy, resolveSetupProvider, resolveSetupService } from "../tui/setup.js";
+import {
+  buildAutoInitMessages,
+  buildInteractiveSetupCopy,
+  buildSetupEnvContent,
+  hasUsableLlmEnv,
+  resolveSetupBaseUrl,
+  resolveSetupModel,
+  resolveSetupProvider,
+  resolveSetupService,
+} from "../tui/setup.js";
 
 describe("tui setup i18n", () => {
   it("builds Chinese setup copy by default", () => {
@@ -27,5 +36,25 @@ describe("tui setup i18n", () => {
     expect(resolveSetupProvider("kkaiapi", "https://api.kkaiapi.com/v1")).toBe("openai");
     expect(resolveSetupService("kkaiapi", "")).toBe("kkaiapi");
     expect(resolveSetupService("openai", "https://api.kkaiapi.com/v1")).toBe("kkaiapi");
+  });
+
+  it("configures Codex OAuth as a keyless service", () => {
+    expect(resolveSetupProvider("codexOAuth", "")).toBe("openai");
+    expect(resolveSetupService("codexOAuth", "")).toBe("codexOAuth");
+    expect(resolveSetupBaseUrl("codexOAuth", "")).toBe("https://chatgpt.com/backend-api/codex");
+    expect(resolveSetupModel("codexOAuth", "")).toBe("gpt-5.5");
+
+    const env = buildSetupEnvContent({
+      provider: "codexOAuth",
+      baseUrl: "",
+      apiKey: "sk-ignored",
+      model: "",
+    });
+    expect(env).toContain("INKOS_LLM_SERVICE=codexOAuth");
+    expect(env).toContain("INKOS_LLM_BASE_URL=https://chatgpt.com/backend-api/codex");
+    expect(env).toContain("INKOS_LLM_MODEL=gpt-5.5");
+    expect(env).toContain("INKOS_LLM_API_FORMAT=responses");
+    expect(env).not.toContain("INKOS_LLM_API_KEY");
+    expect(hasUsableLlmEnv(env)).toBe(true);
   });
 });

@@ -156,6 +156,20 @@ describe("resolveServiceModel", () => {
     expect(result.model.baseUrl).toBe("http://localhost:11434/v1");
   });
 
+  it("resolves Codex OAuth models without a project API key", async () => {
+    const result = await resolveServiceModel(
+      "codexOAuth",
+      "gpt-5.5",
+      root,
+    );
+
+    expect(result.apiKey).toBe("");
+    expect(result.model.id).toBe("gpt-5.5");
+    expect(result.model.api).toBe("openai-codex-responses");
+    expect(result.model.provider).toBe("openai-codex");
+    expect(result.model.baseUrl).toBe("https://chatgpt.com/backend-api/codex");
+  });
+
   it("resolves local custom OpenAI-compatible services without an API key", async () => {
     const result = await resolveServiceModel(
       "custom:LocalProxy",

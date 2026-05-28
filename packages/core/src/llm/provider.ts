@@ -19,6 +19,7 @@ import { getEndpoint } from "./providers/index.js";
 import { lookupModel } from "./providers/lookup.js";
 import { fetchWithProxy } from "../utils/proxy-fetch.js";
 import { isApiKeyOptionalForEndpoint } from "../utils/llm-endpoint-auth.js";
+import { buildCodexOAuthHeaders, isCodexOAuthService } from "./codex-oauth.js";
 
 
 // === Streaming Monitor Types ===
@@ -206,6 +207,7 @@ export function createLLMClient(config: LLMConfig): LLMClient {
   else if (inkosProvider?.id === "zhipu") piProvider = "zai";
   else if (inkosProvider?.id === "openrouter") piProvider = "openrouter";
   else if (inkosProvider?.id === "githubCopilot") piProvider = "githubCopilot";
+  else if (isCodexOAuthService(inkosProvider?.id ?? serviceName)) piProvider = "openai-codex";
   else if (inkosProvider?.id === "ollama") piProvider = "ollama";
   else if (inkosProvider?.api === "anthropic-messages") piProvider = "anthropic";
   else piProvider = provider;
@@ -505,6 +507,28 @@ function shouldUseNativeCustomTransport(client: LLMClient): boolean {
   return client.service === "ollama"
     && client.provider === "openai"
     && shouldUseNativeLocalOpenAICompatibleTransport(client);
+}
+
+async function withCodexOAuthRuntimeAuth(client: LLMClient): Promise<LLMClient> {
+  if (!isCodexOAuthService(client.service)) return client;
+  const headers = await buildCodexOAuthHeaders();
+  const authorization = headers.Authorization ?? "";
+  const token = authorization.replace(/^Bearer\s+/i, "");
+  const runtimeHeaders = { ...headers };
+  delete runtimeHeaders.Authorization;
+  return {
+    ...client,
+    _apiKey: token,
+    _piModel: client._piModel
+      ? {
+          ...client._piModel,
+          headers: {
+            ...(client._piModel.headers ?? {}),
+            ...runtimeHeaders,
+          },
+        }
+      : client._piModel,
+  };
 }
 
 function shouldUseNativeLocalOpenAICompatibleTransport(client: LLMClient): boolean {
@@ -1028,10 +1052,11 @@ export async function chatCompletion(
   try {
     return await withTransientLLMRetry(
       async () => {
-        if (shouldUseNativeCustomTransport(client)) {
-          return chatCompletionViaCustomOpenAICompatible(client, model, messages, resolved, onStreamProgress, onTextDelta);
+        const runtimeClient = await withCodexOAuthRuntimeAuth(client);
+        if (shouldUseNativeCustomTransport(runtimeClient)) {
+          return chatCompletionViaCustomOpenAICompatible(runtimeClient, model, messages, resolved, onStreamProgress, onTextDelta);
         }
-        return chatCompletionViaPiAi(client, model, messages, resolved, onStreamProgress, onTextDelta);
+        return chatCompletionViaPiAi(runtimeClient, model, messages, resolved, onStreamProgress, onTextDelta);
       },
       // Retrying after UI text deltas have been emitted can duplicate visible text.
       { enabled: !onTextDelta },
@@ -1070,7 +1095,8 @@ export async function chatWithTools(
       ),
       maxTokens: options?.maxTokens ?? client.defaults.maxTokens,
     };
-    return await chatWithToolsViaPiAi(client, model, messages, tools, resolved);
+    const runtimeClient = await withCodexOAuthRuntimeAuth(client);
+    return await chatWithToolsViaPiAi(runtimeClient, model, messages, tools, resolved);
   } catch (error) {
     throw wrapLLMError(error, errorCtx);
   }
@@ -1113,6 +1139,13 @@ function toPiContext(messages: ReadonlyArray<LLMMessage>): PiContext {
       };
     });
   return { systemPrompt, messages: piMessages };
+}
+
+function ensureCodexInstructions(piModel: PiModel<PiApi>, context: PiContext): PiContext {
+  if (piModel.api !== "openai-codex-responses" || context.systemPrompt?.trim()) {
+    return context;
+  }
+  return { ...context, systemPrompt: "You are a helpful assistant." };
 }
 
 /** Convert inkos AgentMessage[] to pi-ai Context (with tool calls/results). */
@@ -1184,13 +1217,11 @@ async function chatCompletionViaPiAi(
   onTextDelta?: (text: string) => void,
 ): Promise<LLMResponse> {
   const piModel = resolvePiModel(client, model);
-  const context = toPiContext(messages);
-  const streamOpts = {
+  const context = ensureCodexInstructions(piModel, toPiContext(messages));
+  const streamOpts = buildPiStreamOptions(piModel, client, {
     temperature: resolved.temperature,
     maxTokens: resolved.maxTokens,
-    apiKey: client._apiKey,
-    headers: mergeUserAgent(piModel.headers),
-  };
+  });
 
   if (!client.stream) {
     const response = await piCompleteSimple(piModel, context, streamOpts);
@@ -1279,14 +1310,12 @@ async function chatWithToolsViaPiAi(
   resolved: { readonly temperature: number; readonly maxTokens: number },
 ): Promise<ChatWithToolsResult> {
   const piModel = resolvePiModel(client, model);
-  const context = agentMessagesToPiContext(messages);
+  const context = ensureCodexInstructions(piModel, agentMessagesToPiContext(messages));
   context.tools = toPiTools(tools);
-  const streamOpts = {
+  const streamOpts = buildPiStreamOptions(piModel, client, {
     temperature: resolved.temperature,
     maxTokens: resolved.maxTokens,
-    apiKey: client._apiKey,
-    headers: mergeUserAgent(piModel.headers),
-  };
+  });
 
   if (!client.stream) {
     const response = await piComplete(piModel, context, streamOpts);
@@ -1328,4 +1357,23 @@ async function chatWithToolsViaPiAi(
   }
 
   return { content, toolCalls };
+}
+
+function buildPiStreamOptions(
+  piModel: PiModel<PiApi>,
+  client: LLMClient,
+  resolved: { readonly temperature: number; readonly maxTokens: number },
+): {
+  readonly temperature?: number;
+  readonly maxTokens: number;
+  readonly apiKey?: string;
+  readonly headers: Record<string, string>;
+} {
+  const supportsTemperature = piModel.api !== "openai-codex-responses";
+  return {
+    ...(supportsTemperature ? { temperature: resolved.temperature } : {}),
+    maxTokens: resolved.maxTokens,
+    apiKey: client._apiKey,
+    headers: mergeUserAgent(piModel.headers),
+  };
 }

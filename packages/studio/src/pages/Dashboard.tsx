@@ -1,6 +1,7 @@
 import { fetchJson, useApi, postApi } from "../hooks/use-api";
 import { useEffect, useMemo, useState, useRef } from "react";
 import { useServiceStore } from "../store/service";
+import { useChatStore } from "../store/chat";
 import type { SSEMessage } from "../hooks/use-sse";
 import type { Theme } from "../hooks/use-theme";
 import type { TFunction } from "../hooks/use-i18n";
@@ -134,6 +135,11 @@ export function Dashboard({ nav, sse, theme, t }: { nav: Nav; sse: { messages: R
   const writingBooks = useMemo(() => deriveActiveBookIds(sse.messages), [sse.messages]);
   const serviceStoreServices = useServiceStore((s) => s.services);
   const fetchServices = useServiceStore((s) => s.fetchServices);
+  const selectedModel = useChatStore((s) => s.selectedModel);
+  const selectedService = useChatStore((s) => s.selectedService);
+  const selectedLlm = selectedService && selectedModel
+    ? { service: selectedService, model: selectedModel }
+    : undefined;
   useEffect(() => { void fetchServices(); }, [fetchServices]);
   const hasServices = serviceStoreServices.some((s) => s.connected);
 
@@ -275,7 +281,7 @@ export function Dashboard({ nav, sse, theme, t }: { nav: Nav; sse: { messages: R
                 <div className="flex items-center gap-3 shrink-0 ml-6">
                   <button
                     onClick={async () => {
-                      try { await postApi(`/books/${book.id}/write-next`); }
+                      try { await postApi(`/books/${book.id}/write-next`, selectedLlm); }
                       catch (e) { alert(e instanceof Error ? e.message : "Write failed"); }
                     }}
                     disabled={isWriting}

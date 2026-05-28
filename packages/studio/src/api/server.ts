@@ -37,6 +37,10 @@ import {
   chatCompletion,
   buildExportArtifact,
   GLOBAL_ENV_PATH,
+  CODEX_OAUTH_SERVICE_ID,
+  getCodexOAuthStatus,
+  listCodexOAuthModels,
+  isCodexOAuthService,
   COVER_PROVIDER_PRESETS,
   Scheduler,
   coverSecretKey,
@@ -514,6 +518,18 @@ interface ServiceConfigEntry {
   stream?: boolean;
 }
 
+interface StudioServiceListItem {
+  service: string;
+  label: string;
+  group?: string;
+  authKind?: "apiKey" | "codexOAuth";
+  connected: boolean;
+  accountId?: string;
+  expiresAt?: string;
+  authPath?: string;
+  message?: string;
+}
+
 type LLMConfigSource = "env" | "studio";
 
 interface EnvConfigSummary {
@@ -922,6 +938,38 @@ function fallbackTextModelsForEndpoint(
   return preset?.knownModels?.map((id) => ({ id, name: id })) ?? [];
 }
 
+function endpointModelInfos(endpoint: ReturnType<typeof getAllEndpoints>[number]): Array<{
+  id: string;
+  name: string;
+  maxOutput?: number;
+  contextWindow?: number;
+}> {
+  return endpoint.models
+    .filter((model) => model.enabled !== false)
+    .filter((model) => isTextChatModelId(model.id))
+    .map((model) => ({
+      id: model.id,
+      name: model.id,
+      ...(typeof model.maxOutput === "number" ? { maxOutput: model.maxOutput } : {}),
+      ...(model.contextWindowTokens > 0 ? { contextWindow: model.contextWindowTokens } : {}),
+    }));
+}
+
+async function codexOAuthModelInfos(): Promise<Array<{
+  id: string;
+  name: string;
+  maxOutput?: number;
+  contextWindow?: number;
+}>> {
+  const models = await listCodexOAuthModels();
+  return filterTextChatModels(models).map((model) => ({
+    id: model.id,
+    name: model.name ?? model.id,
+    ...(model.maxOutput !== undefined ? { maxOutput: model.maxOutput } : {}),
+    ...(model.contextWindow > 0 ? { contextWindow: model.contextWindow } : {}),
+  }));
+}
+
 function shouldTrustStaticModelsWhenLiveListUnavailable(endpoint: ReturnType<typeof getAllEndpoints>[number] | undefined): boolean {
   return endpoint?.group === "aggregator";
 }
@@ -1001,6 +1049,28 @@ async function fetchModelsFromServiceBaseUrl(
   apiKey: string,
   proxyUrl?: string,
 ): Promise<{ models: Array<{ id: string; name: string }>; error?: string; authFailed?: boolean }> {
+  if (isCodexOAuthService(serviceId)) {
+    const status = await getCodexOAuthStatus();
+    if (!status.connected) {
+      return {
+        models: [],
+        error: status.message ?? "Codex OAuth 未登录。请先运行 codex login。",
+        authFailed: true,
+      };
+    }
+    try {
+      return {
+        models: await codexOAuthModelInfos(),
+      };
+    } catch (error) {
+      return {
+        models: [],
+        error: error instanceof Error ? error.message : String(error),
+        authFailed: true,
+      };
+    }
+  }
+
   const endpoint = isCustomServiceId(serviceId)
     ? undefined
     : getAllEndpoints().find((ep) => ep.id === serviceId);
@@ -1275,9 +1345,40 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     overrides?: Partial<Pick<PipelineConfig, "externalContext" | "client" | "model">> & {
       readonly currentConfig?: ProjectConfig;
       readonly sessionIdForSSE?: string;
+      readonly selectedService?: string;
+      readonly selectedModel?: string;
     },
   ): Promise<PipelineConfig> {
-    const currentConfig = overrides?.currentConfig ?? await loadCurrentProjectConfig();
+    const selectedService = overrides?.selectedService?.trim();
+    const selectedModel = overrides?.selectedModel?.trim();
+    const hasSelectedModel = Boolean(selectedService && selectedModel);
+    let fallbackService: string | undefined;
+    let fallbackModel: string | undefined;
+    let currentConfig: ProjectConfig;
+
+    if (overrides?.currentConfig) {
+      currentConfig = overrides.currentConfig;
+    } else {
+      try {
+        currentConfig = await loadCurrentProjectConfig(hasSelectedModel ? { requireApiKey: false } : undefined);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!message.includes("LLM API key not set") && !message.includes("INKOS_LLM_API_KEY not set")) {
+          throw error;
+        }
+        const codexStatus = await getCodexOAuthStatus();
+        if (!codexStatus.connected) throw error;
+        currentConfig = await loadCurrentProjectConfig({ requireApiKey: false });
+        fallbackService = CODEX_OAUTH_SERVICE_ID;
+        fallbackModel = getCodexOAuthDefaultModel();
+      }
+    }
+
+    const selectedLlm = selectedService && selectedModel
+      ? await resolvePipelineLlmSelection(currentConfig, selectedService, selectedModel)
+      : fallbackService && fallbackModel && !overrides?.client && !overrides?.model
+        ? await resolvePipelineLlmSelection(currentConfig, fallbackService, fallbackModel)
+        : undefined;
     const scopedSseSink: LogSink = overrides?.sessionIdForSSE
       ? {
           write(entry) {
@@ -1292,10 +1393,10 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       : sseSink;
     const logger = createLogger({ tag: "studio", sinks: [scopedSseSink, consoleSink] });
     return {
-      client: overrides?.client ?? createLLMClient(currentConfig.llm),
-      model: overrides?.model ?? currentConfig.llm.model,
+      client: overrides?.client ?? selectedLlm?.client ?? createLLMClient(currentConfig.llm),
+      model: overrides?.model ?? selectedLlm?.model ?? currentConfig.llm.model,
       projectRoot: root,
-      defaultLLMConfig: currentConfig.llm,
+      defaultLLMConfig: selectedLlm?.defaultLLMConfig ?? currentConfig.llm,
       foundationReviewRetries: currentConfig.foundation?.reviewRetries ?? 2,
       writingReviewRetries: currentConfig.writing?.reviewRetries ?? 1,
       modelOverrides: currentConfig.modelOverrides,
@@ -1312,6 +1413,52 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       },
       externalContext: overrides?.externalContext,
     };
+  }
+
+  function getCodexOAuthDefaultModel(): string {
+    const endpoint = getAllEndpoints().find((ep) => isCodexOAuthService(ep.id));
+    return endpoint?.checkModel
+      ?? endpoint?.models.find((model) => model.enabled !== false)?.id
+      ?? "gpt-5.5";
+  }
+
+  async function resolvePipelineLlmSelection(
+    currentConfig: ProjectConfig,
+    service: string,
+    model: string,
+  ): Promise<Pick<PipelineConfig, "client" | "model"> & { readonly defaultLLMConfig: ProjectConfig["llm"] }> {
+    try {
+      const configuredEntry = await resolveConfiguredServiceEntry(root, service);
+      const resolvedBaseUrl = await resolveConfiguredServiceBaseUrl(root, service);
+      const resolved = await resolveServiceModel(
+        service,
+        model,
+        root,
+        resolvedBaseUrl,
+        configuredEntry?.apiFormat,
+      );
+      const llmConfig = {
+        ...currentConfig.llm,
+        service: configuredEntry?.service ?? service,
+        model,
+        apiKey: resolved.apiKey ?? "",
+        baseUrl: resolvedBaseUrl ?? configuredEntry?.baseUrl ?? "",
+        ...(configuredEntry?.apiFormat ? { apiFormat: configuredEntry.apiFormat } : {}),
+        ...(configuredEntry?.stream !== undefined ? { stream: configuredEntry.stream } : {}),
+        ...(configuredEntry?.temperature !== undefined ? { temperature: configuredEntry.temperature } : {}),
+      } as ProjectConfig["llm"];
+      return {
+        client: createLLMClient(llmConfig),
+        model,
+        defaultLLMConfig: llmConfig,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/API key/i.test(message)) {
+        throw new ApiError(400, "LLM_CONFIG_ERROR", `请先为 ${service} 配置 API Key，或切换到 Codex OAuth。`);
+      }
+      throw error;
+    }
   }
 
   // --- Books ---
@@ -1589,12 +1736,17 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   app.post("/api/v1/books/:id/write-next", async (c) => {
     const id = c.req.param("id");
-    const body = await c.req.json<{ wordCount?: number }>().catch(() => ({ wordCount: undefined }));
+    const body = await c.req
+      .json<{ wordCount?: number; service?: string; model?: string }>()
+      .catch(() => ({ wordCount: undefined, service: undefined, model: undefined }));
 
     broadcast("write:start", { bookId: id });
 
     // Fire and forget — progress/completion/errors pushed via SSE
-    const pipeline = new PipelineRunner(await buildPipelineConfig());
+    const pipeline = new PipelineRunner(await buildPipelineConfig({
+      selectedService: body.service,
+      selectedModel: body.model,
+    }));
     pipeline.writeNextChapter(id, body.wordCount).then(
       (result) => {
         broadcast("write:complete", { bookId: id, chapterNumber: result.chapterNumber, status: result.status, title: result.title, wordCount: result.wordCount });
@@ -1609,11 +1761,16 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   app.post("/api/v1/books/:id/draft", async (c) => {
     const id = c.req.param("id");
-    const body = await c.req.json<{ wordCount?: number; context?: string }>().catch(() => ({ wordCount: undefined, context: undefined }));
+    const body = await c.req
+      .json<{ wordCount?: number; context?: string; service?: string; model?: string }>()
+      .catch(() => ({ wordCount: undefined, context: undefined, service: undefined, model: undefined }));
 
     broadcast("draft:start", { bookId: id });
 
-    const pipeline = new PipelineRunner(await buildPipelineConfig());
+    const pipeline = new PipelineRunner(await buildPipelineConfig({
+      selectedService: body.service,
+      selectedModel: body.model,
+    }));
     pipeline.writeDraft(id, body.context, body.wordCount).then(
       (result) => {
         broadcast("draft:complete", { bookId: id, chapterNumber: result.chapterNumber, title: result.title, wordCount: result.wordCount });
@@ -1697,13 +1854,25 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
   app.get("/api/v1/services", async (c) => {
     const secrets = await loadSecrets(root);
     const endpoints = getAllEndpoints().filter((ep) => ep.id !== "custom");
+    const codexOAuthStatus = endpoints.some((ep) => isCodexOAuthService(ep.id))
+      ? await getCodexOAuthStatus()
+      : null;
 
     // Fast: only check connection status from secrets, no external API calls.
-    const services = endpoints.map((ep) => ({
+    const services: StudioServiceListItem[] = endpoints.map((ep) => ({
       service: ep.id,
       label: ep.label,
       group: ep.group,
-      connected: Boolean(secrets.services[ep.id]?.apiKey),
+      ...(ep.authKind ? { authKind: ep.authKind } : {}),
+      connected: isCodexOAuthService(ep.id)
+        ? Boolean(codexOAuthStatus?.connected)
+        : Boolean(secrets.services[ep.id]?.apiKey),
+      ...(isCodexOAuthService(ep.id) && codexOAuthStatus ? {
+        accountId: codexOAuthStatus.accountId,
+        expiresAt: codexOAuthStatus.expiresAt,
+        authPath: codexOAuthStatus.authPath,
+        message: codexOAuthStatus.message,
+      } : {}),
     })).sort(compareServiceListItems);
 
     // Add custom services from inkos.json
@@ -1878,10 +2047,11 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     }
 
     const baseService = isCustomServiceId(service) ? "custom" : service;
-    const apiKeyOptional = isApiKeyOptionalForEndpoint({
-      provider: resolveServiceProviderFamily(baseService) ?? "openai",
-      baseUrl: resolvedBaseUrl,
-    });
+    const apiKeyOptional = isCodexOAuthService(baseService)
+      || isApiKeyOptionalForEndpoint({
+        provider: resolveServiceProviderFamily(baseService) ?? "openai",
+        baseUrl: resolvedBaseUrl,
+      });
     if (!apiKey?.trim() && !apiKeyOptional) {
       return c.json({
         ok: false,
@@ -1936,6 +2106,21 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   app.put("/api/v1/services/:service/secret", async (c) => {
     const service = c.req.param("service");
+    if (isCodexOAuthService(service)) {
+      const status = await getCodexOAuthStatus();
+      return c.json({
+        ok: status.connected,
+        authKind: "codexOAuth",
+        connected: status.connected,
+        authMode: status.authMode,
+        accountId: status.accountId,
+        expiresAt: status.expiresAt,
+        lastRefresh: status.lastRefresh,
+        authPath: status.authPath,
+        message: status.message,
+      });
+    }
+
     const { apiKey } = await c.req.json<{ apiKey: string }>();
     const secrets = await loadSecrets(root);
     const trimmedKey = apiKey?.trim() ?? "";
@@ -1956,6 +2141,21 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   app.get("/api/v1/services/:service/secret", async (c) => {
     const service = c.req.param("service");
+    if (isCodexOAuthService(service)) {
+      const status = await getCodexOAuthStatus();
+      return c.json({
+        apiKey: "",
+        authKind: "codexOAuth",
+        connected: status.connected,
+        authMode: status.authMode,
+        accountId: status.accountId,
+        expiresAt: status.expiresAt,
+        lastRefresh: status.lastRefresh,
+        authPath: status.authPath,
+        message: status.message,
+      });
+    }
+
     const secrets = await loadSecrets(root);
     return c.json({
       apiKey: secrets.services[service]?.apiKey ?? "",
@@ -1964,22 +2164,18 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   app.get("/api/v1/services/models", async (c) => {
     const secrets = await loadSecrets(root);
+    const codexOAuthStatus = await getCodexOAuthStatus();
     const endpoints = getAllEndpoints()
-      .filter((ep) => ep.id !== "custom" && Boolean(secrets.services[ep.id]?.apiKey));
+      .filter((ep) => ep.id !== "custom")
+      .filter((ep) => isCodexOAuthService(ep.id) ? codexOAuthStatus.connected : Boolean(secrets.services[ep.id]?.apiKey));
 
-    const groups = endpoints.map((ep) => ({
+    const groups = await Promise.all(endpoints.map(async (ep) => ({
       service: ep.id,
       label: ep.label,
-      models: ep.models
-        .filter((m) => m.enabled !== false)
-        .filter((m) => isTextChatModelId(m.id))
-        .map((m) => ({
-          id: m.id,
-          name: m.id,
-          ...(typeof m.maxOutput === "number" ? { maxOutput: m.maxOutput } : {}),
-          ...(m.contextWindowTokens > 0 ? { contextWindow: m.contextWindowTokens } : {}),
-        })),
-    }));
+      models: isCodexOAuthService(ep.id)
+        ? await codexOAuthModelInfos().catch(() => endpointModelInfos(ep))
+        : endpointModelInfos(ep),
+    })));
 
     return c.json({ groups });
   });
@@ -2016,6 +2212,23 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
   app.get("/api/v1/services/:service/models", async (c) => {
     const service = c.req.param("service");
     const refresh = c.req.query("refresh") === "1";
+    if (isCodexOAuthService(service)) {
+      const status = await getCodexOAuthStatus();
+      if (!status.connected) return c.json({ models: [] });
+
+      const cacheKey = `${CODEX_OAUTH_SERVICE_ID}::runtime`;
+      if (!refresh) {
+        const cached = modelListCache.get(cacheKey);
+        if (cached && Date.now() - cached.at < 10 * 60 * 1000) {
+          return c.json({ models: cached.models });
+        }
+      }
+
+      const models = await codexOAuthModelInfos();
+      modelListCache.set(cacheKey, { models, at: Date.now() });
+      return c.json({ models });
+    }
+
     const secrets = await loadSecrets(root);
     const apiKey = c.req.query("apiKey") || secrets.services[service]?.apiKey || "";
 

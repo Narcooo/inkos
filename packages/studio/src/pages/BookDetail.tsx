@@ -5,6 +5,7 @@ import type { TFunction } from "../hooks/use-i18n";
 import type { SSEMessage } from "../hooks/use-sse";
 import { useColors } from "../hooks/use-colors";
 import { deriveBookActivity, shouldRefetchBookView } from "../hooks/use-book-activity";
+import { useChatStore } from "../store/chat";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import {
   ChevronLeft,
@@ -108,6 +109,11 @@ export function BookDetail({
   const [settingsStatus, setSettingsStatus] = useState<BookStatus | null>(null);
   const [exportFormat, setExportFormat] = useState<ExportFormat>("txt");
   const [exportApprovedOnly, setExportApprovedOnly] = useState(false);
+  const selectedModel = useChatStore((s) => s.selectedModel);
+  const selectedService = useChatStore((s) => s.selectedService);
+  const selectedLlm = selectedService && selectedModel
+    ? { service: selectedService, model: selectedModel }
+    : undefined;
   const activity = useMemo(() => deriveBookActivity(sse.messages, bookId), [bookId, sse.messages]);
   const writing = writeRequestPending || activity.writing;
   const drafting = draftRequestPending || activity.drafting;
@@ -140,7 +146,7 @@ export function BookDetail({
   const handleWriteNext = async () => {
     setWriteRequestPending(true);
     try {
-      await postApi(`/books/${bookId}/write-next`);
+      await postApi(`/books/${bookId}/write-next`, selectedLlm);
     } catch (e) {
       setWriteRequestPending(false);
       alert(e instanceof Error ? e.message : "Failed");
@@ -150,7 +156,7 @@ export function BookDetail({
   const handleDraft = async () => {
     setDraftRequestPending(true);
     try {
-      await postApi(`/books/${bookId}/draft`);
+      await postApi(`/books/${bookId}/draft`, selectedLlm);
     } catch (e) {
       setDraftRequestPending(false);
       alert(e instanceof Error ? e.message : "Failed");
