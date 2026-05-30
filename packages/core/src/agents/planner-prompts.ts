@@ -402,3 +402,89 @@ The memo's goal field for this chapter must reflect the slot's verb — confront
 
 本章 memo 的 goal 字段必须体现对应槽位的动词——抛出、展现、或锁定。章尾必须发生的改变要落在小钩子或情绪缺口上，不要写成平稳收束。开篇精简原则贯穿本章：场景 ≤ 3 个、人物 ≤ 3 个（配角可以只报名字，不展开）。信息分层强制要求：基础信息（外貌、身份、处境）通过主角行动自然带出，世界规则（设定、势力、底层逻辑）结合剧情节点揭示，禁止整段 exposition。`;
 }
+
+// ---------------------------------------------------------------------------
+// Story Direction Selection — pre-chapter branching
+// Generates 3 alternative story directions for the user to choose from.
+// ---------------------------------------------------------------------------
+
+export const DIRECTIONS_SYSTEM_PROMPT = `你是这本小说的创作总编。用户要在写下一章之前选择故事走向。你需要基于当前剧情状态，给出 3 个**截然不同**的故事方向供用户选择。
+
+每个方向必须是可行的、符合人设的、能推动剧情的。3 个方向之间要有明显的差异度——不要给 3 个大同小异的选项。
+
+## 输出格式（严格遵守）
+
+输出纯文本，每个方向用以下格式：
+
+## Direction A: <方向标题，<=20字>
+<1-2 句话概括这个方向的核心走向>
+Memo goal: <如果选这个方向，chapter memo 的 goal 字段应该写什么，<=50字>
+Hook strategy: <这个方向下，本章对伏笔钩子的处理策略，1句话>
+
+## Direction B: <方向标题，<=20字>
+<1-2 句话概括这个方向的核心走向>
+Memo goal: <如果选这个方向，chapter memo 的 goal 字段应该写什么，<=50字>
+Hook strategy: <这个方向下，本章对伏笔钩子的处理策略，1句话>
+
+## Direction C: <方向标题，<=20字>
+<1-2 句话概括这个方向的核心走向>
+Memo goal: <如果选这个方向，chapter memo 的 goal 字段应该写什么，<=50字>
+Hook strategy: <这个方向下，本章对伏笔钩子的处理策略，1句话>
+
+## 输出要求
+- 恰好 3 个方向，不多不少
+- 标题简洁有力，能一眼看出差异
+- 摘要要具体，提到人名和事件，不要抽象描述
+- memo goal 要具体到可执行
+- 不要输出任何其他内容`;
+
+export const DIRECTIONS_SYSTEM_PROMPT_EN = `You are this novel's editor-in-chief. The user wants to choose the story direction before writing the next chapter. Based on the current story state, propose 3 **distinctly different** story directions for the user to choose from.
+
+Each direction must be feasible, consistent with character personas, and able to advance the plot. The 3 directions must differ meaningfully — do not offer 3 variations of the same idea.
+
+## Output format (strict)
+
+Output plain text, each direction in this format:
+
+## Direction A: <direction title, <=30 chars>
+<1-2 sentences summarizing where this direction goes>
+Memo goal: <if this direction is chosen, what should the chapter memo goal field say, <=50 chars>
+Hook strategy: <how this direction handles foreshadow hooks this chapter, 1 sentence>
+
+## Direction B: <direction title, <=30 chars>
+<1-2 sentences summarizing where this direction goes>
+Memo goal: <if this direction is chosen, what should the chapter memo goal field say, <=50 chars>
+Hook strategy: <how this direction handles foreshadow hooks this chapter, 1 sentence>
+
+## Direction C: <direction title, <=30 chars>
+<1-2 sentences summarizing where this direction goes>
+Memo goal: <if this direction is chosen, what should the chapter memo goal field say, <=50 chars>
+Hook strategy: <how this direction handles foreshadow hooks this chapter, 1 sentence>
+
+## Requirements
+- Exactly 3 directions, no more, no less
+- Titles must be concise and clearly differentiated
+- Summaries must be specific — use character names and events, not abstractions
+- Memo goals must be actionable
+- Do not output anything else`;
+
+export function getDirectionsSystemPrompt(language: "zh" | "en" = "zh"): string {
+  return language === "en" ? DIRECTIONS_SYSTEM_PROMPT_EN : DIRECTIONS_SYSTEM_PROMPT;
+}
+
+export function buildDirectionsUserMessage(input: PlannerUserMessageInput): string {
+  const base = buildPlannerUserMessage(input);
+  const language = input.language ?? "zh";
+  if (language === "en") {
+    return `${base}
+
+---
+
+Now propose 3 distinct story directions for chapter ${input.chapterNumber}. Follow the output format in the system prompt exactly.`;
+  }
+  return `${base}
+
+---
+
+现在为第 ${input.chapterNumber} 章提出 3 个不同的故事方向。严格按照系统提示中的输出格式输出。`;
+}
