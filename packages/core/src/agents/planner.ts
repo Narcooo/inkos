@@ -7,6 +7,7 @@ import {
   ChapterIntentSchema,
   type ChapterIntent,
   type ChapterMemo,
+  type StoryDirection,
 } from "../models/input-governance.js";
 import {
   renderHookSnapshot,
@@ -19,7 +20,9 @@ import {
 import { parseMemo, PlannerParseError } from "../utils/chapter-memo-parser.js";
 import {
   buildPlannerUserMessage,
+  buildDirectionsUserMessage,
   getPlannerMemoSystemPrompt,
+  getDirectionsSystemPrompt,
 } from "./planner-prompts.js";
 import {
   composeCurrentArcProse,
@@ -50,6 +53,11 @@ export interface PlanChapterOutput {
   readonly intentMarkdown: string;
   readonly plannerInputs: ReadonlyArray<string>;
   readonly runtimePath: string;
+}
+
+export interface DirectionPlanOutput {
+  readonly directions: ReadonlyArray<StoryDirection>;
+  readonly chapterNumber: number;
 }
 
 const MEMO_RETRY_LIMIT = 3;
@@ -172,6 +180,50 @@ export class PlannerAgent extends BaseAgent {
     };
   }
 
+  async planDirections(input: PlanChapterInput): Promise<DirectionPlanOutput> {
+    const seedMaterials = await loadPlanningSeedMaterials({
+      bookDir: input.bookDir,
+      chapterNumber: input.chapterNumber,
+    });
+    const outlineNode = this.findOutlineNode(seedMaterials.volumeOutline, input.chapterNumber);
+    const goal = this.deriveGoal(
+      input.externalContext,
+      seedMaterials.currentFocus,
+      seedMaterials.authorIntent,
+      outlineNode,
+      input.chapterNumber,
+    );
+    const parsedRules = await readAuthoritativeBookRules(input.bookDir);
+    const prohibitions = parsedRules?.rules.prohibitions ?? [];
+    const mustKeep = this.collectMustKeep(seedMaterials.currentState, seedMaterials.storyBible);
+    const mustAvoid = this.collectMustAvoid(seedMaterials.currentFocus, prohibitions);
+    const styleEmphasis = this.collectStyleEmphasis(seedMaterials.authorIntent, seedMaterials.currentFocus);
+    const materials = await gatherPlanningMaterials({
+      bookDir: input.bookDir,
+      chapterNumber: input.chapterNumber,
+      goal,
+      outlineNode,
+      mustKeep,
+      seed: seedMaterials,
+    });
+    const memorySelection = materials.memorySelection;
+
+    const directions = await this.planDirectionsMemo({
+      storyDir: join(input.bookDir, "story"),
+      bookDir: input.bookDir,
+      chapterNumber: input.chapterNumber,
+      isGoldenOpening: this.isGoldenOpeningChapter(input.book.language, input.chapterNumber),
+      chapterSummariesRaw: seedMaterials.chapterSummariesRaw,
+      previousEndingExcerpt: seedMaterials.previousEndingExcerpt,
+      brief: seedMaterials.brief,
+      chapterContext: input.externalContext,
+      recyclableHooks: memorySelection.recyclableHooks,
+      language: input.book.language ?? "zh",
+    });
+
+    return { directions, chapterNumber: input.chapterNumber };
+  }
+
   /**
    * Invoke the LLM to produce a 7-section memo and parse it. Retries up to
    * 3 times on parse failure, injecting the error message back into the user
@@ -262,6 +314,79 @@ export class PlannerAgent extends BaseAgent {
     }
 
     throw lastError ?? new PlannerParseError("memo planner exhausted retries without a specific error");
+  }
+
+  async planDirectionsMemo(input: {
+    readonly storyDir: string;
+    readonly bookDir: string;
+    readonly chapterNumber: number;
+    readonly isGoldenOpening: boolean;
+    readonly chapterSummariesRaw: string;
+    readonly previousEndingExcerpt?: string;
+    readonly brief?: string;
+    readonly chapterContext?: string;
+    readonly recyclableHooks?: ReadonlyArray<StoredHook>;
+    readonly language?: "zh" | "en";
+  }): Promise<ReadonlyArray<StoryDirection>> {
+    const [characterMatrix, subplotBoard, emotionalArcs, pendingHooks, bookRulesRaw] = await Promise.all([
+      readCharacterMatrix(input.storyDir),
+      readSubplotBoard(input.storyDir),
+      readEmotionalArcs(input.storyDir),
+      readPendingHooks(input.storyDir),
+      readBookRules(input.storyDir),
+    ]);
+
+    const language = input.language ?? "zh";
+    const noPriorChapter = language === "en"
+      ? "(this is the opening chapter — no prior chapter)"
+      : "（本章为起始章，无前章）";
+    const noBookRules = language === "en"
+      ? "(no book_rules entries)"
+      : "（暂无 book_rules 条目）";
+
+    const userMessage = buildDirectionsUserMessage({
+      chapterNumber: input.chapterNumber,
+      previousChapterEndingExcerpt: input.previousEndingExcerpt?.trim()
+        ? input.previousEndingExcerpt.trim()
+        : noPriorChapter,
+      recentSummaries: formatRecentSummaries(input.chapterSummariesRaw, input.chapterNumber, 3),
+      currentArcProse: composeCurrentArcProse(subplotBoard, emotionalArcs, input.chapterNumber),
+      protagonistMatrixRow: extractProtagonistRow(characterMatrix),
+      opponentRows: extractOpponentRows(characterMatrix, 3),
+      collaboratorRows: extractCollaboratorRows(characterMatrix, 3),
+      relevantThreads: extractRelevantThreads(pendingHooks, subplotBoard),
+      recyclableHooks: formatRecyclableHooks(
+        input.recyclableHooks ?? [],
+        input.chapterNumber,
+        language,
+      ),
+      isGoldenOpening: input.isGoldenOpening,
+      bookRulesRelevant: bookRulesRaw.trim().length > 0 ? bookRulesRaw.trim() : noBookRules,
+      brief: input.brief ?? "",
+      chapterContext: input.chapterContext ?? "",
+      language,
+    });
+
+    const systemPrompt = getDirectionsSystemPrompt(language);
+
+    for (let attempt = 0; attempt < MEMO_RETRY_LIMIT; attempt += 1) {
+      const response = await this.chat(
+        [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userMessage },
+        ],
+        { temperature: 0.7 },
+      );
+
+      try {
+        return parseDirections(response.content);
+      } catch (error) {
+        if (attempt === MEMO_RETRY_LIMIT - 1) throw error;
+        this.log?.warn(`[planner] directions parse failed (attempt ${attempt + 1}/${MEMO_RETRY_LIMIT}): ${(error as Error).message}`);
+      }
+    }
+
+    throw new Error("directions planner exhausted retries");
   }
 
   private isGoldenOpeningChapter(language: string | undefined, chapterNumber: number): boolean {
@@ -780,4 +905,36 @@ export class PlannerAgent extends BaseAgent {
       return "(文件尚未创建)";
     }
   }
+}
+
+function parseDirections(raw: string): ReadonlyArray<StoryDirection> {
+  const directions: StoryDirection[] = [];
+  const regex = /##\s*Direction\s+([A-C])[:\s]+(.+?)(?:\n|$)([\s\S]*?)(?=##\s*Direction\s+[A-C]|$)/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(raw)) !== null) {
+    const id = match[1].toUpperCase();
+    const title = match[2].trim().slice(0, 50);
+    const body = match[3].trim();
+
+    const memoGoalMatch = body.match(/Memo\s*goal[:\s]+(.+?)(?:\n|$)/i);
+    const hookStrategyMatch = body.match(/Hook\s*strategy[:\s]+(.+?)(?:\n|$)/i);
+    const summaryLines = body.split("\n").filter(
+      (line) => !line.match(/^Memo\s*goal/i) && !line.match(/^Hook\s*strategy/i) && line.trim().length > 0,
+    );
+
+    directions.push({
+      id,
+      title,
+      summary: summaryLines.join(" ").trim().slice(0, 200) || title,
+      memoGoal: memoGoalMatch?.[1]?.trim().slice(0, 50) || title,
+      hookStrategy: hookStrategyMatch?.[1]?.trim().slice(0, 200) || "",
+    });
+  }
+
+  if (directions.length === 0) {
+    throw new Error("Failed to parse any directions from LLM output");
+  }
+
+  return directions;
 }

@@ -7,7 +7,7 @@ import type { NotifyChannel, LLMConfig, AgentLLMOverride, InputGovernanceMode } 
 import type { GenreProfile } from "../models/genre-profile.js";
 import { ArchitectAgent, type ArchitectOutput } from "../agents/architect.js";
 import { FoundationReviewerAgent } from "../agents/foundation-reviewer.js";
-import { PlannerAgent, type PlanChapterOutput } from "../agents/planner.js";
+import { PlannerAgent, type PlanChapterOutput, type DirectionPlanOutput } from "../agents/planner.js";
 import { composeGovernedChapter, type ComposeChapterOutput } from "../agents/composer.js";
 import { WriterAgent, type WriteChapterInput, type WriteChapterOutput } from "../agents/writer.js";
 import { LengthNormalizerAgent } from "../agents/length-normalizer.js";
@@ -1473,13 +1473,27 @@ export class PipelineRunner {
   // Full pipeline (convenience — runs draft + audit + revise in one shot)
   // ---------------------------------------------------------------------------
 
-  async writeNextChapter(bookId: string, wordCount?: number, temperatureOverride?: number): Promise<ChapterPipelineResult> {
+  async writeNextChapter(bookId: string, wordCount?: number, temperatureOverride?: number, context?: string): Promise<ChapterPipelineResult> {
     const releaseLock = await this.state.acquireBookLock(bookId);
     try {
-      return await this._writeNextChapterLocked(bookId, wordCount, temperatureOverride, this.config.externalContext);
+      return await this._writeNextChapterLocked(bookId, wordCount, temperatureOverride, context ?? this.config.externalContext);
     } finally {
       await releaseLock();
     }
+  }
+
+  async planDirections(bookId: string, context?: string): Promise<DirectionPlanOutput> {
+    await this.state.ensureControlDocuments(bookId);
+    const book = await this.state.loadBookConfig(bookId);
+    const bookDir = this.state.bookDir(bookId);
+    const chapterNumber = await this.state.getNextChapterNumber(bookId);
+    const planner = new PlannerAgent(this.agentCtxFor("planner", book.id));
+    return planner.planDirections({
+      book,
+      bookDir,
+      chapterNumber,
+      externalContext: context,
+    });
   }
 
   async repairChapterState(bookId: string, chapterNumber?: number): Promise<ChapterPipelineResult> {
