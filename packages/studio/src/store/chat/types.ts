@@ -73,6 +73,15 @@ export interface AgentResponse {
   readonly details?: {
     readonly draftRaw?: string;
     readonly toolCall?: ToolCall;
+    readonly contentChanged?: {
+      readonly kind: "chapter";
+      readonly bookId: string;
+      readonly chapterNumber: number;
+    } | {
+      readonly kind: "file";
+      readonly path: string;
+      readonly bookId?: string;
+    };
   };
   readonly session?: {
     readonly sessionId?: string;

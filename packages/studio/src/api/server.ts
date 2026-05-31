@@ -240,6 +240,15 @@ function isWriteNextInstruction(instruction: string): boolean {
 type ExternalChatEditResult = {
   readonly responseText: string;
   readonly activeBookId?: string;
+  readonly contentChanged: {
+    readonly kind: "chapter";
+    readonly bookId: string;
+    readonly chapterNumber: number;
+  } | {
+    readonly kind: "file";
+    readonly path: string;
+    readonly bookId?: string;
+  };
 };
 
 const CHAT_EDIT_WARNING = "[warning] Chat external edit requires review before continuation.";
@@ -396,6 +405,9 @@ async function tryHandleExternalChatEdit(params: {
 
     return {
       activeBookId: chapterTarget?.bookId ?? params.activeBookId ?? undefined,
+      contentChanged: chapterTarget
+        ? { kind: "chapter", bookId: chapterTarget.bookId, chapterNumber: chapterTarget.chapterNumber }
+        : { kind: "file", path: target.rel, ...(params.activeBookId ? { bookId: params.activeBookId } : {}) },
       responseText: `已直接编辑 ${target.rel}${chapterTarget ? "，并标记为需要复核" : ""}。`,
     };
   }
@@ -433,6 +445,7 @@ async function tryHandleExternalChatEdit(params: {
 
   return {
     activeBookId: params.activeBookId,
+    contentChanged: { kind: "chapter", bookId: params.activeBookId, chapterNumber },
     responseText: `已直接编辑 ${params.activeBookId} 第 ${chapterNumber} 章，并标记为需要复核。`,
   };
 }
@@ -2405,6 +2418,9 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
         broadcast("agent:complete", { instruction, activeBookId: externalEdit.activeBookId, sessionId: bookSession.sessionId });
         return c.json({
           response: externalEdit.responseText,
+          details: {
+            contentChanged: externalEdit.contentChanged,
+          },
           session: {
             sessionId: bookSession.sessionId,
             ...(externalEdit.activeBookId ? { activeBookId: externalEdit.activeBookId } : {}),

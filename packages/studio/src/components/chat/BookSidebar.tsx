@@ -36,7 +36,10 @@ const streamdownPlugins = { cjk };
 function ArtifactView({ bookId }: { readonly bookId: string }) {
   const artifactFile = useChatStore((s) => s.artifactFile);
   const artifactChapter = useChatStore((s) => s.artifactChapter);
+  const bookDataVersion = useChatStore((s) => s.bookDataVersion);
   const closeArtifact = useChatStore((s) => s.closeArtifact);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const lastArtifactKeyRef = useRef<string | null>(null);
   const [content, setContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
@@ -44,25 +47,73 @@ function ArtifactView({ bookId }: { readonly bookId: string }) {
   const [saving, setSaving] = useState(false);
 
   const isChapter = artifactChapter !== null;
+  const artifactKey = isChapter
+    ? `chapter:${artifactChapter}`
+    : artifactFile ? `file:${artifactFile}` : null;
   const label = isChapter
     ? `第 ${artifactChapter} 章`
     : artifactFile ? FOUNDATION_LABELS[artifactFile] ?? artifactFile : "";
 
   useEffect(() => {
-    setEditing(false);
-    setLoading(true);
+    if (!artifactKey) {
+      setContent(null);
+      setLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const refreshingSameArtifact = lastArtifactKeyRef.current === artifactKey;
+    const previousScrollTop = refreshingSameArtifact ? scrollRef.current?.scrollTop ?? null : null;
+    lastArtifactKeyRef.current = artifactKey;
+
+    if (!refreshingSameArtifact) {
+      setEditing(false);
+      setLoading(true);
+    }
+
+    const restoreScroll = () => {
+      if (previousScrollTop === null || typeof requestAnimationFrame === "undefined") return;
+      requestAnimationFrame(() => {
+        if (!cancelled && lastArtifactKeyRef.current === artifactKey && scrollRef.current) {
+          scrollRef.current.scrollTop = previousScrollTop;
+        }
+      });
+    };
+
     if (isChapter) {
       fetchJson<{ content: string }>(`/books/${bookId}/chapters/${artifactChapter}`)
-        .then((data) => setContent(data.content ?? ""))
-        .catch(() => setContent(null))
-        .finally(() => setLoading(false));
+        .then((data) => {
+          if (!cancelled) setContent(data.content ?? "");
+        })
+        .catch(() => {
+          if (!cancelled) setContent(null);
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setLoading(false);
+            restoreScroll();
+          }
+        });
     } else if (artifactFile) {
       fetchJson<{ content: string | null }>(`/books/${bookId}/truth/${artifactFile}`)
-        .then((data) => setContent(data.content ?? ""))
-        .catch(() => setContent(null))
-        .finally(() => setLoading(false));
+        .then((data) => {
+          if (!cancelled) setContent(data.content ?? "");
+        })
+        .catch(() => {
+          if (!cancelled) setContent(null);
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setLoading(false);
+            restoreScroll();
+          }
+        });
     }
-  }, [bookId, artifactFile, artifactChapter, isChapter]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [bookId, artifactFile, artifactChapter, isChapter, artifactKey, bookDataVersion]);
 
   const handleEdit = useCallback(() => {
     setEditContent(content ?? "");
@@ -130,7 +181,7 @@ function ArtifactView({ bookId }: { readonly bookId: string }) {
           </div>
         )}
       </div>
-      <div className="flex-1 overflow-y-auto">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto">
         {loading ? (
           <div className="flex items-center justify-center py-8">
             <Loader2 size={16} className="text-muted-foreground animate-spin" />
