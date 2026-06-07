@@ -9,6 +9,7 @@ import {
   createSubAgentTool,
   createShortFictionRunTool,
   createPatchChapterTextTool,
+  createReplaceChapterTextTool,
   createRenameEntityTool,
   createWriteFileTool,
   createWriteTruthFileTool,
@@ -98,6 +99,37 @@ describe("agent deterministic writing tools", () => {
         status: "audit-failed",
         auditIssues: expect.arrayContaining([
           expect.stringContaining("Manual text edit requires review"),
+        ]),
+      }),
+    ]);
+  });
+
+  it("fully replaces a chapter body while preserving its heading", async () => {
+    await writeFile(
+      join(state.bookDir("harbor"), "story", "runtime", "chapter-0003.intent.md"),
+      "stale runtime",
+      "utf-8",
+    );
+    const tool = createReplaceChapterTextTool({} as never, root, "harbor");
+
+    await tool.execute("tool-replace-chapter", {
+      chapterNumber: 3,
+      content: "林越把玉印沉进港底。\n\n天亮前，她独自离开码头。",
+    });
+
+    await expect(readFile(join(state.bookDir("harbor"), "chapters", "0003_Storm.md"), "utf-8"))
+      .resolves.toBe("# 第3章 风暴\n\n林越把玉印沉进港底。\n\n天亮前，她独自离开码头。\n");
+    await expect(readFile(
+      join(state.bookDir("harbor"), "story", "runtime", "chapter-0003.intent.md"),
+      "utf-8",
+    )).rejects.toThrow();
+    await expect(state.loadChapterIndex("harbor")).resolves.toEqual([
+      expect.objectContaining({
+        number: 3,
+        status: "audit-failed",
+        wordCount: 22,
+        auditIssues: expect.arrayContaining([
+          expect.stringContaining("Manual chapter replacement requires review and state resync"),
         ]),
       }),
     ]);
