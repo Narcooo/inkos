@@ -1,6 +1,7 @@
 import { readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import type { ChapterMeta } from "../models/chapter.js";
+import { countChapterLength, resolveLengthCountingMode } from "../utils/length-metrics.js";
 import { classifyTruthAuthority, normalizeTruthFileName, type TruthAuthority } from "./truth-authority.js";
 
 export type EditRequest =
@@ -24,6 +25,12 @@ export type EditRequest =
       readonly instruction: string;
       readonly targetText?: string;
       readonly replacementText?: string;
+    }
+  | {
+      readonly kind: "chapter-replace";
+      readonly bookId: string;
+      readonly chapterNumber: number;
+      readonly instruction: string;
     }
   | {
       readonly kind: "truth-file-edit";
@@ -87,6 +94,14 @@ export function planEditTransaction(request: EditRequest): PlannedEditTransactio
         requiresTruthRebuild: true,
       };
     case "chapter-local-edit":
+      return {
+        transactionType: request.kind,
+        bookId: request.bookId,
+        chapterNumber: request.chapterNumber,
+        affectedScope: "chapter",
+        requiresTruthRebuild: true,
+      };
+    case "chapter-replace":
       return {
         transactionType: request.kind,
         bookId: request.bookId,
@@ -242,6 +257,85 @@ async function executeChapterLocalEdit(
   };
 }
 
+async function executeChapterReplace(
+  deps: EditExecutionDeps,
+  request: Extract<EditRequest, { kind: "chapter-replace" }>,
+): Promise<ExecutedEditTransaction> {
+  const root = deps.bookDir(request.bookId);
+  const chaptersDir = join(root, "chapters");
+  const paddedChapter = String(request.chapterNumber).padStart(4, "0");
+  const chapterFile = (await readdir(chaptersDir).catch((error) => {
+    if (isMissingDirectoryError(error)) {
+      return [];
+    }
+    throw error;
+  }))
+    .find((file) => file.startsWith(`${paddedChapter}_`) && file.endsWith(".md"));
+
+  if (!chapterFile) {
+    throw new Error(`Chapter ${request.chapterNumber} not found in "${request.bookId}".`);
+  }
+
+  const replacementBody = request.instruction.trim();
+  if (!replacementBody) {
+    throw new Error("Chapter replacement content must not be empty.");
+  }
+
+  const chapterPath = join(chaptersDir, chapterFile);
+  const currentContent = await readFile(chapterPath, "utf-8");
+  const heading = currentContent.match(/^\s*(#{1,6}\s+.+?)\s*(?:\r?\n|$)/)?.[1];
+  if (!heading) {
+    throw new Error(`Chapter ${request.chapterNumber} has no Markdown heading to preserve.`);
+  }
+
+  const index = [...(await deps.loadChapterIndex(request.bookId))];
+  const chapterMeta = index.find((chapter) => chapter.number === request.chapterNumber);
+  if (!chapterMeta) {
+    throw new Error(`Chapter ${request.chapterNumber} is missing from the chapter index.`);
+  }
+
+  const runtimeDir = join(root, "story", "runtime");
+  const runtimeFiles = (await readdir(runtimeDir).catch((error) => {
+    if (isMissingDirectoryError(error)) {
+      return [];
+    }
+    throw error;
+  }))
+    .filter((file) => file.startsWith(`chapter-${paddedChapter}.`));
+  const countingMode = chapterMeta.lengthTelemetry?.countingMode
+    ?? resolveLengthCountingMode(/[\u4e00-\u9fff]/.test(replacementBody) ? "zh" : "en");
+  const updatedIndex = index.map((chapter) => chapter.number === request.chapterNumber
+    ? {
+        ...chapter,
+        status: "audit-failed" as const,
+        wordCount: countChapterLength(replacementBody, countingMode),
+        updatedAt: new Date().toISOString(),
+        auditIssues: [
+          ...chapter.auditIssues.filter((issue) => !issue.includes("Manual chapter replacement requires review")),
+          "[warning] Manual chapter replacement requires review and state resync before continuation.",
+        ],
+      }
+    : chapter);
+
+  const nextContent = `${heading}\n\n${replacementBody}\n`;
+  await writeFile(chapterPath, nextContent, "utf-8");
+  await Promise.all(runtimeFiles.map((file) => unlink(join(runtimeDir, file)).catch(() => undefined)));
+  await deps.saveChapterIndex(request.bookId, updatedIndex);
+
+  return {
+    transactionType: request.kind,
+    bookId: request.bookId,
+    chapterNumber: request.chapterNumber,
+    touchedFiles: [
+      relative(root, chapterPath),
+      ...runtimeFiles.map((file) => relative(root, join(runtimeDir, file))),
+      "chapters/index.json",
+    ],
+    reviewRequired: true,
+    summary: `Replaced chapter ${request.chapterNumber} and marked it for review and state resync.`,
+  };
+}
+
 export async function executeEditTransaction(
   deps: EditExecutionDeps,
   request: EditRequest,
@@ -251,6 +345,8 @@ export async function executeEditTransaction(
       return executeEntityRename(deps, request);
     case "chapter-local-edit":
       return executeChapterLocalEdit(deps, request);
+    case "chapter-replace":
+      return executeChapterReplace(deps, request);
     case "truth-file-edit": {
       const root = deps.bookDir(request.bookId);
       const normalizedFileName = normalizeTruthFileName(request.fileName);

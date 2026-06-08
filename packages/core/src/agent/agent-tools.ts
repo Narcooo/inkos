@@ -6,6 +6,7 @@ import { readFile, writeFile, readdir, stat } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { StateManager } from "../state/manager.js";
 import { assertSafeTruthFileName, createInteractionToolsFromDeps } from "../interaction/project-tools.js";
+import { executeEditTransaction } from "../interaction/edit-controller.js";
 import { writeExportArtifact } from "../interaction/export-artifact.js";
 import { assertSafeBookId, deriveBookIdFromTitle } from "../utils/book-id.js";
 import { safeChildPath } from "../utils/path-safety.js";
@@ -568,6 +569,45 @@ export function createPatchChapterTextTool(
       };
       const summary = result.__interaction?.responseText ?? `Patched chapter ${params.chapterNumber} for "${bookId}".`;
       return textResult(summary);
+    },
+  };
+}
+
+const ReplaceChapterTextParams = Type.Object({
+  bookId: Type.Optional(Type.String({ description: "Book ID. Omit to use the active book." })),
+  chapterNumber: Type.Number({ description: "Existing chapter number to replace." }),
+  content: Type.String({
+    description: "Complete replacement chapter body. Do not include the Markdown chapter heading; the existing heading is preserved.",
+  }),
+});
+
+export function createReplaceChapterTextTool(
+  pipeline: PipelineRunner,
+  projectRoot: string,
+  activeBookId: string | null,
+): AgentTool<typeof ReplaceChapterTextParams> {
+  const state = new StateManager(projectRoot);
+  return {
+    name: "replace_chapter_text",
+    description: "Fully replace an existing chapter body, preserve its heading, and mark it for review and state resync.",
+    label: "Replace Chapter",
+    parameters: ReplaceChapterTextParams,
+    async execute(_toolCallId, params): Promise<AgentToolResult<undefined>> {
+      const bookId = resolveToolBookId("replace_chapter_text", params.bookId, activeBookId);
+      const execution = await executeEditTransaction(
+        {
+          bookDir: (targetBookId) => state.bookDir(targetBookId),
+          loadChapterIndex: (targetBookId) => state.loadChapterIndex(targetBookId),
+          saveChapterIndex: (targetBookId, index) => state.saveChapterIndex(targetBookId, index),
+        },
+        {
+          kind: "chapter-replace",
+          bookId,
+          chapterNumber: params.chapterNumber,
+          instruction: params.content,
+        },
+      );
+      return textResult(execution.summary);
     },
   };
 }

@@ -87,9 +87,9 @@ export function buildAgentSystemPrompt(bookId: string | null, language: string):
 ## 权限边界
 
 - 当前书由 session 绑定为「${bookId}」。业务工具不要传其他 bookId；省略 bookId 时默认使用当前书。
-- sub_agent、write_truth_file、rename_entity、patch_chapter_text 是当前书业务工具，只能服务当前书。
+- sub_agent、write_truth_file、rename_entity、patch_chapter_text、replace_chapter_text 是当前书业务工具，只能服务当前书。
 - read、grep、ls 只能用于读取和定位当前书内容；你没有直接改工程文件的权限。
-- 用户要求直接编辑已有文本时，如果不是 write_truth_file、rename_entity、patch_chapter_text 能表达的当前书业务改动，说明这类修改需要由 Studio chat 的外部编辑通道处理，不要自己改文件。
+- 用户要求直接编辑已有文本时，如果不是 write_truth_file、rename_entity、patch_chapter_text、replace_chapter_text 能表达的当前书业务改动，说明这类修改需要由 Studio chat 的外部编辑通道处理，不要自己改文件。
 - 不要调用 architect 创建新书；如果用户想新建书，请让用户回到首页开启新建流程。
 
 ## 可用工具
@@ -109,6 +109,7 @@ export function buildAgentSystemPrompt(bookId: string | null, language: string):
 - **write_truth_file** — 整文件覆盖真相文件。优先使用 Phase 5 canonical 路径：outline/story_frame.md、outline/volume_map.md、roles/major/<name>.md、roles/minor/<name>.md；兼容 current_focus.md、author_intent.md、current_state.md 等平铺文件。
 - **rename_entity** — 统一改角色/实体名
 - **patch_chapter_text** — 对已有章节做局部定点修补
+- **replace_chapter_text** — 整章覆盖已有章节正文。必须传 chapterNumber 和完整新版正文 content；不要在 content 中重复 Markdown 章节标题，工具会保留原标题
 - **grep** — 搜索内容（如"哪一章提到了某个角色"）
 - **ls** — 列出文件或章节
 
@@ -118,6 +119,7 @@ export function buildAgentSystemPrompt(bookId: string | null, language: string):
 - 用户问设定相关问题 → 先用 read 读取对应文件再回答
 - 用户想改设定/改真相文件 → 优先用 write_truth_file
 - 用户要求重写/精修已有章节 → sub_agent(agent="reviser", chapterNumber=N, mode=...)
+- 用户已经提供或已经生成完整新版正文，并要求覆盖原章 → replace_chapter_text(chapterNumber=N, content=完整正文)
 - 用户要求角色或实体改名 → 用 rename_entity
 - 用户要求对某一章做局部小修 → 用 patch_chapter_text
 - 用户要求另起一篇完整短篇、短故事、短篇小说成品、简介或封面 → 用 short_fiction_run；它不属于当前长篇书的下一章
@@ -144,9 +146,9 @@ export function buildAgentSystemPrompt(bookId: string | null, language: string):
 ## Permission Boundary
 
 - The active book is session-bound to "${bookId}". Do not pass another bookId to business tools; omit bookId to use the active book.
-- sub_agent, write_truth_file, rename_entity, and patch_chapter_text are active-book business tools.
+- sub_agent, write_truth_file, rename_entity, patch_chapter_text, and replace_chapter_text are active-book business tools.
 - read, grep, and ls are only for reading and locating active-book content; you do not have permission to edit project files directly.
-- If the user asks to directly edit existing text and the request cannot be expressed by write_truth_file, rename_entity, or patch_chapter_text, say that Studio chat's external edit path should handle that file edit instead of modifying files yourself.
+- If the user asks to directly edit existing text and the request cannot be expressed by write_truth_file, rename_entity, patch_chapter_text, or replace_chapter_text, say that Studio chat's external edit path should handle that file edit instead of modifying files yourself.
 - Do NOT call architect to create a new book from this session; ask the user to return home and start a new-book flow.
 
 ## Available Tools
@@ -166,6 +168,7 @@ export function buildAgentSystemPrompt(bookId: string | null, language: string):
 - **write_truth_file** — Replace a canonical truth file. Prefer Phase 5 canonical paths: outline/story_frame.md, outline/volume_map.md, roles/major/<name>.md, roles/minor/<name>.md; flat files such as current_focus.md, author_intent.md, and current_state.md remain supported.
 - **rename_entity** — Rename a character or entity across the book
 - **patch_chapter_text** — Apply a local deterministic patch to a chapter
+- **replace_chapter_text** — Fully replace an existing chapter body. Pass chapterNumber and the complete replacement body in content; omit the Markdown chapter heading because the tool preserves it
 - **grep** — Search content across chapters
 - **ls** — List files or chapters
 
@@ -175,6 +178,7 @@ export function buildAgentSystemPrompt(bookId: string | null, language: string):
 - Use read first for settings inquiries
 - Use write_truth_file for truth files and setting changes
 - For rewrite/polish/rework of an existing chapter → sub_agent(agent="reviser", chapterNumber=N, mode=...)
+- When complete replacement prose is already available and should overwrite the old chapter → replace_chapter_text(chapterNumber=N, content=complete body)
 - Use rename_entity for character/entity renames
 - Use patch_chapter_text for local chapter fixes
 - If the user asks for a separate complete short story / short fiction deliverable, synopsis, or cover assets → use short_fiction_run; it is not the active book's next chapter
