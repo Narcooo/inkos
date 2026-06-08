@@ -1865,11 +1865,12 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   app.post("/api/v1/services/:service/test", async (c) => {
     const service = c.req.param("service");
-    const { apiKey, baseUrl, apiFormat, stream } = await c.req.json<{
+    const { apiKey, baseUrl, apiFormat, stream, manualModel } = await c.req.json<{
       apiKey: string;
       baseUrl?: string;
       apiFormat?: "chat" | "responses";
       stream?: boolean;
+      manualModel?: string;
     }>();
 
     const resolvedBaseUrl = await resolveConfiguredServiceBaseUrl(root, service, baseUrl);
@@ -1898,6 +1899,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       baseUrl: resolvedBaseUrl,
       preferredApiFormat: apiFormat,
       preferredStream: stream,
+      preferredModel: manualModel?.trim(),
       proxyUrl: typeof llm.proxyUrl === "string" ? llm.proxyUrl : undefined,
     });
 

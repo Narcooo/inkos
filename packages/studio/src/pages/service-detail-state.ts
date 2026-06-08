@@ -47,6 +47,7 @@ export async function probeServiceForDetail(
     readonly apiFormat: "chat" | "responses";
     readonly stream: boolean;
     readonly baseUrl?: string;
+    readonly manualModel?: string;
   },
   deps?: { readonly fetchJsonImpl?: JsonFetcher },
 ): Promise<ServiceProbeResponse> {
@@ -114,6 +115,7 @@ export async function saveServiceConfig(args: {
   readonly stream: boolean;
   readonly temperature: string;
   readonly detectedModel: string;
+  readonly manualModel?: string;
   readonly verifiedProbe?: ServiceDetailVerifiedProbe | null;
   readonly fetchJsonImpl?: JsonFetcher;
 }): Promise<{
@@ -165,6 +167,7 @@ export async function saveServiceConfig(args: {
         apiFormat: args.apiFormat,
         stream: args.stream,
         ...(args.isCustom ? { baseUrl: trimmedBaseUrl } : {}),
+        ...(args.manualModel?.trim() ? { manualModel: args.manualModel.trim() } : {}),
       }, { fetchJsonImpl });
     } catch (error) {
       return {
