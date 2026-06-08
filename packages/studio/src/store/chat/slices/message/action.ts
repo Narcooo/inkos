@@ -354,6 +354,9 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
       });
 
       streamEs.close();
+      if (data.details?.contentChanged) {
+        get().bumpBookDataVersion();
+      }
 
       const finalContent = data.details?.draftRaw || data.response || "";
       const toolCall = data.details?.toolCall ?? undefined;
