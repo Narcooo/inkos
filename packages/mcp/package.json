@@ -1,0 +1,43 @@
+{
+  "name": "@actalk/inkos-mcp",
+  "version": "1.5.0",
+  "description": "InkOS MCP server for external-agent import, context, write-back, and export workflows",
+  "type": "module",
+  "bin": {
+    "inkos-mcp": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "!dist/__tests__"
+  ],
+  "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Narcooo/inkos.git",
+    "directory": "packages/mcp"
+  },
+  "scripts": {
+    "prepare:workspace-core": "pnpm --filter @actalk/inkos-core build",
+    "prepack": "node ../../scripts/prepare-package-for-publish.mjs",
+    "postpack": "node ../../scripts/restore-package-json.mjs",
+    "prepublishOnly": "node ../../scripts/verify-no-workspace-protocol.mjs .",
+    "prebuild": "pnpm run prepare:workspace-core",
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "pretypecheck": "pnpm run prepare:workspace-core",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@actalk/inkos-core": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.0.0"
+  }
+}

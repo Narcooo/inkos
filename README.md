@@ -229,6 +229,7 @@ inkos doctor
 - **开始创作入口**：长篇小说、短篇小说、同人创作、番外创作、仿写创作、续写创作、分支互动、开放世界都可以从 Studio 顶部入口进入。
 - **TUI 仪表盘**：`inkos tui` 进入终端全屏交互，适合键盘流用户。
 - **外部 Agent 入口**：`inkos interact --json --message "..."` 仍是 OpenClaw / 其他 agent 的结构化入口。
+- **MCP mode**：`inkos-mcp` 作为 stdio MCP server，让 Codex / Claude Code 在不替代 Studio / CLI 的前提下操作 InkOS 项目；需要 LLM 的生成、导入整理、续写和 truth/state 更新由外部 agent 自己完成，默认不要求 InkOS LLM API Key。详见 [docs/mcp.md](docs/mcp.md)。
 - **原子命令保留**：`plan` / `compose` / `draft` / `audit` / `revise` / `write next` 仍适合脚本和高级用户。
 
 ### 写第一本书
