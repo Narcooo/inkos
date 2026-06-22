@@ -57,7 +57,7 @@ v1.5.0 は単独機能の追加ではなく、InkOS を「章生成パイプラ�
 
 **Studio Chat** — 質問応答だけでなく、長編作成、Short、表紙生成、Play、永続テキスト編集を扱います。重いアクションは確認してから実行し、ツール結果がないのに成功したとは扱いません。
 
-**モデル設定** — Studio はサービス設定、モデルルーティング、表紙サービス、[kkaiapi](https://en.kkaiapi.com/) / OpenRouter などのモデル集約入口、カスタム OpenAI-compatible エンドポイントに対応します。
+**モデル設定** — Studio はサービス設定、モデルルーティング、表紙サービス、[kkaiapi](https://en.kkaiapi.com/) / OpenRouter / [Atlas Cloud](https://www.atlascloud.ai/) などのモデル集約入口、カスタム OpenAI-compatible エンドポイントに対応します。
 
 <p align="center">
   <img src="assets/play-item-warcraft.png" width="420" alt="InkOS Play アイテム画像例">
@@ -105,7 +105,7 @@ inkos
 
 Studio を開き、**モデル設定**へ進みます：
 
-1. Google Gemini、Moonshot、MiniMax、DeepSeek、kkaiapi、OpenRouter、またはカスタムエンドポイントを選択。
+1. Google Gemini、Moonshot、MiniMax、DeepSeek、kkaiapi、OpenRouter、Atlas Cloud、またはカスタムエンドポイントを選択。
 2. API Key を貼り付けて接続をテスト。
 3. 利用可能なモデルを選んで保存。
 4. Studio Chat または書籍ページに戻って創作を開始。
