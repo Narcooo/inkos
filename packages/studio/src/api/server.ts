@@ -1729,7 +1729,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     const logger = createLogger({ tag: "studio", sinks: [scopedSseSink, consoleSink] });
     return {
       client: overrides?.client ?? createLLMClient(currentConfig.llm),
-      model: overrides?.model ?? currentConfig.llm.model,
+      model: overrides?.model ?? currentConfig.llm.defaultModel ?? currentConfig.llm.model,
       projectRoot: root,
       defaultLLMConfig: currentConfig.llm,
       foundationReviewRetries: currentConfig.foundation?.reviewRetries ?? 2,
