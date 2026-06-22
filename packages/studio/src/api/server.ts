@@ -4278,6 +4278,19 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     }
   });
 
+  // --- Rebuild Chapter Index ---
+
+  app.post("/api/v1/books/:id/rebuild-index", async (c) => {
+    const id = c.req.param("id");
+
+    try {
+      const index = await state.rebuildChapterIndex(id);
+      return c.json({ bookId: id, count: index.length, index });
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
   // --- Detect All chapters ---
 
   app.post("/api/v1/books/:id/detect-all", async (c) => {

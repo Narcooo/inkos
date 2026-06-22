@@ -29,6 +29,7 @@ import { createStudioCommand, launchStudioEntry } from "./commands/studio.js";
 import { consolidateCommand } from "./commands/consolidate.js";
 import { createInteractCommand, type InteractCommandHooks } from "./commands/interact.js";
 import { createTuiCommand } from "./commands/tui.js";
+import { rebuildIndexCommand } from "./commands/rebuild-index.js";
 import { launchTui } from "./tui/app.js";
 
 const require = createRequire(import.meta.url);
@@ -87,6 +88,7 @@ export function createProgram(hooks: ProgramHooks = {}): Command {
   program.addCommand(shortCommand);
   program.addCommand(createStudioCommand({ launchStudio: hooks.launchStudio }));
   program.addCommand(consolidateCommand);
+  program.addCommand(rebuildIndexCommand);
   program.addCommand(createInteractCommand({
     readInput: hooks.readInteractionInput,
   }));

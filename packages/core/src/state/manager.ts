@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir, readdir, rm, stat, unlink, open } from "node:fs/promises";
+import { readFile, writeFile, mkdir, readdir, rm, stat, unlink, open, rename } from "node:fs/promises";
 import { join } from "node:path";
 import type { BookConfig } from "../models/book.js";
 import type { ChapterMeta } from "../models/chapter.js";
@@ -265,11 +265,21 @@ export class StateManager {
 
   async loadChapterIndex(bookId: string): Promise<ReadonlyArray<ChapterMeta>> {
     const indexPath = join(this.bookDir(bookId), "chapters", "index.json");
+    let raw: string;
     try {
-      const raw = await readFile(indexPath, "utf-8");
+      raw = await readFile(indexPath, "utf-8");
+    } catch (err: any) {
+      if (err?.code === "ENOENT") return [];
+      throw err;
+    }
+    try {
       return JSON.parse(raw);
     } catch {
-      return [];
+      throw new Error(
+        `Chapter index for "${bookId}" is corrupted (invalid JSON at ${indexPath}). ` +
+        `Run "inkos rebuild-index ${bookId}" to reconstruct it from chapter files, ` +
+        `or manually restore a backup.`,
+      );
     }
   }
 
@@ -286,11 +296,10 @@ export class StateManager {
   ): Promise<void> {
     const chaptersDir = join(bookDir, "chapters");
     await mkdir(chaptersDir, { recursive: true });
-    await writeFile(
-      join(chaptersDir, "index.json"),
-      JSON.stringify(index, null, 2),
-      "utf-8",
-    );
+    const target = join(chaptersDir, "index.json");
+    const tmp = join(chaptersDir, ".index.json.tmp");
+    await writeFile(tmp, JSON.stringify(index, null, 2), "utf-8");
+    await rename(tmp, target);
   }
 
   async snapshotState(bookId: string, chapterNumber: number): Promise<void> {
@@ -548,6 +557,72 @@ export class StateManager {
 
     await this.saveChapterIndex(bookId, kept);
     return discarded;
+  }
+
+  /**
+   * Reconstruct the chapter index from on-disk chapter files.
+   *
+   * Scans `chapters/NNNN_*.md`, merges with any surviving index metadata
+   * (title, status, wordCount, etc.), and overwrites `index.json`.
+   * Returns the rebuilt index.
+   */
+  async rebuildChapterIndex(bookId: string): Promise<ReadonlyArray<ChapterMeta>> {
+    const bookDir = this.bookDir(bookId);
+    const chaptersDir = join(bookDir, "chapters");
+
+    // 1. Gather chapter numbers and titles from disk filenames
+    let diskEntries: Array<{ number: number; file: string; title: string }> = [];
+    try {
+      const files = await readdir(chaptersDir);
+      for (const file of files) {
+        const match = file.match(/^(\d{4})_(.+)\.md$/);
+        if (match) {
+          const number = parseInt(match[1]!, 10);
+          const title = decodeURIComponent(match[2]!);
+          diskEntries.push({ number, file, title });
+        }
+      }
+    } catch {
+      // chapters directory doesn't exist — index stays empty
+    }
+    diskEntries.sort((a, b) => a.number - b.number);
+
+    // 2. Try to load the existing index (may be corrupted — read raw to bypass validation)
+    let existingIndex: ChapterMeta[] = [];
+    const indexPath = join(chaptersDir, "index.json");
+    try {
+      const raw = await readFile(indexPath, "utf-8");
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        existingIndex = parsed;
+      }
+    } catch {
+      // corrupted or missing — start fresh
+    }
+    const existingByNumber = new Map(existingIndex.map((e) => [e.number, e]));
+
+    // 3. Build a fresh index: prefer existing metadata, fall back to filename-derived values
+    const now = new Date().toISOString();
+    const rebuilt: ChapterMeta[] = diskEntries.map(({ number, title }) => {
+      const existing = existingByNumber.get(number);
+      if (existing) {
+        return { ...existing, title: existing.title || title };
+      }
+      return {
+        number,
+        title,
+        status: "imported" as ChapterMeta["status"],
+        wordCount: 0,
+        createdAt: now,
+        updatedAt: now,
+        auditIssues: [],
+        lengthWarnings: [],
+      };
+    });
+
+    // 4. Persist
+    await this.saveChapterIndex(bookId, rebuilt);
+    return rebuilt;
   }
 
   private async writeIfMissing(path: string, content: string): Promise<void> {
