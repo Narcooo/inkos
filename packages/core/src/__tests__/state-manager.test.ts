@@ -102,6 +102,75 @@ describe("StateManager", () => {
       );
       expect(dirStat.isDirectory()).toBe(true);
     });
+
+    it("throws when index file exists but contains invalid JSON", async () => {
+      const bookDir = manager.bookDir("book-c");
+      await mkdir(join(bookDir, "chapters"), { recursive: true });
+      await writeFile(join(bookDir, "chapters", "index.json"), "{invalid json", "utf-8");
+      await expect(manager.loadChapterIndex("book-c")).rejects.toThrow(/corrupted/);
+    });
+
+    it("atomic save writes via temp file and rename", async () => {
+      await manager.saveChapterIndex("book-d", chapters);
+      const loaded = await manager.loadChapterIndex("book-d");
+      expect(loaded).toEqual(chapters);
+      // temp file should not exist
+      const tmpExists = await stat(join(manager.bookDir("book-d"), "chapters", ".index.json.tmp")).catch(() => null);
+      expect(tmpExists).toBeNull();
+    });
+  });
+
+  describe("rebuildChapterIndex", () => {
+    it("reconstructs index from chapter files on disk", async () => {
+      const bookDir = manager.bookDir("book-rebuild");
+      const chaptersDir = join(bookDir, "chapters");
+      await mkdir(chaptersDir, { recursive: true });
+      await writeFile(join(chaptersDir, "0001_第一章.md"), "# 第一章\n内容", "utf-8");
+      await writeFile(join(chaptersDir, "0003_第三章.md"), "# 第三章\n内容", "utf-8");
+
+      const index = await manager.rebuildChapterIndex("book-rebuild");
+      expect(index).toHaveLength(2);
+      expect(index[0]!.number).toBe(1);
+      expect(index[0]!.title).toBe("第一章");
+      expect(index[0]!.status).toBe("imported");
+      expect(index[1]!.number).toBe(3);
+      expect(index[1]!.title).toBe("第三章");
+    });
+
+    it("preserves existing index metadata when chapter files match", async () => {
+      const bookDir = manager.bookDir("book-rebuild2");
+      const chaptersDir = join(bookDir, "chapters");
+      await mkdir(chaptersDir, { recursive: true });
+      await writeFile(join(chaptersDir, "0001_ChapterOne.md"), "content", "utf-8");
+      // Write a pre-existing index with metadata for chapter 1
+      await writeFile(join(chaptersDir, "index.json"), JSON.stringify([
+        { number: 1, title: "Chapter One", status: "ready-for-review", wordCount: 5000, createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", auditIssues: [], lengthWarnings: [] },
+      ]), "utf-8");
+
+      const index = await manager.rebuildChapterIndex("book-rebuild2");
+      expect(index).toHaveLength(1);
+      expect(index[0]!.title).toBe("Chapter One");
+      expect(index[0]!.status).toBe("ready-for-review");
+      expect(index[0]!.wordCount).toBe(5000);
+    });
+
+    it("returns empty array when no chapter files exist", async () => {
+      const index = await manager.rebuildChapterIndex("nonexistent-rebuild");
+      expect(index).toEqual([]);
+    });
+
+    it("handles corrupted existing index gracefully", async () => {
+      const bookDir = manager.bookDir("book-rebuild3");
+      const chaptersDir = join(bookDir, "chapters");
+      await mkdir(chaptersDir, { recursive: true });
+      await writeFile(join(chaptersDir, "0001_Ch1.md"), "content", "utf-8");
+      await writeFile(join(chaptersDir, "index.json"), "corrupted!", "utf-8");
+
+      const index = await manager.rebuildChapterIndex("book-rebuild3");
+      expect(index).toHaveLength(1);
+      expect(index[0]!.number).toBe(1);
+      expect(index[0]!.title).toBe("Ch1");
+    });
   });
 
   // -------------------------------------------------------------------------

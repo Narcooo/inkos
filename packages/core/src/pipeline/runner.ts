@@ -1194,64 +1194,69 @@ export class PipelineRunner {
     };
   }
 
-  /** Audit the latest (or specified) chapter. Read-only, no lock needed. */
+  /** Audit the latest (or specified) chapter. Acquires a book lock to protect the index from concurrent mutations. */
   async auditDraft(bookId: string, chapterNumber?: number): Promise<AuditResult & { readonly chapterNumber: number }> {
-    const book = await this.state.loadBookConfig(bookId);
-    const bookDir = this.state.bookDir(bookId);
-    const targetChapter = chapterNumber ?? (await this.state.getNextChapterNumber(bookId)) - 1;
-    if (targetChapter < 1) {
-      throw new Error(`No chapters to audit for "${bookId}"`);
-    }
+    const releaseLock = await this.state.acquireBookLock(bookId);
+    try {
+      const book = await this.state.loadBookConfig(bookId);
+      const bookDir = this.state.bookDir(bookId);
+      const targetChapter = chapterNumber ?? (await this.state.getNextChapterNumber(bookId)) - 1;
+      if (targetChapter < 1) {
+        throw new Error(`No chapters to audit for "${bookId}"`);
+      }
 
-    const content = await this.readChapterContent(bookDir, targetChapter);
-    const auditor = new ContinuityAuditor(this.agentCtxFor("auditor", bookId));
-    const { profile: gp } = await this.loadGenreProfile(book.genre);
-    const language = book.language ?? gp.language;
-    this.logStage(language, {
-      zh: `审计第${targetChapter}章`,
-      en: `auditing chapter ${targetChapter}`,
-    });
-    const evaluation = await this.evaluateMergedAudit({
-      auditor,
-      book,
-      bookDir,
-      chapterContent: content,
-      chapterNumber: targetChapter,
-      language,
-    });
-    const result = evaluation.auditResult;
-
-    // Update index with audit result
-    const index = await this.state.loadChapterIndex(bookId);
-    const updated = index.map((ch) =>
-      ch.number === targetChapter
-        ? {
-            ...ch,
-            status: (result.passed ? "ready-for-review" : "audit-failed") as ChapterMeta["status"],
-            updatedAt: new Date().toISOString(),
-            auditIssues: result.issues.map((i) => `[${i.severity}] ${i.description}`),
-          }
-        : ch,
-    );
-    await this.state.saveChapterIndex(bookId, updated);
-    const latestChapter = index.length > 0 ? Math.max(...index.map((chapter) => chapter.number)) : targetChapter;
-    if (targetChapter === latestChapter) {
-      await this.persistAuditDriftGuidance({
+      const content = await this.readChapterContent(bookDir, targetChapter);
+      const auditor = new ContinuityAuditor(this.agentCtxFor("auditor", bookId));
+      const { profile: gp } = await this.loadGenreProfile(book.genre);
+      const language = book.language ?? gp.language;
+      this.logStage(language, {
+        zh: `审计第${targetChapter}章`,
+        en: `auditing chapter ${targetChapter}`,
+      });
+      const evaluation = await this.evaluateMergedAudit({
+        auditor,
+        book,
         bookDir,
+        chapterContent: content,
         chapterNumber: targetChapter,
-        issues: result.issues.filter((issue) => issue.severity === "critical" || issue.severity === "warning"),
         language,
-      }).catch(() => undefined);
+      });
+      const result = evaluation.auditResult;
+
+      // Update index with audit result
+      const index = await this.state.loadChapterIndex(bookId);
+      const updated = index.map((ch) =>
+        ch.number === targetChapter
+          ? {
+              ...ch,
+              status: (result.passed ? "ready-for-review" : "audit-failed") as ChapterMeta["status"],
+              updatedAt: new Date().toISOString(),
+              auditIssues: result.issues.map((i) => `[${i.severity}] ${i.description}`),
+            }
+          : ch,
+      );
+      await this.state.saveChapterIndex(bookId, updated);
+      const latestChapter = index.length > 0 ? Math.max(...index.map((chapter) => chapter.number)) : targetChapter;
+      if (targetChapter === latestChapter) {
+        await this.persistAuditDriftGuidance({
+          bookDir,
+          chapterNumber: targetChapter,
+          issues: result.issues.filter((issue) => issue.severity === "critical" || issue.severity === "warning"),
+          language,
+        }).catch(() => undefined);
+      }
+
+      await this.emitWebhook(
+        result.passed ? "audit-passed" : "audit-failed",
+        bookId,
+        targetChapter,
+        { summary: result.summary, issueCount: result.issues.length },
+      );
+
+      return { ...result, chapterNumber: targetChapter };
+    } finally {
+      await releaseLock();
     }
-
-    await this.emitWebhook(
-      result.passed ? "audit-passed" : "audit-failed",
-      bookId,
-      targetChapter,
-      { summary: result.summary, issueCount: result.issues.length },
-    );
-
-    return { ...result, chapterNumber: targetChapter };
   }
 
   /** Revise the latest (or specified) chapter based on audit issues. */
