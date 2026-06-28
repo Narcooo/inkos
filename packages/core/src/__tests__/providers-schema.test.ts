@@ -90,6 +90,19 @@ describe("providers structural integrity", () => {
     expect(getEndpoint("minimax")?.baseUrl).toBe("https://api.minimaxi.com/v1");
   });
 
+  it("AgnesAI uses the OpenAI-compatible gateway and stays in the China group", () => {
+    const agnes = getEndpoint("agnesai");
+    expect(agnes).toMatchObject({
+      label: "AgnesAI",
+      group: "china",
+      api: "openai-completions",
+      baseUrl: "https://apihub.agnes-ai.com/v1",
+      checkModel: "agnes-2.0-flash",
+    });
+    expect(agnes?.models.some((model) => model.id === "agnes-2.0-flash" && model.enabled !== false)).toBe(true);
+    expect(agnes?.models.some((model) => model.id === "agnes-image-2.1-flash" && model.status === "nonText")).toBe(true);
+  });
+
   it("B2：中国原厂批次 2 全部收录（6 个）", () => {
     const ids = getAllEndpoints().map((p) => p.id);
     for (const id of ["spark", "sensenova", "tencentcloud", "xiaomimimo", "longcat", "internlm"]) {
@@ -120,9 +133,9 @@ describe("providers structural integrity", () => {
     expect(getEndpoint("newapi")?.baseUrl).toBe("");
   });
 
-  it("B4：总 provider 数 = 30（不含 CodingPlan 分组，R5 删 qwen / higress 且精简聚合入口后）", () => {
+  it("B4：总 provider 数 = 31（不含 CodingPlan 分组，R5 删 qwen / higress 且精简聚合入口后）", () => {
     const nonCoding = getAllEndpoints().filter((p) => p.group !== "codingPlan");
-    expect(nonCoding.length).toBe(30);
+    expect(nonCoding.length).toBe(31);
   });
 
   it("B6：CodingPlan 8 个 provider 全部收录", () => {
@@ -136,8 +149,8 @@ describe("providers structural integrity", () => {
     }
   });
 
-  it("B6：总 provider 数 = 38 (30 base + 8 CodingPlan)", () => {
-    expect(getAllEndpoints().length).toBe(38);
+  it("B6：总 provider 数 = 39 (31 base + 8 CodingPlan)", () => {
+    expect(getAllEndpoints().length).toBe(39);
   });
 
   it("B6：CodingPlan provider 都走 anthropic-messages", () => {

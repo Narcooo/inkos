@@ -43,6 +43,23 @@ describe("service-presets regression", () => {
   });
 
   describe("listModelsForService", () => {
+    it("exposes AgnesAI as an OpenAI-compatible provider with text models", async () => {
+      const preset = resolveServicePreset("agnesai");
+      expect(preset).toMatchObject({
+        providerFamily: "openai",
+        api: "openai-completions",
+        baseUrl: "https://apihub.agnes-ai.com/v1",
+      });
+
+      const models = await listModelsForService("agnesai");
+      expect(models.map((m) => m.id)).toEqual(expect.arrayContaining([
+        "agnes-2.0-flash",
+        "agnes-1.5-flash",
+      ]));
+      expect(models.some((m) => m.id.includes("image"))).toBe(false);
+      expect(guessServiceFromBaseUrl("https://apihub.agnes-ai.com/v1")).toBe("agnesai");
+    });
+
     it("exposes kkaiapi as an OpenAI-compatible aggregator with text models", async () => {
       const preset = resolveServicePreset("kkaiapi");
       expect(preset).toMatchObject({

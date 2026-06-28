@@ -58,6 +58,7 @@ const SERVICE_PRESETS_MOCK: Record<string, ServicePresetMock> = {
   bailian: { providerFamily: "anthropic", baseUrl: "https://dashscope.aliyuncs.com/apps/anthropic", modelsBaseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", knownModels: [] as string[] },
   google: { providerFamily: "openai", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", modelsBaseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", knownModels: [] as string[] },
   kkaiapi: { providerFamily: "openai", baseUrl: "https://api.kkaiapi.com/v1", modelsBaseUrl: "https://api.kkaiapi.com/v1", knownModels: [] as string[] },
+  agnesai: { providerFamily: "openai", baseUrl: "https://apihub.agnes-ai.com/v1", modelsBaseUrl: "https://apihub.agnes-ai.com/v1", knownModels: [] as string[] },
   ollama: { providerFamily: "openai", baseUrl: "http://localhost:11434/v1", modelsBaseUrl: "http://localhost:11434/v1", knownModels: [] as string[] },
   custom: { providerFamily: "openai", baseUrl: "", knownModels: [] as string[] },
 };
@@ -92,7 +93,7 @@ const listModelsForServiceMock = vi.fn(async (service: string, apiKey?: string, 
 const endpointIdsByGroup = {
   overseas: ["anthropic", "google", "mistral", "openai", "xai"],
   china: [
-    "ai360", "baichuan", "bailian", "deepseek", "hunyuan", "internlm", "longcat",
+    "agnesai", "ai360", "baichuan", "bailian", "deepseek", "hunyuan", "internlm", "longcat",
     "minimax", "moonshot", "sensenova", "spark", "stepfun", "tencentcloud",
     "volcengine", "wenxin", "xiaomimimo", "zeroone", "zhipu",
   ],
@@ -109,11 +110,18 @@ const endpointMocks = [
     label: id,
     group,
     ...(id === "google" ? { checkModel: "gemini-2.5-flash" } : {}),
+    ...(id === "agnesai" ? { checkModel: "agnes-2.0-flash" } : {}),
     ...(id === "minimax" ? { checkModel: "MiniMax-M2.7" } : {}),
     ...(id === "ollama" ? { checkModel: "llama3.2:3b" } : {}),
     ...(id === "volcengine" ? { checkModel: "doubao-lite-32k" } : {}),
     models: [
-      { id: `${id}-model`, maxOutput: 4096, contextWindowTokens: 32768, enabled: true },
+      ...(id === "agnesai"
+        ? [
+            { id: "agnes-2.0-flash", maxOutput: 8192, contextWindowTokens: 1_000_000, enabled: true },
+            { id: "agnes-1.5-flash", maxOutput: 8192, contextWindowTokens: 1_000_000, enabled: true },
+            { id: "agnes-image-2.1-flash", maxOutput: 1, contextWindowTokens: 1, enabled: false, status: "nonText", capabilities: { text: false, imageOutput: true } },
+          ]
+        : [{ id: `${id}-model`, maxOutput: 4096, contextWindowTokens: 32768, enabled: true }]),
       { id: `${id}-disabled`, maxOutput: 4096, contextWindowTokens: 32768, enabled: false },
     ],
   }))),
@@ -973,14 +981,18 @@ describe("createStudioServer daemon lifecycle", () => {
     expect(res.status).toBe(200);
     const body = await res.json() as { services: Array<{ service: string; group?: string; connected: boolean }> };
     const bank = body.services.filter((s) => !s.service.startsWith("custom"));
-    expect(bank.length).toBe(37);
+    expect(bank.length).toBe(38);
     expect(bank.every((s) => typeof s.group === "string")).toBe(true);
     expect(bank.filter((s) => s.group === "overseas")).toHaveLength(5);
-    expect(bank.filter((s) => s.group === "china")).toHaveLength(18);
+    expect(bank.filter((s) => s.group === "china")).toHaveLength(19);
     expect(bank.filter((s) => s.group === "aggregator")).toHaveLength(4);
     expect(bank.filter((s) => s.group === "local")).toHaveLength(2);
     expect(bank.filter((s) => s.group === "codingPlan")).toHaveLength(8);
     expect(bank.filter((s) => s.group === "aggregator").map((s) => s.service)[0]).toBe("kkaiapi");
+    expect(body.services.find((s) => s.service === "agnesai")).toMatchObject({
+      group: "china",
+      connected: false,
+    });
     expect(body.services.find((s) => s.service === "moonshot")?.connected).toBe(true);
     expect(body.services.find((s) => s.service === "custom:内网GPT")).toMatchObject({
       connected: true,
@@ -990,7 +1002,7 @@ describe("createStudioServer daemon lifecycle", () => {
   it("returns connected bank model groups from the local bank", async () => {
     loadSecretsMock.mockResolvedValue({
       services: {
-        moonshot: { apiKey: "sk-moonshot" },
+        agnesai: { apiKey: "sk-agnes" },
       },
     });
 
@@ -1000,9 +1012,10 @@ describe("createStudioServer daemon lifecycle", () => {
     const response = await app.request("http://localhost/api/v1/services/models");
     expect(response.status).toBe(200);
     const body = await response.json() as { groups: Array<{ service: string; models: Array<{ id: string }> }> };
-    expect(body.groups.map((g) => g.service)).toEqual(["moonshot"]);
+    expect(body.groups.map((g) => g.service)).toEqual(["agnesai"]);
     expect(body.groups[0]?.models).toEqual([
-      { id: "moonshot-model", name: "moonshot-model", maxOutput: 4096, contextWindow: 32768 },
+      { id: "agnes-2.0-flash", name: "agnes-2.0-flash", maxOutput: 8192, contextWindow: 1000000 },
+      { id: "agnes-1.5-flash", name: "agnes-1.5-flash", maxOutput: 8192, contextWindow: 1000000 },
     ]);
   });
 
@@ -2142,23 +2155,37 @@ describe("createStudioServer daemon lifecycle", () => {
     const { createStudioServer } = await import("./server.js");
     const app = createStudioServer(cloneProjectConfig() as never, root);
 
+    const configResponse = await app.request("http://localhost/api/v1/cover/config");
+    expect(configResponse.status).toBe(200);
+    await expect(configResponse.json()).resolves.toMatchObject({
+      providers: expect.arrayContaining([
+        expect.objectContaining({
+          service: "agnesai",
+          label: "AgnesAI Images",
+          baseUrl: "https://apihub.agnes-ai.com/v1",
+          defaultModel: "agnes-image-2.1-flash",
+          models: ["agnes-image-2.1-flash", "agnes-image-2.0-flash"],
+        }),
+      ]),
+    });
+
     const saveConfig = await app.request("http://localhost/api/v1/cover/config", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        service: "kkaiapi",
-        model: "gpt-image-2",
+        service: "agnesai",
+        model: "agnes-image-2.1-flash",
       }),
     });
     expect(saveConfig.status).toBe(200);
 
     const raw = JSON.parse(await readFile(join(root, "inkos.json"), "utf-8"));
     expect(raw.llm.cover).toEqual({
-      service: "kkaiapi",
-      model: "gpt-image-2",
+      service: "agnesai",
+      model: "agnes-image-2.1-flash",
     });
 
-    const saveSecret = await app.request("http://localhost/api/v1/cover/secret/kkaiapi", {
+    const saveSecret = await app.request("http://localhost/api/v1/cover/secret/agnesai", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ apiKey: "sk-cover" }),
@@ -2166,7 +2193,7 @@ describe("createStudioServer daemon lifecycle", () => {
     expect(saveSecret.status).toBe(200);
     expect(saveSecretsMock).toHaveBeenCalledWith(root, {
       services: {
-        "cover:kkaiapi": { apiKey: "sk-cover" },
+        "cover:agnesai": { apiKey: "sk-cover" },
       },
     });
   });

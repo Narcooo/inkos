@@ -171,6 +171,44 @@ describe("public short-fiction chain", () => {
     }
   });
 
+  it("resolves AgnesAI cover generation from project cover config", async () => {
+    const root = await mkdtemp(join(tmpdir(), "inkos-agnes-cover-"));
+    try {
+      await writeFile(join(root, "inkos.json"), JSON.stringify({
+        name: "agnes-cover-test",
+        version: "0.1.0",
+        language: "zh",
+        llm: {
+          provider: "openai",
+          service: "agnesai",
+          configSource: "studio",
+          baseUrl: "https://apihub.agnes-ai.com/v1",
+          apiKey: "",
+          model: "agnes-2.0-flash",
+          cover: {
+            service: "agnesai",
+            model: "agnes-image-2.1-flash",
+          },
+        },
+        notify: [],
+      }, null, 2), "utf-8");
+      await saveSecrets(root, {
+        services: {
+          "cover:agnesai": { apiKey: "sk-agnes-cover" },
+        },
+      });
+
+      await expect(resolveCoverGenerationRequest({ root })).resolves.toMatchObject({
+        api: "images",
+        baseUrl: "https://apihub.agnes-ai.com/v1",
+        model: "agnes-image-2.1-flash",
+        apiKey: "sk-agnes-cover",
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("extracts OpenAI-compatible image generation URLs and base64 payloads", () => {
     expect(extractImagesGenerationImage({
       data: [{ url: "https://api.kkaiapi.com/files/img_abc123.png" }],

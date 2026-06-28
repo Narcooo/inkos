@@ -1,4 +1,4 @@
-export type CoverProviderId = "kkaiapi" | "openai" | "google";
+export type CoverProviderId = "kkaiapi" | "openai" | "google" | "agnesai";
 
 export interface CoverProviderPreset {
   readonly service: CoverProviderId;
@@ -33,6 +33,14 @@ export const COVER_PROVIDER_PRESETS: readonly CoverProviderPreset[] = [
     api: "gemini",
     defaultModel: "gemini-3.1-flash-image-preview",
     models: ["gemini-3.1-flash-image-preview", "gemini-2.5-flash-image"],
+  },
+  {
+    service: "agnesai",
+    label: "AgnesAI Images",
+    baseUrl: "https://apihub.agnes-ai.com/v1",
+    api: "images",
+    defaultModel: "agnes-image-2.1-flash",
+    models: ["agnes-image-2.1-flash", "agnes-image-2.0-flash"],
   },
 ];
 
