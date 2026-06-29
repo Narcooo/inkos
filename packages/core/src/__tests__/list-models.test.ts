@@ -30,6 +30,12 @@ describe("listModelsForService (B8)", () => {
     expect(models.some((m) => m.id.includes("image"))).toBe(false);
   });
 
+  it("minimax static fallback includes MiniMax-M3", async () => {
+    const models = await listModelsForService("minimax");
+    expect(models[0]?.id).toBe("MiniMax-M3");
+    expect(models.some((m) => m.id === "MiniMax-M3")).toBe(true);
+  });
+
   it("custom service 走 live probe + bank 补元数据", async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,

@@ -987,12 +987,15 @@ describe("createStudioServer daemon lifecycle", () => {
     });
   });
 
-  it("returns connected bank model groups from the local bank", async () => {
+  it("returns connected model groups from the unified service model resolver", async () => {
     loadSecretsMock.mockResolvedValue({
       services: {
         moonshot: { apiKey: "sk-moonshot" },
       },
     });
+    listModelsForServiceMock.mockResolvedValueOnce([
+      { id: "moonshot-live", name: "moonshot-live", contextWindow: 65536, maxOutput: 8192 },
+    ]);
 
     const { createStudioServer } = await import("./server.js");
     const app = createStudioServer(cloneProjectConfig() as never, root);
@@ -1002,11 +1005,12 @@ describe("createStudioServer daemon lifecycle", () => {
     const body = await response.json() as { groups: Array<{ service: string; models: Array<{ id: string }> }> };
     expect(body.groups.map((g) => g.service)).toEqual(["moonshot"]);
     expect(body.groups[0]?.models).toEqual([
-      { id: "moonshot-model", name: "moonshot-model", maxOutput: 4096, contextWindow: 32768 },
+      { id: "moonshot-live", name: "moonshot-live", maxOutput: 8192, contextWindow: 65536 },
     ]);
+    expect(listModelsForServiceMock).toHaveBeenCalledWith("moonshot", "sk-moonshot");
   });
 
-  it("filters non-text models out of connected bank model groups", async () => {
+  it("filters non-text models out of connected model groups", async () => {
     loadSecretsMock.mockResolvedValue({
       services: {
         google: { apiKey: "sk-google" },
@@ -1017,13 +1021,14 @@ describe("createStudioServer daemon lifecycle", () => {
         id: "google",
         label: "Google Gemini",
         group: "overseas",
-        models: [
-          { id: "gemini-2.5-flash", maxOutput: 65536, contextWindowTokens: 1114112, enabled: true },
-          { id: "gemini-3.1-flash-image-preview", maxOutput: 32768, contextWindowTokens: 163840, enabled: true },
-          { id: "text-embedding-004", maxOutput: 2048, contextWindowTokens: 2048, enabled: true },
-        ],
+        models: [],
       },
     ] as never);
+    listModelsForServiceMock.mockResolvedValueOnce([
+      { id: "gemini-2.5-flash", name: "gemini-2.5-flash", contextWindow: 1114112 },
+      { id: "gemini-3.1-flash-image-preview", name: "gemini-3.1-flash-image-preview", contextWindow: 163840 },
+      { id: "text-embedding-004", name: "text-embedding-004", contextWindow: 2048 },
+    ]);
 
     const { createStudioServer } = await import("./server.js");
     const app = createStudioServer(cloneProjectConfig() as never, root);

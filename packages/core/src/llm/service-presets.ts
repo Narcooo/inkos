@@ -29,7 +29,7 @@ export const SERVICE_PRESETS: Record<string, ServicePreset> = {
     temperatureRange: [0, 2],
     defaultTemperature: 0.9,
     writingTemperature: 0.9,
-    knownModels: ["MiniMax-M2.7", "MiniMax-M2.7-highspeed", "MiniMax-M2.5", "MiniMax-M2.5-highspeed", "MiniMax-M2.1", "MiniMax-M2.1-highspeed", "MiniMax-M2"],
+    knownModels: ["MiniMax-M3", "MiniMax-M2.7", "MiniMax-M2.7-highspeed", "MiniMax-M2.5", "MiniMax-M2.5-highspeed", "MiniMax-M2.1", "MiniMax-M2.1-highspeed", "MiniMax-M2"],
   },
   bailian:     {
     providerFamily: "anthropic",
