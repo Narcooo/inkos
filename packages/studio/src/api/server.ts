@@ -33,6 +33,7 @@ import {
   listModelsForService,
   isApiKeyOptionalForEndpoint,
   getAllEndpoints,
+  getEndpoint,
   probeModelsFromUpstream,
   fetchWithProxy,
   chatCompletion,
@@ -1477,17 +1478,20 @@ async function readEffectiveEnvConfigValues(root: string): Promise<{ source: "pr
 async function resolveConfiguredServiceBaseUrl(root: string, serviceId: string, inlineBaseUrl?: string): Promise<string | undefined> {
   if (inlineBaseUrl?.trim()) return inlineBaseUrl.trim();
 
-  if (!isCustomServiceId(serviceId)) {
-    return resolveServicePreset(serviceId)?.baseUrl;
+  // 预设已有 baseUrl 的非网关服务直接使用预设
+  const presetBaseUrl = resolveServicePreset(serviceId)?.baseUrl;
+  if (presetBaseUrl && !isCustomServiceId(serviceId) && serviceId !== "newapi" && serviceId !== "higress") {
+    return presetBaseUrl;
   }
 
+  // custom/newapi/higress 等网关服务需要查配置文件
   try {
     const config = await loadRawConfig(root);
     const services = normalizeServiceConfig((config.llm as Record<string, unknown> | undefined)?.services);
     const matched = services.find((entry) => serviceConfigKey(entry) === serviceId);
-    return matched?.baseUrl;
+    return matched?.baseUrl || (presetBaseUrl || undefined);
   } catch {
-    return undefined;
+    return presetBaseUrl;
   }
 }
 
@@ -2772,11 +2776,12 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
 
   app.post("/api/v1/services/:service/test", async (c) => {
     const service = c.req.param("service");
-    const { apiKey, baseUrl, apiFormat, stream } = await c.req.json<{
+    const { apiKey, baseUrl, apiFormat, stream, preferredModel } = await c.req.json<{
       apiKey: string;
       baseUrl?: string;
       apiFormat?: "chat" | "responses";
       stream?: boolean;
+      preferredModel?: string;
     }>();
 
     const resolvedBaseUrl = await resolveConfiguredServiceBaseUrl(root, service, baseUrl);
@@ -2805,6 +2810,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       baseUrl: resolvedBaseUrl,
       preferredApiFormat: apiFormat,
       preferredStream: stream,
+      preferredModel,
       proxyUrl: typeof llm.proxyUrl === "string" ? llm.proxyUrl : undefined,
     });
 
@@ -2871,6 +2877,8 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
 
   app.get("/api/v1/services/models", async (c) => {
     const secrets = await loadSecrets(root);
+
+    // Bank endpoints with preset models
     const endpoints = getAllEndpoints()
       .filter((ep) => ep.id !== "custom" && Boolean(secrets.services[ep.id]?.apiKey));
 
@@ -2888,7 +2896,31 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
         })),
     }));
 
-    return c.json({ groups });
+    // Gateway services (newapi, higress): probe live models when baseUrl is configured
+    const gatewayServices = ["newapi", "higress"];
+    const gatewayGroups = await Promise.all(
+      gatewayServices
+        .filter((svc) => Boolean(secrets.services[svc]?.apiKey))
+        .map(async (svc) => {
+          const baseUrl = await resolveConfiguredServiceBaseUrl(root, svc);
+          if (!baseUrl) return null;
+          const ep = getEndpoint(svc);
+          const probed = await probeModelsFromUpstream(baseUrl, secrets.services[svc].apiKey, 10_000);
+          const textModels = filterTextChatModels(probed);
+          return {
+            service: svc,
+            label: ep?.label ?? svc,
+            models: textModels.map((m) => ({
+              id: m.id,
+              name: m.name,
+              ...(m.contextWindow > 0 ? { contextWindow: m.contextWindow } : {}),
+            })),
+          };
+        }),
+    );
+
+    const result = [...groups, ...gatewayGroups.filter((g): g is NonNullable<typeof g> => g !== null)];
+    return c.json({ groups: result });
   });
 
   app.get("/api/v1/services/models/custom", async (c) => {
@@ -2946,10 +2978,12 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     }
 
     // B13: 走 listModelsForService 走 live probe + bank 交叉，返回带元数据的 models
+    // 网关类服务（custom/newapi/higress）baseUrl 为空，需要传 resolvedBaseUrl 才能探测
+    const needsLiveBaseUrl = isCustomServiceId(service) || service === "newapi" || service === "higress";
     const enriched = await listModelsForService(
       isCustomServiceId(service) ? "custom" : service,
       apiKey,
-      isCustomServiceId(service) ? resolvedBaseUrl ?? undefined : undefined,
+      needsLiveBaseUrl ? (resolvedBaseUrl ?? undefined) : undefined,
     );
     const models = filterTextChatModels(enriched).map((m) => ({
       id: m.id,
