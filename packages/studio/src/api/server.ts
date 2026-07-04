@@ -106,6 +106,44 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { isSafeBookId } from "./safety.js";
 import { ApiError } from "./errors.js";
 import { buildStudioBookConfig } from "./book-create.js";
+import { createRelationsRouter } from "./routes/relations.js";
+import { createVolumesRouter } from "./routes/volumes.js";
+import { createSceneRolesRouter } from "./routes/scene-roles.js";
+import { createCharactersRouter } from "./routes/characters.js";
+import { createPersonasRouter } from "./routes/personas.js";
+import { createPresetsRouter } from "./routes/presets.js";
+import { createPersonaAIGenRouter } from "./routes/persona-ai-gen.js";
+import { createOutlineRouter } from "./routes/outline.js";
+import { createVoiceProfilesRouter } from "./routes/voice-profiles.js";
+import { createTimelinesRouter } from "./routes/timelines.js";
+import { createSkillsRouter } from "./routes/skills.js";
+import { createSessionTagsRouter } from "./routes/session-tags.js";
+import { createSessionsRouter } from "./routes/sessions.js";
+import { createRelationExtractionRouter } from "./routes/relation-extraction.js";
+import { createSearchRouter } from "./routes/search.js";
+import { createForeshadowingRouter } from "./routes/foreshadowing.js";
+import { createWorldsRouter, createBookWorldsRouter } from "./routes/worlds.js";
+import { createWorldsExtractRouter } from "./routes/worlds-extract.js";
+import { createWorldsAIGenRouter } from "./routes/worlds-ai-gen.js";
+import { createMapsAIGenRouter } from "./routes/maps-ai-gen.js";
+import { createPublishRouter } from "./routes/publish.js";
+import { createBookStyleRouter } from "./routes/book-style.js";
+import { createStyleProfilesRouter } from "./routes/style-profiles.js";
+import { createStyleConsistencyRouter } from "./routes/style-consistency.js";
+import { createConsistencyRouter } from "./routes/consistency.js";
+import { createRelationLabelerRouter } from "./routes/relation-labeler.js";
+import { createWritingContinueRouter } from "./routes/writing-continue.js";
+import { createAgentTeamRouter } from "./routes/agent-team.js";
+import { createForeshadowingExtractRouter } from "./routes/foreshadowing-extract.js";
+import { createForeshadowingRelationsRouter } from "./routes/foreshadowing-relations.js";
+import { createTimelineExtractRouter } from "./routes/timeline-extract.js";
+import { createChapterVersionsRouter } from "./routes/chapter-versions.js";
+import { createAgentTemplatesRouter } from "./routes/agent-templates.js";
+
+import { createChapterVersionsRouter } from "./routes/chapter-versions.js";
+import { createAgentTemplatesRouter } from "./routes/agent-templates.js";
+import { createCustomAgentsRouter } from "./routes/custom-agents.js";
+import { createAgentOrderRouter } from "./routes/agent-order.js";
 
 // -- Pipeline stage definitions per agent type --
 
@@ -2407,15 +2445,18 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       return null;
     }
 
-    // Phase hotfix 3: accept both Chinese and English locale role dirs so
-    // English-layout books (roles/major, roles/minor) are reachable through
-    // Studio. The runtime reader (utils/outline-paths.ts:75) already scans
-    // both — Studio used to drop English books to read-only.
+    // Phase hotfix 3 + R-04: accept all 5 tier directory names (both zh and en
+    // locale) so that roles/主角/王二.md through roles/scene/茶馆老板.md are all
+    // reachable. Must stay in sync with TIER_DIR_MAP in core/src/models/character.ts.
+    const tierDirs = ["主角","重要","次要","客串","一次性",
+                      "protagonist","supporting","guest","one-shot","scene",
+                      "主要角色","次要角色","major","minor"];
+    const tierDirPattern = `roles/(${tierDirs.join("|")})/[^/]+\\.md$`;
     const allowed =
       TRUTH_FLAT_FILES.includes(file)
       || TRUTH_OUTLINE_FILES.includes(file)
       || RUNTIME_DIAGNOSTIC_FILE_RE.test(file)
-      || /^roles\/(主要角色|次要角色|major|minor)\/[^/]+\.md$/.test(file);
+      || new RegExp(tierDirPattern).test(file);
 
     if (!allowed) return null;
 
@@ -2492,6 +2533,127 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     try {
       const chapters = await state.loadChapterIndex(id);
       return c.json(computeAnalytics(id, chapters));
+    } catch {
+      return c.json({ error: `Book "${id}" not found` }, 404);
+    }
+  });
+
+  // --- Dashboard Aggregated Data (R-14) ---
+
+  app.get("/api/v1/books/:id/dashboard", async (c) => {
+    const id = c.req.param("id");
+    try {
+      const book = await state.loadBookConfig(id);
+      const chapters = await state.loadChapterIndex(id);
+      const nextChapter = await state.getNextChapterNumber(id);
+      const bookDir = state.bookDir(id);
+      const { join } = await import("node:path");
+      const { readFile, readdir } = await import("node:fs/promises");
+
+      // Chapter / word count stats
+      const totalChapters = nextChapter - 1;
+      const targetChapters = (book as any).targetChapters ?? 0;
+      const totalWords = chapters.reduce((sum: number, ch: any) => sum + (ch.wordCount ?? 0), 0);
+
+      // Characters grouped by tier
+      const TIER_ROLE_DIRS = [
+        "protagonist", "supporting", "guest", "one-shot", "scene",
+        "主角", "重要", "次要", "客串", "一次性",
+        "主要角色", "次要角色", "major", "minor",
+      ];
+      const characters: Array<{ name: string; tier: string; description: string }> = [];
+      const rolesDir = join(bookDir, "story", "roles");
+      for (const dir of TIER_ROLE_DIRS) {
+        try {
+          const files = await readdir(join(rolesDir, dir));
+          for (const file of files) {
+            if (file.endsWith(".md")) {
+              const name = file.replace(/\.md$/, "");
+              let description = "";
+              try {
+                const content = await readFile(join(rolesDir, dir, file), "utf-8");
+                const lines = content.split("\n").filter((l: string) => l.trim() && !l.startsWith("---"));
+                description = lines.slice(0, 3).join(" ").slice(0, 200);
+              } catch { /* ignore */ }
+              characters.push({ name, tier: dir, description });
+            }
+          }
+        } catch { /* directory doesn't exist */ }
+      }
+
+      // Recent timeline events (last 10)
+      let recentEvents: Array<{ id: string; chapter: number; description: string; date?: string }> = [];
+      try {
+        const timelinesRaw = await readFile(join(bookDir, "story", "state", "character_timelines.json"), "utf-8");
+        const timelinesData = JSON.parse(timelinesRaw);
+        const events = (timelinesData.events ?? []).sort((a: any, b: any) => (b.chapter ?? 0) - (a.chapter ?? 0));
+        recentEvents = events.slice(0, 10).map((e: any) => ({
+          id: e.id,
+          chapter: e.chapter ?? 0,
+          description: (e.description ?? "").slice(0, 200),
+          date: e.date,
+        }));
+      } catch { /* no timeline data */ }
+
+      // Relations summary
+      let relationCount = 0;
+      let recentRelations: Array<{ id: string; source: string; target: string; type: string }> = [];
+      try {
+        const relationsRaw = await readFile(join(bookDir, "story", "state", "relations.json"), "utf-8");
+        const relationsData = JSON.parse(relationsRaw);
+        const rels = relationsData.relations ?? [];
+        relationCount = rels.length;
+        recentRelations = rels.slice(-5).map((r: any) => ({
+          id: r.id,
+          source: r.sourceRoleId ?? r.source ?? "",
+          target: r.targetRoleId ?? r.target ?? "",
+          type: r.type ?? r.relationType ?? "unknown",
+        }));
+      } catch { /* no relations data */ }
+
+      // World info
+      const worldId = (book as any).worldId ?? null;
+      let worldSummary: any = null;
+      if (worldId) {
+        try {
+          const { loadWorld } = await import("@actalk/inkos-core");
+          const world: any = await loadWorld(root, worldId as string);
+          if (world) {
+            worldSummary = {
+              id: world.id,
+              name: world.name,
+              dimensions: world.dimensions
+                ? Object.entries(world.dimensions).map(([key, dim]: [string, any]) => ({
+                    name: key,
+                    content: (dim.content ?? dim.description ?? "").slice(0, 100),
+                  }))
+                : [],
+            };
+          }
+        } catch { /* world not found */ }
+      }
+
+      return c.json({
+        book: {
+          id,
+          title: (book as any).title ?? id,
+          genre: (book as any).genre ?? "unknown",
+          status: (book as any).status ?? "active",
+        },
+        stats: {
+          totalChapters,
+          targetChapters,
+          totalWords,
+          chaptersWritten: totalChapters,
+        },
+        characters,
+        recentEvents,
+        relations: {
+          total: relationCount,
+          recent: recentRelations,
+        },
+        world: worldSummary,
+      });
     } catch {
       return c.json({ error: `Book "${id}" not found` }, 404);
     }
@@ -3331,12 +3493,22 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       const flatFiles = (await listDir(".")).filter((f) => !f.startsWith("outline") && !f.startsWith("roles"));
       // Phase 5 outline/ files
       const outlineFiles = (await listDir("outline")).map((f) => `outline/${f}`);
-      // Phase 5 roles/主要角色 + roles/次要角色, plus Phase hotfix 3
-      // English-locale equivalents so en-language books are visible.
-      const majorRolesZh = (await listDir("roles/主要角色")).map((f) => `roles/主要角色/${f}`);
-      const minorRolesZh = (await listDir("roles/次要角色")).map((f) => `roles/次要角色/${f}`);
-      const majorRolesEn = (await listDir("roles/major")).map((f) => `roles/major/${f}`);
-      const minorRolesEn = (await listDir("roles/minor")).map((f) => `roles/minor/${f}`);
+      // R-04: Scan all 5 tier directories (zh + en + legacy).
+      const TIER_ROLE_DIRS = [
+        "主角","protagonist",
+        "重要","supporting",
+        "次要","guest",
+        "客串","one-shot",
+        "一次性","scene",
+        // Legacy compatibility
+        "主要角色","major",
+        "次要角色","minor",
+      ];
+      const roleDirFiles: string[] = [];
+      for (const dir of TIER_ROLE_DIRS) {
+        const files = await listDir(`roles/${dir}`);
+        roleDirFiles.push(...files.map((f) => `roles/${dir}/${f}`));
+      }
       const runtimeFiles = (await listDir("runtime"))
         .map((f) => `runtime/${f}`)
         .filter((f) => RUNTIME_DIAGNOSTIC_FILE_RE.test(f));
@@ -3344,10 +3516,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       const all = [
         ...flatFiles,
         ...outlineFiles,
-        ...majorRolesZh,
-        ...minorRolesZh,
-        ...majorRolesEn,
-        ...minorRolesEn,
+        ...roleDirFiles,
         ...runtimeFiles,
       ];
       const described = await Promise.all(all.map(describe));
@@ -3604,7 +3773,9 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
 
   app.get("/api/v1/sessions", async (c) => {
     const bookId = c.req.query("bookId");
-    const sessions = await listBookSessions(root, bookId === undefined ? null : bookId === "null" ? null : bookId);
+    const status = c.req.query("status");
+    const statusFilter = status === "active" || status === "archived" ? status : undefined;
+    const sessions = await listBookSessions(root, bookId === undefined ? null : bookId === "null" ? null : bookId, statusFilter);
     return c.json({ sessions });
   });
 
@@ -5509,6 +5680,235 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     const { assetRef, delta } = await generateNodeImage({ projectRoot: root, projectId: id, node, deps });
     const { rev } = await applyGraphDelta({ projectRoot: root, projectId: id, delta });
     return c.json({ assetRef, rev });
+  });
+
+  // ── Relations CRUD ──
+  const relationsRouter = createRelationsRouter((id) => state.bookDir(id));
+  app.route("/api/v1/books", relationsRouter);
+
+  // ── AI Relation Extraction (AI-1) ──
+  const relationExtractionRouter = createRelationExtractionRouter(
+    (id) => state.bookDir(id),
+    () => root,
+  );
+  app.route("/api/v1/books", relationExtractionRouter);
+
+  // ── AI World Extraction (Wrld-7) ──
+  const worldsExtractRouter = createWorldsExtractRouter((id) => state.bookDir(id));
+  app.route("/api/v1/books", worldsExtractRouter);
+
+  // ── AI Relation Labeler (R-15) ──
+  const relationLabelerRouter = createRelationLabelerRouter(
+    (id) => state.bookDir(id),
+  );
+  app.route("/api/v1/books", relationLabelerRouter);
+
+  // ── AI Foreshadowing Extraction (Issue #211) ──
+  const foreshadowingExtractRouter = createForeshadowingExtractRouter((id) => state.bookDir(id), root);
+  app.route("/api/v1/books", foreshadowingExtractRouter);
+
+  // ── Foreshadowing Relations (Issue #324) ──
+  const foreshadowingRelationsRouter = createForeshadowingRelationsRouter();
+  app.route("/api/v1/books", foreshadowingRelationsRouter);
+
+  // ── AI Timeline Extraction (Issue #211) ──
+  const timelineExtractRouter = createTimelineExtractRouter((id) => state.bookDir(id), root);
+  app.route("/api/v1/books", timelineExtractRouter);
+
+  // ── Volumes CRUD ──
+  const volumesRouter = createVolumesRouter((id) => state.bookDir(id));
+  app.route("/api/v1/books", volumesRouter);
+
+  // ── Per-Book Style Analysis (Issue #328) ──
+  const bookStyleRouter = createBookStyleRouter((id) => state.bookDir(id));
+  app.route("/api/v1/books", bookStyleRouter);
+
+  // ── Chapter Versions (Issue #235) ──
+  const chapterVersionsRouter = createChapterVersionsRouter((id) => state.bookDir(id));
+  app.route("/api/v1/books", chapterVersionsRouter);
+
+  // ── Timelines CRUD ──
+  const timelinesRouter = createTimelinesRouter((id) => state.bookDir(id));
+  app.route("/api/v1/books", timelinesRouter);
+
+  // ── Scene Roles CRUD ──
+  const sceneRolesRouter = createSceneRolesRouter((id) => state.bookDir(id));
+  app.route("/api/v1/books", sceneRolesRouter);
+
+  // ── Outline CRUD (E1-1) ──
+  const outlineRouter = createOutlineRouter((id) => state.bookDir(id));
+  app.route("/api/v1/books", outlineRouter);
+
+  // ── Character Tier Change ──
+  const charactersRouter = createCharactersRouter((id) => state.bookDir(id));
+  app.route("/api/v1/books", charactersRouter);
+
+  // ── Persona CRUD (project-level) ──
+  const personasRouter = createPersonasRouter(() => root);
+  app.route("/api/v1/project", personasRouter);
+
+  // ── Persona Presets (Per-6) ──
+  const presetsRouter = createPresetsRouter(() => root);
+  app.route("/api/v1/project", presetsRouter);
+
+  // ── Persona AI Generation (Per-7) ──
+  const personaAIGenRouter = createPersonaAIGenRouter({ getProjectRoot: () => root });
+  app.route("/api/v1/project", personaAIGenRouter);
+
+  // ── Session Archive (Ar-1) ──
+  const sessionsRouter = createSessionsRouter(() => root);
+  app.route("/api/v1/project", sessionsRouter);
+
+  // ── Session Tags (R-02) ──
+  const sessionTagsRouter = createSessionTagsRouter(() => root);
+  app.route("/api/v1/project", sessionTagsRouter);
+
+  // ── Voice Profile CRUD (C3-1) ──
+  const voiceProfilesRouter = createVoiceProfilesRouter(() => root);
+  app.route("/api/v1/project", voiceProfilesRouter);
+
+  // ── Full-Text Search (Ar-2) ──
+  const searchRouter = createSearchRouter(() => root);
+  app.route("/api/v1/books", searchRouter);
+
+  app.route("/api/skills", createSkillsRouter(root));
+  app.route("/api/worlds", createWorldsRouter(root));
+  app.route("/api/worlds", createWorldsAIGenRouter(root));
+  app.route("/api/worlds", createMapsAIGenRouter(root));
+  app.route("/api/books", createBookWorldsRouter(root));
+  app.route("/api/foreshadowing", createForeshadowingRouter(root));
+  app.route("/api/publish", createPublishRouter(root));
+  app.route("/api/style-profiles", createStyleProfilesRouter(root));
+  app.route("/api/consistency", createConsistencyRouter(root));
+  app.route("/api/style-consistency", createStyleConsistencyRouter(root));
+  app.route("/api/v1/writing", createWritingContinueRouter(root));
+  app.route("/api/v1/project/agent-team", createAgentTeamRouter(root));
+  app.route("/api/v1/agent-templates", createAgentTemplatesRouter(root));
+
+  app.route("/api/v1/agent-templates", createAgentTemplatesRouter(root));
+  app.route("/api/v1/custom-agents", createCustomAgentsRouter(root));
+  app.route("/api/v1/agent-order", createAgentOrderRouter(root));
+
+  // ── Writer's Block Breakthrough (E4 simplified) ──
+  // GET  /api/v1/books/:id/writers-block — analyze context and return 3-5 advancement suggestions
+  app.get("/api/v1/books/:id/writers-block", async (c) => {
+    const id = c.req.param("id");
+    const dir = state.bookDir(id);
+    const { join } = await import("node:path");
+    const { readFile } = await import("node:fs/promises");
+
+    // ── 1. Load story frame ──
+    let storyFrame = "";
+    const framePaths = [
+      join(dir, "story", "outline", "story_frame.md"),
+      join(dir, "story", "story_bible.md"),
+    ];
+    for (const fp of framePaths) {
+      try { storyFrame = await readFile(fp, "utf-8"); break; } catch { /* try next */ }
+    }
+
+    // ── 2. Load character context ──
+    const roleDir = join(dir, "story", "roles");
+    let characters = "";
+    try {
+      const { readdir } = await import("node:fs/promises");
+      const tierDirs = ["主要角色", "次要角色", "major", "minor"];
+      const cards: string[] = [];
+      for (const td of tierDirs) {
+        let entries: string[];
+        try { entries = await readdir(join(roleDir, td)); } catch { continue; }
+        for (const entry of entries) {
+          if (!entry.endsWith(".md")) continue;
+          const content = await readFile(join(roleDir, td, entry), "utf-8").catch(() => "");
+          if (content.trim()) cards.push(`--- ${entry.replace(/\.md$/, "")} (${td}) ---\n${content}`);
+        }
+      }
+      characters = cards.join("\n\n");
+    } catch { characters = "(no character data available)"; }
+
+    // ── 3. Load current chapter state ──
+    let currentState = "";
+    try {
+      currentState = await readFile(join(dir, "story", "state", "current_state.json"), "utf-8");
+    } catch {
+      try { currentState = await readFile(join(dir, "story", "current_state.md"), "utf-8"); } catch { currentState = "(no current state)"; }
+    }
+
+    // ── 4. Load latest chapter content ──
+    let latestChapterContent = "";
+    try {
+      const { readdir } = await import("node:fs/promises");
+      const chaptersDir = join(dir, "story", "chapters");
+      let indexPath = join(chaptersDir, "index.json");
+      let index: { chapters?: Array<{ number: number }> };
+      try { index = JSON.parse(await readFile(indexPath, "utf-8")); } catch { index = { chapters: [] }; }
+      const chapters = (index.chapters ?? []).sort((a, b) => b.number - a.number);
+      if (chapters.length > 0) {
+        const latest = chapters[0].number;
+        try { latestChapterContent = await readFile(join(chaptersDir, `${latest}.md`), "utf-8").then(r => r.substring(0, 3000)); } catch { latestChapterContent = ""; }
+      }
+    } catch { latestChapterContent = ""; }
+
+    // ── 5. Call LLM ──
+    const client = createLLMClient(config.llm);
+    const systemPrompt = `你是一位资深小说创作顾问。你的任务是为一位卡文的作者提供 3-5 条推进建议。
+
+基于提供的故事框架、角色设定和当前写作状态，给出具体的推进方向。
+
+每条建议应包含：
+1. **情节方向** — 故事下一步可以朝哪个方向发展
+2. **角色行为** — 具体角色可以做什么
+3. **冲突点** — 这一方向下的核心冲突或张力
+
+请以 JSON 数组格式返回，每条建议为一个对象：
+{
+  "suggestions": [
+    { "direction": "情节方向标题", "plot": "具体情节描述", "characterAction": "角色行为描述", "conflict": "冲突点描述" }
+  ]
+}
+
+注意：
+- 建议必须基于已有设定，不离谱
+- 每条建议独立可行
+- 使用与用户作品相同的语言
+- 返回**纯 JSON**，不要 markdown 包装`;
+
+    const userPrompt = `## 故事框架 / Story Frame
+${storyFrame.substring(0, 4000) || "(无故事框架)"}
+
+## 角色设定 / Characters
+${characters.substring(0, 4000) || "(无角色数据)"}
+
+## 当前写作状态 / Current State
+${currentState.substring(0, 2000) || "(无状态数据)"}
+
+## 最新章节内容 / Latest Chapter (开头 3000 字)
+${latestChapterContent || "(无已写章节)"}
+
+请基于以上信息，给出 3-5 条推进建议。`;
+
+    try {
+      const response = await chatCompletion(client, config.llm.model, [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ], { temperature: 0.7, maxTokens: 4096 });
+
+      // Parse the response
+      const text = response.content.trim();
+      let suggestions: Array<Record<string, string>> = [];
+      // Try to extract JSON from the response (it might be wrapped in markdown code blocks)
+      const jsonMatch = text.match(/\[\s*\{.*\}\s*\]/s) || text.match(/\{[\s\S]*"suggestions"[\s\S]*\}/s);
+      if (jsonMatch) {
+        try { const parsed = JSON.parse(jsonMatch[0]); suggestions = parsed.suggestions ?? (Array.isArray(parsed) ? parsed : []); } catch { /* fallback */ }
+      }
+      if (suggestions.length === 0) {
+        // Fallback: return raw text
+        suggestions = [{ direction: "建议", plot: text.substring(0, 2000), characterAction: "", conflict: "" }];
+      }
+      return c.json({ suggestions });
+    } catch (err) {
+      return c.json({ error: { code: "LLM_ERROR", message: String(err) } }, 500);
+    }
   });
 
   return app;

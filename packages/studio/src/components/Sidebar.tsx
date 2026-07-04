@@ -46,6 +46,16 @@ import {
   Clapperboard,
   Rows3,
   Film,
+  Network,
+  CalendarDays,
+  Users,
+  Archive,
+  Sparkles,
+  AlertTriangle,
+  Globe,
+  Upload,
+  BarChart3,
+  PenLine,
 } from "lucide-react";
 import { InkosLogo } from "./InkosLogo";
 
@@ -70,7 +80,7 @@ interface BookSummary {
   readonly chaptersWritten: number;
 }
 
-interface Nav {
+export interface Nav {
   toDashboard: () => void;
   toChat: () => void;
   toBook: (id: string) => void;
@@ -81,10 +91,26 @@ interface Nav {
   toLogs: () => void;
   toGenres: () => void;
   toStyle: () => void;
+  toStyleConsistency: () => void;
   toImport: (tab?: "chapters" | "canon" | "fanfic" | "spinoff" | "imitation") => void;
   toRadar: () => void;
   toDoctor: () => void;
+  toRelations: (bookId: string) => void;
+  toTimeline: (bookId: string) => void;
   toFilmStudio: (id: string) => void;
+  toAgents: () => void;
+  toAgentPipeline: () => void;
+  toArchive: () => void;
+  toSkills: () => void;
+  toForeshadowing: (bookId: string) => void;
+  toWorlds: () => void;
+  toWorldDetail: (worldId: string) => void;
+  toWorldMap: (worldId: string) => void;
+  toWorldCreate: () => void;
+  toPublish: (bookId: string) => void;
+  toBookWorlds: (bookId: string) => void;
+  toChapterWizard: (bookId: string) => void;
+  toBookStyle: (bookId: string) => void;
 }
 
 export function Sidebar({ nav, activePage, sse, t }: {
@@ -105,6 +131,7 @@ export function Sidebar({ nav, activePage, sse, t }: {
   const activateSession = useChatStore((s) => s.activateSession);
   const createDraftSession = useChatStore((s) => s.createDraftSession);
   const renameSession = useChatStore((s) => s.renameSession);
+  const archiveSession = useChatStore((s) => s.archiveSession);
   const deleteSession = useChatStore((s) => s.deleteSession);
   const setInput = useChatStore((s) => s.setInput);
   const [renameTarget, setRenameTarget] = useState<{ sessionId: string; currentTitle: string } | null>(null);
@@ -399,6 +426,11 @@ export function Sidebar({ nav, activePage, sse, t }: {
                                   <span>改名</span>
                                 </DropdownMenuItem>
                                 <DropdownMenuSeparator />
+                                <DropdownMenuItem onClick={() => void archiveSession(session.sessionId)}>
+                                  <Archive size={14} />
+                                  <span>归档</span>
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
                                 <DropdownMenuItem
                                   variant="destructive"
                                   onClick={() => setDeleteTarget({ sessionId: session.sessionId, title: label })}
@@ -411,6 +443,62 @@ export function Sidebar({ nav, activePage, sse, t }: {
                           </div>
                         );
                       })}
+                      <button
+                        type="button"
+                        onClick={() => nav.toRelations(book.id)}
+                        className="w-full flex items-center gap-2 pl-9 pr-2 py-1.5 text-[13px] text-muted-foreground/50 hover:text-foreground hover:text-primary transition-colors"
+                      >
+                        <Network size={12} />
+                        <span>关系图谱</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => nav.toTimeline(book.id)}
+                        className="w-full flex items-center gap-2 pl-9 pr-2 py-1.5 text-[13px] text-muted-foreground/50 hover:text-foreground hover:text-primary transition-colors"
+                      >
+                        <CalendarDays size={12} />
+                        <span>时间线</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => nav.toBookWorlds(book.id)}
+                        className="w-full flex items-center gap-2 pl-9 pr-2 py-1.5 text-[13px] text-muted-foreground/50 hover:text-foreground hover:text-primary transition-colors"
+                      >
+                        <Globe size={12} />
+                        <span>本书世界</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => nav.toForeshadowing(book.id)}
+                        className="w-full flex items-center gap-2 pl-9 pr-2 py-1.5 text-[13px] text-muted-foreground/50 hover:text-foreground hover:text-primary transition-colors"
+                      >
+                        <AlertTriangle size={12} />
+                        <span>伏笔追踪</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => nav.toPublish(book.id)}
+                        className="w-full flex items-center gap-2 pl-9 pr-2 py-1.5 text-[13px] text-muted-foreground/50 hover:text-foreground hover:text-primary transition-colors"
+                      >
+                        <Upload size={12} />
+                        <span>发布</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => nav.toChapterWizard(book.id)}
+                        className="w-full flex items-center gap-2 pl-9 pr-2 py-1.5 text-[13px] text-muted-foreground/50 hover:text-foreground hover:text-primary transition-colors"
+                      >
+                        <Sparkles size={12} />
+                        <span>生成章节</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => nav.toBookStyle(book.id)}
+                        className="w-full flex items-center gap-2 pl-9 pr-2 py-1.5 text-[13px] text-muted-foreground/50 hover:text-foreground hover:text-primary transition-colors"
+                      >
+                        <PenLine size={12} />
+                        <span>文风检测</span>
+                      </button>
                       <button
                         type="button"
                         onClick={() => void handleCreateSession(book.id)}
@@ -524,6 +612,11 @@ export function Sidebar({ nav, activePage, sse, t }: {
                               <span>改名</span>
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
+                            <DropdownMenuItem onClick={() => void archiveSession(session.sessionId)}>
+                              <Archive size={14} />
+                              <span>归档</span>
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
                             <DropdownMenuItem
                               variant="destructive"
                               onClick={() => setDeleteTarget({ sessionId: session.sessionId, title: label })}
@@ -602,10 +695,40 @@ export function Sidebar({ nav, activePage, sse, t }: {
           </div>
           <div className="space-y-1">
             <SidebarItem
+              label="Agent Team"
+              icon={<Users size={16} />}
+              active={activePage === "agents" || activePage === "agent-pipeline"}
+              onClick={nav.toAgents}
+            />
+            <SidebarItem
+              label="世界设定"
+              icon={<Globe size={16} />}
+              active={activePage === "worlds" || activePage === "world-create" || activePage.startsWith("world-detail")}
+              onClick={nav.toWorlds}
+            />
+            <SidebarItem
+              label="会话归档"
+              icon={<Archive size={16} />}
+              active={activePage === "archive"}
+              onClick={nav.toArchive}
+            />
+            <SidebarItem
+              label="Skill 库"
+              icon={<Sparkles size={16} />}
+              active={activePage === "skills"}
+              onClick={nav.toSkills}
+            />
+            <SidebarItem
               label={t("nav.style")}
               icon={<Wand2 size={16} />}
               active={activePage === "style"}
               onClick={nav.toStyle}
+            />
+            <SidebarItem
+              label="文风统一检测"
+              icon={<BarChart3 size={16} />}
+              active={activePage === "style-consistency"}
+              onClick={nav.toStyleConsistency}
             />
             <SidebarItem
               label={t("nav.import")}
@@ -640,6 +763,30 @@ export function Sidebar({ nav, activePage, sse, t }: {
           </div>
         </div>
       )}
+
+      {/* AGPL-3.0 License Notice — required by AGPL §5(d) and §13 */}
+      <div className="px-3 py-2 border-t border-border/20">
+        <p className="text-[10px] leading-relaxed text-muted-foreground/40 text-center">
+          InkOS is free software under{' '}
+          <a
+            href="https://www.gnu.org/licenses/agpl-3.0.html"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline underline-offset-2 hover:text-muted-foreground/70 transition-colors"
+          >
+            AGPL-3.0
+          </a>
+          .{' '}
+          <a
+            href="https://github.com/Narcooo/inkos"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline underline-offset-2 hover:text-muted-foreground/70 transition-colors"
+          >
+            Source code
+          </a>
+        </p>
+      </div>
 
       <Dialog
         open={renameTarget !== null}
