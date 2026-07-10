@@ -26,6 +26,9 @@ import {
   Trash2,
   Save,
   Sparkles as SparklesIcon,
+  MessageSquare,
+  History,
+  Plus,
 } from "lucide-react";
 
 interface ChapterMeta {
@@ -54,12 +57,22 @@ type ReviseMode = "spot-fix" | "polish" | "rewrite" | "rework" | "anti-detect";
 type ExportFormat = "txt" | "md" | "epub" | "docx";
 type BookStatus = "active" | "paused" | "outlining" | "completed" | "dropped";
 
+interface SessionSummary {
+  readonly sessionId: string;
+  readonly bookId: string | null;
+  readonly title: string | null;
+  readonly messageCount: number;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+}
+
 interface Nav {
   toDashboard: () => void;
   toChapter: (bookId: string, num: number) => void;
   toAnalytics: (bookId: string) => void;
   toStyleProfile: (bookId: string) => void;
   toTruth: (bookId: string) => void;
+  toBookSession: (bookId: string, sessionId: string) => void;
 }
 
 function translateChapterStatus(status: string, t: TFunction): string {
@@ -111,6 +124,9 @@ export function BookDetail({
   const [settingsStatus, setSettingsStatus] = useState<BookStatus | null>(null);
   const [exportFormat, setExportFormat] = useState<ExportFormat>("txt");
   const [exportApprovedOnly, setExportApprovedOnly] = useState(false);
+  const [sessions, setSessions] = useState<ReadonlyArray<SessionSummary>>([]);
+  const [loadingSessions, setLoadingSessions] = useState(false);
+  const [showSessionsPanel, setShowSessionsPanel] = useState(false);
   const activity = useMemo(() => deriveBookActivity(sse.messages, bookId), [bookId, sse.messages]);
   const writing = writeRequestPending || activity.writing;
   const drafting = draftRequestPending || activity.drafting;
@@ -174,6 +190,47 @@ export function BookDetail({
       alert(e instanceof Error ? e.message : "Delete failed");
     } finally {
       setDeleting(false);
+    }
+  };
+
+  const loadSessionList = async () => {
+    setLoadingSessions(true);
+    try {
+      const res = await fetch(`/api/v1/sessions?bookId=${encodeURIComponent(bookId)}`);
+      const json = await res.json();
+      setSessions(json.sessions ?? []);
+    } catch (e) {
+      console.error("Failed to load sessions:", e);
+    } finally {
+      setLoadingSessions(false);
+    }
+  };
+
+  const handleCreateSession = async () => {
+    try {
+      const res = await fetch("/api/v1/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bookId }),
+      });
+      const json = await res.json();
+      if (json.session?.sessionId) {
+        nav.toBookSession(bookId, json.session.sessionId);
+      }
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to create session");
+    }
+  };
+
+  const handleOpenSession = (sessionId: string) => {
+    nav.toBookSession(bookId, sessionId);
+  };
+
+  const handleToggleSessionsPanel = async () => {
+    const nextState = !showSessionsPanel;
+    setShowSessionsPanel(nextState);
+    if (nextState && sessions.length === 0 && !loadingSessions) {
+      await loadSessionList();
     }
   };
 
@@ -443,6 +500,26 @@ export function BookDetail({
             <Wand2 size={14} />
             {t("book.styleProfile")}
           </button>
+          <button
+            onClick={handleToggleSessionsPanel}
+            className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-secondary/50 text-muted-foreground rounded-lg hover:text-foreground hover:bg-secondary transition-all border border-border/50"
+          >
+            <History size={14} />
+            {t("book.sessions")}
+            {sessions.length > 0 && (
+              <span className="ml-1 px-1.5 py-0.5 text-[10px] font-bold bg-primary/10 text-primary rounded-full">
+                {sessions.length}
+              </span>
+            )}
+          </button>
+          <button
+            onClick={handleCreateSession}
+            disabled={writing || drafting}
+            className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-primary/10 text-primary rounded-lg hover:bg-primary/20 transition-all border border-primary/20 disabled:opacity-50"
+          >
+            <Plus size={14} />
+            {t("book.newSession")}
+          </button>
           <div className="flex items-center gap-2">
             <select
               value={exportFormat}
@@ -483,6 +560,65 @@ export function BookDetail({
             </button>
           </div>
       </div>
+
+      {/* Sessions Panel */}
+      {showSessionsPanel && (
+        <div className="paper-sheet rounded-2xl border border-border/40 shadow-sm p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm font-bold uppercase tracking-widest text-muted-foreground">
+              {t("book.sessions")}
+            </h2>
+            <button
+              onClick={handleCreateSession}
+              disabled={writing || drafting}
+              className="flex items-center gap-2 px-3 py-1.5 text-xs font-bold bg-primary text-primary-foreground rounded-lg hover:scale-105 active:scale-95 transition-all disabled:opacity-50"
+            >
+              <Plus size={14} />
+              {t("book.newSession")}
+            </button>
+          </div>
+          
+          {loadingSessions ? (
+            <div className="flex items-center justify-center py-12">
+              <div className="w-6 h-6 border-2 border-primary/20 border-t-primary rounded-full animate-spin" />
+              <span className="ml-3 text-sm text-muted-foreground">{t("common.loading")}</span>
+            </div>
+          ) : sessions.length === 0 ? (
+            <div className="text-center py-12">
+              <MessageSquare size={48} className="mx-auto text-muted-foreground/30 mb-3" />
+              <p className="text-sm text-muted-foreground">{t("book.noSessions")}</p>
+              <button
+                onClick={handleCreateSession}
+                disabled={writing || drafting}
+                className="mt-4 inline-flex items-center gap-2 px-4 py-2 text-xs font-bold bg-primary text-primary-foreground rounded-lg hover:scale-105 active:scale-95 transition-all disabled:opacity-50"
+              >
+                <Plus size={14} />
+                {t("book.newSession")}
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {sessions.map((session) => (
+                <button
+                  key={session.sessionId}
+                  onClick={() => handleOpenSession(session.sessionId)}
+                  className="w-full flex items-center gap-4 p-4 rounded-lg border border-border/50 bg-background/50 hover:bg-secondary/30 hover:border-primary/30 transition-all group"
+                >
+                  <div className="flex-1 text-left">
+                    <div className="font-medium text-sm text-foreground group-hover:text-primary transition-colors">
+                      {session.title || t("session.untitled")}
+                    </div>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      {session.messageCount} {t("session.messages")} · {new Date(session.updatedAt).toLocaleString()}
+                    </div>
+                  </div>
+                  <ChevronLeft size={16} className="text-muted-foreground/50 group-hover:text-primary group-hover:-rotate-180 transition-all" />
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Book Settings */}
       <div className="paper-sheet rounded-2xl border border-border/40 shadow-sm p-6">

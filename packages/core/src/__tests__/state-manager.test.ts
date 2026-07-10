@@ -1155,6 +1155,110 @@ describe("StateManager", () => {
 
       expect(hooks.hooks.map((hook) => hook.hookId)).toEqual(["H009"]);
     });
+
+    it("filters out [new] placeholder hook ids when bootstrapping from markdown", async () => {
+      const bookId = "runtime-state-new-placeholder-book";
+      const storyDir = join(manager.bookDir(bookId), "story");
+      await mkdir(storyDir, { recursive: true });
+      await Promise.all([
+        writeFile(
+          join(storyDir, "current_state.md"),
+          [
+            "# Current State",
+            "",
+            "| Field | Value |",
+            "| --- | --- |",
+            "| Current Chapter | 2 |",
+            "",
+          ].join("\n"),
+          "utf-8",
+        ),
+        writeFile(
+          join(storyDir, "pending_hooks.md"),
+          [
+            "| hook_id | start_chapter | type | status | last_advanced | expected_payoff | notes |",
+            "| --- | --- | --- | --- | --- | --- | --- |",
+            "| H001 | 1 | mystery | open | 1 | Reveal the secret | A real hook |",
+            "| [new] | 2 | relationship | open | 2 | New character connection | Placeholder hook |",
+            "| [NEW] | 2 | artifact | open | 2 | Mysterious object | Uppercase placeholder |",
+            "",
+          ].join("\n"),
+          "utf-8",
+        ),
+        writeFile(
+          join(storyDir, "chapter_summaries.md"),
+          [
+            "| chapter | title | characters | events | stateChanges | hookActivity | mood | chapterType |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- |",
+            "| 2 | Chapter Two | Character | Events | Changes | H001 mentioned | mood | type |",
+            "",
+          ].join("\n"),
+          "utf-8",
+        ),
+      ]);
+
+      await manager.ensureRuntimeState(bookId, 2);
+
+      const hooks = JSON.parse(
+        await readFile(join(manager.stateDir(bookId), "hooks.json"), "utf-8"),
+      ) as { hooks: Array<{ hookId: string }> };
+
+      expect(hooks.hooks.map((hook) => hook.hookId)).toEqual(["H001"]);
+    });
+
+    it("renames duplicate hook ids when loading corrupted hooks.json", async () => {
+      const bookId = "runtime-state-duplicate-hook-id-book";
+      const storyDir = join(manager.bookDir(bookId), "story");
+      const stateDir = join(storyDir, "state");
+      await mkdir(stateDir, { recursive: true });
+      await Promise.all([
+        writeFile(
+          join(storyDir, "current_state.md"),
+          [
+            "# Current State",
+            "",
+            "| Field | Value |",
+            "| --- | --- |",
+            "| Current Chapter | 3 |",
+            "",
+          ].join("\n"),
+          "utf-8",
+        ),
+        writeFile(
+          join(stateDir, "hooks.json"),
+          JSON.stringify({
+            hooks: [
+              { hookId: "[new]", startChapter: 2, type: "mystery", status: "open", lastAdvancedChapter: 2, expectedPayoff: "Secret 1", notes: "" },
+              { hookId: "[new]", startChapter: 2, type: "relationship", status: "open", lastAdvancedChapter: 2, expectedPayoff: "Secret 2", notes: "" },
+              { hookId: "[new]", startChapter: 3, type: "artifact", status: "open", lastAdvancedChapter: 3, expectedPayoff: "Secret 3", notes: "" },
+            ],
+          }, null, 2),
+          "utf-8",
+        ),
+        writeFile(
+          join(storyDir, "chapter_summaries.md"),
+          [
+            "| chapter | title | characters | events | stateChanges | hookActivity | mood | chapterType |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- |",
+            "| 3 | Chapter Three | Character | Events | Changes | hooks advanced | mood | type |",
+            "",
+          ].join("\n"),
+          "utf-8",
+        ),
+      ]);
+
+      await manager.ensureRuntimeState(bookId, 3);
+
+      const hooks = JSON.parse(
+        await readFile(join(stateDir, "hooks.json"), "utf-8"),
+      ) as { hooks: Array<{ hookId: string }> };
+
+      const hookIds = hooks.hooks.map((hook) => hook.hookId);
+      expect(hookIds).toContain("[new]");
+      expect(hookIds).toContain("[new]-2");
+      expect(hookIds).toContain("[new]-3");
+      expect(hookIds.length).toBe(3);
+    });
   });
 
   // -------------------------------------------------------------------------

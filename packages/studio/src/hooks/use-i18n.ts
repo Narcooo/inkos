@@ -116,6 +116,14 @@ const strings = {
   "book.statusCompleted": { zh: "已完成", en: "Completed" },
   "book.statusDropped": { zh: "已放弃", en: "Dropped" },
   "book.truthFiles": { zh: "真相文件", en: "Truth Files" },
+  "book.sessions": { zh: "会话历史", en: "Sessions" },
+  "book.newSession": { zh: "新对话", en: "New Session" },
+  "book.viewSessions": { zh: "查看历史会话", en: "View Sessions" },
+  "book.noSessions": { zh: "暂无会话记录", en: "No sessions yet" },
+
+  // Session
+  "session.untitled": { zh: "未命名会话", en: "Untitled Session" },
+  "session.messages": { zh: "条消息", en: "messages" },
 
   // Style
   "style.title": { zh: "文风分析", en: "Style Analyzer" },

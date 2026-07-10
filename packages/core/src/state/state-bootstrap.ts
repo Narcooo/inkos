@@ -447,23 +447,38 @@ function repairHooksStateInput(value: unknown, warnings: string[]): { readonly v
   }
 
   let changed = false;
+  const seenHookIds = new Set<string>();
   const hooks = value.hooks.map((hook, index) => {
     if (!isRecord(hook)) return hook;
-    const hookId = typeof hook.hookId === "string" && hook.hookId.trim()
+    let hookId = typeof hook.hookId === "string" && hook.hookId.trim()
       ? hook.hookId.trim()
       : `hooks[${index}]`;
+
+    let repairedHookId = hookId;
+    if (seenHookIds.has(hookId)) {
+      let suffix = 2;
+      while (seenHookIds.has(`${hookId}-${suffix}`)) {
+        suffix += 1;
+      }
+      repairedHookId = `${hookId}-${suffix}`;
+      appendWarning(warnings, `${hookId}: duplicate hook id, renamed to ${repairedHookId}`);
+      changed = true;
+    }
+    seenHookIds.add(repairedHookId);
+
     if (typeof hook.type === "string" && hook.type.trim().length > 0) {
-      if (hook.type === hook.type.trim()) {
+      if (hook.type === hook.type.trim() && repairedHookId === hookId) {
         return hook;
       }
       changed = true;
-      return { ...hook, type: hook.type.trim() };
+      return { ...hook, type: hook.type.trim(), hookId: repairedHookId };
     }
 
     changed = true;
-    appendWarning(warnings, `${hookId}: empty hook type normalized to "unspecified"`);
+    appendWarning(warnings, `${repairedHookId}: empty hook type normalized to "unspecified"`);
     return {
       ...hook,
+      hookId: repairedHookId,
       type: "unspecified",
     };
   });

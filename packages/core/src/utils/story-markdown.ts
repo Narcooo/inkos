@@ -240,6 +240,7 @@ export function normalizeHookId(value: string | undefined): string {
     previous = normalized;
     normalized = normalized
       .replace(/^\[(.+?)\]\([^)]+\)$/u, "$1")
+      .replace(/^\[(.+)\]$/u, "$1")
       .replace(/^\*\*(.+)\*\*$/u, "$1")
       .replace(/^__(.+)__$/u, "$1")
       .replace(/^\*(.+)\*$/u, "$1")
@@ -252,6 +253,9 @@ export function normalizeHookId(value: string | undefined): string {
     .replace(/-{2,}/g, "-")
     .replace(/^-+|-+$/g, "")
     .trim();
+  if (/^(new|无|空|none|nil|null|暂无|n\/a|na|n-a|tbd|todo|待定)$/i.test(normalized)) {
+    return "";
+  }
   return /[a-z0-9\u4e00-\u9fff]/iu.test(normalized) ? normalized : "";
 }
 

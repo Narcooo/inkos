@@ -3351,17 +3351,34 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       // Step 4: 创建 Agent
       console.log(`[Humanize] Step 4: 创建 AI 味去除 Agent...`);
       const { AITasteRemoverAgent, createLogger, createStderrSink } = await import("@actalk/inkos-core");
+      
+      // Load current config to get the actual model
+      const currentConfig = await loadCurrentProjectConfig();
       const pipeline = new PipelineRunner(await buildPipelineConfig());
       
-      // Get LLM config from pipeline
+      // Get LLM config from pipeline and fallback to actual config if needed
       const llmClient = pipeline.config?.client;
-      const llmModel = pipeline.config?.model;
+      let llmModel = pipeline.config?.model;
+      
+      // If model is placeholder, use the actual configured model
+      if (llmModel === "noop-model" || !llmModel) {
+        llmModel = currentConfig.llm.model;
+        // Also check failover config for model
+        const failoverConfig = (currentConfig.llm as Record<string, unknown>)?.failover as Record<string, unknown> | undefined;
+        if (failoverConfig?.fallbacks && Array.isArray(failoverConfig.fallbacks) && failoverConfig.fallbacks.length > 0) {
+          const firstFallback = failoverConfig.fallbacks[0];
+          if (typeof firstFallback === "object" && firstFallback !== null && "model" in firstFallback) {
+            llmModel = String(firstFallback.model);
+          }
+        }
+      }
       
       console.log(`[Humanize] LLM 配置检查:`);
       console.log(`  - Client: ${llmClient ? llmClient.provider : "未配置"}`);
       console.log(`  - Model: ${llmModel ?? "未配置"}`);
+      console.log(`  - 原始配置模型: ${currentConfig.llm.model}`);
       
-      if (!llmClient || !llmModel) {
+      if (!llmClient || !llmModel || llmModel === "noop-model") {
         console.log(`[Humanize] ✗ LLM 未配置，终止处理`);
         throw new Error("LLM not configured. Please configure LLM in settings first.");
       }

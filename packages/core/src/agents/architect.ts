@@ -1148,7 +1148,23 @@ ${trimmed}\n`;
     }
 
     const language: "zh" | "en" = /[\u4e00-\u9fff]/.test(section) ? "zh" : "en";
-    const normalizedHooks = dataRows.map((row, index) => {
+    const validDataRows = dataRows.filter((row) => {
+      const rawId = (row[0] ?? "").trim();
+      const normalized = rawId
+        .replace(/^\[(.+?)\]\([^)]+\)$/u, "$1")
+        .replace(/^\[(.+)\]$/u, "$1")
+        .replace(/^\*\*(.+)\*\*$/u, "$1")
+        .replace(/^__(.+)__$/u, "$1")
+        .replace(/^\*(.+)\*$/u, "$1")
+        .replace(/^_(.+)_$/u, "$1")
+        .replace(/^`(.+)`$/u, "$1")
+        .replace(/^~~(.+)~~$/u, "$1")
+        .replace(/-{2,}/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .trim();
+      return !/^(new|无|空|none|nil|null|暂无|n\/a|na|n-a|tbd|todo|待定)$/i.test(normalized);
+    });
+    const normalizedHooks = validDataRows.map((row, index) => {
       const rawProgress = row[4] ?? "";
       const normalizedProgress = this.parseHookChapterNumber(rawProgress);
       const seedNote = normalizedProgress === 0 && this.hasNarrativeProgress(rawProgress)
