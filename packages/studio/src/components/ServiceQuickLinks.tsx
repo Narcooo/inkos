@@ -27,6 +27,11 @@ const SERVICE_QUICK_LINKS: Record<string, ReadonlyArray<{ zh: string; en: string
     { zh: "模型", en: "Models", href: "https://openrouter.ai/models" },
     { zh: "文档", en: "Docs", href: "https://openrouter.ai/docs/api-reference/overview" },
   ],
+  requesty: [
+    { zh: "API Keys", en: "API Keys", href: "https://app.requesty.ai/api-keys" },
+    { zh: "模型", en: "Models", href: "https://app.requesty.ai/router/list" },
+    { zh: "文档", en: "Docs", href: "https://docs.requesty.ai/" },
+  ],
 };
 
 export function getServiceQuickLinks(serviceId: string): ReadonlyArray<ServiceQuickLink> {

@@ -75,7 +75,7 @@ v1.6.0 は、InkOS を開放世界 Play からさらにインタラクティブ�
 
 **Runtime Skill とリサーチ** — `.inkos/skills/` に専門 skill を追加し、`@skill-id` で強制使用できます。外部事実が必要な場合は出典付き Markdown リサーチレポートを生成できます。
 
-**モデル設定** — Studio はサービス設定、モデルルーティング、表紙サービス、[keaiapi](https://keaiapi.com/) / OpenRouter などのモデル集約入口、カスタム OpenAI-compatible エンドポイントに対応します。
+**モデル設定** — Studio はサービス設定、モデルルーティング、表紙サービス、[keaiapi](https://keaiapi.com/) / OpenRouter / [Requesty](https://requesty.ai/) などのモデル集約入口、カスタム OpenAI-compatible エンドポイントに対応します。
 
 <p align="center">
   <img src="assets/play-item-warcraft.png" width="420" alt="InkOS Play アイテム画像例">
@@ -123,7 +123,7 @@ inkos
 
 Studio を開き、**モデル設定**へ進みます：
 
-1. Google Gemini、Moonshot、MiniMax、DeepSeek、keaiapi、OpenRouter、またはカスタムエンドポイントを選択。
+1. Google Gemini、Moonshot、MiniMax、DeepSeek、keaiapi、OpenRouter、Requesty、またはカスタムエンドポイントを選択。
 2. API Key を貼り付けて接続をテスト。
 3. 利用可能なモデルを選んで保存。
 4. Studio Chat または書籍ページに戻って創作を開始。

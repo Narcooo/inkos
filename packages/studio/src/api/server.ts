@@ -226,7 +226,7 @@ function compareServiceListItems(
   left: { readonly service: string },
   right: { readonly service: string },
 ): number {
-  const priority = ["kkaiapi", "openrouter", "newapi", "siliconcloud"];
+  const priority = ["kkaiapi", "openrouter", "requesty", "newapi", "siliconcloud"];
   const leftPriority = priority.indexOf(left.service);
   const rightPriority = priority.indexOf(right.service);
   if (leftPriority !== -1 || rightPriority !== -1) {
