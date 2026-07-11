@@ -108,9 +108,9 @@ describe("providers structural integrity", () => {
     expect(ids).not.toContain("higress");
   });
 
-  it("B4：海外/本地/自定义/聚合/GH 全部收录（8 个）", () => {
+  it("B4：海外/本地/自定义/聚合/GH 全部收录（含 Requesty 聚合入口）", () => {
     const ids = getAllEndpoints().map((p) => p.id);
-    for (const id of ["ollama", "openrouter", "custom", "mistral", "xai", "newapi", "githubCopilot", "kkaiapi"]) {
+    for (const id of ["ollama", "openrouter", "requesty", "custom", "mistral", "xai", "newapi", "githubCopilot", "kkaiapi"]) {
       expect(ids).toContain(id);
     }
   });
@@ -120,9 +120,15 @@ describe("providers structural integrity", () => {
     expect(getEndpoint("newapi")?.baseUrl).toBe("");
   });
 
-  it("B4：总 provider 数 = 30（不含 CodingPlan 分组，R5 删 qwen / higress 且精简聚合入口后）", () => {
+  it("B4：Requesty 走 OpenAI 兼容路由，固定 baseUrl", () => {
+    expect(getEndpoint("requesty")?.api).toBe("openai-responses");
+    expect(getEndpoint("requesty")?.baseUrl).toBe("https://router.requesty.ai/v1");
+    expect(getEndpoint("requesty")?.group).toBe("aggregator");
+  });
+
+  it("B4：总 provider 数 = 31（30 base + Requesty 聚合入口）", () => {
     const nonCoding = getAllEndpoints().filter((p) => p.group !== "codingPlan");
-    expect(nonCoding.length).toBe(30);
+    expect(nonCoding.length).toBe(31);
   });
 
   it("B6：CodingPlan 8 个 provider 全部收录", () => {
@@ -136,8 +142,8 @@ describe("providers structural integrity", () => {
     }
   });
 
-  it("B6：总 provider 数 = 38 (30 base + 8 CodingPlan)", () => {
-    expect(getAllEndpoints().length).toBe(38);
+  it("B6：总 provider 数 = 39 (31 base + 8 CodingPlan)", () => {
+    expect(getAllEndpoints().length).toBe(39);
   });
 
   it("B6：CodingPlan provider 都走 anthropic-messages", () => {

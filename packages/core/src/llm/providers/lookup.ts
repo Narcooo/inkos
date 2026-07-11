@@ -9,7 +9,7 @@ const PROVIDER_PRIORITY: readonly string[] = [
   "anthropic", "openai", "google", "deepseek", "bailian", "moonshot", "kimicode",
   "zhipu", "minimax", "xai",
   "siliconcloud",
-  "openrouter", "aihubmix", "novita",
+  "openrouter", "requesty", "aihubmix", "novita",
 ];
 
 /**
