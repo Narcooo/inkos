@@ -1,10 +1,10 @@
-export type CoverProviderId = "kkaiapi" | "openai" | "google";
+export type CoverProviderId = "kkaiapi" | "openai" | "google" | "dashscope";
 
 export interface CoverProviderPreset {
   readonly service: CoverProviderId;
   readonly label: string;
   readonly baseUrl: string;
-  readonly api: "responses" | "images" | "gemini";
+  readonly api: "responses" | "images" | "gemini" | "dashscope";
   readonly defaultModel: string;
   readonly models: readonly string[];
 }
@@ -33,6 +33,14 @@ export const COVER_PROVIDER_PRESETS: readonly CoverProviderPreset[] = [
     api: "gemini",
     defaultModel: "gemini-3.1-flash-image-preview",
     models: ["gemini-3.1-flash-image-preview", "gemini-2.5-flash-image"],
+  },
+  {
+    service: "dashscope",
+    label: "通义万相 (DashScope)",
+    baseUrl: "https://dashscope.aliyuncs.com/api/v1",
+    api: "dashscope",
+    defaultModel: "wan2.6-t2i",
+    models: ["wan2.6-t2i", "wan2.5-t2i", "wan2.1-t2i-plus", "wan2.1-t2i-turbo", "wanx-v1"],
   },
 ];
 
