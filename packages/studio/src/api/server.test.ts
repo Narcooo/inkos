@@ -1073,6 +1073,15 @@ describe("createStudioServer daemon lifecycle", () => {
     const status = await app.request("http://localhost/api/v1/services/openaiCodex/oauth/oauth-1");
     await expect(status.json()).resolves.toEqual({ state: "success" });
 
+    const { OpenAICodexOAuthBusyError } = await import("./openai-codex-oauth.js");
+    oauth.start.mockRejectedValueOnce(new OpenAICodexOAuthBusyError());
+    const conflict = await app.request("http://localhost/api/v1/services/openaiCodex/oauth/start", { method: "POST" });
+    expect(conflict.status).toBe(409);
+
+    oauth.start.mockRejectedValueOnce(new Error("OAuth initialization failed"));
+    const failure = await app.request("http://localhost/api/v1/services/openaiCodex/oauth/start", { method: "POST" });
+    expect(failure.status).toBe(500);
+
     const secret = await app.request("http://localhost/api/v1/services/openaiCodex/secret");
     await expect(secret.json()).resolves.toEqual({
       apiKey: "",

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { fetchJson } from "../hooks/use-api";
 import { useServiceStore } from "../store/service";
 import { Eye, EyeOff, Loader2, ArrowLeft, Trash2 } from "lucide-react";
@@ -64,6 +64,11 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
   const [verifiedProbe, setVerifiedProbe] = useState<VerifiedProbe | null>(null);
   const [oauthSessionId, setOauthSessionId] = useState("");
   const [oauthCode, setOauthCode] = useState("");
+  const oauthAttemptRef = useRef(0);
+
+  useEffect(() => () => {
+    oauthAttemptRef.current += 1;
+  }, [serviceId]);
 
   // -- Unified connection status --
   const [status, setStatus] = useState<ConnectionStatus>({ state: "idle" });
@@ -187,22 +192,27 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
   };
 
   const handleOpenAICodexLogin = async () => {
+    const attemptId = ++oauthAttemptRef.current;
     setStatus({ state: "testing" });
     const popup = window.open("about:blank", "inkos-openai-codex-oauth", "popup,width=720,height=820");
     if (popup) popup.opener = null;
     try {
       const login = await startOpenAICodexOAuth();
+      if (oauthAttemptRef.current !== attemptId) return;
       setOauthSessionId(login.sessionId);
       if (popup) popup.location.href = login.url;
       else window.location.assign(login.url);
 
       for (let attempt = 0; attempt < 600; attempt += 1) {
         await new Promise((resolve) => window.setTimeout(resolve, 1_000));
+        if (oauthAttemptRef.current !== attemptId) return;
         const current = await readOpenAICodexOAuthStatus(login.sessionId);
         if (current.state === "error") throw new Error(current.error);
         if (current.state === "success") {
           await refreshServices();
           await fetchLiveModels(serviceId);
+          if (oauthAttemptRef.current !== attemptId) return;
+          popup?.close();
           setStatus({ state: "idle" });
           setOauthSessionId("");
           setOauthCode("");
@@ -212,6 +222,7 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
       throw new Error(tr("登录超时，请重试", "Login timed out; try again"));
     } catch (error) {
       popup?.close();
+      if (oauthAttemptRef.current !== attemptId) return;
       setStatus({ state: "error", message: error instanceof Error ? error.message : tr("登录失败", "Login failed") });
     }
   };

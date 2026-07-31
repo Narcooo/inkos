@@ -1,5 +1,6 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import { getOAuthApiKey, type OAuthCredentials } from "@mariozechner/pi-ai/oauth";
 
 export interface OAuthServiceSecret {
@@ -18,6 +19,7 @@ export interface SecretsFile {
 
 const SECRETS_DIR = ".inkos";
 const SECRETS_FILE = "secrets.json";
+const oauthApiKeyRequests = new Map<string, Promise<string | null>>();
 
 const LEGACY_SERVICE_ID_REMAP: Record<string, string> = {
   siliconflow: "siliconcloud",
@@ -81,24 +83,22 @@ export async function getServiceApiKey(
   if (entry?.apiKey) return entry.apiKey;
 
   if (entry?.oauth) {
-    const result = await getOAuthApiKey(entry.oauth.provider, {
-      [entry.oauth.provider]: entry.oauth.credentials,
-    });
-    if (result) {
-      if (result.newCredentials !== entry.oauth.credentials) {
-        const latest = await loadSecrets(projectRoot);
-        const latestEntry = latest.services[service];
-        if (latestEntry?.oauth?.provider === entry.oauth.provider) {
-          latest.services[service] = {
-            oauth: {
-              provider: entry.oauth.provider,
-              credentials: result.newCredentials,
-            },
-          };
-          await saveSecrets(projectRoot, latest);
-        }
+    const requestKey = [
+      join(projectRoot, SECRETS_DIR, SECRETS_FILE),
+      service,
+      oauthCredentialVersion(entry.oauth.credentials),
+    ].join("\0");
+    const activeRequest = oauthApiKeyRequests.get(requestKey);
+    if (activeRequest) return await activeRequest;
+
+    const request = resolveOAuthApiKey(projectRoot, service, entry.oauth);
+    oauthApiKeyRequests.set(requestKey, request);
+    try {
+      return await request;
+    } finally {
+      if (oauthApiKeyRequests.get(requestKey) === request) {
+        oauthApiKeyRequests.delete(requestKey);
       }
-      return result.apiKey;
     }
   }
 
@@ -107,6 +107,53 @@ export async function getServiceApiKey(
   if (process.env[envKey]) return process.env[envKey]!;
 
   return null;
+}
+
+async function resolveOAuthApiKey(
+  projectRoot: string,
+  service: string,
+  oauth: OAuthServiceSecret,
+): Promise<string | null> {
+  const originalCredentials = oauth.credentials;
+  const result = await getOAuthApiKey(oauth.provider, {
+    [oauth.provider]: originalCredentials,
+  });
+  if (!result) return null;
+
+  if (!sameOAuthCredentials(result.newCredentials, originalCredentials)) {
+    const latest = await loadSecrets(projectRoot);
+    const latestOAuth = latest.services[service]?.oauth;
+    if (
+      latestOAuth?.provider === oauth.provider
+      && sameOAuthCredentials(latestOAuth.credentials, originalCredentials)
+    ) {
+      latest.services[service] = {
+        ...latest.services[service],
+        oauth: {
+          provider: oauth.provider,
+          credentials: result.newCredentials,
+        },
+      };
+      await saveSecrets(projectRoot, latest);
+    }
+  }
+  return result.apiKey;
+}
+
+function sameOAuthCredentials(left: OAuthCredentials, right: OAuthCredentials): boolean {
+  return left.access === right.access
+    && left.refresh === right.refresh
+    && left.expires === right.expires;
+}
+
+function oauthCredentialVersion(credentials: OAuthCredentials): string {
+  return createHash("sha256")
+    .update(credentials.access)
+    .update("\0")
+    .update(credentials.refresh)
+    .update("\0")
+    .update(String(credentials.expires))
+    .digest("hex");
 }
 
 export function hasServiceCredentials(secret: ServiceSecret | undefined): boolean {

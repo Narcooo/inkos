@@ -132,6 +132,7 @@ import { ApiError } from "./errors.js";
 import { buildStudioBookConfig } from "./book-create.js";
 import {
   OpenAICodexOAuthSessionManager,
+  OpenAICodexOAuthBusyError,
   type OpenAICodexOAuthSessionManagerLike,
 } from "./openai-codex-oauth.js";
 import {
@@ -3714,7 +3715,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     } catch (error) {
       return c.json({
         error: error instanceof Error ? error.message : String(error),
-      }, 409);
+      }, error instanceof OpenAICodexOAuthBusyError ? 409 : 500);
     }
   });
 

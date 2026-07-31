@@ -23,6 +23,13 @@ export interface OpenAICodexOAuthSessionManagerLike {
   submitCode(sessionId: string, code: string): boolean;
 }
 
+export class OpenAICodexOAuthBusyError extends Error {
+  constructor() {
+    super("An OpenAI Codex login is already in progress.");
+    this.name = "OpenAICodexOAuthBusyError";
+  }
+}
+
 export class OpenAICodexOAuthSessionManager implements OpenAICodexOAuthSessionManagerLike {
   private readonly sessions = new Map<string, Session>();
   private activeSessionId: string | undefined;
@@ -35,7 +42,7 @@ export class OpenAICodexOAuthSessionManager implements OpenAICodexOAuthSessionMa
 
   async start(): Promise<{ sessionId: string; url: string; instructions?: string }> {
     if (this.activeSessionId) {
-      throw new Error("An OpenAI Codex login is already in progress.");
+      throw new OpenAICodexOAuthBusyError();
     }
 
     const sessionId = randomUUID();
@@ -82,7 +89,7 @@ export class OpenAICodexOAuthSessionManager implements OpenAICodexOAuthSessionMa
     }).finally(() => {
       clearTimeout(timeout);
       if (this.activeSessionId === sessionId) this.activeSessionId = undefined;
-      const cleanup = setTimeout(() => this.sessions.delete(sessionId), 5 * 60 * 1000);
+      const cleanup = setTimeout(() => this.sessions.delete(sessionId), 15 * 60 * 1000);
       cleanup.unref?.();
     });
 

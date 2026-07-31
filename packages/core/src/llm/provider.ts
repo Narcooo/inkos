@@ -1319,7 +1319,9 @@ async function chatCompletionViaPiAi(
   const piModel = resolvePiModel(client, model);
   const context = toPiContext(messages);
   const streamOpts = {
-    temperature: resolved.temperature,
+    ...(piModel.api === "openai-codex-responses"
+      ? {}
+      : { temperature: resolved.temperature }),
     maxTokens: resolved.maxTokens,
     apiKey: client._apiKey,
     headers: mergeUserAgent(piModel.headers),

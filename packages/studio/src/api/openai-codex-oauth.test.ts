@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import type { OpenAICodexLoginOptions } from "@actalk/inkos-core";
-import { OpenAICodexOAuthSessionManager } from "./openai-codex-oauth.js";
+import {
+  OpenAICodexOAuthBusyError,
+  OpenAICodexOAuthSessionManager,
+} from "./openai-codex-oauth.js";
 
 describe("OpenAICodexOAuthSessionManager", () => {
   it("publishes the authorization URL and persists successful credentials", async () => {
@@ -45,7 +48,7 @@ describe("OpenAICodexOAuthSessionManager", () => {
     );
 
     const started = await manager.start();
-    await expect(manager.start()).rejects.toThrow("already in progress");
+    await expect(manager.start()).rejects.toBeInstanceOf(OpenAICodexOAuthBusyError);
     manager.submitCode(started.sessionId, "done");
   });
 });

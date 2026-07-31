@@ -125,6 +125,19 @@ describe("providers structural integrity", () => {
     expect(getEndpoint("newapi")?.baseUrl).toBe("");
   });
 
+  it("OpenAI Codex uses the ChatGPT OAuth Responses transport", () => {
+    const codex = getEndpoint("openaiCodex");
+    expect(codex).toMatchObject({
+      label: "OpenAI Codex (ChatGPT)",
+      group: "overseas",
+      api: "openai-codex-responses",
+      baseUrl: "https://chatgpt.com/backend-api",
+      checkModel: "gpt-5.4",
+      transportDefaults: { apiFormat: "responses", stream: true },
+    });
+    expect(codex?.models.some((model) => model.id === "gpt-5.4")).toBe(true);
+  });
+
   it("B4：总 provider 数 = 31（不含 CodingPlan 分组）", () => {
     const nonCoding = getAllEndpoints().filter((p) => p.group !== "codingPlan");
     expect(nonCoding.length).toBe(31);
