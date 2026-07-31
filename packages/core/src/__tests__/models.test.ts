@@ -370,6 +370,18 @@ describe("ProjectConfigSchema", () => {
     expect(parsed.writing.reviewMode).toBe("manual");
   });
 
+  it("accepts OpenAI Codex as an OAuth-backed cover provider", () => {
+    const parsed = ProjectConfigSchema.parse({
+      ...validProject,
+      llm: {
+        ...validProject.llm,
+        cover: { service: "openaiCodex", model: "gpt-image-2" },
+      },
+    });
+
+    expect(parsed.llm.cover).toEqual({ service: "openaiCodex", model: "gpt-image-2" });
+  });
+
   it("applies default empty notify array", () => {
     const withoutNotify = {
       name: "p1",

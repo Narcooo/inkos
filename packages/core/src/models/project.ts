@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { COVER_PROVIDER_IDS } from "../llm/cover-providers.js";
 
 // C1 (v2.0.0 breaking): `maxTokens` 字段已被 providers bank 接管；zod 用 strip mode 静默丢弃老配置里的 `maxTokens`。
 const LLMServiceEntrySchema = z.object({
@@ -11,7 +12,7 @@ const LLMServiceEntrySchema = z.object({
 });
 
 const LLMCoverConfigSchema = z.object({
-  service: z.enum(["kkaiapi", "openai", "google"]),
+  service: z.enum(COVER_PROVIDER_IDS),
   model: z.string().min(1),
 }).optional();
 

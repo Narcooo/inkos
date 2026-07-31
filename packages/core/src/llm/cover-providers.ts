@@ -1,4 +1,5 @@
-export type CoverProviderId = "kkaiapi" | "openai" | "openaiCodex" | "google";
+export const COVER_PROVIDER_IDS = ["kkaiapi", "openai", "openaiCodex", "google"] as const;
+export type CoverProviderId = typeof COVER_PROVIDER_IDS[number];
 
 export interface CoverProviderPreset {
   readonly service: CoverProviderId;
