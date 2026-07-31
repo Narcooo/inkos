@@ -32,12 +32,14 @@ import {
   resolveServiceModel,
   loadSecrets,
   saveSecrets,
+  getServiceApiKey,
   hasServiceCredentials,
   getServiceAuthStatus,
   saveServiceOAuthCredentials,
   OPENAI_CODEX_SERVICE_ID,
   OPENAI_CODEX_OAUTH_PROVIDER_ID,
   OPENAI_CODEX_DEFAULT_MODEL,
+  listOpenAICodexModels,
   listModelsForService,
   isApiKeyOptionalForEndpoint,
   getAllEndpoints,
@@ -3604,7 +3606,8 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     const cover = normalizeCoverConfig(llm.cover);
     const secrets = await loadSecrets(root);
     const keyFor = (service: string): boolean =>
-      Boolean(secrets.services[coverSecretKey(service)]?.apiKey || secrets.services[service]?.apiKey);
+      hasServiceCredentials(secrets.services[coverSecretKey(service)])
+      || hasServiceCredentials(secrets.services[service]);
     // "Configured" = a cover service is selected AND has a key, OR a cover
     // endpoint is provided via env (the CLI/power-user path). This is the gate
     // for the Play auto-illustration toggles.
@@ -3624,6 +3627,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
         defaultModel: provider.defaultModel,
         models: provider.models,
         connected: keyFor(provider.service),
+        authType: provider.service === OPENAI_CODEX_SERVICE_ID ? "oauth" : "apiKey",
       })),
     });
   });
@@ -3655,6 +3659,13 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       return c.json({ error: "Unsupported cover service" }, 400);
     }
     const secrets = await loadSecrets(root);
+    if (service === OPENAI_CODEX_SERVICE_ID) {
+      return c.json({
+        apiKey: "",
+        authType: "oauth",
+        connected: hasServiceCredentials(secrets.services[service]),
+      });
+    }
     return c.json({ apiKey: secrets.services[coverSecretKey(service)]?.apiKey ?? "" });
   });
 
@@ -3662,6 +3673,9 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     const service = c.req.param("service");
     if (!resolveCoverProviderPreset(service)) {
       return c.json({ error: "Unsupported cover service" }, 400);
+    }
+    if (service === OPENAI_CODEX_SERVICE_ID) {
+      return c.json({ error: "OpenAI Codex cover generation uses ChatGPT OAuth, not an API key." }, 400);
     }
     const body = await c.req.json<{ apiKey?: string }>();
     const trimmedKey = body.apiKey?.trim() ?? "";
@@ -3902,15 +3916,30 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     const secrets = await loadSecrets(root);
     if (service === OPENAI_CODEX_SERVICE_ID && hasServiceCredentials(secrets.services[service])) {
       const endpoint = getAllEndpoints().find((candidate) => candidate.id === service);
+      let liveModelIds: string[] = [];
+      try {
+        const accessToken = await getServiceApiKey(root, service);
+        if (accessToken) liveModelIds = await listOpenAICodexModels(accessToken);
+      } catch {
+        // Keep the curated fallback available when catalog discovery is offline
+        // or the account endpoint temporarily rejects the request.
+      }
+      const fallbackModels = (endpoint?.models ?? []).filter((model) => model.enabled !== false);
+      const cardsById = new Map(fallbackModels.map((model) => [model.id, model]));
+      const models = liveModelIds.length > 0
+        ? liveModelIds.map((id) => cardsById.get(id) ?? {
+          id,
+          maxOutput: 128_000,
+          contextWindowTokens: 272_000,
+        })
+        : fallbackModels;
       return c.json({
-        models: (endpoint?.models ?? [])
-          .filter((model) => model.enabled !== false)
-          .map((model) => ({
-            id: model.id,
-            name: model.id,
-            maxOutput: model.maxOutput,
-            contextWindow: model.contextWindowTokens,
-          })),
+        models: models.map((model) => ({
+          id: model.id,
+          name: model.id,
+          maxOutput: model.maxOutput,
+          contextWindow: model.contextWindowTokens,
+        })),
       });
     }
     const apiKey = c.req.query("apiKey") || secrets.services[service]?.apiKey || "";

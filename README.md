@@ -182,7 +182,7 @@ inkos
 3. 选择可用模型，保存配置。
 4. 回到书籍页面开始写作。
 
-OpenAI Codex 不需要 API Key：在服务详情页点击「使用 ChatGPT 登录」，浏览器授权成功后，InkOS 会保存 OAuth 凭据并在过期时自动刷新。Studio、CLI 和 daemon 共用这份项目凭据。
+OpenAI Codex 不需要 API Key：在服务详情页点击「使用 ChatGPT 登录」，浏览器授权成功后，InkOS 会保存并自动刷新 OAuth 凭据。模型列表会优先读取当前 ChatGPT 账号的 Codex 后端目录，并在目录暂时不可用时保留 GPT-5.6 兜底项；Studio、CLI 和 daemon 共用这份项目凭据。
 
 Studio 运行时只使用：
 
@@ -337,7 +337,7 @@ inkos short run \
 给《她签下离婚协议那天，他悔疯了》生成一张短篇封面，偏现代都市、强反转。
 ```
 
-封面工具会独立生成 `covers/<标题>/cover-prompt.md` 和 `covers/<标题>/cover.png`。如果还没有配置封面服务，先在 Studio 的模型配置里设置封面服务和 API Key。
+封面工具会独立生成 `covers/<标题>/cover-prompt.md` 和 `covers/<标题>/cover.png`。如果还没有配置封面服务，先在 Studio 的模型配置里设置封面服务；选择 OpenAI Codex 时会复用 ChatGPT OAuth 登录，不需要另填 API Key。
 
 生成后也可以继续通过 chat 改封面提示词，例如“把人物拉近一点、标题字更大、表情更冷笑”。系统会用新的 `coverPrompt` 重写 `cover-prompt.md` 并重生成封面，不需要重新写短篇。
 

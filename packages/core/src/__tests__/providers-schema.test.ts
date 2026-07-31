@@ -132,9 +132,12 @@ describe("providers structural integrity", () => {
       group: "overseas",
       api: "openai-codex-responses",
       baseUrl: "https://chatgpt.com/backend-api",
-      checkModel: "gpt-5.4",
+      checkModel: "gpt-5.6-sol",
       transportDefaults: { apiFormat: "responses", stream: true },
     });
+    expect(codex?.models.some((model) => model.id === "gpt-5.6-sol")).toBe(true);
+    expect(codex?.models.some((model) => model.id === "gpt-5.6-terra")).toBe(true);
+    expect(codex?.models.some((model) => model.id === "gpt-5.6-luna")).toBe(true);
     expect(codex?.models.some((model) => model.id === "gpt-5.4")).toBe(true);
   });
 

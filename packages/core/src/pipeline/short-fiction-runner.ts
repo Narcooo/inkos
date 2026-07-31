@@ -29,7 +29,8 @@ import {
   type ShortFictionSalesPackage,
 } from "../agents/short-fiction.js";
 import { coverSecretKey, resolveCoverProviderPreset, type CoverProviderPreset } from "../llm/cover-providers.js";
-import { loadSecrets } from "../llm/secrets.js";
+import { generateOpenAICodexImage } from "../llm/openai-codex-images.js";
+import { getServiceApiKey, loadSecrets } from "../llm/secrets.js";
 import { safeChildPath } from "../utils/path-safety.js";
 import { toPosixPath as projectPath } from "../utils/posix-path.js";
 
@@ -585,6 +586,14 @@ export async function generateImageFromPrompt(
   size: string,
   signal?: AbortSignal,
 ): Promise<{ readonly buffer: Buffer; readonly extension: "png" | "jpg" }> {
+  if (request.api === "codex-responses") {
+    return generateOpenAICodexImage({
+      accessToken: request.apiKey,
+      prompt,
+      size,
+      signal,
+    });
+  }
   if (request.api === "gemini") {
     const payload = await generateGeminiCover(request, prompt, signal);
     return { buffer: Buffer.from(payload.base64, "base64"), extension: payload.extension };
@@ -666,7 +675,7 @@ export async function resolveCoverGenerationRequest(input: {
   }
   const apiKey = await resolveProjectCoverApiKey(input.root, projectCover.service);
   if (!apiKey) {
-    throw new Error(`Cover API key is required. Configure a cover key for ${preset.label}.`);
+    throw new Error(`Cover credentials are required. Connect ${preset.label} in Studio first.`);
   }
 
   return {
@@ -697,7 +706,7 @@ async function readProjectCoverConfig(root: string): Promise<{ readonly service:
 async function resolveProjectCoverApiKey(root: string, service: string): Promise<string> {
   const secrets = await loadSecrets(root);
   return secrets.services[coverSecretKey(service)]?.apiKey
-    || secrets.services[service]?.apiKey
+    || await getServiceApiKey(root, service)
     || process.env[`${service.replace(/[^a-zA-Z0-9]/g, "_").toUpperCase()}_API_KEY`]
     || "";
 }

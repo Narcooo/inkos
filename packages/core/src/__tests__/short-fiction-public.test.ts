@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { Buffer } from "node:buffer";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -165,6 +166,44 @@ describe("public short-fiction chain", () => {
         baseUrl: "https://api.kkaiapi.com/v1",
         model: "gpt-image-2",
         apiKey: "sk-cover",
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("resolves Codex cover generation from the shared ChatGPT OAuth credentials", async () => {
+    const root = await mkdtemp(join(tmpdir(), "inkos-short-codex-cover-"));
+    const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+    const access = `${encode({ alg: "none" })}.${encode({
+      "https://api.openai.com/auth": { chatgpt_account_id: "acct-cover" },
+    })}.signature`;
+    try {
+      await writeFile(join(root, "inkos.json"), JSON.stringify({
+        name: "codex-cover-test",
+        version: "0.1.0",
+        language: "zh",
+        llm: {
+          cover: { service: "openaiCodex", model: "gpt-image-2" },
+        },
+        notify: [],
+      }), "utf-8");
+      await saveSecrets(root, {
+        services: {
+          openaiCodex: {
+            oauth: {
+              provider: "openai-codex",
+              credentials: { access, refresh: "refresh", expires: Date.now() + 60_000 },
+            },
+          },
+        },
+      });
+
+      await expect(resolveCoverGenerationRequest({ root })).resolves.toMatchObject({
+        api: "codex-responses",
+        baseUrl: "https://chatgpt.com/backend-api/codex",
+        model: "gpt-image-2",
+        apiKey: access,
       });
     } finally {
       await rm(root, { recursive: true, force: true });

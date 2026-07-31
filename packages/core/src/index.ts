@@ -465,9 +465,20 @@ export {
   OPENAI_CODEX_SERVICE_ID,
   OPENAI_CODEX_OAUTH_PROVIDER_ID,
   OPENAI_CODEX_DEFAULT_MODEL,
+  OPENAI_CODEX_FALLBACK_MODEL_IDS,
+  extractOpenAICodexAccountId,
+  addOpenAICodexForwardCompatibleModels,
+  listOpenAICodexModels,
   type OpenAICodexLoginOptions,
   type OAuthCredentials,
 } from "./llm/openai-codex-auth.js";
+export {
+  generateOpenAICodexImage,
+  OPENAI_CODEX_IMAGE_RESPONSES_URL,
+  OPENAI_CODEX_IMAGE_MODEL,
+  OPENAI_CODEX_IMAGE_HOST_MODELS,
+  type OpenAICodexImageRequest,
+} from "./llm/openai-codex-images.js";
 export {
   COVER_PROVIDER_PRESETS,
   coverSecretKey,

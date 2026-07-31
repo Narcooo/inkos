@@ -59,6 +59,7 @@ interface CoverProviderInfo {
   readonly defaultModel: string;
   readonly models: readonly string[];
   readonly connected: boolean;
+  readonly authType: "apiKey" | "oauth";
 }
 
 interface CoverConfigPayload {
@@ -100,6 +101,11 @@ function CoverConfigCard() {
 
   useEffect(() => {
     if (!service) return;
+    const provider = providers.find((item) => item.service === service);
+    if (provider?.authType === "oauth") {
+      setApiKey("");
+      return;
+    }
     let cancelled = false;
     void fetchJson<{ apiKey?: string }>(`/cover/secret/${encodeURIComponent(service)}`)
       .then((payload) => {
@@ -110,7 +116,7 @@ function CoverConfigCard() {
         if (!cancelled) setApiKey("");
       });
     return () => { cancelled = true; };
-  }, [service]);
+  }, [providers, service]);
 
   const handleServiceChange = (nextService: string) => {
     const provider = providers.find((item) => item.service === nextService);
@@ -126,11 +132,13 @@ function CoverConfigCard() {
     setStatus("saving");
     setMessage("");
     try {
-      await fetchJson(`/cover/secret/${encodeURIComponent(provider.service)}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiKey: apiKey.trim() }),
-      });
+      if (provider.authType === "apiKey") {
+        await fetchJson(`/cover/secret/${encodeURIComponent(provider.service)}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ apiKey: apiKey.trim() }),
+        });
+      }
       await fetchJson("/cover/config", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -160,7 +168,7 @@ function CoverConfigCard() {
         </div>
         {selected?.connected && (
           <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-500">
-            {tr("已有密钥", "Key saved")}
+            {selected.authType === "oauth" ? tr("已登录", "Signed in") : tr("已有密钥", "Key saved")}
           </span>
         )}
       </div>
@@ -192,7 +200,13 @@ function CoverConfigCard() {
         </label>
       </div>
 
-      <label className="space-y-1.5">
+      {selected?.authType === "oauth" ? (
+        <div className="rounded-lg border border-border/60 bg-background px-3 py-2 text-xs text-muted-foreground">
+          {selected.connected
+            ? tr("将复用 OpenAI Codex 服务的 ChatGPT 登录凭据。", "Uses the ChatGPT credentials from the OpenAI Codex service.")
+            : tr("请先在下方服务商列表打开 OpenAI Codex，并使用 ChatGPT 登录。", "Open OpenAI Codex in the provider list below and sign in with ChatGPT first.")}
+        </div>
+      ) : <label className="space-y-1.5">
         <span className="block text-xs font-medium text-muted-foreground/70">API Key</span>
         <div className="relative">
           <input
@@ -210,12 +224,12 @@ function CoverConfigCard() {
             {showKey ? <EyeOff size={14} /> : <Eye size={14} />}
           </button>
         </div>
-      </label>
+      </label>}
 
       <div className="flex flex-wrap items-center gap-3">
         <button
           onClick={handleSave}
-          disabled={status === "saving" || !selected}
+          disabled={status === "saving" || !selected || (selected.authType === "oauth" && !selected.connected)}
           className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3.5 py-2 text-xs text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
         >
           {status === "saving" && <Loader2 size={12} className="animate-spin" />}
