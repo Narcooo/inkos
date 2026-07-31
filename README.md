@@ -177,10 +177,12 @@ inkos
 
 打开 Studio 后进入「模型配置」：
 
-1. 选择服务商，例如 Google Gemini、Moonshot、MiniMax、智谱、百炼或自定义端点。
+1. 选择服务商，例如 OpenAI Codex (ChatGPT)、Google Gemini、Moonshot、MiniMax、智谱、百炼或自定义端点。
 2. 粘贴 API Key，点击「测试连接」。
 3. 选择可用模型，保存配置。
 4. 回到书籍页面开始写作。
+
+OpenAI Codex 不需要 API Key：在服务详情页点击「使用 ChatGPT 登录」，浏览器授权成功后，InkOS 会保存 OAuth 凭据并在过期时自动刷新。Studio、CLI 和 daemon 共用这份项目凭据。
 
 Studio 运行时只使用：
 

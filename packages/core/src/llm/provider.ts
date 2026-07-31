@@ -175,6 +175,7 @@ export function createLLMClient(config: LLMConfig): LLMClient {
   // api.x.ai / deepseek.com / anthropic.com 等）。这里只列 pi-ai 嗅探不到、需要显式指定的少数情况。
   let piProvider: string;
   if (inkosProvider?.id === "google") piProvider = "google";
+  else if (inkosProvider?.id === "openaiCodex") piProvider = "openai-codex";
   else if (inkosProvider?.id === "zhipu") piProvider = "zai";
   else if (inkosProvider?.id === "openrouter") piProvider = "openrouter";
   else if (inkosProvider?.id === "githubCopilot") piProvider = "githubCopilot";

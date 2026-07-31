@@ -4,7 +4,40 @@ import {
   matchServiceConfigEntryForDetail,
   rehydrateServiceConnectionStatus,
   saveServiceConfig,
+  startOpenAICodexOAuth,
+  readOpenAICodexOAuthStatus,
+  submitOpenAICodexOAuthCode,
 } from "./service-detail-state";
+
+describe("OpenAI Codex OAuth API", () => {
+  it("starts login and reads its status", async () => {
+    const fetchJsonImpl = vi.fn(async (path: string, init?: RequestInit) => {
+      if (path === "/services/openaiCodex/oauth/start") {
+        expect(init?.method).toBe("POST");
+        return { sessionId: "session-1", url: "https://auth.example" };
+      }
+      if (path === "/services/openaiCodex/oauth/session-1") {
+        return { state: "success" };
+      }
+      if (path === "/services/openaiCodex/oauth/session-1/code") {
+        expect(init).toMatchObject({ method: "POST" });
+        expect(JSON.parse(String(init?.body))).toEqual({ code: "callback-code" });
+        return { ok: true };
+      }
+      throw new Error(`unexpected path: ${path}`);
+    });
+
+    await expect(startOpenAICodexOAuth({ fetchJsonImpl: fetchJsonImpl as never })).resolves.toEqual({
+      sessionId: "session-1",
+      url: "https://auth.example",
+    });
+    await expect(readOpenAICodexOAuthStatus("session-1", { fetchJsonImpl: fetchJsonImpl as never }))
+      .resolves.toEqual({ state: "success" });
+    await expect(submitOpenAICodexOAuthCode("session-1", "callback-code", {
+      fetchJsonImpl: fetchJsonImpl as never,
+    })).resolves.toBeUndefined();
+  });
+});
 
 describe("rehydrateServiceConnectionStatus", () => {
   it("loads saved key without probing models on page load", async () => {

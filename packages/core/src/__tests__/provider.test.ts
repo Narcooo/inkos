@@ -987,6 +987,22 @@ describe("createLLMClient with providers lookup", () => {
     expect(client._piModel?.baseUrl).toBe("https://generativelanguage.googleapis.com/v1beta");
     expect(client._piModel?.compat).toBeUndefined();
   });
+
+  it("OpenAI Codex uses the native OAuth Responses transport", async () => {
+    const { createLLMClient } = await import("../llm/provider.js");
+    const { LLMConfigSchema } = await import("../models/project.js");
+    const client = createLLMClient(LLMConfigSchema.parse({
+      provider: "openai",
+      service: "openaiCodex",
+      model: "gpt-5.4",
+      apiKey: "oauth-access-token",
+      baseUrl: "https://chatgpt.com/backend-api",
+      apiFormat: "responses",
+    }));
+    expect(client._piModel?.api).toBe("openai-codex-responses");
+    expect(client._piModel?.provider).toBe("openai-codex");
+    expect(client._piModel?.baseUrl).toBe("https://chatgpt.com/backend-api");
+  });
 });
 
 describe("stream interruption detection", () => {

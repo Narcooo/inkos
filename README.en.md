@@ -42,7 +42,7 @@ InkOS Studio already supports Moonshot (Kimi). Get an API key from the Kimi Open
 
 InkOS 1.7 brings cross-language delivery, long-form forecasting, and continuous collaboration into the same Agent workbench. Translate complete works, compare several non-canonical futures, keep chatting while production runs in the background, or ask Chat to read references, import an existing manuscript, adjust prompts, revise chapters, and safely recover the creative state.
 
-- **Model setup** — Studio includes provider settings, model routing, cover-service settings, [kkaiapi](https://en.kkaiapi.com/) / OpenRouter aggregator entries, and custom OpenAI-compatible endpoints.
+- **Model setup** — Studio includes provider settings, model routing, ChatGPT OAuth for OpenAI Codex, cover-service settings, [kkaiapi](https://en.kkaiapi.com/) / OpenRouter aggregator entries, and custom OpenAI-compatible endpoints.
 - **Narrative forecasts**: Studio Chat and the CLI can create, re-check, and select 2-5 isolated futures from current canon, comparing chapter beats, character decisions, projected changes, risks, and author-intent alignment. Selecting one saves a plan only; it does not pre-emptively alter prose, foundations, or story state.
 - **Complete translation workbench**: import EPUB, text-based PDF, TXT, and Markdown; translate by chapter and semantic segment; maintain a glossary, generate side-by-side review reports, and export TXT, Markdown, or EPUB. Studio, Chat, and `inkos translate init / run / export` share the same capability.
 - **Native cross-language creation**: short fiction, scripts, storyboards, and interactive-film pipelines now include English-native prompt paths, with matching Studio copy and CLI language fallback rather than a translation-only menu.

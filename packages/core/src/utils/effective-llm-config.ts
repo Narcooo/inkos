@@ -1,7 +1,7 @@
 import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ProjectConfigSchema, type LLMConfig, type ProjectConfig } from "../models/project.js";
-import { loadSecrets } from "../llm/secrets.js";
+import { getServiceApiKey } from "../llm/secrets.js";
 import { getEndpoint } from "../llm/providers/index.js";
 import { guessServiceFromBaseUrl, resolveServicePreset, resolveServiceProviderFamily } from "../llm/service-presets.js";
 import { isApiKeyOptionalForEndpoint } from "./llm-endpoint-auth.js";
@@ -344,8 +344,7 @@ function applyCommonEnv(
 }
 
 async function getStudioServiceApiKey(projectRoot: string, serviceKey: string): Promise<string> {
-  const secrets = await loadSecrets(projectRoot);
-  return secrets.services[serviceKey]?.apiKey ?? "";
+  return await getServiceApiKey(projectRoot, serviceKey) ?? "";
 }
 
 function normalizeServiceEntries(raw: unknown): ServiceConfigEntry[] {

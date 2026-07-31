@@ -1,5 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { loadSecrets, saveSecrets, getServiceApiKey } from "../llm/secrets.js";
+import {
+  loadSecrets,
+  saveSecrets,
+  getServiceApiKey,
+  getServiceAuthStatus,
+  hasServiceCredentials,
+  saveServiceOAuthCredentials,
+} from "../llm/secrets.js";
 import { mkdtemp, rm, mkdir, writeFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -90,6 +97,24 @@ describe("secrets", () => {
       );
       const key = await getServiceApiKey(root, "custom:内网GPT");
       expect(key).toBe("sk-custom");
+    });
+
+    it("returns a valid OAuth access token", async () => {
+      await saveServiceOAuthCredentials(root, "openaiCodex", "openai-codex", {
+        access: "oauth-access",
+        refresh: "oauth-refresh",
+        expires: Date.now() + 60_000,
+      });
+
+      expect(await getServiceApiKey(root, "openaiCodex")).toBe("oauth-access");
+      const secret = (await loadSecrets(root)).services.openaiCodex;
+      expect(hasServiceCredentials(secret)).toBe(true);
+      expect(getServiceAuthStatus(secret)).toEqual({
+        authType: "oauth",
+        connected: true,
+        expiresAt: expect.any(Number),
+      });
+      expect(secret.apiKey).toBeUndefined();
     });
   });
 });

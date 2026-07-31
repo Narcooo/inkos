@@ -10,6 +10,9 @@ import {
   probeServiceForDetail,
   rehydrateServiceConnectionStatus,
   saveServiceConfig,
+  startOpenAICodexOAuth,
+  readOpenAICodexOAuthStatus,
+  submitOpenAICodexOAuthCode,
   type ServiceDetailConnectionStatus as ConnectionStatus,
   type ServiceDetailDetectedConfig as DetectedConfig,
   type ServiceDetailModelInfo as ModelInfo,
@@ -37,6 +40,7 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
   const loading = useServiceStore((s) => s.servicesLoading);
   const fetchServices = useServiceStore((s) => s.fetchServices);
   const refreshServices = useServiceStore((s) => s.refreshServices);
+  const fetchLiveModels = useServiceStore((s) => s.fetchLiveModels);
   const setStoreModels = useServiceStore((s) => s.setLiveModels);
   const clearStoreModels = useServiceStore((s) => s.clearModels);
 
@@ -44,6 +48,7 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
 
   const svc = services.find((s) => s.service === serviceId);
   const isCustom = serviceId === "custom" || serviceId.startsWith("custom:");
+  const isOpenAICodex = serviceId === "openaiCodex";
   const persistedCustomName = serviceId.startsWith("custom:") ? decodeURIComponent(serviceId.slice("custom:".length)) : "";
 
   // -- Local form state --
@@ -57,6 +62,8 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
   const [detectedModel, setDetectedModel] = useState<string>("");
   const [detectedConfig, setDetectedConfig] = useState<DetectedConfig | null>(null);
   const [verifiedProbe, setVerifiedProbe] = useState<VerifiedProbe | null>(null);
+  const [oauthSessionId, setOauthSessionId] = useState("");
+  const [oauthCode, setOauthCode] = useState("");
 
   // -- Unified connection status --
   const [status, setStatus] = useState<ConnectionStatus>({ state: "idle" });
@@ -179,6 +186,45 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
     }
   };
 
+  const handleOpenAICodexLogin = async () => {
+    setStatus({ state: "testing" });
+    const popup = window.open("about:blank", "inkos-openai-codex-oauth", "popup,width=720,height=820");
+    if (popup) popup.opener = null;
+    try {
+      const login = await startOpenAICodexOAuth();
+      setOauthSessionId(login.sessionId);
+      if (popup) popup.location.href = login.url;
+      else window.location.assign(login.url);
+
+      for (let attempt = 0; attempt < 600; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1_000));
+        const current = await readOpenAICodexOAuthStatus(login.sessionId);
+        if (current.state === "error") throw new Error(current.error);
+        if (current.state === "success") {
+          await refreshServices();
+          await fetchLiveModels(serviceId);
+          setStatus({ state: "idle" });
+          setOauthSessionId("");
+          setOauthCode("");
+          return;
+        }
+      }
+      throw new Error(tr("登录超时，请重试", "Login timed out; try again"));
+    } catch (error) {
+      popup?.close();
+      setStatus({ state: "error", message: error instanceof Error ? error.message : tr("登录失败", "Login failed") });
+    }
+  };
+
+  const handleOpenAICodexCode = async () => {
+    if (!oauthSessionId || !oauthCode.trim()) return;
+    try {
+      await submitOpenAICodexOAuthCode(oauthSessionId, oauthCode.trim());
+    } catch (error) {
+      setStatus({ state: "error", message: error instanceof Error ? error.message : tr("提交失败", "Submission failed") });
+    }
+  };
+
   const handleDelete = async () => {
     if (!window.confirm(tr(`删除“${label}”的配置和密钥？`, `Delete the config and key for “${label}”?`))) return;
     setStatus({ state: "saving" });
@@ -270,6 +316,50 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
           </div>
         )}
 
+        {isOpenAICodex ? (
+          <div className="space-y-3 rounded-xl border border-border/60 bg-card/60 p-4">
+            <p className="text-sm text-muted-foreground">
+              {tr(
+                "使用浏览器登录 ChatGPT。InkOS 会保存并自动刷新 OAuth 凭据，不需要填写 API Key。",
+                "Sign in to ChatGPT in your browser. InkOS stores and refreshes the OAuth credentials; no API key is needed.",
+              )}
+            </p>
+            <div className="flex items-center gap-2">
+              <button onClick={handleOpenAICodexLogin} disabled={isBusy}
+                className="flex items-center gap-1.5 px-3.5 py-2 text-xs rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50">
+                {status.state === "testing" && <Loader2 size={12} className="animate-spin" />}
+                {isConnected ? tr("重新登录 ChatGPT", "Sign in again") : tr("使用 ChatGPT 登录", "Sign in with ChatGPT")}
+              </button>
+              {isConnected && (
+                <button onClick={handleDelete} disabled={isBusy}
+                  className="flex items-center gap-1.5 px-3.5 py-2 text-xs rounded-lg border border-destructive/30 text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-50">
+                  <Trash2 size={12} />
+                  {tr("退出并删除配置", "Sign out and delete")}
+                </button>
+              )}
+            </div>
+            {status.state === "testing" && oauthSessionId && (
+              <div className="space-y-2 border-t border-border/40 pt-3">
+                <p className="text-xs text-muted-foreground">
+                  {tr(
+                    "如果浏览器无法自动返回 InkOS，请粘贴最终回调地址或授权码。",
+                    "If the browser cannot return to InkOS automatically, paste the final callback URL or authorization code.",
+                  )}
+                </p>
+                <div className="flex gap-2">
+                  <input value={oauthCode} onChange={(event) => setOauthCode(event.target.value)}
+                    className="min-w-0 flex-1 rounded-lg border border-border/60 bg-background px-3 py-2 text-xs font-mono"
+                    placeholder={tr("回调地址或授权码", "Callback URL or authorization code")} />
+                  <button onClick={handleOpenAICodexCode} disabled={!oauthCode.trim()}
+                    className="rounded-lg border border-border/60 px-3 py-2 text-xs hover:bg-secondary/50 disabled:opacity-50">
+                    {tr("提交", "Submit")}
+                  </button>
+                </div>
+              </div>
+            )}
+            {status.state === "error" && <p className="text-xs text-destructive">{status.message}</p>}
+          </div>
+        ) : <>
         {/* API Key */}
         <Field label="API Key">
           <div className="relative">
@@ -384,6 +474,7 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
             </Field>
           </div>
         </details>
+        </>}
       </div>
     </div>
   );

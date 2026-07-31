@@ -40,6 +40,50 @@ export interface ServiceDetailVerifiedProbe {
   readonly detected?: ServiceDetailDetectedConfig;
 }
 
+export interface OpenAICodexOAuthStart {
+  readonly sessionId: string;
+  readonly url: string;
+  readonly instructions?: string;
+}
+
+export type OpenAICodexOAuthStatus =
+  | { readonly state: "pending"; readonly progress?: string }
+  | { readonly state: "success" }
+  | { readonly state: "error"; readonly error: string };
+
+export async function startOpenAICodexOAuth(
+  deps?: { readonly fetchJsonImpl?: JsonFetcher },
+): Promise<OpenAICodexOAuthStart> {
+  return await (deps?.fetchJsonImpl ?? fetchJson)<OpenAICodexOAuthStart>(
+    "/services/openaiCodex/oauth/start",
+    { method: "POST" },
+  );
+}
+
+export async function readOpenAICodexOAuthStatus(
+  sessionId: string,
+  deps?: { readonly fetchJsonImpl?: JsonFetcher },
+): Promise<OpenAICodexOAuthStatus> {
+  return await (deps?.fetchJsonImpl ?? fetchJson)<OpenAICodexOAuthStatus>(
+    `/services/openaiCodex/oauth/${encodeURIComponent(sessionId)}`,
+  );
+}
+
+export async function submitOpenAICodexOAuthCode(
+  sessionId: string,
+  code: string,
+  deps?: { readonly fetchJsonImpl?: JsonFetcher },
+): Promise<void> {
+  await (deps?.fetchJsonImpl ?? fetchJson)(
+    `/services/openaiCodex/oauth/${encodeURIComponent(sessionId)}/code`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+    },
+  );
+}
+
 export async function probeServiceForDetail(
   serviceId: string,
   body: {
