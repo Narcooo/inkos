@@ -41,6 +41,7 @@ describe("OpenAI Codex model discovery", () => {
     expect(models).toContain("gpt-5.6-sol");
     expect(models).toContain("gpt-5.6-terra");
     expect(models).toContain("gpt-5.6-luna");
+    expect(models.some((model) => model.endsWith("-pro"))).toBe(false);
     expect(models).not.toContain("hidden-model");
   });
 

@@ -9,13 +9,13 @@ export const OPENAI_CODEX_SERVICE_ID = "openaiCodex";
 export const OPENAI_CODEX_OAUTH_PROVIDER_ID = "openai-codex";
 export const OPENAI_CODEX_DEFAULT_MODEL = "gpt-5.6-sol";
 export const OPENAI_CODEX_MODELS_URL = "https://chatgpt.com/backend-api/codex/models?client_version=1.0.0";
-export const OPENAI_CODEX_FALLBACK_MODEL_IDS = [
+const OPENAI_CODEX_FORWARD_COMPAT_MODEL_IDS = [
   "gpt-5.6-sol",
-  "gpt-5.6-sol-pro",
   "gpt-5.6-terra",
-  "gpt-5.6-terra-pro",
   "gpt-5.6-luna",
-  "gpt-5.6-luna-pro",
+] as const;
+export const OPENAI_CODEX_FALLBACK_MODEL_IDS = [
+  ...OPENAI_CODEX_FORWARD_COMPAT_MODEL_IDS,
   "gpt-5.5",
   "gpt-5.4-mini",
   "gpt-5.4",
@@ -56,7 +56,7 @@ export function addOpenAICodexForwardCompatibleModels(modelIds: readonly string[
   const result = Array.from(new Set(modelIds.map((id) => id.trim()).filter(Boolean)));
   const templates = new Set(result);
   if (["gpt-5.5", "gpt-5.4", "gpt-5.4-mini"].some((id) => templates.has(id))) {
-    for (const id of OPENAI_CODEX_FALLBACK_MODEL_IDS.slice(0, 6)) {
+    for (const id of OPENAI_CODEX_FORWARD_COMPAT_MODEL_IDS) {
       if (!templates.has(id)) result.push(id);
     }
   }
