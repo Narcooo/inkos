@@ -7,7 +7,7 @@ describe("providers structural integrity", () => {
     for (const p of getAllEndpoints()) {
       expect(p.id).toBeTruthy();
       expect(p.label).toBeTruthy();
-      expect(p.api).toMatch(/^(openai-completions|openai-responses|anthropic-messages|google-generative-ai)$/);
+      expect(p.api).toMatch(/^(openai-completions|openai-responses|openai-codex-responses|anthropic-messages|google-generative-ai)$/);
       // gateway/anchor provider 允许 baseUrl 为空（由用户填）
       if (gatewayProviders.has(p.id)) {
         expect(typeof p.baseUrl).toBe("string");
@@ -125,9 +125,25 @@ describe("providers structural integrity", () => {
     expect(getEndpoint("newapi")?.baseUrl).toBe("");
   });
 
-  it("B4：总 provider 数 = 30（不含 CodingPlan 分组，R5 删 qwen / higress 且精简聚合入口后）", () => {
+  it("OpenAI Codex uses the ChatGPT OAuth Responses transport", () => {
+    const codex = getEndpoint("openaiCodex");
+    expect(codex).toMatchObject({
+      label: "OpenAI Codex (ChatGPT)",
+      group: "overseas",
+      api: "openai-codex-responses",
+      baseUrl: "https://chatgpt.com/backend-api",
+      checkModel: "gpt-5.6-sol",
+      transportDefaults: { apiFormat: "responses", stream: true },
+    });
+    expect(codex?.models.some((model) => model.id === "gpt-5.6-sol")).toBe(true);
+    expect(codex?.models.some((model) => model.id === "gpt-5.6-terra")).toBe(true);
+    expect(codex?.models.some((model) => model.id === "gpt-5.6-luna")).toBe(true);
+    expect(codex?.models.some((model) => model.id === "gpt-5.4")).toBe(true);
+  });
+
+  it("B4：总 provider 数 = 31（不含 CodingPlan 分组）", () => {
     const nonCoding = getAllEndpoints().filter((p) => p.group !== "codingPlan");
-    expect(nonCoding.length).toBe(30);
+    expect(nonCoding.length).toBe(31);
   });
 
   it("B6：CodingPlan 8 个 provider 全部收录", () => {
@@ -141,8 +157,8 @@ describe("providers structural integrity", () => {
     }
   });
 
-  it("B6：总 provider 数 = 38 (30 base + 8 CodingPlan)", () => {
-    expect(getAllEndpoints().length).toBe(38);
+  it("B6：总 provider 数 = 39 (31 base + 8 CodingPlan)", () => {
+    expect(getAllEndpoints().length).toBe(39);
   });
 
   it("B6：CodingPlan provider 都走 anthropic-messages", () => {

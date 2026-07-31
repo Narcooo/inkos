@@ -886,6 +886,28 @@ describe("createLLMClient per-call maxTokens not capped (v2.0.0)", () => {
     const opts = mockStreamSimple.mock.calls[0]?.[2] as Record<string, unknown>;
     expect(opts.maxTokens).toBe(16384);
   });
+
+  it("omits temperature for the OpenAI Codex Responses transport", async () => {
+    mockStreamSimple.mockReturnValue(makeTextStream("ok"));
+    const client = makeClient(1, {
+      service: "openaiCodex",
+      apiFormat: "responses",
+      _piModel: {
+        ...MOCK_PI_MODEL,
+        api: "openai-codex-responses",
+        provider: "openai-codex",
+        baseUrl: "https://chatgpt.com/backend-api",
+      },
+    });
+
+    await chatCompletion(client, "gpt-5.4", [
+      { role: "user", content: "write" },
+    ], { temperature: 1.5 });
+
+    const opts = mockStreamSimple.mock.calls.at(-1)?.[2] as Record<string, unknown>;
+    expect(opts).not.toHaveProperty("temperature");
+    expect(opts.maxTokens).toBe(512);
+  });
 });
 
 describe("createLLMClient with providers lookup", () => {
@@ -986,6 +1008,22 @@ describe("createLLMClient with providers lookup", () => {
     expect(client._piModel?.provider).toBe("google");
     expect(client._piModel?.baseUrl).toBe("https://generativelanguage.googleapis.com/v1beta");
     expect(client._piModel?.compat).toBeUndefined();
+  });
+
+  it("OpenAI Codex uses the native OAuth Responses transport", async () => {
+    const { createLLMClient } = await import("../llm/provider.js");
+    const { LLMConfigSchema } = await import("../models/project.js");
+    const client = createLLMClient(LLMConfigSchema.parse({
+      provider: "openai",
+      service: "openaiCodex",
+      model: "gpt-5.4",
+      apiKey: "oauth-access-token",
+      baseUrl: "https://chatgpt.com/backend-api",
+      apiFormat: "responses",
+    }));
+    expect(client._piModel?.api).toBe("openai-codex-responses");
+    expect(client._piModel?.provider).toBe("openai-codex");
+    expect(client._piModel?.baseUrl).toBe("https://chatgpt.com/backend-api");
   });
 });
 

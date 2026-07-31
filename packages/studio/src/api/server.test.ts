@@ -48,6 +48,7 @@ const resolveServiceModelMock = vi.fn();
 const loadSecretsMock = vi.fn();
 const saveSecretsMock = vi.fn();
 const getServiceApiKeyMock = vi.fn();
+const listOpenAICodexModelsMock = vi.fn(async () => [] as string[]);
 const createLLMTranslationModelMock = vi.fn();
 const createShortFictionRunToolMock = vi.fn((_pipeline: unknown, _root: string, _options?: unknown) => ({
   name: "short_fiction_run",
@@ -105,7 +106,7 @@ const listModelsForServiceMock = vi.fn(async (service: string, apiKey?: string, 
   }));
 });
 const endpointIdsByGroup = {
-  overseas: ["anthropic", "google", "mistral", "openai", "xai"],
+  overseas: ["anthropic", "google", "mistral", "openai", "openaiCodex", "xai"],
   china: [
     "ai360", "baichuan", "bailian", "deepseek", "hunyuan", "internlm", "longcat",
     "minimax", "moonshot", "sensenova", "spark", "stepfun", "tencentcloud",
@@ -127,7 +128,11 @@ const endpointMocks = [
     ...(id === "minimax" ? { checkModel: "MiniMax-M2.7" } : {}),
     ...(id === "ollama" ? { checkModel: "llama3.2:3b" } : {}),
     ...(id === "volcengine" ? { checkModel: "doubao-lite-32k" } : {}),
-    models: [
+    models: id === "openaiCodex" ? [
+      { id: "gpt-5.6-sol", maxOutput: 128_000, contextWindowTokens: 1_050_000, enabled: true },
+      { id: "gpt-5.6-terra", maxOutput: 128_000, contextWindowTokens: 1_050_000, enabled: true },
+      { id: "gpt-5.6-luna", maxOutput: 128_000, contextWindowTokens: 400_000, enabled: true },
+    ] : [
       { id: `${id}-model`, maxOutput: 4096, contextWindowTokens: 32768, enabled: true },
       { id: `${id}-disabled`, maxOutput: 4096, contextWindowTokens: 32768, enabled: false },
     ],
@@ -315,6 +320,14 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
     loadSecrets: loadSecretsMock,
     saveSecrets: saveSecretsMock,
     getServiceApiKey: getServiceApiKeyMock,
+    hasServiceCredentials: actual.hasServiceCredentials,
+    getServiceAuthStatus: actual.getServiceAuthStatus,
+    saveServiceOAuthCredentials: actual.saveServiceOAuthCredentials,
+    loginOpenAICodex: actual.loginOpenAICodex,
+    OPENAI_CODEX_SERVICE_ID: actual.OPENAI_CODEX_SERVICE_ID,
+    OPENAI_CODEX_OAUTH_PROVIDER_ID: actual.OPENAI_CODEX_OAUTH_PROVIDER_ID,
+    OPENAI_CODEX_DEFAULT_MODEL: actual.OPENAI_CODEX_DEFAULT_MODEL,
+    listOpenAICodexModels: listOpenAICodexModelsMock,
     listModelsForService: listModelsForServiceMock,
     getAllEndpoints: getAllEndpointsMock,
     probeModelsFromUpstream: probeModelsFromUpstreamMock,
@@ -580,6 +593,7 @@ describe("createStudioServer daemon lifecycle", () => {
     loadSecretsMock.mockReset();
     saveSecretsMock.mockReset();
     getServiceApiKeyMock.mockReset();
+    listOpenAICodexModelsMock.mockReset();
     resolveServicePresetMock.mockClear();
     resolveServiceProviderFamilyMock.mockClear();
     resolveServiceModelsBaseUrlMock.mockClear();
@@ -618,6 +632,7 @@ describe("createStudioServer daemon lifecycle", () => {
     loadSecretsMock.mockResolvedValue({ services: {} });
     saveSecretsMock.mockResolvedValue(undefined);
     getServiceApiKeyMock.mockResolvedValue(undefined);
+    listOpenAICodexModelsMock.mockResolvedValue([]);
   });
 
   afterEach(async () => {
@@ -1026,9 +1041,9 @@ describe("createStudioServer daemon lifecycle", () => {
     expect(res.status).toBe(200);
     const body = await res.json() as { services: Array<{ service: string; group?: string; connected: boolean }> };
     const bank = body.services.filter((s) => !s.service.startsWith("custom"));
-    expect(bank.length).toBe(37);
+    expect(bank.length).toBe(38);
     expect(bank.every((s) => typeof s.group === "string")).toBe(true);
-    expect(bank.filter((s) => s.group === "overseas")).toHaveLength(5);
+    expect(bank.filter((s) => s.group === "overseas")).toHaveLength(6);
     expect(bank.filter((s) => s.group === "china")).toHaveLength(18);
     expect(bank.filter((s) => s.group === "aggregator")).toHaveLength(4);
     expect(bank.filter((s) => s.group === "local")).toHaveLength(2);
@@ -1038,6 +1053,85 @@ describe("createStudioServer daemon lifecycle", () => {
     expect(body.services.find((s) => s.service === "custom:内网GPT")).toMatchObject({
       connected: true,
     });
+  });
+
+  it("starts and polls OpenAI Codex OAuth without exposing tokens", async () => {
+    loadSecretsMock.mockResolvedValue({
+      services: {
+        openaiCodex: {
+          oauth: {
+            provider: "openai-codex",
+            credentials: { access: "secret-access", refresh: "secret-refresh", expires: 123 },
+          },
+        },
+      },
+    });
+    const oauth = {
+      start: vi.fn(async () => ({ sessionId: "oauth-1", url: "https://auth.example" })),
+      status: vi.fn(() => ({ state: "success" as const })),
+      submitCode: vi.fn(() => true),
+    };
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root, { openAICodexOAuth: oauth });
+
+    const start = await app.request("http://localhost/api/v1/services/openaiCodex/oauth/start", { method: "POST" });
+    expect(start.status).toBe(200);
+    await expect(start.json()).resolves.toEqual({ sessionId: "oauth-1", url: "https://auth.example" });
+
+    const status = await app.request("http://localhost/api/v1/services/openaiCodex/oauth/oauth-1");
+    await expect(status.json()).resolves.toEqual({ state: "success" });
+
+    const { OpenAICodexOAuthBusyError } = await import("./openai-codex-oauth.js");
+    oauth.start.mockRejectedValueOnce(new OpenAICodexOAuthBusyError());
+    const conflict = await app.request("http://localhost/api/v1/services/openaiCodex/oauth/start", { method: "POST" });
+    expect(conflict.status).toBe(409);
+
+    oauth.start.mockRejectedValueOnce(new Error("OAuth initialization failed"));
+    const failure = await app.request("http://localhost/api/v1/services/openaiCodex/oauth/start", { method: "POST" });
+    expect(failure.status).toBe(500);
+
+    const secret = await app.request("http://localhost/api/v1/services/openaiCodex/secret");
+    await expect(secret.json()).resolves.toEqual({
+      apiKey: "",
+      authType: "oauth",
+      connected: true,
+      expiresAt: 123,
+    });
+  });
+
+  it("discovers the signed-in Codex account model catalog and exposes GPT-5.6", async () => {
+    loadSecretsMock.mockResolvedValue({
+      services: {
+        openaiCodex: {
+          oauth: {
+            provider: "openai-codex",
+            credentials: { access: "access", refresh: "refresh", expires: Date.now() + 60_000 },
+          },
+        },
+      },
+    });
+    getServiceApiKeyMock.mockResolvedValue("refreshed-access");
+    listOpenAICodexModelsMock.mockResolvedValue([
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
+      "account-specific-model",
+    ]);
+
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+    const response = await app.request("http://localhost/api/v1/services/openaiCodex/models?refresh=1");
+
+    expect(response.status).toBe(200);
+    const body = await response.json() as { models: Array<{ id: string; contextWindow: number }> };
+    expect(body.models.map((model) => model.id)).toEqual([
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
+      "account-specific-model",
+    ]);
+    expect(body.models.find((model) => model.id === "gpt-5.6-sol")?.contextWindow).toBe(1_050_000);
+    expect(listOpenAICodexModelsMock).toHaveBeenCalledWith("refreshed-access");
   });
 
   it("returns connected bank model groups from the local bank", async () => {
@@ -2284,6 +2378,45 @@ describe("createStudioServer daemon lifecycle", () => {
         "cover:kkaiapi": { apiKey: "sk-cover" },
       },
     });
+  });
+
+  it("offers Codex OAuth as a cover provider without exposing or accepting a cover API key", async () => {
+    loadSecretsMock.mockResolvedValue({
+      services: {
+        openaiCodex: {
+          oauth: {
+            provider: "openai-codex",
+            credentials: { access: "secret", refresh: "refresh", expires: Date.now() + 60_000 },
+          },
+        },
+      },
+    });
+
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+    const configResponse = await app.request("http://localhost/api/v1/cover/config");
+    const config = await configResponse.json() as {
+      providers: Array<{ service: string; authType: string; connected: boolean }>;
+    };
+    expect(config.providers.find((provider) => provider.service === "openaiCodex")).toMatchObject({
+      authType: "oauth",
+      connected: true,
+    });
+
+    const secretResponse = await app.request("http://localhost/api/v1/cover/secret/openaiCodex");
+    await expect(secretResponse.json()).resolves.toEqual({
+      apiKey: "",
+      authType: "oauth",
+      connected: true,
+    });
+
+    const rejected = await app.request("http://localhost/api/v1/cover/secret/openaiCodex", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ apiKey: "must-not-be-saved" }),
+    });
+    expect(rejected.status).toBe(400);
+    expect(saveSecretsMock).not.toHaveBeenCalled();
   });
 
   it("serves generated project cover images without exposing arbitrary files", async () => {

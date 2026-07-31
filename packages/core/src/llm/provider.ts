@@ -175,6 +175,7 @@ export function createLLMClient(config: LLMConfig): LLMClient {
   // api.x.ai / deepseek.com / anthropic.com 等）。这里只列 pi-ai 嗅探不到、需要显式指定的少数情况。
   let piProvider: string;
   if (inkosProvider?.id === "google") piProvider = "google";
+  else if (inkosProvider?.id === "openaiCodex") piProvider = "openai-codex";
   else if (inkosProvider?.id === "zhipu") piProvider = "zai";
   else if (inkosProvider?.id === "openrouter") piProvider = "openrouter";
   else if (inkosProvider?.id === "githubCopilot") piProvider = "githubCopilot";
@@ -1318,7 +1319,9 @@ async function chatCompletionViaPiAi(
   const piModel = resolvePiModel(client, model);
   const context = toPiContext(messages);
   const streamOpts = {
-    temperature: resolved.temperature,
+    ...(piModel.api === "openai-codex-responses"
+      ? {}
+      : { temperature: resolved.temperature }),
     maxTokens: resolved.maxTokens,
     apiKey: client._apiKey,
     headers: mergeUserAgent(piModel.headers),

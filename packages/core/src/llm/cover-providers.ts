@@ -1,10 +1,11 @@
-export type CoverProviderId = "kkaiapi" | "openai" | "google";
+export const COVER_PROVIDER_IDS = ["kkaiapi", "openai", "openaiCodex", "google"] as const;
+export type CoverProviderId = typeof COVER_PROVIDER_IDS[number];
 
 export interface CoverProviderPreset {
   readonly service: CoverProviderId;
   readonly label: string;
   readonly baseUrl: string;
-  readonly api: "responses" | "images" | "gemini";
+  readonly api: "responses" | "codex-responses" | "images" | "gemini";
   readonly defaultModel: string;
   readonly models: readonly string[];
 }
@@ -23,6 +24,14 @@ export const COVER_PROVIDER_PRESETS: readonly CoverProviderPreset[] = [
     label: "OpenAI Images",
     baseUrl: "https://api.openai.com/v1",
     api: "images",
+    defaultModel: "gpt-image-2",
+    models: ["gpt-image-2"],
+  },
+  {
+    service: "openaiCodex",
+    label: "OpenAI Codex (ChatGPT OAuth)",
+    baseUrl: "https://chatgpt.com/backend-api/codex",
+    api: "codex-responses",
     defaultModel: "gpt-image-2",
     models: ["gpt-image-2"],
   },

@@ -32,6 +32,14 @@ import {
   resolveServiceModel,
   loadSecrets,
   saveSecrets,
+  getServiceApiKey,
+  hasServiceCredentials,
+  getServiceAuthStatus,
+  saveServiceOAuthCredentials,
+  OPENAI_CODEX_SERVICE_ID,
+  OPENAI_CODEX_OAUTH_PROVIDER_ID,
+  OPENAI_CODEX_DEFAULT_MODEL,
+  listOpenAICodexModels,
   listModelsForService,
   isApiKeyOptionalForEndpoint,
   getAllEndpoints,
@@ -124,6 +132,11 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { isSafeBookId } from "./safety.js";
 import { ApiError } from "./errors.js";
 import { buildStudioBookConfig } from "./book-create.js";
+import {
+  OpenAICodexOAuthSessionManager,
+  OpenAICodexOAuthBusyError,
+  type OpenAICodexOAuthSessionManagerLike,
+} from "./openai-codex-oauth.js";
 import {
   deleteStudioTaskSnapshot,
   loadStudioTaskSnapshot,
@@ -2689,7 +2702,10 @@ async function probeServiceCapabilities(args: {
 
 // --- Server factory ---
 
-export function createStudioServer(initialConfig: ProjectConfig, root: string, overrides: { readonly nodeImageGenerator?: NodeImageDeps } = {}) {
+export function createStudioServer(initialConfig: ProjectConfig, root: string, overrides: {
+  readonly nodeImageGenerator?: NodeImageDeps;
+  readonly openAICodexOAuth?: OpenAICodexOAuthSessionManagerLike;
+} = {}) {
   const app = new Hono();
   const state = new StateManager(root);
   let cachedConfig = initialConfig;
@@ -2705,6 +2721,31 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
   // 已删除会话的 sessionId：删除会话时中止其生产任务，任务随后的错误持久化
   // 不能把快照文件重新写回来（给已删除的会话"还魂"）。同名会话重新创建时移除标记。
   const deletedSessionIds = new Set<string>();
+  const configureOpenAICodex = async (credentials: import("@actalk/inkos-core").OAuthCredentials): Promise<void> => {
+    await saveServiceOAuthCredentials(
+      root,
+      OPENAI_CODEX_SERVICE_ID,
+      OPENAI_CODEX_OAUTH_PROVIDER_ID,
+      credentials,
+    );
+    const config = await loadRawConfig(root);
+    config.llm = config.llm ?? {};
+    const llm = config.llm as Record<string, unknown>;
+    const existingServices = normalizeServiceConfig(llm.services);
+    llm.services = mergeServiceConfig(existingServices, [{
+      service: OPENAI_CODEX_SERVICE_ID,
+      temperature: 1,
+      apiFormat: "responses",
+      stream: true,
+    }]);
+    llm.service = OPENAI_CODEX_SERVICE_ID;
+    llm.defaultModel = OPENAI_CODEX_DEFAULT_MODEL;
+    llm.configSource = "studio";
+    syncTopLevelLlmMirror(llm);
+    await saveRawConfig(root, config);
+  };
+  const openAICodexOAuth = overrides.openAICodexOAuth
+    ?? new OpenAICodexOAuthSessionManager(configureOpenAICodex);
 
   // 已删除会话不再追加 transcript 消息：appendManualSessionMessages 底层的
   // appendTranscriptEvents 是 mkdir + appendFile，会把已删除会话的 sessions
@@ -3441,7 +3482,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       service: ep.id,
       label: ep.label,
       group: ep.group,
-      connected: Boolean(secrets.services[ep.id]?.apiKey),
+      connected: hasServiceCredentials(secrets.services[ep.id]),
     })).sort(compareServiceListItems);
 
     // Add custom services from inkos.json
@@ -3454,7 +3495,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
             service: secretKey,
             label: svc.name ?? "Custom",
             group: undefined,
-            connected: Boolean(secrets.services[secretKey]?.apiKey),
+            connected: hasServiceCredentials(secrets.services[secretKey]),
           });
         }
       }
@@ -3565,7 +3606,8 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     const cover = normalizeCoverConfig(llm.cover);
     const secrets = await loadSecrets(root);
     const keyFor = (service: string): boolean =>
-      Boolean(secrets.services[coverSecretKey(service)]?.apiKey || secrets.services[service]?.apiKey);
+      hasServiceCredentials(secrets.services[coverSecretKey(service)])
+      || hasServiceCredentials(secrets.services[service]);
     // "Configured" = a cover service is selected AND has a key, OR a cover
     // endpoint is provided via env (the CLI/power-user path). This is the gate
     // for the Play auto-illustration toggles.
@@ -3585,6 +3627,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
         defaultModel: provider.defaultModel,
         models: provider.models,
         connected: keyFor(provider.service),
+        authType: provider.service === OPENAI_CODEX_SERVICE_ID ? "oauth" : "apiKey",
       })),
     });
   });
@@ -3616,6 +3659,13 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       return c.json({ error: "Unsupported cover service" }, 400);
     }
     const secrets = await loadSecrets(root);
+    if (service === OPENAI_CODEX_SERVICE_ID) {
+      return c.json({
+        apiKey: "",
+        authType: "oauth",
+        connected: hasServiceCredentials(secrets.services[service]),
+      });
+    }
     return c.json({ apiKey: secrets.services[coverSecretKey(service)]?.apiKey ?? "" });
   });
 
@@ -3623,6 +3673,9 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     const service = c.req.param("service");
     if (!resolveCoverProviderPreset(service)) {
       return c.json({ error: "Unsupported cover service" }, 400);
+    }
+    if (service === OPENAI_CODEX_SERVICE_ID) {
+      return c.json({ error: "OpenAI Codex cover generation uses ChatGPT OAuth, not an API key." }, 400);
     }
     const body = await c.req.json<{ apiKey?: string }>();
     const trimmedKey = body.apiKey?.trim() ?? "";
@@ -3668,6 +3721,27 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     await saveSecrets(root, secrets);
     modelListCache.clear();
     return c.json({ ok: true, service });
+  });
+
+  app.post("/api/v1/services/openaiCodex/oauth/start", async (c) => {
+    try {
+      return c.json(await openAICodexOAuth.start());
+    } catch (error) {
+      return c.json({
+        error: error instanceof Error ? error.message : String(error),
+      }, error instanceof OpenAICodexOAuthBusyError ? 409 : 500);
+    }
+  });
+
+  app.get("/api/v1/services/openaiCodex/oauth/:sessionId", (c) => {
+    const status = openAICodexOAuth.status(c.req.param("sessionId"));
+    return status ? c.json(status) : c.json({ error: "OAuth session not found." }, 404);
+  });
+
+  app.post("/api/v1/services/openaiCodex/oauth/:sessionId/code", async (c) => {
+    const { code } = await c.req.json<{ code?: string }>();
+    const accepted = openAICodexOAuth.submitCode(c.req.param("sessionId"), code ?? "");
+    return accepted ? c.json({ ok: true }) : c.json({ error: "OAuth session is not pending." }, 409);
   });
 
   app.post("/api/v1/services/:service/test", async (c) => {
@@ -3774,15 +3848,21 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
   app.get("/api/v1/services/:service/secret", async (c) => {
     const service = c.req.param("service");
     const secrets = await loadSecrets(root);
+    const secret = secrets.services[service];
+    const auth = getServiceAuthStatus(secret);
+    if (auth.authType === "apiKey") {
+      return c.json({ apiKey: secret?.apiKey ?? "" });
+    }
     return c.json({
-      apiKey: secrets.services[service]?.apiKey ?? "",
+      apiKey: "",
+      ...auth,
     });
   });
 
   app.get("/api/v1/services/models", async (c) => {
     const secrets = await loadSecrets(root);
     const endpoints = getAllEndpoints()
-      .filter((ep) => ep.id !== "custom" && Boolean(secrets.services[ep.id]?.apiKey));
+      .filter((ep) => ep.id !== "custom" && hasServiceCredentials(secrets.services[ep.id]));
 
     const groups = endpoints.map((ep) => ({
       service: ep.id,
@@ -3823,7 +3903,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       service: s.id,
       label: s.label,
       models: filterTextChatModels(
-        await probeModelsFromUpstream(s.baseUrl, secrets.services[s.id].apiKey, 10_000),
+        await probeModelsFromUpstream(s.baseUrl, secrets.services[s.id].apiKey!, 10_000),
       ),
     })));
 
@@ -3834,6 +3914,34 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     const service = c.req.param("service");
     const refresh = c.req.query("refresh") === "1";
     const secrets = await loadSecrets(root);
+    if (service === OPENAI_CODEX_SERVICE_ID && hasServiceCredentials(secrets.services[service])) {
+      const endpoint = getAllEndpoints().find((candidate) => candidate.id === service);
+      let liveModelIds: string[] = [];
+      try {
+        const accessToken = await getServiceApiKey(root, service);
+        if (accessToken) liveModelIds = await listOpenAICodexModels(accessToken);
+      } catch {
+        // Keep the curated fallback available when catalog discovery is offline
+        // or the account endpoint temporarily rejects the request.
+      }
+      const fallbackModels = (endpoint?.models ?? []).filter((model) => model.enabled !== false);
+      const cardsById = new Map(fallbackModels.map((model) => [model.id, model]));
+      const models = liveModelIds.length > 0
+        ? liveModelIds.map((id) => cardsById.get(id) ?? {
+          id,
+          maxOutput: 128_000,
+          contextWindowTokens: 272_000,
+        })
+        : fallbackModels;
+      return c.json({
+        models: models.map((model) => ({
+          id: model.id,
+          name: model.id,
+          maxOutput: model.maxOutput,
+          contextWindow: model.contextWindowTokens,
+        })),
+      });
+    }
     const apiKey = c.req.query("apiKey") || secrets.services[service]?.apiKey || "";
 
     const resolvedBaseUrl = await resolveConfiguredServiceBaseUrl(root, service);

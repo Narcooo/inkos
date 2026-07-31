@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { resolveEffectiveLLMConfig } from "../utils/effective-llm-config.js";
+import type { ServiceSecret } from "../llm/secrets.js";
 
 describe("resolveEffectiveLLMConfig", () => {
   let root = "";
@@ -23,7 +24,7 @@ describe("resolveEffectiveLLMConfig", () => {
     }, null, 2), "utf-8");
   }
 
-  async function writeSecrets(services: Record<string, { apiKey: string }>) {
+  async function writeSecrets(services: Record<string, ServiceSecret>) {
     await mkdir(join(root, ".inkos"), { recursive: true });
     await writeFile(join(root, ".inkos", "secrets.json"), JSON.stringify({ services }, null, 2), "utf-8");
   }
@@ -55,6 +56,39 @@ describe("resolveEffectiveLLMConfig", () => {
     expect(result.llm.apiKey).toBe("sk-google");
     expect(result.diagnostics.apiKeySource).toBe("studio-secret");
     expect(result.diagnostics.warnings.join("\n")).toContain("旧顶层");
+  });
+
+  it("CLI consumer reuses OpenAI Codex OAuth credentials saved by Studio", async () => {
+    await writeProject({
+      configSource: "studio",
+      service: "openaiCodex",
+      services: [{ service: "openaiCodex", apiFormat: "responses", stream: true }],
+      defaultModel: "gpt-5.4",
+    });
+    await writeSecrets({
+      openaiCodex: {
+        oauth: {
+          provider: "openai-codex",
+          credentials: {
+            access: "oauth-access",
+            refresh: "oauth-refresh",
+            expires: Date.now() + 60_000,
+          },
+        },
+      },
+    });
+
+    const result = await resolveEffectiveLLMConfig({
+      consumer: "cli",
+      projectRoot: root,
+      envLayers: { global: {}, project: {}, process: {} },
+    });
+
+    expect(result.llm.service).toBe("openaiCodex");
+    expect(result.llm.model).toBe("gpt-5.4");
+    expect(result.llm.baseUrl).toBe("https://chatgpt.com/backend-api");
+    expect(result.llm.apiFormat).toBe("responses");
+    expect(result.llm.apiKey).toBe("oauth-access");
   });
 
   it("CLI consumer 允许 INKOS_LLM_SERVICE 切换服务，并从 provider bank 推导 baseUrl", async () => {

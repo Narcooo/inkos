@@ -42,7 +42,7 @@ InkOS Studio already supports Moonshot (Kimi). Get an API key from the Kimi Open
 
 InkOS 1.7 brings cross-language delivery, long-form forecasting, and continuous collaboration into the same Agent workbench. Translate complete works, compare several non-canonical futures, keep chatting while production runs in the background, or ask Chat to read references, import an existing manuscript, adjust prompts, revise chapters, and safely recover the creative state.
 
-- **Model setup** — Studio includes provider settings, model routing, cover-service settings, [kkaiapi](https://en.kkaiapi.com/) / OpenRouter aggregator entries, and custom OpenAI-compatible endpoints.
+- **Model setup** — Studio includes provider settings, model routing, ChatGPT OAuth for OpenAI Codex, cover-service settings, [kkaiapi](https://en.kkaiapi.com/) / OpenRouter aggregator entries, and custom OpenAI-compatible endpoints.
 - **Narrative forecasts**: Studio Chat and the CLI can create, re-check, and select 2-5 isolated futures from current canon, comparing chapter beats, character decisions, projected changes, risks, and author-intent alignment. Selecting one saves a plan only; it does not pre-emptively alter prose, foundations, or story state.
 - **Complete translation workbench**: import EPUB, text-based PDF, TXT, and Markdown; translate by chapter and semantic segment; maintain a glossary, generate side-by-side review reports, and export TXT, Markdown, or EPUB. Studio, Chat, and `inkos translate init / run / export` share the same capability.
 - **Native cross-language creation**: short fiction, scripts, storyboards, and interactive-film pipelines now include English-native prompt paths, with matching Studio copy and CLI language fallback rather than a translation-only menu.
@@ -161,12 +161,14 @@ inkos
 
 Open Studio, then go to **Model Settings**:
 
-1. Choose a service such as Google Gemini, Moonshot, MiniMax, DeepSeek, kkaiapi, OpenRouter, or a custom endpoint.
+1. Choose a service such as OpenAI Codex (ChatGPT), Google Gemini, Moonshot, MiniMax, DeepSeek, kkaiapi, OpenRouter, or a custom endpoint.
 2. Paste the API key and test the connection.
 3. Pick an available model and save.
 4. Return to Studio Chat or your book page.
 
 Studio uses project service settings and `.inkos/secrets.json`. It may show env-detection hints, but env files do not override the Studio-selected service/model/base URL/API key.
+
+OpenAI Codex does not require an API key. Select **Sign in with ChatGPT** on its service page; InkOS stores and refreshes the OAuth credentials. Its model picker prefers the signed-in account's live Codex catalog and retains GPT-5.6 fallback entries when discovery is temporarily unavailable. Studio, CLI, and the daemon share these project credentials.
 
 MiniMax uses the official OpenAI-compatible `/v1/chat/completions` endpoint. InkOS disables returned thinking by default for `MiniMax-M3*`; M2.x thinking cannot be disabled by the upstream service.
 
@@ -297,7 +299,7 @@ To generate only a cover for an existing title or synopsis, do not rerun the sho
 Generate a short-fiction cover for "The Divorce Papers He Regretted", modern city, high-drama reversal.
 ```
 
-The cover tool writes `covers/<title>/cover-prompt.md` and `covers/<title>/cover.png`. If no cover provider is configured yet, set the cover provider and API key in Studio model settings first.
+The cover tool writes `covers/<title>/cover-prompt.md` and `covers/<title>/cover.png`. If no cover provider is configured yet, set one in Studio model settings. Choosing OpenAI Codex reuses the ChatGPT OAuth login and does not require a separate API key.
 
 After generation, you can keep editing the cover prompt through chat, for example: "move the character closer, make the title text bigger, and give her a colder smile." InkOS will pass the revised direction as `coverPrompt`, rewrite `cover-prompt.md`, and regenerate the cover without rewriting the story.
 

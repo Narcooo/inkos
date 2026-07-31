@@ -1,6 +1,7 @@
 import type { InkosEndpoint } from "./types.js";
 import { ANTHROPIC } from "./endpoints/anthropic.js";
 import { OPENAI } from "./endpoints/openai.js";
+import { OPENAI_CODEX } from "./endpoints/openaiCodex.js";
 import { GOOGLE } from "./endpoints/google.js";
 import { DEEPSEEK } from "./endpoints/deepseek.js";
 import { MINIMAX } from "./endpoints/minimax.js";
@@ -49,7 +50,7 @@ export type { InkosEndpoint, InkosModel, ApiProtocol, EndpointGroup } from "./ty
  * 但 Layer 2 还会按 PROVIDER_PRIORITY 显式排序，所以此处顺序不影响结果。
  */
 const ALL_PROVIDERS: readonly InkosEndpoint[] = [
-  ANTHROPIC, OPENAI, GOOGLE, DEEPSEEK, MINIMAX,
+  ANTHROPIC, OPENAI, OPENAI_CODEX, GOOGLE, DEEPSEEK, MINIMAX,
   MOONSHOT, ZHIPU, SILICONCLOUD, BAILIAN, VOLCENGINE, HUNYUAN, BAICHUAN, STEPFUN, WENXIN,
   SPARK, SENSENOVA, TENCENTCLOUD, XIAOMI_MIMO, LONGCAT, INTERNLM,
   ZEROONE, AI360,
