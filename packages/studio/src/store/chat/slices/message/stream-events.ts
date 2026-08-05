@@ -40,6 +40,7 @@ interface ContextCompressionEventPayload {
 interface AttachSessionStreamListenersInput {
   sessionId: string;
   streamTs: number;
+  sourceRequestId?: string;
   streamEs: EventSource;
   set: SliceSet;
   get: SliceGet;
@@ -251,6 +252,7 @@ export function createLatestEventThrottle<T>(
 export function attachSessionStreamListeners({
   sessionId,
   streamTs,
+  sourceRequestId,
   streamEs,
   set,
   get,
@@ -354,6 +356,13 @@ export function attachSessionStreamListeners({
       if (!sessionMatchesEvent(sessionId, data) || !data?.execution) return;
       const execution = data.execution as ToolExecution;
       const running = execution.status === "running" || execution.status === "processing";
+      // EventSource may connect after the production task has already started, so its
+      // real-time tool:start broadcast is missed and only this snapshot is replayed.
+      // A task started during this request needs the same task-round reclassification;
+      // an older task is parallel background work and must not interrupt the new chat.
+      const startedByCurrentRequest = running
+        && typeof sourceRequestId === "string"
+        && data.sourceRequestId === sourceRequestId;
       // 服务端在每次 SSE 连接建立时都会重放该会话的任务快照。终态快照只用于
       // 收尾一个当前确实还在运行中的任务卡（刷新恢复场景）；如果本会话没有在
       // 跟踪这个任务，说明它是上一轮已结束任务的残留快照，直接忽略——否则
@@ -370,6 +379,7 @@ export function attachSessionStreamListeners({
         sessions: updateSession(state.sessions, sessionId, (runtime) => ({
           messages: mergeTaskExecution(runtime.messages, execution),
           isStreaming: keepStream,
+          ...(startedByCurrentRequest && runtime.isChatStreaming ? { isChatStreaming: false } : {}),
           stream: keepStream ? runtime.stream : null,
         })),
       }));
@@ -452,6 +462,8 @@ export function attachSessionStreamListeners({
       // 拿到任务控制器，用户也可以继续聊天），isStreaming 维持 true（任务在跑）。
       // 挂起的 fetch 返回后由 sendMessage 的 finally 按"是否还有任务在跑"收尾。
       const background = data.background === true;
+      const belongsToCurrentRequest = typeof sourceRequestId === "string"
+        && data.sourceRequestId === sourceRequestId;
       flushTextDeltas();
       set((state) => ({
         sessions: updateSession(state.sessions, sessionId, (runtime) => {
@@ -497,7 +509,9 @@ export function attachSessionStreamListeners({
           const flat = deriveFlat(parts);
           return {
             messages: replaceLast(messages, { ...stream, ...flat, parts }),
-            ...(background && runtime.isChatStreaming ? { isChatStreaming: false } : {}),
+            ...(background && belongsToCurrentRequest && runtime.isChatStreaming
+              ? { isChatStreaming: false }
+              : {}),
           };
         }),
       }));

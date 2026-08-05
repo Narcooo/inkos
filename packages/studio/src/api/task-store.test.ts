@@ -23,6 +23,7 @@ describe("Studio task snapshots", () => {
     await saveStudioTaskSnapshot(root, {
       version: 1,
       sessionId: "session-1",
+      sourceRequestId: "request-1",
       requestedIntent: "short_run",
       updatedAt: 20,
       execution: {
@@ -38,6 +39,7 @@ describe("Studio task snapshots", () => {
     await expect(loadStudioTaskSnapshot(root, "session-1")).resolves.toEqual({
       version: 1,
       sessionId: "session-1",
+      sourceRequestId: "request-1",
       requestedIntent: "short_run",
       updatedAt: 20,
       execution: {

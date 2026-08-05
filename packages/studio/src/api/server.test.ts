@@ -18,7 +18,9 @@ const evaluateBookQualityMock = vi.fn();
 const reviseDraftMock = vi.fn();
 const resyncChapterArtifactsMock = vi.fn();
 const writeNextChapterMock = vi.fn();
+const writeChaptersMock = vi.fn();
 const rollbackToChapterMock = vi.fn();
+const deleteLatestChapterMock = vi.fn();
 const saveChapterIndexMock = vi.fn();
 const loadChapterIndexMock = vi.fn();
 const loadBookConfigMock = vi.fn();
@@ -74,6 +76,7 @@ const SERVICE_PRESETS_MOCK: Record<string, ServicePresetMock> = {
   google: { providerFamily: "openai", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", modelsBaseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", knownModels: [] as string[] },
   kkaiapi: { providerFamily: "openai", baseUrl: "https://api.kkaiapi.com/v1", modelsBaseUrl: "https://api.kkaiapi.com/v1", knownModels: [] as string[] },
   ollama: { providerFamily: "openai", baseUrl: "http://localhost:11434/v1", modelsBaseUrl: "http://localhost:11434/v1", knownModels: [] as string[] },
+  lmstudio: { providerFamily: "openai", baseUrl: "http://localhost:1234/v1", modelsBaseUrl: "http://localhost:1234/v1", knownModels: [] as string[] },
   custom: { providerFamily: "openai", baseUrl: "", knownModels: [] as string[] },
 };
 const resolveServicePresetMock = vi.fn((service: string) => SERVICE_PRESETS_MOCK[service]);
@@ -112,7 +115,7 @@ const endpointIdsByGroup = {
     "volcengine", "wenxin", "xiaomimimo", "zeroone", "zhipu",
   ],
   aggregator: ["kkaiapi", "openrouter", "newapi", "siliconcloud"],
-  local: ["githubCopilot", "ollama"],
+  local: ["githubCopilot", "lmstudio", "ollama"],
   codingPlan: [
     "astronCodingPlan", "bailianCodingPlan", "glmCodingPlan", "kimiCodingPlan", "kimicode",
     "minimaxCodingPlan", "opencodeCodingPlan", "volcengineCodingPlan",
@@ -180,6 +183,10 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
       return (await rollbackToChapterMock(bookId, chapterNumber)) as number[];
     }
 
+    async acquireBookLock(): Promise<() => Promise<void>> {
+      return async () => undefined;
+    }
+
     async getNextChapterNumber(_bookId?: string): Promise<number> {
       return 1;
     }
@@ -217,6 +224,7 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
     reviseDraft = reviseDraftMock;
     resyncChapterArtifacts = resyncChapterArtifactsMock;
     writeNextChapter = writeNextChapterMock;
+    writeChapters = writeChaptersMock;
   }
 
   class MockConsolidatorAgent {
@@ -269,6 +277,13 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
     loadProjectConfig: loadProjectConfigMock,
     processProjectInteractionRequest: processProjectInteractionRequestMock,
     createInteractionToolsFromDeps: createInteractionToolsFromDepsMock,
+    deleteLatestChapter: deleteLatestChapterMock,
+    executeEditTransaction: actual.executeEditTransaction,
+    listChapterVersions: actual.listChapterVersions,
+    readChapterPlanDocument: actual.readChapterPlanDocument,
+    readChapterUserBrief: actual.readChapterUserBrief,
+    readChapterVersion: actual.readChapterVersion,
+    saveChapterUserBrief: actual.saveChapterUserBrief,
     loadProjectSession: loadProjectSessionMock,
     resolveSessionActiveBook: resolveSessionActiveBookMock,
     runAgentSession: runAgentSessionMock,
@@ -310,6 +325,7 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
     resolveServiceModel: resolveServiceModelMock,
     COVER_PROVIDER_PRESETS: actual.COVER_PROVIDER_PRESETS,
     coverSecretKey: actual.coverSecretKey,
+    normalizeCoverBaseUrl: actual.normalizeCoverBaseUrl,
     resolveCoverProviderPreset: actual.resolveCoverProviderPreset,
     isApiKeyOptionalForEndpoint: actual.isApiKeyOptionalForEndpoint,
     loadSecrets: loadSecretsMock,
@@ -412,7 +428,9 @@ describe("createStudioServer daemon lifecycle", () => {
     reviseDraftMock.mockReset();
     resyncChapterArtifactsMock.mockReset();
     writeNextChapterMock.mockReset();
+    writeChaptersMock.mockReset();
     rollbackToChapterMock.mockReset();
+    deleteLatestChapterMock.mockReset();
     saveChapterIndexMock.mockReset();
     loadChapterIndexMock.mockReset();
     loadBookConfigMock.mockReset();
@@ -473,6 +491,16 @@ describe("createStudioServer daemon lifecycle", () => {
       status: "ready-for-review",
       auditResult: { passed: true, issues: [], summary: "rewritten" },
     });
+    writeChaptersMock.mockResolvedValue([
+      {
+        chapterNumber: 3,
+        title: "Rewritten Chapter",
+        wordCount: 1800,
+        revised: false,
+        status: "ready-for-review",
+        auditResult: { passed: true, issues: [], summary: "rewritten" },
+      },
+    ]);
     createLLMClientMock.mockReset();
     createLLMClientMock.mockReturnValue({});
     createLLMTranslationModelMock.mockReset();
@@ -556,6 +584,14 @@ describe("createStudioServer daemon lifecycle", () => {
     });
     saveChapterIndexMock.mockResolvedValue(undefined);
     rollbackToChapterMock.mockResolvedValue([]);
+    deleteLatestChapterMock.mockResolvedValue({
+      bookId: "demo-book",
+      deletedChapter: 3,
+      title: "Demo",
+      trashedFiles: ["chapters/.trash/0003_Demo.md"],
+      rolledBackTo: 2,
+      discarded: [3],
+    });
     pipelineConfigs.length = 0;
     pipelineAbortSignals.length = 0;
     runAgentSessionMock.mockReset();
@@ -1009,6 +1045,7 @@ describe("createStudioServer daemon lifecycle", () => {
       llm: {
         services: [
           { service: "custom", name: "内网GPT", baseUrl: "https://llm.internal.corp/v1" },
+          { service: "lmstudio", temperature: 0.7, apiFormat: "chat", stream: true },
         ],
       },
     }, null, 2), "utf-8");
@@ -1026,15 +1063,19 @@ describe("createStudioServer daemon lifecycle", () => {
     expect(res.status).toBe(200);
     const body = await res.json() as { services: Array<{ service: string; group?: string; connected: boolean }> };
     const bank = body.services.filter((s) => !s.service.startsWith("custom"));
-    expect(bank.length).toBe(37);
+    expect(bank.length).toBe(38);
     expect(bank.every((s) => typeof s.group === "string")).toBe(true);
     expect(bank.filter((s) => s.group === "overseas")).toHaveLength(5);
     expect(bank.filter((s) => s.group === "china")).toHaveLength(18);
     expect(bank.filter((s) => s.group === "aggregator")).toHaveLength(4);
-    expect(bank.filter((s) => s.group === "local")).toHaveLength(2);
+    expect(bank.filter((s) => s.group === "local")).toHaveLength(3);
     expect(bank.filter((s) => s.group === "codingPlan")).toHaveLength(8);
     expect(bank.filter((s) => s.group === "aggregator").map((s) => s.service)[0]).toBe("kkaiapi");
     expect(body.services.find((s) => s.service === "moonshot")?.connected).toBe(true);
+    expect(body.services.find((s) => s.service === "lmstudio")).toMatchObject({
+      connected: true,
+      apiKeyOptional: true,
+    });
     expect(body.services.find((s) => s.service === "custom:内网GPT")).toMatchObject({
       connected: true,
     });
@@ -1162,6 +1203,29 @@ describe("createStudioServer daemon lifecycle", () => {
     });
     expect(fetchMock).toHaveBeenCalledWith(
       "http://localhost:11434/v1/models",
+      expect.objectContaining({ headers: {} }),
+    );
+  });
+
+  it("returns LM Studio live models without a saved API key", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [{ id: "openai/gpt-oss-20b" }] }),
+    });
+    vi.stubGlobal("fetch", fetchMock as typeof fetch);
+
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const response = await app.request("http://localhost/api/v1/services/lmstudio/models?refresh=1");
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      models: [
+        { id: "openai/gpt-oss-20b", name: "openai/gpt-oss-20b" },
+      ],
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:1234/v1/models",
       expect.objectContaining({ headers: {} }),
     );
   });
@@ -2263,6 +2327,7 @@ describe("createStudioServer daemon lifecycle", () => {
       body: JSON.stringify({
         service: "kkaiapi",
         model: "gpt-image-2",
+        baseUrl: "https://images.example.com/v1/",
       }),
     });
     expect(saveConfig.status).toBe(200);
@@ -2271,6 +2336,15 @@ describe("createStudioServer daemon lifecycle", () => {
     expect(raw.llm.cover).toEqual({
       service: "kkaiapi",
       model: "gpt-image-2",
+      baseUrl: "https://images.example.com/v1",
+    });
+
+    const readConfig = await app.request("http://localhost/api/v1/cover/config");
+    expect(readConfig.status).toBe(200);
+    await expect(readConfig.json()).resolves.toMatchObject({
+      service: "kkaiapi",
+      model: "gpt-image-2",
+      baseUrl: "https://images.example.com/v1",
     });
 
     const saveSecret = await app.request("http://localhost/api/v1/cover/secret/kkaiapi", {
@@ -2284,6 +2358,28 @@ describe("createStudioServer daemon lifecycle", () => {
         "cover:kkaiapi": { apiKey: "sk-cover" },
       },
     });
+  });
+
+  it("rejects invalid custom cover base URLs without changing project config", async () => {
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const response = await app.request("http://localhost/api/v1/cover/config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        service: "kkaiapi",
+        model: "gpt-image-2",
+        baseUrl: "file:///tmp/fake-cover-api",
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: expect.stringContaining("Base URL"),
+    });
+    const raw = JSON.parse(await readFile(join(root, "inkos.json"), "utf-8"));
+    expect(raw.llm.cover).toBeUndefined();
   });
 
   it("serves generated project cover images without exposing arbitrary files", async () => {
@@ -2598,6 +2694,205 @@ describe("createStudioServer daemon lifecycle", () => {
     expect(response.status).toBe(200);
     expect(pipelineConfigs.at(-1)).toMatchObject({ externalContext: "把注意力拉回师债主线。" });
     expect(reviseDraftMock).toHaveBeenCalledWith("demo-book", 3, "rewrite");
+  });
+
+  it("exposes editable chapter briefs, generated plans, and archived versions", async () => {
+    const bookDir = join(root, "books", "demo-book");
+    const runtimeDir = join(bookDir, "story", "runtime");
+    const versionsDir = join(bookDir, "chapters", ".versions", "0003");
+    const versionId = "1782864000000_manual_11111111-1111-4111-8111-111111111111";
+    await mkdir(runtimeDir, { recursive: true });
+    await mkdir(versionsDir, { recursive: true });
+    await writeFile(join(runtimeDir, "chapter-0003.user-brief.md"), "保留证人的原话。\n", "utf-8");
+    await writeFile(join(runtimeDir, "chapter-0003.plan.md"), "# Chapter 3 Plan\n\nFind the ledger.", "utf-8");
+    await writeFile(join(versionsDir, `${versionId}.md`), "# 第3章 旧稿\n\n旧正文。", "utf-8");
+    loadChapterIndexMock.mockResolvedValue([{
+      number: 3,
+      title: "Demo",
+      status: "ready-for-review",
+      wordCount: 4,
+      createdAt: "2026-07-01T00:00:00.000Z",
+      updatedAt: "2026-07-01T00:00:00.000Z",
+      auditIssues: [],
+      lengthWarnings: [],
+    }]);
+
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const response = await app.request("http://localhost/api/v1/books/demo-book/chapters/3/workspace");
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      chapterNumber: 3,
+      brief: "保留证人的原话。",
+      plan: expect.stringContaining("Find the ledger"),
+      canDelete: true,
+      versions: [expect.objectContaining({
+        id: versionId,
+        source: "manual",
+      })],
+    });
+
+    const versionResponse = await app.request(
+      `http://localhost/api/v1/books/demo-book/chapters/3/versions/${versionId}`,
+    );
+    await expect(versionResponse.json()).resolves.toMatchObject({
+      content: expect.stringContaining("旧正文"),
+    });
+  });
+
+  it("persists chapter briefs and archives manual chapter saves", async () => {
+    loadChapterIndexMock.mockResolvedValue([{
+      number: 3,
+      title: "Demo",
+      status: "ready-for-review",
+      wordCount: 4,
+      createdAt: "2026-07-01T00:00:00.000Z",
+      updatedAt: "2026-07-01T00:00:00.000Z",
+      auditIssues: [],
+      lengthWarnings: [],
+    }]);
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const briefResponse = await app.request(
+      "http://localhost/api/v1/books/demo-book/chapters/3/workspace/brief",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ brief: "让证人先撒谎，再被账页击穿。" }),
+      },
+    );
+    expect(briefResponse.status).toBe(200);
+    await expect(readFile(
+      join(root, "books", "demo-book", "story", "runtime", "chapter-0003.user-brief.md"),
+      "utf-8",
+    )).resolves.toContain("让证人先撒谎");
+
+    const saveResponse = await app.request(
+      "http://localhost/api/v1/books/demo-book/chapters/3",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: "# 第3章 新稿\n\n人工修改后的正文。" }),
+      },
+    );
+    expect(saveResponse.status).toBe(200);
+    await expect(readFile(
+      join(root, "books", "demo-book", "chapters", "0003_Demo.md"),
+      "utf-8",
+    )).resolves.toContain("人工修改后的正文");
+    const versionFiles = await (await import("node:fs/promises")).readdir(
+      join(root, "books", "demo-book", "chapters", ".versions", "0003"),
+    );
+    expect(versionFiles).toHaveLength(1);
+    expect(versionFiles[0]).toContain("_manual_");
+    await expect(readFile(
+      join(root, "books", "demo-book", "chapters", ".versions", "0003", versionFiles[0]!),
+      "utf-8",
+    )).resolves.toContain("Body");
+  });
+
+  it("generates a non-mutating chapter inspiration card from the current manuscript", async () => {
+    chatCompletionMock.mockResolvedValueOnce({
+      content: "## 灵感卡\n\n让证人先交出一页伪账，再由水印暴露替换时间。",
+      usage: { inputTokens: 100, outputTokens: 30 },
+    });
+    const chapterPath = join(root, "books", "demo-book", "chapters", "0003_Demo.md");
+    const before = await readFile(chapterPath, "utf-8");
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const response = await app.request(
+      "http://localhost/api/v1/books/demo-book/chapters/3/workspace/inspiration",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ brief: "不要增加新角色。" }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      chapterNumber: 3,
+      card: expect.stringContaining("水印"),
+    });
+    expect(chatCompletionMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.any(String),
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: "user",
+          content: expect.stringContaining("不要增加新角色"),
+        }),
+      ]),
+      expect.objectContaining({ temperature: 0.9 }),
+    );
+    await expect(readFile(chapterPath, "utf-8")).resolves.toBe(before);
+  });
+
+  it("regenerates a chapter in place without rolling back downstream chapters", async () => {
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const response = await app.request("http://localhost/api/v1/books/demo-book/rewrite/3", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ brief: "保留事实，重做冲突顺序。" }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(reviseDraftMock).toHaveBeenCalledWith("demo-book", 3, "rework");
+    expect(rollbackToChapterMock).not.toHaveBeenCalled();
+    expect(writeNextChapterMock).not.toHaveBeenCalled();
+    expect(pipelineConfigs.at(-1)).toMatchObject({
+      externalContext: "保留事实，重做冲突顺序。",
+      revisionGate: "always",
+    });
+    await expect(readFile(
+      join(root, "books", "demo-book", "story", "runtime", "chapter-0003.user-brief.md"),
+      "utf-8",
+    )).resolves.toContain("保留事实");
+  });
+
+  it("restores an archived chapter version and exposes safe latest-chapter deletion", async () => {
+    const bookDir = join(root, "books", "demo-book");
+    const versionsDir = join(bookDir, "chapters", ".versions", "0003");
+    const versionId = "1782864000000_revision_11111111-1111-4111-8111-111111111111";
+    await mkdir(versionsDir, { recursive: true });
+    await writeFile(join(versionsDir, `${versionId}.md`), "# 第3章 旧稿\n\n恢复后的正文。", "utf-8");
+    loadChapterIndexMock.mockResolvedValue([{
+      number: 3,
+      title: "Demo",
+      status: "ready-for-review",
+      wordCount: 4,
+      createdAt: "2026-07-01T00:00:00.000Z",
+      updatedAt: "2026-07-01T00:00:00.000Z",
+      auditIssues: [],
+      lengthWarnings: [],
+    }]);
+
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const restoreResponse = await app.request(
+      `http://localhost/api/v1/books/demo-book/chapters/3/versions/${versionId}/restore`,
+      { method: "POST" },
+    );
+    expect(restoreResponse.status).toBe(200);
+    await expect(readFile(join(bookDir, "chapters", "0003_Demo.md"), "utf-8"))
+      .resolves.toContain("恢复后的正文");
+
+    const deleteResponse = await app.request(
+      "http://localhost/api/v1/books/demo-book/chapters/3",
+      { method: "DELETE" },
+    );
+    expect(deleteResponse.status).toBe(200);
+    expect(deleteLatestChapterMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "demo-book",
+      { chapterNumber: 3 },
+    );
   });
 
   it("exposes a resync endpoint for rebuilding latest chapter truth artifacts", async () => {
@@ -3717,6 +4012,7 @@ describe("createStudioServer daemon lifecycle", () => {
       body: JSON.stringify({
         instruction: "写一篇冷库账本短篇。",
         sessionId: "bg-flag-session",
+        clientRequestId: "client-request-1",
         sessionKind: "short",
         actionSource: "button",
         requestedIntent: "short_run",
@@ -3732,6 +4028,7 @@ describe("createStudioServer daemon lifecycle", () => {
     expect(findToolStart((data) => String(data.id ?? "").startsWith("direct-short_run-"))?.data).toMatchObject({
       sessionId: "bg-flag-session",
       background: true,
+      sourceRequestId: "client-request-1",
     });
 
     // 聊天轮工具的 tool:start 不带 background 标记，前端维持聊天轮分类。
@@ -4182,6 +4479,53 @@ describe("createStudioServer daemon lifecycle", () => {
         },
       }),
     );
+  }, 60_000);
+
+  it("runs a confirmed multi-chapter write sequentially through the existing write_next intent", async () => {
+    writeChaptersMock.mockResolvedValueOnce([
+      {
+        chapterNumber: 3,
+        title: "第三章",
+        wordCount: 1800,
+        revised: false,
+        status: "ready-for-review",
+        auditResult: { passed: true, issues: [], summary: "ok" },
+      },
+      {
+        chapterNumber: 4,
+        title: "第四章",
+        wordCount: 1750,
+        revised: false,
+        status: "ready-for-review",
+        auditResult: { passed: true, issues: [], summary: "ok" },
+      },
+    ]);
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const response = await app.request("http://localhost/api/v1/agent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        instruction: "连续写两章",
+        activeBookId: "demo-book",
+        sessionId: "agent-session-1",
+        sessionKind: "book",
+        actionSource: "button",
+        requestedIntent: "write_next",
+        actionPayload: { writeNext: { chapterCount: 2 } },
+      }),
+    });
+
+    const body = await response.json();
+    expect(response.status, JSON.stringify(body)).toBe(200);
+    expect(body.response).toContain("已连续完成 2 章");
+    expect(writeChaptersMock).toHaveBeenCalledWith(
+      "demo-book",
+      2,
+      expect.objectContaining({ onChapterComplete: expect.any(Function) }),
+    );
+    expect(writeNextChapterMock).not.toHaveBeenCalled();
   }, 60_000);
 
   it("does not present audit-failed direct write-next as completed", async () => {
@@ -5038,6 +5382,96 @@ describe("createStudioServer daemon lifecycle", () => {
     });
     const agentConfig = runAgentSessionMock.mock.calls.at(-1)?.[0] as Record<string, unknown>;
     expect(agentConfig.model).toBe(ollamaModel);
+    expect(agentConfig.apiKey).toBe("");
+  });
+
+  it("lets the Studio agent creation path use explicit LM Studio models without an API key", async () => {
+    const lmStudioModel = {
+      id: "openai/gpt-oss-20b",
+      name: "openai/gpt-oss-20b",
+      api: "openai-completions",
+      provider: "openai",
+      baseUrl: "http://localhost:1234/v1",
+      reasoning: false,
+      input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 0,
+      maxTokens: 16384,
+    };
+    await writeFile(join(root, "inkos.json"), JSON.stringify({
+      ...projectConfig,
+      llm: {
+        configSource: "studio",
+        service: "lmstudio",
+        provider: "openai",
+        baseUrl: "http://localhost:1234/v1",
+        model: "openai/gpt-oss-20b",
+        apiKey: "",
+        services: [
+          { service: "lmstudio", apiFormat: "chat", stream: false },
+        ],
+        defaultModel: "openai/gpt-oss-20b",
+        apiFormat: "chat",
+        stream: false,
+      },
+    }, null, 2), "utf-8");
+    loadBookSessionMock.mockResolvedValueOnce({
+      sessionId: "agent-session-1",
+      bookId: null,
+      title: null,
+      messages: [],
+      events: [],
+      draftRounds: [],
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    createLLMClientMock.mockImplementation(((cfg: any) => ({
+      _piModel: {
+        ...lmStudioModel,
+        id: cfg.model,
+        name: cfg.model,
+        baseUrl: cfg.baseUrl || "http://localhost:1234/v1",
+      },
+      _apiKey: cfg.apiKey ?? "",
+    })) as any);
+    resolveServiceModelMock.mockResolvedValue({
+      model: lmStudioModel,
+      apiKey: "",
+    });
+    runAgentSessionMock.mockResolvedValueOnce({
+      responseText: "收到。",
+      messages: [
+        { role: "user", content: "你好" },
+        { role: "assistant", content: "收到。" },
+      ],
+    });
+
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const response = await app.request("http://localhost/api/v1/agent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        instruction: "你好",
+        service: "lmstudio",
+        model: "openai/gpt-oss-20b",
+        sessionId: "agent-session-1",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(createLLMClientMock).toHaveBeenCalledWith(expect.objectContaining({
+      service: "lmstudio",
+      model: "openai/gpt-oss-20b",
+      apiKey: "",
+    }));
+    expect(pipelineConfigs.at(-1)).toMatchObject({
+      client: expect.objectContaining({ _apiKey: "" }),
+      model: "openai/gpt-oss-20b",
+    });
+    const agentConfig = runAgentSessionMock.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(agentConfig.model).toBe(lmStudioModel);
     expect(agentConfig.apiKey).toBe("");
   });
 

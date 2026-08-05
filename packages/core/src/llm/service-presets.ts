@@ -47,6 +47,7 @@ export const SERVICE_PRESETS: Record<string, ServicePreset> = {
   openrouter:  { providerFamily: "openai",    api: "openai-responses",   baseUrl: "https://openrouter.ai/api/v1",                       label: "OpenRouter",      piProvider: "openrouter" },
   kkaiapi:     { providerFamily: "openai",    api: "openai-completions", baseUrl: "https://api.kkaiapi.com/v1",                         label: "kkaiapi",         modelsBaseUrl: "https://api.kkaiapi.com/v1" },
   ollama:      { providerFamily: "openai",    api: "openai-completions", baseUrl: "http://localhost:11434/v1",                          label: "Ollama (本地)" },
+  lmstudio:    { providerFamily: "openai",    api: "openai-completions", baseUrl: "http://localhost:1234/v1",                           label: "LM Studio (本地)", modelsBaseUrl: "http://localhost:1234/v1" },
   custom:      { providerFamily: "openai",    api: "openai-completions", baseUrl: "",                                                    label: "自定义端点" },
 };
 

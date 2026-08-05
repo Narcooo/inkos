@@ -22,6 +22,7 @@ import { readGenreProfile } from "../agents/rules-reader.js";
 import { analyzeAITells } from "../agents/ai-tells.js";
 import { analyzeSensitiveWords } from "../agents/sensitive-words.js";
 import { StateManager } from "../state/manager.js";
+import { archiveChapterVersion, readChapterUserBrief } from "../state/chapter-workspace.js";
 import { MemoryDB, type Fact } from "../state/memory-db.js";
 import { dispatchNotification, dispatchWebhookEvent } from "../notify/dispatcher.js";
 import type { WebhookEvent } from "../notify/webhook.js";
@@ -65,6 +66,23 @@ const SEQUENCE_LEVEL_CATEGORIES = new Set([
 
 function isSequenceLevelCategory(category: string): boolean {
   return SEQUENCE_LEVEL_CATEGORIES.has(category);
+}
+
+function mergeChapterRevisionInstructions(
+  persistedBrief: string,
+  currentInstruction?: string,
+): string | undefined {
+  const persisted = persistedBrief.trim();
+  const current = currentInstruction?.trim() ?? "";
+  if (!persisted) return current || undefined;
+  if (!current || current === persisted) return persisted;
+  return [
+    "## Persisted chapter brief",
+    persisted,
+    "",
+    "## Current revision instruction",
+    current,
+  ].join("\n");
 }
 
 interface ImportFoundationSourceOptions {
@@ -301,6 +319,16 @@ export interface ChapterPipelineResult {
   readonly lengthWarnings?: ReadonlyArray<string>;
   readonly lengthTelemetry?: LengthTelemetry;
   readonly tokenUsage?: TokenUsageSummary;
+}
+
+export interface WriteChaptersOptions {
+  readonly wordCount?: number;
+  readonly temperatureOverride?: number;
+  readonly onChapterComplete?: (
+    result: ChapterPipelineResult,
+    completedCount: number,
+    requestedCount: number,
+  ) => void;
 }
 
 // Atomic operation results
@@ -1332,6 +1360,10 @@ export class PipelineRunner {
       if (!chapterMeta) {
         throw new Error(`Chapter ${targetChapter} not found in index`);
       }
+      const latestChapter = index.length > 0
+        ? Math.max(...index.map((chapter) => chapter.number))
+        : targetChapter;
+      const isLatestChapter = targetChapter === latestChapter;
 
       // Re-audit to get structured issues (index only stores strings)
       const content = await this.readChapterContent(bookDir, targetChapter);
@@ -1339,7 +1371,11 @@ export class PipelineRunner {
       const { profile: gp } = await this.loadGenreProfile(book.genre);
       const language = book.language ?? gp.language;
       const countingMode = resolveLengthCountingMode(language);
-      const effectiveExternalContext = externalContext ?? this.config.externalContext;
+      const persistedChapterBrief = await readChapterUserBrief(bookDir, targetChapter);
+      const effectiveExternalContext = mergeChapterRevisionInstructions(
+        persistedChapterBrief,
+        externalContext ?? this.config.externalContext,
+      );
       const reviseControlInput = (this.config.inputGovernanceMode ?? "v2") === "legacy"
         ? undefined
         : await this.createGovernedArtifacts(
@@ -1366,7 +1402,14 @@ export class PipelineRunner {
           : undefined,
       });
 
-      if (preRevision.blockingCount === 0 && preRevision.aiTellCount === 0) {
+      const explicitRevisionRequested = Boolean(effectiveExternalContext?.trim())
+        || mode === "rewrite"
+        || mode === "rework";
+      if (
+        preRevision.blockingCount === 0
+        && preRevision.aiTellCount === 0
+        && !explicitRevisionRequested
+      ) {
         return {
           chapterNumber: targetChapter,
           wordCount: countChapterLength(content, countingMode),
@@ -1528,6 +1571,7 @@ export class PipelineRunner {
       if (!existingFile) {
         throw new Error(`Chapter ${targetChapter} file not found in ${chaptersDir} (expected filename starting with ${paddedNum})`);
       }
+      await archiveChapterVersion(bookDir, targetChapter, content, "revision");
       const reviseLang = book.language ?? gp.language;
       const reviseHeading = reviseLang === "en"
         ? `# Chapter ${targetChapter}: ${chapterMeta.title}`
@@ -1538,23 +1582,29 @@ export class PipelineRunner {
         "utf-8",
       );
 
-      // Update truth files
-      const storyDir = join(bookDir, "story");
-      if (reviseOutput.updatedState !== "(状态卡未更新)") {
-        await writeFile(join(storyDir, "current_state.md"), reviseOutput.updatedState, "utf-8");
+      // Only the latest chapter owns current truth. Reworking an older chapter
+      // invalidates its descendants, but must not rewind the live story state.
+      if (isLatestChapter) {
+        const storyDir = join(bookDir, "story");
+        if (reviseOutput.updatedState !== "(状态卡未更新)") {
+          await writeFile(join(storyDir, "current_state.md"), reviseOutput.updatedState, "utf-8");
+        }
+        if (gp.numericalSystem && reviseOutput.updatedLedger && reviseOutput.updatedLedger !== "(账本未更新)") {
+          await writeFile(join(storyDir, "particle_ledger.md"), reviseOutput.updatedLedger, "utf-8");
+        }
+        if (reviseOutput.updatedHooks !== "(伏笔池未更新)") {
+          await writeFile(join(storyDir, "pending_hooks.md"), reviseOutput.updatedHooks, "utf-8");
+        }
+        await this.syncLegacyStructuredStateFromMarkdown(bookDir, targetChapter);
       }
-      if (gp.numericalSystem && reviseOutput.updatedLedger && reviseOutput.updatedLedger !== "(账本未更新)") {
-        await writeFile(join(storyDir, "particle_ledger.md"), reviseOutput.updatedLedger, "utf-8");
-      }
-      if (reviseOutput.updatedHooks !== "(伏笔池未更新)") {
-        await writeFile(join(storyDir, "pending_hooks.md"), reviseOutput.updatedHooks, "utf-8");
-      }
-      await this.syncLegacyStructuredStateFromMarkdown(bookDir, targetChapter);
 
       // Update index
-      const updatedIndex = index.map((ch) =>
-        ch.number === targetChapter
-          ? {
+      const downstreamRevisionNotice = language === "en"
+        ? `[warning] Chapter ${targetChapter} changed; re-review this downstream chapter for continuity.`
+        : `[warning] 第${targetChapter}章已重写，请重新检查本章与前文的连续性。`;
+      const updatedIndex = index.map((ch) => {
+        if (ch.number === targetChapter) {
+          return {
               ...ch,
               status: (effectivePostRevision.auditResult.passed ? "ready-for-review" : "audit-failed") as ChapterMeta["status"],
               wordCount: normalizedRevision.wordCount,
@@ -1562,12 +1612,23 @@ export class PipelineRunner {
               auditIssues: effectivePostRevision.auditResult.issues.map((i) => `[${i.severity}] ${i.description}`),
               lengthWarnings,
               lengthTelemetry,
-            }
-          : ch,
-      );
+            };
+        }
+        if (ch.number > targetChapter) {
+          return {
+            ...ch,
+            status: "needs-revision" as ChapterMeta["status"],
+            updatedAt: new Date().toISOString(),
+            auditIssues: [
+              ...(ch.auditIssues ?? []).filter((issue) => !issue.includes("re-review this downstream chapter") && !issue.includes("请重新检查本章与前文")),
+              downstreamRevisionNotice,
+            ],
+          };
+        }
+        return ch;
+      });
       await this.state.saveChapterIndex(bookId, updatedIndex);
-      const latestChapter = index.length > 0 ? Math.max(...index.map((chapter) => chapter.number)) : targetChapter;
-      if (targetChapter === latestChapter) {
+      if (isLatestChapter) {
         await this.persistAuditDriftGuidance({
           bookDir,
           chapterNumber: targetChapter,
@@ -1583,9 +1644,13 @@ export class PipelineRunner {
         zh: `更新第${targetChapter}章索引与快照`,
         en: `updating chapter index and snapshots for chapter ${targetChapter}`,
       });
-      await this.state.snapshotState(bookId, targetChapter);
+      if (isLatestChapter) {
+        await this.state.snapshotState(bookId, targetChapter);
+      }
       await this.syncNarrativeMemoryIndex(bookId);
-      await this.syncCurrentStateFactHistory(bookId, targetChapter);
+      if (isLatestChapter) {
+        await this.syncCurrentStateFactHistory(bookId, targetChapter);
+      }
 
       await this.emitWebhook("revision-complete", bookId, targetChapter, {
         wordCount: normalizedRevision.wordCount,
@@ -1667,6 +1732,37 @@ export class PipelineRunner {
     const releaseLock = await this.state.acquireBookLock(bookId);
     try {
       return await this._writeNextChapterLocked(bookId, wordCount, temperatureOverride, this.config.externalContext);
+    } finally {
+      await releaseLock();
+    }
+  }
+
+  async writeChapters(
+    bookId: string,
+    chapterCount: number,
+    options: WriteChaptersOptions = {},
+  ): Promise<ReadonlyArray<ChapterPipelineResult>> {
+    if (!Number.isInteger(chapterCount) || chapterCount < 1 || chapterCount > 20) {
+      throw new Error(`chapterCount must be an integer between 1 and 20; received ${chapterCount}.`);
+    }
+
+    this.throwIfOperationAborted();
+    const releaseLock = await this.state.acquireBookLock(bookId);
+    try {
+      const results: ChapterPipelineResult[] = [];
+      for (let index = 0; index < chapterCount; index += 1) {
+        this.throwIfOperationAborted();
+        const result = await this._writeNextChapterLocked(
+          bookId,
+          options.wordCount,
+          options.temperatureOverride,
+          this.config.externalContext,
+        );
+        results.push(result);
+        options.onChapterComplete?.(result, results.length, chapterCount);
+        if (result.status !== "ready-for-review") break;
+      }
+      return results;
     } finally {
       await releaseLock();
     }

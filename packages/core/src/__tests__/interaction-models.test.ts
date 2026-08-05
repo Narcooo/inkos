@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   AutomationModeSchema,
+  ActionPayloadSchema,
   ActionSourceSchema,
   BookCreationDraftSchema,
   InteractionIntentTypeSchema,
@@ -67,6 +68,15 @@ describe("interaction models", () => {
     expect(normalizeRequestedIntent("")).toBeUndefined();
     expect(normalizePlayMode("open")).toBe("open");
     expect(normalizePlayMode(null)).toBeUndefined();
+
+    expect(ActionPayloadSchema.parse({
+      writeNext: { chapterCount: 5 },
+    })).toEqual({
+      writeNext: { chapterCount: 5 },
+    });
+    expect(ActionPayloadSchema.safeParse({
+      writeNext: { chapterCount: 21 },
+    }).success).toBe(false);
   });
 
   it("validates structured script and storyboard creation payloads", () => {
@@ -118,6 +128,9 @@ describe("interaction models", () => {
     expect(isExplicitWriteChapterCommand("开始写第一章。")).toBe(true);
     expect(isExplicitWriteChapterCommand("请写下一章，写完后落盘。")).toBe(true);
     expect(isExplicitWriteChapterCommand("write chapter 1")).toBe(true);
+    expect(isExplicitWriteChapterCommand("连续写5章")).toBe(false);
+    expect(isExplicitWriteChapterCommand("write 5 chapters")).toBe(false);
+    expect(isExplicitWriteChapterCommand("写第5章")).toBe(false);
     expect(isExplicitWriteChapterCommand("继续")).toBe(false);
     expect(isExplicitWriteChapterCommand("我们讨论一下要不要写下一章")).toBe(false);
     expect(isExplicitWriteChapterCommand("我觉得第一章应该怎么写？")).toBe(false);

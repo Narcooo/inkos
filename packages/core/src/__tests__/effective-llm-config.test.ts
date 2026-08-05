@@ -529,6 +529,26 @@ describe("resolveEffectiveLLMConfig", () => {
     expect(result.llm.apiKey).toBe("");
   });
 
+  it("Studio 使用 LM Studio 动态模型时不要求 API key", async () => {
+    await writeProject({
+      configSource: "studio",
+      service: "lmstudio",
+      services: [{ service: "lmstudio", apiFormat: "chat", stream: true }],
+      defaultModel: "openai/gpt-oss-20b",
+    });
+
+    const result = await resolveEffectiveLLMConfig({
+      consumer: "studio",
+      projectRoot: root,
+      envLayers: { global: {}, project: {}, process: {} },
+    });
+
+    expect(result.llm.service).toBe("lmstudio");
+    expect(result.llm.baseUrl).toBe("http://localhost:1234/v1");
+    expect(result.llm.model).toBe("openai/gpt-oss-20b");
+    expect(result.llm.apiKey).toBe("");
+  });
+
   it("从 provider bank 应用 service transport 默认值", async () => {
     await writeProject({
       configSource: "studio",

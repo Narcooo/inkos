@@ -64,6 +64,7 @@ interface CoverProviderInfo {
 interface CoverConfigPayload {
   readonly service: string | null;
   readonly model: string | null;
+  readonly baseUrl: string | null;
   readonly providers: readonly CoverProviderInfo[];
 }
 
@@ -71,6 +72,7 @@ function CoverConfigCard() {
   const [providers, setProviders] = useState<readonly CoverProviderInfo[]>([]);
   const [service, setService] = useState("kkaiapi");
   const [model, setModel] = useState("gpt-image-2");
+  const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [showKey, setShowKey] = useState(false);
   const [status, setStatus] = useState<"idle" | "loading" | "saving" | "saved" | "error">("loading");
@@ -88,6 +90,7 @@ function CoverConfigCard() {
         const provider = payload.providers.find((item) => item.service === nextService) ?? payload.providers[0];
         setService(nextService);
         setModel(payload.model ?? provider?.defaultModel ?? "gpt-image-2");
+        setBaseUrl(payload.baseUrl ?? "");
         setStatus("idle");
       })
       .catch((error) => {
@@ -116,6 +119,7 @@ function CoverConfigCard() {
     const provider = providers.find((item) => item.service === nextService);
     setService(nextService);
     setModel(provider?.defaultModel ?? "gpt-image-2");
+    setBaseUrl("");
     setStatus("idle");
     setMessage("");
   };
@@ -134,7 +138,11 @@ function CoverConfigCard() {
       await fetchJson("/cover/config", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ service: provider.service, model }),
+        body: JSON.stringify({
+          service: provider.service,
+          model,
+          ...(baseUrl.trim() ? { baseUrl: baseUrl.trim() } : {}),
+        }),
       });
       setStatus("saved");
       setMessage(tr("封面配置已保存", "Cover config saved"));
@@ -193,6 +201,23 @@ function CoverConfigCard() {
       </div>
 
       <label className="space-y-1.5">
+        <span className="block text-xs font-medium text-muted-foreground/70">Base URL</span>
+        <input
+          type="url"
+          value={baseUrl}
+          onChange={(event) => setBaseUrl(event.target.value)}
+          placeholder={selected?.baseUrl ?? "https://example.com/v1"}
+          className="w-full rounded-lg border border-border/60 bg-background px-3 py-2 text-sm font-mono"
+        />
+        <span className="block text-[11px] leading-5 text-muted-foreground/55">
+          {tr(
+            "留空使用该服务的默认地址；自定义地址会作为封面生成 API 根路径。",
+            "Leave blank to use the provider default; a custom value becomes the cover generation API root.",
+          )}
+        </span>
+      </label>
+
+      <label className="space-y-1.5">
         <span className="block text-xs font-medium text-muted-foreground/70">API Key</span>
         <div className="relative">
           <input
@@ -221,11 +246,6 @@ function CoverConfigCard() {
           {status === "saving" && <Loader2 size={12} className="animate-spin" />}
           {tr("保存封面配置", "Save cover config")}
         </button>
-        {selected?.baseUrl && (
-          <span className="text-xs text-muted-foreground/60">
-            Base URL: <span className="font-mono">{selected.baseUrl}</span>
-          </span>
-        )}
         {message && (
           <span className={`text-xs ${status === "error" ? "text-destructive" : "text-emerald-500"}`}>
             {message}

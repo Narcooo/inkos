@@ -74,6 +74,49 @@ describe("saveServiceConfig", () => {
     });
   });
 
+  it("allows a built-in local service to validate and save without an API key", async () => {
+    const calls: string[] = [];
+    const fetchJsonImpl = vi.fn(async (path: string) => {
+      calls.push(path);
+      if (path === "/services/lmstudio/test") {
+        return {
+          ok: true,
+          models: [{ id: "qwen3-30b" }],
+          selectedModel: "qwen3-30b",
+          detected: { apiFormat: "chat", stream: true },
+        };
+      }
+      if (path === "/services/lmstudio/secret") return { ok: true };
+      if (path === "/services/config") return { ok: true };
+      throw new Error(`unexpected path: ${path}`);
+    });
+
+    const result = await saveServiceConfig({
+      effectiveServiceId: "lmstudio",
+      serviceId: "lmstudio",
+      isCustom: false,
+      apiKeyOptional: true,
+      resolvedCustomName: "",
+      apiKey: "",
+      baseUrl: "",
+      apiFormat: "chat",
+      stream: true,
+      temperature: "0.7",
+      detectedModel: "",
+      fetchJsonImpl: fetchJsonImpl as never,
+    });
+
+    expect(calls).toEqual([
+      "/services/lmstudio/test",
+      "/services/lmstudio/secret",
+      "/services/config",
+    ]);
+    expect(result).toMatchObject({
+      status: { state: "connected", models: [{ id: "qwen3-30b" }] },
+      detectedModel: "qwen3-30b",
+    });
+  });
+
   it("validates the upstream service before persisting secrets/config", async () => {
     const calls: string[] = [];
     const bodies: unknown[] = [];

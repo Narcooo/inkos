@@ -22,6 +22,11 @@ import type { ChapterMeta } from "../models/chapter.js";
 import { MemoryDB } from "../state/memory-db.js";
 import * as memoryDbModule from "../state/memory-db.js";
 import { countChapterLength } from "../utils/length-metrics.js";
+import {
+  listChapterVersions,
+  readChapterVersion,
+  saveChapterUserBrief,
+} from "../state/chapter-workspace.js";
 
 const require = createRequire(import.meta.url);
 const hasNodeSqlite = (() => {
@@ -4752,6 +4757,11 @@ describe("PipelineRunner", () => {
       auditIssues: [],
       lengthWarnings: [],
     }]);
+    await saveChapterUserBrief(
+      state.bookDir(bookId),
+      1,
+      "保留证人关于雨夜账本的原话。",
+    );
 
     vi.spyOn(ContinuityAuditor.prototype, "auditChapter")
       .mockResolvedValueOnce(
@@ -4781,6 +4791,9 @@ describe("PipelineRunner", () => {
 
       expect(reviseChapter.mock.calls[0]?.[6]).toMatchObject({
         chapterIntent: expect.stringContaining("把注意力收回师债主线"),
+      });
+      expect(reviseChapter.mock.calls[0]?.[6]).toMatchObject({
+        chapterIntent: expect.stringContaining("保留证人关于雨夜账本的原话"),
       });
       expect(reviseChapter.mock.calls[0]?.[6]).not.toMatchObject({
         chapterIntent: expect.stringContaining("商会路线优先"),
@@ -5076,10 +5089,93 @@ describe("PipelineRunner", () => {
 
       expect(result.applied).toBe(true);
       expect(savedChapter).toContain(revisedBody);
+      const versions = await listChapterVersions(state.bookDir(bookId), 1);
+      expect(versions).toHaveLength(1);
+      await expect(readChapterVersion(state.bookDir(bookId), 1, versions[0]!.id))
+        .resolves.toContain("林越推门进去");
       // Audit metrics are still recorded — the failing audit lands in the index
       // instead of blocking the user's explicit revision.
       expect(savedIndex[0]?.status).toBe("audit-failed");
       expect(savedIndex[0]?.auditIssues).toContain("[critical] Fix the chapter state");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, SLOW_PIPELINE_TEST_TIMEOUT_MS);
+
+  it("runs an explicit rework even when the current chapter already passes audit", async () => {
+    const { root, runner, bookId, chaptersDir, revisedBody } = await createRevisionGateFixture("always");
+
+    vi.spyOn(ContinuityAuditor.prototype, "auditChapter")
+      .mockResolvedValueOnce(createAuditResult({ passed: true, issues: [], summary: "clean" }))
+      .mockResolvedValueOnce(createAuditResult({ passed: true, issues: [], summary: "clean alternative" }));
+
+    try {
+      const result = await runner.reviseDraft(
+        bookId,
+        1,
+        "rework",
+        "保留事实，但重新组织整章冲突。",
+      );
+      const savedChapter = await readFile(join(chaptersDir, "0001_Test_Chapter.md"), "utf-8");
+
+      expect(result.applied).toBe(true);
+      expect(savedChapter).toContain(revisedBody);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, SLOW_PIPELINE_TEST_TIMEOUT_MS);
+
+  it("keeps current truth intact and marks downstream chapters when reworking an older chapter", async () => {
+    const { root, runner, state, bookId, chaptersDir, revisedBody } = await createRevisionGateFixture("always");
+    const storyDir = join(state.bookDir(bookId), "story");
+    const latestState = "# Current State\n\nThe second chapter is already complete.";
+    const latestHooks = "# Pending Hooks\n\n- H2 remains active after chapter 2.";
+    await Promise.all([
+      writeFile(
+        join(chaptersDir, "0002_Later_Chapter.md"),
+        "# 第2章 Later Chapter\n\n第二章已经发生。",
+        "utf-8",
+      ),
+      writeFile(join(storyDir, "current_state.md"), latestState, "utf-8"),
+      writeFile(join(storyDir, "pending_hooks.md"), latestHooks, "utf-8"),
+    ]);
+    const index = await state.loadChapterIndex(bookId);
+    await state.saveChapterIndex(bookId, [
+      ...index,
+      {
+        number: 2,
+        title: "Later Chapter",
+        status: "ready-for-review",
+        wordCount: 8,
+        createdAt: "2026-03-20T00:00:00.000Z",
+        updatedAt: "2026-03-20T00:00:00.000Z",
+        auditIssues: [],
+        lengthWarnings: [],
+      },
+    ]);
+    const snapshotState = vi.spyOn(state, "snapshotState");
+
+    vi.spyOn(ContinuityAuditor.prototype, "auditChapter")
+      .mockResolvedValueOnce(createAuditResult({ passed: true, issues: [], summary: "clean" }))
+      .mockResolvedValueOnce(createAuditResult({ passed: true, issues: [], summary: "clean alternative" }));
+
+    try {
+      const result = await runner.reviseDraft(
+        bookId,
+        1,
+        "rework",
+        "重写第一章，但不要假装第二章尚未发生。",
+      );
+      const savedChapter = await readFile(join(chaptersDir, "0001_Test_Chapter.md"), "utf-8");
+      const savedIndex = await state.loadChapterIndex(bookId);
+
+      expect(result.applied).toBe(true);
+      expect(savedChapter).toContain(revisedBody);
+      await expect(readFile(join(storyDir, "current_state.md"), "utf-8")).resolves.toBe(latestState);
+      await expect(readFile(join(storyDir, "pending_hooks.md"), "utf-8")).resolves.toBe(latestHooks);
+      expect(savedIndex[0]?.status).toBe("ready-for-review");
+      expect(savedIndex[1]?.status).toBe("needs-revision");
+      expect(snapshotState).not.toHaveBeenCalled();
     } finally {
       await rm(root, { recursive: true, force: true });
     }

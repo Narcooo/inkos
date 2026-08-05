@@ -124,13 +124,14 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
 
   // -- Derived state --
   const isConnected = Boolean(svc?.connected);
+  const apiKeyOptional = Boolean(svc?.apiKeyOptional);
   const models = status.state === "connected" ? status.models : (storeModels ?? []);
   const isBusy = status.state === "testing" || status.state === "saving";
 
   // -- Handlers --
   const handleTest = async () => {
     const trimmedKey = apiKey.trim();
-    if (!trimmedKey && !isCustom) {
+    if (!trimmedKey && !isCustom && !apiKeyOptional) {
       setStatus({ state: "error", message: tr("请先输入 API Key", "Enter an API key first") });
       return;
     }
@@ -205,6 +206,7 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
         effectiveServiceId,
         serviceId,
         isCustom,
+        apiKeyOptional,
         resolvedCustomName,
         apiKey: trimmedKey,
         baseUrl,
@@ -271,11 +273,11 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
         )}
 
         {/* API Key */}
-        <Field label="API Key">
+        <Field label={apiKeyOptional ? tr("API Key（可选）", "API key (optional)") : "API Key"}>
           <div className="relative">
             <input
               type={showKey ? "text" : "password"} value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)} placeholder="sk-..."
+              onChange={(e) => setApiKey(e.target.value)} placeholder={apiKeyOptional ? tr("本地服务可留空", "Optional for local service") : "sk-..."}
               className="w-full rounded-lg border border-border/60 bg-background px-3 py-2 pr-10 text-sm font-mono"
             />
             <button type="button" onClick={() => setShowKey((v) => !v)}

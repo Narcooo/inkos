@@ -423,6 +423,33 @@ describe("chatCompletion via pi-ai", () => {
     vi.unstubAllGlobals();
   });
 
+  it("aborts a pending kkaiapi request instead of leaving the writer blocked", async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn((_url: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      const signal = init?.signal;
+      signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = makeClient(0.7, {
+      service: "kkaiapi",
+      stream: true,
+      _piModel: {
+        ...MOCK_PI_MODEL,
+        provider: "openai",
+        baseUrl: "https://api.kkaiapi.com/v1",
+      },
+    });
+
+    const pending = chatCompletion(client, "deepseek-v4-flash", [{ role: "user", content: "write" }], {
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    controller.abort(new Error("Stopped by user"));
+
+    await expect(pending).rejects.toThrow("Stopped by user");
+    vi.unstubAllGlobals();
+  });
+
   it("does not leave a stream monitor timer after native non-stream chat", async () => {
     vi.useFakeTimers();
     const fetchMock = vi.fn().mockResolvedValue({
@@ -648,6 +675,38 @@ describe("chatCompletion via pi-ai", () => {
     ]);
 
     expect(result.content).toBe("本地 Ollama 可用");
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(mockCompleteSimple).not.toHaveBeenCalled();
+
+    vi.unstubAllGlobals();
+  });
+
+  it("uses native fetch transport for local LM Studio without an API key", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: "本地 LM Studio 可用" } }],
+        usage: { prompt_tokens: 3, completion_tokens: 4, total_tokens: 7 },
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = makeClient(0.7, {
+      service: "lmstudio",
+      configSource: "studio",
+      stream: false,
+      _apiKey: "",
+      _piModel: {
+        ...MOCK_PI_MODEL,
+        provider: "openai",
+        baseUrl: "http://127.0.0.1:1234/v1",
+      },
+    });
+    const result = await chatCompletion(client, "openai/gpt-oss-20b", [
+      { role: "user", content: "ping" },
+    ]);
+
+    expect(result.content).toBe("本地 LM Studio 可用");
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(mockCompleteSimple).not.toHaveBeenCalled();
 

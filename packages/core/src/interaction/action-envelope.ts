@@ -47,6 +47,10 @@ export const CreateBookActionPayloadSchema = z.object({
   chapterWordCount: z.number().int().min(1).optional(),
 }).strict();
 
+export const WriteNextActionPayloadSchema = z.object({
+  chapterCount: z.number().int().min(1).max(20).default(1),
+}).strict();
+
 // charsPerChapter 的单位随语言变化：zh 是每章汉字数（900-1200），en 是每章英文单词数（600-800）。
 // 这两个区间与 short-fiction-runner 的执行层校验共用同一组常量，保证确认卡和执行层不再各说各话。
 export function shortRunCharsPerChapterRange(language: "zh" | "en"): {
@@ -167,6 +171,7 @@ export const TranslationCreateActionPayloadSchema = z.object({
 
 export const ActionPayloadSchema = z.object({
   createBook: CreateBookActionPayloadSchema.optional(),
+  writeNext: WriteNextActionPayloadSchema.optional(),
   shortRun: ShortRunActionPayloadSchema.optional(),
   playStart: PlayStartActionPayloadSchema.optional(),
   generateCover: GenerateCoverActionPayloadSchema.optional(),
@@ -251,8 +256,8 @@ export function isExplicitWriteChapterCommand(instruction: string): boolean {
   if (!trimmed) return false;
 
   const zhWriteChapter =
-    /^(?:请|帮我|麻烦|现在|直接|开始|继续|接着|再)?\s*(?:写|续写|创作|生成)(?:出|一下)?\s*(?:第?\s*[一二三四五六七八九十百千万\d]+\s*章|下一章|一章|正文|章节)(?:\s|[，。,.！!？?；;：:]|$)/.test(trimmed);
+    /^(?:请|帮我|麻烦|现在|直接|开始|继续|接着|再)?\s*(?:写|续写|创作|生成)(?:出|一下)?\s*(?:第?\s*一\s*章|第?\s*1\s*章|下一章|一章|正文|章节)(?:\s|[，。,.！!？?；;：:]|$)/.test(trimmed);
   if (zhWriteChapter) return true;
 
-  return /^(?:please\s+)?(?:write|continue|draft|generate)\s+(?:the\s+)?(?:next\s+)?chapter(?:\s+\d+|\s+one)?\b/i.test(trimmed);
+  return /^(?:please\s+)?(?:write|continue|draft|generate)\s+(?:(?:the\s+)?next\s+chapter|chapter(?:\s+(?:1|one))?)\b/i.test(trimmed);
 }

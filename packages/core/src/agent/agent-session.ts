@@ -20,6 +20,7 @@ import { buildAgentSystemPrompt } from "./agent-system-prompt.js";
 import {
   createPatchChapterTextTool,
   createReplaceChapterTextTool,
+  createDeleteLatestChapterTool,
   createRenameEntityTool,
   createSubAgentTool,
   createReadTool,
@@ -791,6 +792,7 @@ const PRODUCTION_MUTATION_TOOL_NAMES = new Set([
   "rename_entity",
   "patch_chapter_text",
   "replace_chapter_text",
+  "delete_latest_chapter",
   "import_chapters",
 ]);
 
@@ -932,6 +934,7 @@ function createModeTools(params: CreateAgentToolsForModeParams) {
     createRenameEntityTool(params.pipeline, params.projectRoot, params.bookId),
     createPatchChapterTextTool(params.pipeline, params.projectRoot, params.bookId),
     createReplaceChapterTextTool(params.pipeline, params.projectRoot, params.bookId),
+    createDeleteLatestChapterTool(params.projectRoot, params.bookId),
     researchTool,
     materialTool,
     materialRetrievalTool,

@@ -112,6 +112,7 @@ export interface SessionResponse {
 export interface StudioTaskSnapshot {
   readonly version: 1;
   readonly sessionId: string;
+  readonly sourceRequestId?: string;
   readonly requestedIntent: RequestedIntent;
   readonly execution: ToolExecution;
   readonly updatedAt: number;

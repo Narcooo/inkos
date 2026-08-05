@@ -758,6 +758,8 @@ describe("chat message actions", () => {
     const sent = store.getState().sendMessage(sessionId, "写下一章");
     await vi.waitFor(() => expect(fakeEventSources).toHaveLength(1));
     expect(store.getState().sessions[sessionId]).toMatchObject({ isStreaming: true, isChatStreaming: true });
+    const agentRequest = fetchJson.mock.calls.find(([path]) => path === "/agent");
+    const sourceRequestId = JSON.parse(String(agentRequest?.[1]?.body)).clientRequestId as string;
 
     // 普通聊天轮工具启动（不带 background 标记）不改变轮次分类
     fakeEventSources[0]?.emit("tool:start", { sessionId, id: "chat-tool-0", tool: "read" });
@@ -771,6 +773,7 @@ describe("chat message actions", () => {
       tool: "sub_agent",
       args: { agent: "writer", bookId: "demo-book" },
       background: true,
+      sourceRequestId,
     });
 
     // 重分类：isChatStreaming 归 false（停止按钮据此走 scope=all，能拿到任务控制器），
@@ -797,6 +800,79 @@ describe("chat message actions", () => {
       stream: null,
     });
     expect(fakeEventSources[0]?.closed).toBe(true);
+  });
+
+  it("reclassifies a free-text turn from a replayed task snapshot and stops the production task", async () => {
+    const store = createTestStore();
+    const sessionId = store.getState().createDraftSession("demo-book", "book");
+    store.getState().setSelectedModel("deepseek-v4-flash", "kkaiapi");
+
+    let resolveAgent!: (value: unknown) => void;
+    fetchJson
+      .mockResolvedValueOnce({ session: { sessionId, bookId: "demo-book", sessionKind: "book" } })
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveAgent = resolve;
+      }))
+      .mockResolvedValueOnce({ ok: true, aborted: true });
+
+    const sent = store.getState().sendMessage(sessionId, "连续写五章");
+    await vi.waitFor(() => expect(fakeEventSources).toHaveLength(1));
+    expect(store.getState().sessions[sessionId]).toMatchObject({ isStreaming: true, isChatStreaming: true });
+    const agentRequest = fetchJson.mock.calls.find(([path]) => path === "/agent");
+    const sourceRequestId = JSON.parse(String(agentRequest?.[1]?.body)).clientRequestId as string;
+
+    // EventSource 可能晚于生产任务启动才连上：实时 tool:start 已经错过，服务端
+    // 会回放带同一请求 ID 的 running 快照。它必须完成与 tool:start 相同的重分类。
+    fakeEventSources[0]?.emit("task:snapshot", {
+      sessionId,
+      sourceRequestId,
+      execution: {
+        id: "direct-write_next-replayed",
+        tool: "sub_agent",
+        agent: "writer",
+        status: "running",
+        startedAt: Date.now(),
+      },
+    });
+
+    expect(store.getState().sessions[sessionId]).toMatchObject({ isStreaming: true, isChatStreaming: false });
+    await store.getState().abortSession(sessionId);
+    const abortCall = fetchJson.mock.calls.find(([path]) => path === `/sessions/${sessionId}/abort`);
+    expect(abortCall?.[1]).toMatchObject({ method: "POST" });
+    expect(abortCall?.[1]).not.toHaveProperty("body");
+
+    resolveAgent({ error: { code: "REQUEST_ABORTED", message: "This operation was aborted" } });
+    await sent;
+  });
+
+  it("keeps a parallel chat turn classified as chat when replaying an older background task", async () => {
+    const store = createTestStore();
+    const sessionId = await setupRunningTaskSession(store);
+
+    let resolveAgent!: (value: unknown) => void;
+    fetchJson.mockClear();
+    fetchJson.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveAgent = resolve;
+    }));
+
+    const sent = store.getState().sendMessage(sessionId, "顺便解释一下当前进度");
+    await vi.waitFor(() => expect(fakeEventSources).toHaveLength(2));
+    expect(store.getState().sessions[sessionId]?.isChatStreaming).toBe(true);
+
+    fakeEventSources[1]?.emit("task:snapshot", {
+      sessionId,
+      sourceRequestId: "older-request",
+      execution: {
+        id: "direct-short_run-1",
+        tool: "short_fiction_run",
+        status: "running",
+        startedAt: 1,
+      },
+    });
+
+    expect(store.getState().sessions[sessionId]?.isChatStreaming).toBe(true);
+    resolveAgent({ response: "任务仍在运行。", session: { sessionId, sessionKind: "short" } });
+    await sent;
   });
 
   it("routes executionId-tagged llm progress to the task card's active stage", async () => {
@@ -951,7 +1027,7 @@ describe("chat message actions", () => {
     expect(store.getState().sessions[sessionId]?.lastFailedSend).toEqual({ text: "你好" });
   });
 
-  it("retries the last failed send with identical /agent parameters and clears the record", async () => {
+  it("retries the last failed send with identical business parameters and a fresh request id", async () => {
     const store = createTestStore();
     const sessionId = store.getState().createDraftSession("demo-book", "book");
     store.getState().setSelectedModel("deepseek-v4-flash", "kkaiapi");
@@ -971,7 +1047,13 @@ describe("chat message actions", () => {
     expect(agentCalls).toHaveLength(2);
     const firstBody = JSON.parse((agentCalls[0]?.[1] as { body: string }).body);
     const retryBody = JSON.parse((agentCalls[1]?.[1] as { body: string }).body);
-    expect(retryBody).toEqual(firstBody);
+    expect(retryBody.clientRequestId).toEqual(expect.any(String));
+    expect(retryBody.clientRequestId).not.toBe(firstBody.clientRequestId);
+    const { clientRequestId: firstRequestId, ...firstBusinessParams } = firstBody;
+    const { clientRequestId: retryRequestId, ...retryBusinessParams } = retryBody;
+    expect(firstRequestId).toEqual(expect.any(String));
+    expect(retryRequestId).toEqual(expect.any(String));
+    expect(retryBusinessParams).toEqual(firstBusinessParams);
     expect(store.getState().sessions[sessionId]?.lastFailedSend).toBeUndefined();
   });
 

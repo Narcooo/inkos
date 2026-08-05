@@ -1,4 +1,5 @@
 import type { StateCreator } from "zustand";
+import { nanoid } from "nanoid";
 import type {
   AgentResponse,
   ChatAttachmentPayload,
@@ -526,6 +527,7 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
     const requestedSkills = mergeSkillIds(skillDirectives.requestedSkills, options?.requestedSkills);
     const disabledSkills = mergeSkillIds([], options?.disabledSkills);
     const streamTs = Date.now() + 1;
+    const sourceRequestId = nanoid();
 
     set((state) => ({
       input: "",
@@ -549,7 +551,7 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
     set((state) => ({
       sessions: updateSession(state.sessions, sessionId, () => ({ stream: streamEs })),
     }));
-    attachSessionStreamListeners({ sessionId, streamTs, streamEs, set, get });
+    attachSessionStreamListeners({ sessionId, streamTs, sourceRequestId, streamEs, set, get });
 
     try {
       const data = await fetchJson<AgentResponse>("/agent", {
@@ -567,6 +569,7 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
           disabledSkills,
           attachments,
           sessionId,
+          clientRequestId: sourceRequestId,
           model: get().selectedModel ?? undefined,
           service: get().selectedService ?? undefined,
         }),

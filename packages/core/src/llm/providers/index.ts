@@ -25,6 +25,7 @@ import { ZEROONE } from "./endpoints/zeroone.js";
 import { AI360 } from "./endpoints/ai360.js";
 // B4
 import { OLLAMA } from "./endpoints/ollama.js";
+import { LMSTUDIO } from "./endpoints/lmstudio.js";
 import { OPENROUTER } from "./endpoints/openrouter.js";
 import { CUSTOM } from "./endpoints/custom.js";
 import { MISTRAL } from "./endpoints/mistral.js";
@@ -54,7 +55,7 @@ const ALL_PROVIDERS: readonly InkosEndpoint[] = [
   MOONSHOT, ZHIPU, SILICONCLOUD, BAILIAN, VOLCENGINE, HUNYUAN, BAICHUAN, STEPFUN, WENXIN,
   SPARK, SENSENOVA, TENCENTCLOUD, XIAOMI_MIMO, LONGCAT, INTERNLM,
   ZEROONE, AI360,
-  OLLAMA, OPENROUTER, CUSTOM, MISTRAL, XAI, NEWAPI, GITHUB_COPILOT, KKAIAPI, ATLASCLOUD,
+  OLLAMA, LMSTUDIO, OPENROUTER, CUSTOM, MISTRAL, XAI, NEWAPI, GITHUB_COPILOT, KKAIAPI, ATLASCLOUD,
   // B6 CodingPlan（8 个）
   KIMI_CODING_PLAN, KIMI_CODE, MINIMAX_CODING_PLAN, BAILIAN_CODING_PLAN, GLM_CODING_PLAN, VOLCENGINE_CODING_PLAN, OPENCODE_CODING_PLAN, ASTRON_CODING_PLAN,
 ];

@@ -57,6 +57,7 @@ import {
   type PlayImageSettings,
   Scheduler,
   coverSecretKey,
+  normalizeCoverBaseUrl,
   resolveCoverProviderPreset,
   SessionKindSchema,
   isExplicitWriteChapterCommand,
@@ -93,6 +94,13 @@ import {
   createConnectChoiceTool,
   createRemoveNodeTool,
   createLLMTranslationModel,
+  deleteLatestChapter,
+  executeEditTransaction,
+  listChapterVersions,
+  readChapterPlanDocument,
+  readChapterUserBrief,
+  readChapterVersion,
+  saveChapterUserBrief,
   createTranslationProjectFromFile,
   loadTranslationChapter,
   loadTranslationManifest,
@@ -1430,12 +1438,21 @@ interface WriteNextChapterToolResult {
   readonly isError?: boolean;
   readonly content: ReadonlyArray<{ readonly type: "text"; readonly text: string }>;
   readonly details: {
-    readonly kind: "chapter_written";
+    readonly kind: "chapter_written" | "chapters_written";
     readonly bookId: string;
-    readonly chapterNumber: number;
+    readonly chapterNumber?: number;
     readonly title?: string;
-    readonly wordCount: number;
+    readonly wordCount?: number;
     readonly status?: string;
+    readonly requestedCount?: number;
+    readonly completedCount?: number;
+    readonly stoppedStatus?: string;
+    readonly chapters?: ReadonlyArray<{
+      readonly chapterNumber: number;
+      readonly title?: string;
+      readonly wordCount: number;
+      readonly status?: string;
+    }>;
   };
 }
 
@@ -1471,6 +1488,7 @@ function createWriteNextChapterTool(
   pipeline: PipelineRunner,
   bookId: string,
   lang: StudioLanguage,
+  chapterCount = 1,
 ): {
   readonly name: "sub_agent";
   readonly execute: (
@@ -1483,6 +1501,65 @@ function createWriteNextChapterTool(
   return {
     name: "sub_agent",
     async execute(_toolCallId, _params, signal, onUpdate) {
+      if (chapterCount > 1) {
+        onUpdate?.({
+          content: [{
+            type: "text",
+            text: pick(
+              lang,
+              `正在为 ${bookId} 连续写 ${chapterCount} 章…`,
+              `Writing ${chapterCount} consecutive chapters for ${bookId}...`,
+            ),
+          }],
+        });
+        const results = await pipeline.runWithAbortSignal(
+          signal,
+          () => pipeline.writeChapters(bookId, chapterCount, {
+            onChapterComplete(result, completedCount, requestedCount) {
+              onUpdate?.({
+                content: [{
+                  type: "text",
+                  text: pick(
+                    lang,
+                    `第 ${completedCount}/${requestedCount} 章已落盘：第 ${result.chapterNumber} 章《${result.title}》。`,
+                    `${completedCount}/${requestedCount} persisted: chapter ${result.chapterNumber} "${result.title}".`,
+                  ),
+                }],
+              });
+            },
+          }),
+        );
+        const last = results.at(-1);
+        const stoppedStatus = last?.status !== "ready-for-review" ? last?.status : undefined;
+        const responseText = stoppedStatus
+          ? pick(
+              lang,
+              `已完成 ${results.length}/${chapterCount} 章；第 ${last?.chapterNumber} 章状态为 ${stoppedStatus}，批量写作已停止，请复核后再继续。`,
+              `Completed ${results.length}/${chapterCount} chapters. Chapter ${last?.chapterNumber} ended with ${stoppedStatus}, so the batch stopped for review.`,
+            )
+          : pick(
+              lang,
+              `已连续完成 ${results.length} 章（第 ${results[0]?.chapterNumber} 章至第 ${last?.chapterNumber} 章）。`,
+              `Completed ${results.length} consecutive chapters (chapters ${results[0]?.chapterNumber}-${last?.chapterNumber}).`,
+            );
+        return {
+          ...(stoppedStatus ? { isError: true } : {}),
+          content: [{ type: "text", text: responseText }],
+          details: {
+            kind: "chapters_written",
+            bookId,
+            requestedCount: chapterCount,
+            completedCount: results.length,
+            chapters: results.map((result) => ({
+              chapterNumber: result.chapterNumber,
+              title: result.title,
+              wordCount: result.wordCount,
+              status: result.status,
+            })),
+            ...(stoppedStatus ? { stoppedStatus } : {}),
+          },
+        };
+      }
       onUpdate?.({
         content: [{
           type: "text",
@@ -1519,6 +1596,7 @@ async function executeConfirmedProductionAction(args: {
   readonly playMode?: PlayMode;
   readonly language?: StudioLanguage;
   readonly taskId: string;
+  readonly sourceRequestId?: string;
   readonly signal: AbortSignal;
   readonly onTaskChange: (exec: CollectedToolExec) => Promise<void>;
 }): Promise<CollectedToolExec> {
@@ -1572,7 +1650,8 @@ async function executeConfirmedProductionAction(args: {
     if (!args.bookId) {
       throw new ApiError(400, "BOOK_ID_REQUIRED", pick(lang, "写下一章需要先打开一本书。", "Writing the next chapter requires an active book."));
     }
-    tool = createWriteNextChapterTool(args.pipeline, args.bookId, lang);
+    const chapterCount = actionPayload?.writeNext?.chapterCount ?? 1;
+    tool = createWriteNextChapterTool(args.pipeline, args.bookId, lang, chapterCount);
     agent = "writer";
     params = { agent: "writer", bookId: args.bookId };
   } else if (args.requestedIntent === "generate_cover") {
@@ -1739,6 +1818,7 @@ async function executeConfirmedProductionAction(args: {
     args: params,
     stages: exec.stages?.map(stage => stage.label),
     background: true,
+    ...(args.sourceRequestId ? { sourceRequestId: args.sourceRequestId } : {}),
   });
 
   try {
@@ -1986,7 +2066,7 @@ function mergeServiceConfig(existing: ServiceConfigEntry[], updates: ServiceConf
   return [...merged.values()];
 }
 
-function normalizeCoverConfig(raw: unknown): { service: string; model: string } | undefined {
+function normalizeCoverConfig(raw: unknown): { service: string; model: string; baseUrl?: string } | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const record = raw as Record<string, unknown>;
   const service = typeof record.service === "string" ? record.service : "";
@@ -1996,7 +2076,12 @@ function normalizeCoverConfig(raw: unknown): { service: string; model: string } 
   const model = requestedModel && preset.models.includes(requestedModel)
     ? requestedModel
     : preset.defaultModel;
-  return { service: preset.service, model };
+  const baseUrl = normalizeCoverBaseUrl(record.baseUrl);
+  return {
+    service: preset.service,
+    model,
+    ...(baseUrl ? { baseUrl } : {}),
+  };
 }
 
 function syncTopLevelLlmMirror(llm: Record<string, unknown>): void {
@@ -2590,7 +2675,7 @@ async function probeServiceCapabilities(args: {
     endpoint?.checkModel
     ?? preset?.knownModels?.[0]
     ?? endpoint?.models.find((model) => model.enabled !== false)?.id;
-  const useDynamicLocalModels = baseService === "ollama";
+  const useDynamicLocalModels = baseService === "ollama" || baseService === "lmstudio";
   const useEndpointCheckModel = !useDynamicLocalModels
     && !isCustomServiceId(args.service)
     && discoveredModels.length === 0
@@ -2725,11 +2810,13 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     sessionId: string,
     requestedIntent: RequestedIntent,
     exec: CollectedToolExec,
+    sourceRequestId?: string,
   ): Promise<void> => {
     if (deletedSessionIds.has(sessionId)) return;
     const snapshot: StudioTaskSnapshot = {
       version: 1,
       sessionId,
+      ...(sourceRequestId ? { sourceRequestId } : {}),
       requestedIntent,
       updatedAt: Date.now(),
       execution: {
@@ -2858,7 +2945,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
   }
 
   async function buildPipelineConfig(
-    overrides?: Partial<Pick<PipelineConfig, "externalContext" | "client" | "model">> & {
+    overrides?: Partial<Pick<PipelineConfig, "externalContext" | "client" | "model" | "revisionGate">> & {
       readonly currentConfig?: ProjectConfig;
       readonly sessionIdForSSE?: string;
       // 确认式生产任务的 execution id。给任务构建 pipeline 时传入，该 pipeline
@@ -2899,7 +2986,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       foundationReviewRetries: currentConfig.foundation?.reviewRetries ?? 2,
       writingReviewRetries: currentConfig.writing?.reviewRetries ?? 1,
       chapterReviewMode,
-      revisionGate,
+      revisionGate: overrides?.revisionGate ?? revisionGate,
       modelOverrides: currentConfig.modelOverrides,
       notifyChannels: currentConfig.notify,
       logger,
@@ -3074,26 +3161,209 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     }
   });
 
+  app.get("/api/v1/books/:id/chapters/:num/workspace", async (c) => {
+    const id = c.req.param("id");
+    const num = parseInt(c.req.param("num"), 10);
+    if (!Number.isInteger(num) || num < 1) {
+      return c.json({ error: "Invalid chapter number" }, 400);
+    }
+    try {
+      const bookDir = state.bookDir(id);
+      const [brief, plan, versions, index] = await Promise.all([
+        readChapterUserBrief(bookDir, num),
+        readChapterPlanDocument(bookDir, num),
+        listChapterVersions(bookDir, num),
+        state.loadChapterIndex(id),
+      ]);
+      const latestChapter = index.reduce((latest, chapter) => Math.max(latest, chapter.number), 0);
+      return c.json({
+        chapterNumber: num,
+        brief,
+        plan,
+        versions,
+        canDelete: num === latestChapter,
+      });
+    } catch (e) {
+      return c.json({ error: e instanceof Error ? e.message : String(e) }, 500);
+    }
+  });
+
+  app.put("/api/v1/books/:id/chapters/:num/workspace/brief", async (c) => {
+    const id = c.req.param("id");
+    const num = parseInt(c.req.param("num"), 10);
+    const body: { brief?: unknown } = await c.req.json<{ brief?: unknown }>().catch(() => ({}));
+    if (!Number.isInteger(num) || num < 1 || typeof body.brief !== "string") {
+      return c.json({ error: "A valid chapter number and brief string are required" }, 400);
+    }
+    try {
+      await saveChapterUserBrief(state.bookDir(id), num, body.brief);
+      return c.json({ ok: true, chapterNumber: num, brief: body.brief.trim() });
+    } catch (e) {
+      return c.json({ error: e instanceof Error ? e.message : String(e) }, 500);
+    }
+  });
+
+  app.post("/api/v1/books/:id/chapters/:num/workspace/inspiration", async (c) => {
+    const id = c.req.param("id");
+    const num = parseInt(c.req.param("num"), 10);
+    const body: { brief?: unknown } = await c.req.json<{ brief?: unknown }>().catch(() => ({}));
+    if (!Number.isInteger(num) || num < 1 || (body.brief !== undefined && typeof body.brief !== "string")) {
+      return c.json({ error: "A valid chapter number and optional brief string are required" }, 400);
+    }
+    try {
+      const bookDir = state.bookDir(id);
+      const chaptersDir = join(bookDir, "chapters");
+      const files = await readdir(chaptersDir);
+      const paddedNum = String(num).padStart(4, "0");
+      const chapterFile = files.find((file) => file.startsWith(paddedNum) && file.endsWith(".md"));
+      if (!chapterFile) {
+        return c.json({ error: "Chapter not found" }, 404);
+      }
+      const [chapter, persistedBrief, plan, book, pipelineConfig] = await Promise.all([
+        readFile(join(chaptersDir, chapterFile), "utf-8"),
+        readChapterUserBrief(bookDir, num),
+        readChapterPlanDocument(bookDir, num),
+        state.loadBookConfig(id),
+        buildPipelineConfig({ bookIdForSettings: id }),
+      ]);
+      const language = book.language === "en" ? "en" : "zh";
+      const requestedBrief = typeof body.brief === "string" ? body.brief.trim() : "";
+      const response = await chatCompletion(
+        pipelineConfig.client,
+        pipelineConfig.model,
+        [
+          {
+            role: "system",
+            content: language === "en"
+              ? [
+                  "You are a fiction editor generating one optional inspiration card for a chapter rewrite.",
+                  "Offer a concrete alternative beat, evidence/action detail, and ending turn that fit the supplied canon.",
+                  "Do not rewrite the chapter, modify canon, or claim any file was changed.",
+                  "Return only a short, readable Markdown card.",
+                ].join("\n")
+              : [
+                  "你是小说编辑，只为本章重写生成一张可选的灵感卡。",
+                  "给出一个符合现有设定的具体替代场面、证据或行动细节，以及章尾转折。",
+                  "不要代写整章，不要改写既成事实，也不要声称已经修改文件。",
+                  "只返回简短、可读的 Markdown 灵感卡。",
+                ].join("\n"),
+          },
+          {
+            role: "user",
+            content: [
+              language === "en" ? `Book: ${book.title}` : `书名：${book.title}`,
+              language === "en" ? `Chapter: ${num}` : `章节：第${num}章`,
+              requestedBrief || persistedBrief
+                ? `${language === "en" ? "Current user brief" : "当前用户提示"}:\n${requestedBrief || persistedBrief}`
+                : "",
+              plan ? `${language === "en" ? "Generated chapter plan" : "系统章节计划"}:\n${plan}` : "",
+              `${language === "en" ? "Current chapter" : "当前章节"}:\n${chapter}`,
+            ].filter(Boolean).join("\n\n"),
+          },
+        ],
+        { temperature: 0.9, maxTokens: 600 },
+      );
+      const card = response.content.trim();
+      if (!card) {
+        throw new Error("The model returned an empty inspiration card");
+      }
+      return c.json({ chapterNumber: num, card });
+    } catch (e) {
+      return c.json({ error: e instanceof Error ? e.message : String(e) }, 500);
+    }
+  });
+
+  app.get("/api/v1/books/:id/chapters/:num/versions/:versionId", async (c) => {
+    const id = c.req.param("id");
+    const num = parseInt(c.req.param("num"), 10);
+    try {
+      const content = await readChapterVersion(
+        state.bookDir(id),
+        num,
+        c.req.param("versionId"),
+      );
+      return c.json({ chapterNumber: num, versionId: c.req.param("versionId"), content });
+    } catch (e) {
+      return c.json({ error: e instanceof Error ? e.message : String(e) }, 404);
+    }
+  });
+
+  app.post("/api/v1/books/:id/chapters/:num/versions/:versionId/restore", async (c) => {
+    const id = c.req.param("id");
+    const num = parseInt(c.req.param("num"), 10);
+    const releaseLock = await state.acquireBookLock(id);
+    try {
+      const fullText = await readChapterVersion(
+        state.bookDir(id),
+        num,
+        c.req.param("versionId"),
+      );
+      const result = await executeEditTransaction(
+        {
+          bookDir: (bookId) => state.bookDir(bookId),
+          loadChapterIndex: (bookId) => state.loadChapterIndex(bookId),
+          saveChapterIndex: (bookId, index) => state.saveChapterIndex(bookId, index),
+        },
+        {
+          kind: "chapter-replace",
+          bookId: id,
+          chapterNumber: num,
+          fullText,
+          versionSource: "restore",
+        },
+      );
+      broadcast("chapter:restored", { bookId: id, chapterNumber: num });
+      return c.json({ ok: true, chapterNumber: num, versionId: c.req.param("versionId"), result });
+    } catch (e) {
+      return c.json({ error: e instanceof Error ? e.message : String(e) }, 500);
+    } finally {
+      await releaseLock();
+    }
+  });
+
+  app.delete("/api/v1/books/:id/chapters/:num", async (c) => {
+    const id = c.req.param("id");
+    const num = parseInt(c.req.param("num"), 10);
+    const releaseLock = await state.acquireBookLock(id);
+    try {
+      const result = await deleteLatestChapter(state, id, { chapterNumber: num });
+      broadcast("chapter:deleted", { bookId: id, chapterNumber: result.deletedChapter });
+      return c.json({ ok: true, ...result });
+    } catch (e) {
+      return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+    } finally {
+      await releaseLock();
+    }
+  });
+
   // --- Chapter Save ---
 
   app.put("/api/v1/books/:id/chapters/:num", async (c) => {
     const id = c.req.param("id");
     const num = parseInt(c.req.param("num"), 10);
-    const bookDir = state.bookDir(id);
-    const chaptersDir = join(bookDir, "chapters");
     const { content } = await c.req.json<{ content: string }>();
 
+    const releaseLock = await state.acquireBookLock(id);
     try {
-      const files = await readdir(chaptersDir);
-      const paddedNum = String(num).padStart(4, "0");
-      const match = files.find((f) => f.startsWith(paddedNum) && f.endsWith(".md"));
-      if (!match) return c.json({ error: "Chapter not found" }, 404);
-
-      const { writeFile: writeFileFs } = await import("node:fs/promises");
-      await writeFileFs(join(chaptersDir, match), content, "utf-8");
-      return c.json({ ok: true, chapterNumber: num });
+      const result = await executeEditTransaction(
+        {
+          bookDir: (bookId) => state.bookDir(bookId),
+          loadChapterIndex: (bookId) => state.loadChapterIndex(bookId),
+          saveChapterIndex: (bookId, index) => state.saveChapterIndex(bookId, index),
+        },
+        {
+          kind: "chapter-replace",
+          bookId: id,
+          chapterNumber: num,
+          fullText: content,
+          versionSource: "manual",
+        },
+      );
+      return c.json({ ok: true, chapterNumber: num, result });
     } catch (e) {
       return c.json({ error: String(e) }, 500);
+    } finally {
+      await releaseLock();
     }
   });
 
@@ -3435,30 +3705,52 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
   app.get("/api/v1/services", async (c) => {
     const secrets = await loadSecrets(root);
     const endpoints = getAllEndpoints().filter((ep) => ep.id !== "custom");
-
-    // Fast: only check connection status from secrets, no external API calls.
-    const services = endpoints.map((ep) => ({
-      service: ep.id,
-      label: ep.label,
-      group: ep.group,
-      connected: Boolean(secrets.services[ep.id]?.apiKey),
-    })).sort(compareServiceListItems);
-
-    // Add custom services from inkos.json
+    let configuredServices: ReturnType<typeof normalizeServiceConfig> = [];
     try {
       const config = await loadRawConfig(root);
-      for (const svc of normalizeServiceConfig((config.llm as Record<string, unknown> | undefined)?.services)) {
-        if (svc.service === "custom") {
-          const secretKey = `custom:${svc.name}`;
-          services.push({
-            service: secretKey,
-            label: svc.name ?? "Custom",
-            group: undefined,
-            connected: Boolean(secrets.services[secretKey]?.apiKey),
-          });
-        }
-      }
+      configuredServices = normalizeServiceConfig(
+        (config.llm as Record<string, unknown> | undefined)?.services,
+      );
     } catch { /* no config file */ }
+    const configuredBankServices = new Set(
+      configuredServices
+        .filter((service) => service.service !== "custom")
+        .map((service) => service.service),
+    );
+
+    // Fast: only check connection status from secrets, no external API calls.
+    const services = endpoints.map((ep) => {
+      const apiKeyOptional = isApiKeyOptionalForEndpoint({
+        provider: resolveServiceProviderFamily(ep.id) ?? "openai",
+        baseUrl: resolveServicePreset(ep.id)?.baseUrl ?? ep.baseUrl,
+      });
+      return {
+        service: ep.id,
+        label: ep.label,
+        group: ep.group,
+        apiKeyOptional,
+        connected: Boolean(secrets.services[ep.id]?.apiKey)
+          || (apiKeyOptional && configuredBankServices.has(ep.id)),
+      };
+    }).sort(compareServiceListItems);
+
+    // Add custom services from inkos.json
+    for (const svc of configuredServices) {
+      if (svc.service === "custom") {
+        const secretKey = `custom:${svc.name}`;
+        const apiKeyOptional = isApiKeyOptionalForEndpoint({
+          provider: "openai",
+          baseUrl: svc.baseUrl,
+        });
+        services.push({
+          service: secretKey,
+          label: svc.name ?? "Custom",
+          group: undefined,
+          apiKeyOptional,
+          connected: Boolean(secrets.services[secretKey]?.apiKey) || apiKeyOptional,
+        });
+      }
+    }
 
     return c.json({ services });
   });
@@ -3577,6 +3869,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     return c.json({
       service: cover?.service ?? null,
       model: cover?.model ?? null,
+      baseUrl: cover?.baseUrl ?? null,
       configured,
       providers: COVER_PROVIDER_PRESETS.map((provider) => ({
         service: provider.service,
@@ -3590,7 +3883,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
   });
 
   app.put("/api/v1/cover/config", async (c) => {
-    const body = await c.req.json<{ service?: string; model?: string }>();
+    const body = await c.req.json<{ service?: string; model?: string; baseUrl?: string }>();
     const preset = resolveCoverProviderPreset(body.service);
     if (!preset) {
       return c.json({ error: "Unsupported cover service" }, 400);
@@ -3598,6 +3891,17 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     const model = typeof body.model === "string" && preset.models.includes(body.model)
       ? body.model
       : preset.defaultModel;
+    const requestedBaseUrl = typeof body.baseUrl === "string" ? body.baseUrl.trim() : "";
+    const baseUrl = normalizeCoverBaseUrl(requestedBaseUrl);
+    if (requestedBaseUrl && !baseUrl) {
+      return c.json({
+        error: pick(
+          await currentProjectLanguage(),
+          "封面 Base URL 必须是有效的 HTTP(S) 地址，且不能包含账号、查询参数或锚点。",
+          "Cover Base URL must be a valid HTTP(S) URL without credentials, query parameters, or fragments.",
+        ),
+      }, 400);
+    }
 
     const config = await loadRawConfig(root);
     config.llm = config.llm ?? {};
@@ -3605,9 +3909,10 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     llm.cover = {
       service: preset.service,
       model,
+      ...(baseUrl ? { baseUrl } : {}),
     };
     await saveRawConfig(root, config);
-    return c.json({ ok: true, service: preset.service, model });
+    return c.json({ ok: true, service: preset.service, model, baseUrl: baseUrl ?? null });
   });
 
   app.get("/api/v1/cover/secret/:service", async (c) => {
@@ -4502,6 +4807,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       instruction,
       activeBookId,
       sessionId: reqSessionId,
+      clientRequestId: reqClientRequestId,
       sessionKind: reqSessionKind,
       actionSource: reqActionSource,
       requestedIntent: reqRequestedIntent,
@@ -4516,6 +4822,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       instruction: string;
       activeBookId?: string;
       sessionId?: string;
+      clientRequestId?: unknown;
       sessionKind?: string;
       actionSource?: string;
       requestedIntent?: string;
@@ -4534,6 +4841,9 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     if (!sessionId?.trim()) {
       throw new ApiError(400, "SESSION_ID_REQUIRED", "sessionId is required");
     }
+    const sourceRequestId = typeof reqClientRequestId === "string" && reqClientRequestId.trim()
+      ? reqClientRequestId.trim().slice(0, 128)
+      : undefined;
     const language = await currentProjectLanguage();
     if (reqModel && !isTextChatModelId(reqModel)) {
       const message = nonTextModelMessage(reqModel, language);
@@ -4856,8 +5166,14 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
             actionPayload,
             language: surfaceLanguage,
             taskId,
+            sourceRequestId,
             signal: taskController.signal,
-            onTaskChange: (taskExec) => persistConfirmedTask(bookSession.sessionId, confirmedIntent, taskExec),
+            onTaskChange: (taskExec) => persistConfirmedTask(
+              bookSession.sessionId,
+              confirmedIntent,
+              taskExec,
+              sourceRequestId,
+            ),
             ...(playMode ? { playMode } : {}),
           });
 
@@ -5684,16 +6000,22 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
 
     broadcast("rewrite:start", { bookId: id, chapter: chapterNum });
     try {
-      const rollbackTarget = chapterNum - 1;
-      const discarded = await state.rollbackToChapter(id, rollbackTarget);
+      if (Object.prototype.hasOwnProperty.call(body, "brief")) {
+        await saveChapterUserBrief(state.bookDir(id), chapterNum, body.brief ?? "");
+      }
       const pipeline = new PipelineRunner(await buildPipelineConfig({
         externalContext: body.brief,
+        revisionGate: "always",
+        bookIdForSettings: id,
       }));
-      pipeline.writeNextChapter(id).then(
-        (result) => broadcast("rewrite:complete", { bookId: id, chapterNumber: result.chapterNumber, title: result.title, wordCount: result.wordCount }),
-        (e) => broadcast("rewrite:error", { bookId: id, error: e instanceof Error ? e.message : String(e) }),
-      );
-      return c.json({ status: "rewriting", bookId: id, chapter: chapterNum, rolledBackTo: rollbackTarget, discarded });
+      const result = await pipeline.reviseDraft(id, chapterNum, "rework");
+      broadcast("rewrite:complete", {
+        bookId: id,
+        chapterNumber: result.chapterNumber,
+        wordCount: result.wordCount,
+        status: result.status,
+      });
+      return c.json({ status: "complete", bookId: id, chapter: chapterNum, result });
     } catch (e) {
       broadcast("rewrite:error", { bookId: id, error: String(e) });
       return c.json({ error: String(e) }, 500);

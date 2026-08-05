@@ -40,6 +40,20 @@ export function resolveCoverProviderPreset(service: string | undefined): CoverPr
   return COVER_PROVIDER_PRESETS.find((provider) => provider.service === service);
 }
 
+export function normalizeCoverBaseUrl(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  try {
+    const parsed = new URL(trimmed);
+    if (!["http:", "https:"].includes(parsed.protocol)) return undefined;
+    if (parsed.username || parsed.password || parsed.search || parsed.hash) return undefined;
+    return trimmed.replace(/\/+$/u, "");
+  } catch {
+    return undefined;
+  }
+}
+
 export function coverSecretKey(service: string): string {
   return `cover:${service}`;
 }

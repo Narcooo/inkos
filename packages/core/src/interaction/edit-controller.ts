@@ -1,6 +1,10 @@
 import { access, readdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
 import type { ChapterMeta } from "../models/chapter.js";
+import {
+  archiveChapterVersion,
+  type ChapterVersionSource,
+} from "../state/chapter-workspace.js";
 import { classifyTruthAuthority, normalizeTruthFileName, type TruthAuthority } from "./truth-authority.js";
 
 export type EditRequest =
@@ -22,6 +26,7 @@ export type EditRequest =
       readonly bookId: string;
       readonly chapterNumber: number;
       readonly fullText: string;
+      readonly versionSource?: ChapterVersionSource;
     }
   | {
       readonly kind: "chapter-local-edit";
@@ -276,7 +281,10 @@ async function clearChapterRuntimeFiles(root: string, chapterNumber: number): Pr
     }
     throw error;
   }))
-    .filter((file) => file.startsWith(`chapter-${paddedChapter}.`));
+    .filter((file) => (
+      file.startsWith(`chapter-${paddedChapter}.`)
+      && file !== `chapter-${paddedChapter}.user-brief.md`
+    ));
   await Promise.all(runtimeFiles.map((file) => unlink(join(runtimeDir, file)).catch(() => undefined)));
   return runtimeFiles.map((file) => relative(root, join(runtimeDir, file)));
 }
@@ -320,6 +328,13 @@ async function executeChapterReplace(
     throw new Error("Chapter replacement requires fullText.");
   }
   const { chapterPath } = await findChapterPath(root, request.chapterNumber);
+  const previousContent = await readFile(chapterPath, "utf-8");
+  await archiveChapterVersion(
+    root,
+    request.chapterNumber,
+    previousContent,
+    request.versionSource ?? "agent",
+  );
   await writeFile(chapterPath, fullText.endsWith("\n") ? fullText : `${fullText}\n`, "utf-8");
   const removedRuntimeFiles = await clearChapterRuntimeFiles(root, request.chapterNumber);
 
@@ -360,6 +375,7 @@ async function executeChapterLocalEdit(
   if (nextContent === content) {
     throw new Error(`Target text was not found in chapter ${request.chapterNumber}.`);
   }
+  await archiveChapterVersion(root, request.chapterNumber, content, "agent");
   await writeFile(chapterPath, nextContent, "utf-8");
 
   const removedRuntimeFiles = await clearChapterRuntimeFiles(root, request.chapterNumber);

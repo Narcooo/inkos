@@ -156,6 +156,20 @@ describe("resolveServiceModel", () => {
     expect(result.model.baseUrl).toBe("http://localhost:11434/v1");
   });
 
+  it("resolves LM Studio local models without an API key", async () => {
+    const result = await resolveServiceModel(
+      "lmstudio",
+      "openai/gpt-oss-20b",
+      root,
+    );
+
+    expect(result.apiKey).toBe("");
+    expect(result.model.id).toBe("openai/gpt-oss-20b");
+    expect(result.model.provider).toBe("openai");
+    expect(result.model.api).toBe("openai-completions");
+    expect(result.model.baseUrl).toBe("http://localhost:1234/v1");
+  });
+
   it("resolves local custom OpenAI-compatible services without an API key", async () => {
     const result = await resolveServiceModel(
       "custom:LocalProxy",

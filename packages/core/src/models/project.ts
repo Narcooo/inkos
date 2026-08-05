@@ -13,6 +13,7 @@ const LLMServiceEntrySchema = z.object({
 const LLMCoverConfigSchema = z.object({
   service: z.enum(["kkaiapi", "openai", "google"]),
   model: z.string().min(1),
+  baseUrl: z.string().url().optional(),
 }).optional();
 
 // C1 (v2.0.0 breaking): 删除 maxTokens / maxTokensCap 字段。

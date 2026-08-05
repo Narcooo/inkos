@@ -51,12 +51,9 @@ function BookMenu({ bookId, bookTitle, nav, t, onDelete, onOpenChange }: {
   readonly onOpenChange?: (open: boolean) => void;
 }) {
   const [open, setOpenRaw] = useState(false);
-  const setOpen = (next: boolean | ((prev: boolean) => boolean)) => {
-    setOpenRaw((prev) => {
-      const value = typeof next === "function" ? next(prev) : next;
-      onOpenChange?.(value);
-      return value;
-    });
+  const setOpen = (next: boolean) => {
+    setOpenRaw(next);
+    onOpenChange?.(next);
   };
   const [confirmDelete, setConfirmDelete] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -80,7 +77,7 @@ function BookMenu({ bookId, bookTitle, nav, t, onDelete, onOpenChange }: {
   return (
     <div ref={menuRef} className="relative">
       <button
-        onClick={() => setOpen((prev) => !prev)}
+        onClick={() => setOpen(!open)}
         className="p-3 rounded-xl text-muted-foreground hover:text-primary hover:bg-primary/10 hover:scale-105 active:scale-95 transition-all cursor-pointer"
       >
         <MoreVertical size={18} />

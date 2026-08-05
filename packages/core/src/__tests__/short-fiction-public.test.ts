@@ -171,6 +171,45 @@ describe("public short-fiction chain", () => {
     }
   });
 
+  it("uses a custom cover base URL stored in the project cover config", async () => {
+    const root = await mkdtemp(join(tmpdir(), "inkos-short-cover-custom-"));
+    try {
+      await writeFile(join(root, "inkos.json"), JSON.stringify({
+        name: "cover-test",
+        version: "0.1.0",
+        language: "zh",
+        llm: {
+          provider: "openai",
+          service: "kkaiapi",
+          configSource: "studio",
+          baseUrl: "https://api.kkaiapi.com/v1",
+          apiKey: "",
+          model: "deepseek-v4-flash",
+          cover: {
+            service: "kkaiapi",
+            model: "gpt-image-2",
+            baseUrl: "https://images.example.com/v1",
+          },
+        },
+        notify: [],
+      }, null, 2), "utf-8");
+      await saveSecrets(root, {
+        services: {
+          "cover:kkaiapi": { apiKey: "sk-cover" },
+        },
+      });
+
+      await expect(resolveCoverGenerationRequest({ root })).resolves.toMatchObject({
+        api: "images",
+        baseUrl: "https://images.example.com/v1",
+        model: "gpt-image-2",
+        apiKey: "sk-cover",
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("extracts OpenAI-compatible image generation URLs and base64 payloads", () => {
     expect(extractImagesGenerationImage({
       data: [{ url: "https://api.kkaiapi.com/files/img_abc123.png" }],

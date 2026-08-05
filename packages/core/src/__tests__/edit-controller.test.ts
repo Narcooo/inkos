@@ -12,6 +12,7 @@ import {
   planEditTransaction,
   type EditRequest,
 } from "../interaction/edit-controller.js";
+import { listChapterVersions, readChapterVersion } from "../state/chapter-workspace.js";
 
 let projectRoot: string;
 
@@ -304,6 +305,10 @@ describe("edit controller", () => {
     );
 
     await expect(readFile(join(bookDir, "chapters", "0003_灰墙榜下.md"), "utf-8")).resolves.toContain("新名字");
+    const versions = await listChapterVersions(bookDir, 3);
+    expect(versions).toHaveLength(1);
+    await expect(readChapterVersion(bookDir, 3, versions[0]!.id))
+      .resolves.toContain("旧名字");
     expect(savedIndex[0]?.status).toBe("audit-failed");
     expect(savedIndex[0]?.auditIssues.at(-1)).toContain("Manual text edit requires review");
     expect(result.reviewRequired).toBe(true);
@@ -391,6 +396,11 @@ describe("edit controller", () => {
     await mkdir(join(bookDir, "story", "runtime"), { recursive: true });
     await writeFile(join(bookDir, "chapters", "0002_旧章.md"), "# 第2章 旧章\n\n旧正文。", "utf-8");
     await writeFile(join(bookDir, "story", "runtime", "chapter-0002.plan.md"), "stale plan", "utf-8");
+    await writeFile(
+      join(bookDir, "story", "runtime", "chapter-0002.user-brief.md"),
+      "保留雨夜证词。\n",
+      "utf-8",
+    );
     const chapterIndex = [{
       number: 2,
       title: "旧章",
@@ -420,8 +430,14 @@ describe("edit controller", () => {
     );
 
     await expect(readFile(join(bookDir, "chapters", "0002_旧章.md"), "utf-8")).resolves.toContain("新正文完整替换");
+    const versions = await listChapterVersions(bookDir, 2);
+    expect(versions).toHaveLength(1);
+    await expect(readChapterVersion(bookDir, 2, versions[0]!.id))
+      .resolves.toContain("旧正文");
     await expect(access(join(bookDir, "story", "runtime", "chapter-0002.plan.md")).then(() => true).catch(() => false))
       .resolves.toBe(false);
+    await expect(readFile(join(bookDir, "story", "runtime", "chapter-0002.user-brief.md"), "utf-8"))
+      .resolves.toBe("保留雨夜证词。\n");
     expect(savedIndex[0]?.status).toBe("audit-failed");
     expect(savedIndex[0]?.wordCount).toBeGreaterThan(0);
     expect(savedIndex[0]?.auditIssues.at(-1)).toContain("Manual chapter replacement requires review");

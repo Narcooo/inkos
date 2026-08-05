@@ -37,7 +37,7 @@ import {
 } from "../utils/governed-working-set.js";
 import { extractPOVFromOutline, filterMatrixByPOV, filterHooksByPOV } from "../utils/pov-filter.js";
 import { parseCreativeOutput } from "./writer-parser.js";
-import { buildRuntimeStateArtifacts, saveRuntimeStateSnapshot, type RuntimeStateArtifacts } from "../state/runtime-state-store.js";
+import { buildRuntimeStateArtifacts, type RuntimeStateArtifacts } from "../state/runtime-state-store.js";
 import type { RuntimeStateSnapshot } from "../state/state-reducer.js";
 import { parsePendingHooksMarkdown } from "../utils/memory-retrieval.js";
 import { analyzeHookHealth } from "../utils/hook-health.js";
@@ -48,8 +48,9 @@ import {
   renderNarrativeSelectedContext,
   sanitizeNarrativeEvidenceBlock,
 } from "../utils/narrative-control.js";
-import { readFile, writeFile, mkdir, readdir, rm } from "node:fs/promises";
+import { readFile, writeFile, mkdir, readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { commitAtomicFileSet, type AtomicFileWrite } from "../utils/atomic-file-set.js";
 
 const LEGACY_WRITER_CONTEXT_BUDGET = {
   storyBible: 14_000,
@@ -696,17 +697,13 @@ export class WriterAgent extends BaseAgent {
     language: "zh" | "en" = "zh",
   ): Promise<void> {
     const chaptersDir = join(bookDir, "chapters");
-    const storyDir = join(bookDir, "story");
     await mkdir(chaptersDir, { recursive: true });
 
     const paddedNum = String(output.chapterNumber).padStart(4, "0");
     const filename = `${paddedNum}_${this.sanitizeFilename(output.title)}.md`;
     const existingChapterFiles = await readdir(chaptersDir).catch(() => []);
-    await Promise.all(
-      existingChapterFiles
-        .filter((file) => file.startsWith(`${paddedNum}_`) && file.endsWith(".md") && file !== filename)
-        .map((file) => rm(join(chaptersDir, file), { force: true })),
-    );
+    const supersededChapterFiles = existingChapterFiles
+      .filter((file) => file.startsWith(`${paddedNum}_`) && file.endsWith(".md") && file !== filename);
 
     const heading = language === "en"
       ? `# Chapter ${output.chapterNumber}: ${output.title}`
@@ -722,29 +719,56 @@ export class WriterAgent extends BaseAgent {
       language,
     );
 
-    const writes: Array<Promise<void>> = [
-      writeFile(join(chaptersDir, filename), chapterContent, "utf-8"),
-      writeFile(join(storyDir, "current_state.md"), runtimeStateArtifacts?.currentStateMarkdown ?? output.updatedState, "utf-8"),
-      writeFile(join(storyDir, "pending_hooks.md"), runtimeStateArtifacts?.hooksMarkdown ?? output.updatedHooks, "utf-8"),
+    const writes: AtomicFileWrite[] = [
+      { relativePath: join("chapters", filename), content: chapterContent },
+      {
+        relativePath: join("story", "current_state.md"),
+        content: runtimeStateArtifacts?.currentStateMarkdown ?? output.updatedState,
+      },
+      {
+        relativePath: join("story", "pending_hooks.md"),
+        content: runtimeStateArtifacts?.hooksMarkdown ?? output.updatedHooks,
+      },
     ];
 
     if (runtimeStateArtifacts?.chapterSummariesMarkdown) {
-      writes.push(
-        writeFile(join(storyDir, "chapter_summaries.md"), runtimeStateArtifacts.chapterSummariesMarkdown, "utf-8"),
-      );
+      writes.push({
+        relativePath: join("story", "chapter_summaries.md"),
+        content: runtimeStateArtifacts.chapterSummariesMarkdown,
+      });
     }
 
-    if (runtimeStateArtifacts?.snapshot ?? output.runtimeStateSnapshot) {
-      writes.push(saveRuntimeStateSnapshot(bookDir, runtimeStateArtifacts?.snapshot ?? output.runtimeStateSnapshot!));
+    const runtimeStateSnapshot = runtimeStateArtifacts?.snapshot ?? output.runtimeStateSnapshot;
+    if (runtimeStateSnapshot) {
+      writes.push(
+        {
+          relativePath: join("story", "state", "manifest.json"),
+          content: JSON.stringify(runtimeStateSnapshot.manifest, null, 2),
+        },
+        {
+          relativePath: join("story", "state", "current_state.json"),
+          content: JSON.stringify(runtimeStateSnapshot.currentState, null, 2),
+        },
+        {
+          relativePath: join("story", "state", "hooks.json"),
+          content: JSON.stringify(runtimeStateSnapshot.hooks, null, 2),
+        },
+        {
+          relativePath: join("story", "state", "chapter_summaries.json"),
+          content: JSON.stringify(runtimeStateSnapshot.chapterSummaries, null, 2),
+        },
+      );
     }
 
     if (numericalSystem) {
-      writes.push(
-        writeFile(join(storyDir, "particle_ledger.md"), output.updatedLedger, "utf-8"),
-      );
+      writes.push({ relativePath: join("story", "particle_ledger.md"), content: output.updatedLedger });
     }
 
-    await Promise.all(writes);
+    await commitAtomicFileSet({
+      rootDir: bookDir,
+      writes,
+      deletes: supersededChapterFiles.map((file) => join("chapters", file)),
+    });
   }
 
   private buildUserPrompt(params: {

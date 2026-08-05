@@ -60,6 +60,22 @@ describe("listModelsForService (B8)", () => {
     expect(models.some((m) => m.id === "qwen3.6:35b-a3b")).toBe(true);
   });
 
+  it("LM Studio 无 apiKey 时探测本地 /models 并保留动态模型", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [{ id: "openai/gpt-oss-20b" }] }),
+    } as any);
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const models = await listModelsForService("lmstudio");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:1234/v1/models",
+      expect.any(Object),
+    );
+    expect(models.some((m) => m.id === "openai/gpt-oss-20b")).toBe(true);
+  });
+
   it("R4：env 补丁已删除 — INKOS_LLM_MODEL 不再污染跨 service 菜单", async () => {
     process.env.INKOS_LLM_MODEL = "my-secret-model";
     const models = await listModelsForService("anthropic");

@@ -11,6 +11,7 @@ import {
   createShortFictionRunTool,
   createPatchChapterTextTool,
   createReplaceChapterTextTool,
+  createDeleteLatestChapterTool,
   createPlayEditTool,
   createPlayStartTool,
   createProposeActionTool,
@@ -79,6 +80,34 @@ describe("agent deterministic writing tools", () => {
     expect(result.content[0]?.type).toBe("text");
     await expect(readFile(join(state.bookDir("harbor"), "story", "story_bible.md"), "utf-8"))
       .resolves.toContain("distrusts the guild");
+  });
+
+  it("deletes only the latest chapter through the deterministic tool path", async () => {
+    const snapshotDir = join(state.bookDir("harbor"), "story", "snapshots", "2");
+    await mkdir(snapshotDir, { recursive: true });
+    await writeFile(join(snapshotDir, "current_state.md"), "# Current State\n\nChapter 2.", "utf-8");
+    await writeFile(join(snapshotDir, "pending_hooks.md"), "# Pending Hooks\n", "utf-8");
+    await writeFile(join(state.bookDir("harbor"), "story", "current_state.md"), "# Current State\n\nChapter 3.", "utf-8");
+    await writeFile(join(state.bookDir("harbor"), "story", "pending_hooks.md"), "# Pending Hooks\n", "utf-8");
+
+    const tool = createDeleteLatestChapterTool(root, "harbor");
+    const result = await tool.execute("tool-delete", { chapterNumber: 3 });
+
+    expect(result.content[0]).toMatchObject({
+      type: "text",
+      text: expect.stringContaining("Deleted latest chapter 3"),
+    });
+    expect(result.details).toMatchObject({
+      kind: "chapter_deleted",
+      bookId: "harbor",
+      deletedChapter: 3,
+      rolledBackTo: 2,
+    });
+    await expect(state.loadChapterIndex("harbor")).resolves.toEqual([]);
+    await expect(readFile(
+      join(state.bookDir("harbor"), "chapters", ".trash", "0003_Storm.md"),
+      "utf-8",
+    )).resolves.toContain("jade seal");
   });
 
   it("writes role cards through the deterministic truth-file tool path", async () => {
@@ -678,6 +707,39 @@ describe("agent deterministic writing tools", () => {
     } as any);
 
     expect(pipeline.writeNextChapter).toHaveBeenCalledWith("harbor", 2600);
+  });
+
+  it("runs a requested chapter batch through one writer operation", async () => {
+    const pipeline = {
+      writeNextChapter: vi.fn(),
+      writeChapters: vi.fn(async () => [
+        { chapterNumber: 4, title: "第四章", wordCount: 2600, status: "ready-for-review" },
+        { chapterNumber: 5, title: "第五章", wordCount: 2550, status: "ready-for-review" },
+        { chapterNumber: 6, title: "第六章", wordCount: 2490, status: "audit-failed" },
+      ]),
+    };
+    const tool = createSubAgentTool(pipeline as never, "harbor");
+
+    const result = await tool.execute("tool-writer-batch", {
+      agent: "writer",
+      bookId: "harbor",
+      chapterCount: 5,
+      chapterWordCount: 2600,
+      instruction: "连续写五章",
+    } as any);
+
+    expect(pipeline.writeChapters).toHaveBeenCalledWith(
+      "harbor",
+      5,
+      expect.objectContaining({ wordCount: 2600 }),
+    );
+    expect(pipeline.writeNextChapter).not.toHaveBeenCalled();
+    expect(result.details).toMatchObject({
+      kind: "chapters_written",
+      requestedCount: 5,
+      completedCount: 3,
+      stoppedStatus: "audit-failed",
+    });
   });
 
   it("runs the writer pipeline inside the tool AbortSignal scope", async () => {

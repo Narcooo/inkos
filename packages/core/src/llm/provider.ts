@@ -652,7 +652,7 @@ function shouldUseNativeCustomTransport(client: LLMClient): boolean {
     }
     return client.provider === "openai" && shouldUseNativeLocalOpenAICompatibleTransport(client);
   }
-  return client.service === "ollama"
+  return (client.service === "ollama" || client.service === "lmstudio")
     && client.provider === "openai"
     && shouldUseNativeLocalOpenAICompatibleTransport(client);
 }

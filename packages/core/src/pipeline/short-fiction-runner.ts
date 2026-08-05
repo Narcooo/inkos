@@ -28,7 +28,12 @@ import {
   type ShortFictionReference,
   type ShortFictionSalesPackage,
 } from "../agents/short-fiction.js";
-import { coverSecretKey, resolveCoverProviderPreset, type CoverProviderPreset } from "../llm/cover-providers.js";
+import {
+  coverSecretKey,
+  normalizeCoverBaseUrl,
+  resolveCoverProviderPreset,
+  type CoverProviderPreset,
+} from "../llm/cover-providers.js";
 import { loadSecrets } from "../llm/secrets.js";
 import { safeChildPath } from "../utils/path-safety.js";
 import { toPosixPath as projectPath } from "../utils/posix-path.js";
@@ -671,23 +676,31 @@ export async function resolveCoverGenerationRequest(input: {
 
   return {
     api: preset.api,
-    baseUrl: preset.baseUrl,
+    baseUrl: projectCover.baseUrl || preset.baseUrl,
     model: input.coverModel || projectCover.model || preset.defaultModel,
     apiKey,
   };
 }
 
-async function readProjectCoverConfig(root: string): Promise<{ readonly service: string; readonly model?: string } | undefined> {
+async function readProjectCoverConfig(root: string): Promise<{
+  readonly service: string;
+  readonly model?: string;
+  readonly baseUrl?: string;
+} | undefined> {
   try {
     const raw = await readFile(join(root, "inkos.json"), "utf-8");
-    const parsed = JSON.parse(raw) as { llm?: { cover?: { service?: unknown; model?: unknown } } };
+    const parsed = JSON.parse(raw) as {
+      llm?: { cover?: { service?: unknown; model?: unknown; baseUrl?: unknown } };
+    };
     const service = typeof parsed.llm?.cover?.service === "string" ? parsed.llm.cover.service : "";
     if (!service) return undefined;
+    const baseUrl = normalizeCoverBaseUrl(parsed.llm?.cover?.baseUrl);
     return {
       service,
       ...(typeof parsed.llm?.cover?.model === "string" && parsed.llm.cover.model.trim()
         ? { model: parsed.llm.cover.model.trim() }
         : {}),
+      ...(baseUrl ? { baseUrl } : {}),
     };
   } catch {
     return undefined;

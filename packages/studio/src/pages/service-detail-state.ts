@@ -107,6 +107,7 @@ export async function saveServiceConfig(args: {
   readonly effectiveServiceId: string;
   readonly serviceId: string;
   readonly isCustom: boolean;
+  readonly apiKeyOptional?: boolean;
   readonly resolvedCustomName: string;
   readonly apiKey: string;
   readonly baseUrl: string;
@@ -125,7 +126,7 @@ export async function saveServiceConfig(args: {
   const trimmedKey = args.apiKey.trim();
   const trimmedBaseUrl = args.baseUrl.trim();
 
-  if (!trimmedKey && !args.isCustom) {
+  if (!trimmedKey && !args.isCustom && !args.apiKeyOptional) {
     return {
       status: { state: "error", message: "请先输入 API Key" },
       detectedModel: "",

@@ -468,6 +468,7 @@ function modelBelongsToService(service: string, model: string): boolean {
  * 这些服务的可用模型清单是动态的，静态 bank 必然滞后，
  * 所以用户显式配置的模型 id 直接透传，不做 bank 白名单校验（issue #300）：
  * - ollama：本地装了什么模型就有什么模型
+ * - lmstudio：本地装了什么模型就有什么模型
  * - openrouter：聚合 350+ 上游模型，上游随时增删，bank 只列常用子集
  * - newapi：自建中转网关，模型清单由部署方自定义，bank 为空
  * - kkaiapi：多家大模型的 OpenAI 兼容中转站，上游清单随时变化
@@ -476,6 +477,7 @@ function modelBelongsToService(service: string, model: string): boolean {
  */
 const SERVICES_WITH_DYNAMIC_MODELS: ReadonlySet<string> = new Set([
   "ollama",
+  "lmstudio",
   "openrouter",
   "newapi",
   "kkaiapi",
