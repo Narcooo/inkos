@@ -51,6 +51,7 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
   const [showKey, setShowKey] = useState(false);
   const [customName, setCustomName] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
+  const [manualModel, setManualModel] = useState("");
   const [temperature, setTemperature] = useState("0.7");
   const [apiFormat, setApiFormat] = useState<"chat" | "responses">("chat");
   const [stream, setStream] = useState(true);
@@ -63,7 +64,7 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
 
   useEffect(() => {
     let cancelled = false;
-    void fetchJson<{ services: Array<Record<string, unknown>> }>("/services/config")
+    void fetchJson<{ services: Array<Record<string, unknown>>; defaultModel?: string; model?: string }>("/services/config")
       .then((data) => {
         if (cancelled) return;
         const matched = matchServiceConfigEntryForDetail(data.services ?? [], serviceId);
@@ -75,6 +76,9 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
         if (typeof matched.temperature === "number") setTemperature(String(matched.temperature));
         if (matched.apiFormat === "chat" || matched.apiFormat === "responses") setApiFormat(matched.apiFormat);
         if (typeof matched.stream === "boolean") setStream(matched.stream);
+        // Restore manual model from config if available
+        const savedModel = data.defaultModel ?? data.model ?? (matched.defaultModel as string | undefined) ?? (matched.model as string | undefined);
+        if (savedModel) setManualModel(savedModel);
       })
       .catch(() => {});
     return () => { cancelled = true; };
@@ -147,6 +151,7 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
         apiFormat,
         stream,
         ...(isCustom ? { baseUrl: baseUrl.trim() } : {}),
+        ...(isCustom && manualModel.trim() ? { manualModel: manualModel.trim() } : {}),
       });
       if (result.ok) {
         const models = result.models ?? [];
@@ -214,6 +219,7 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
         stream,
         temperature,
         detectedModel,
+        manualModel,
         verifiedProbe,
       });
       if (result.status.state === "connected") {
@@ -268,6 +274,10 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
             <Field label="Base URL">
               <input type="text" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)}
                 placeholder="https://api.example.com/v1" className="w-full rounded-lg border border-border/60 bg-background px-3 py-2 text-sm font-mono" />
+            </Field>
+            <Field label="Model ID（可选）">
+              <input type="text" value={manualModel} onChange={(e) => setManualModel(e.target.value)}
+                placeholder="例如：kimi-k2.5（服务商不支持 /models 时必填）" className="w-full rounded-lg border border-border/60 bg-background px-3 py-2 text-sm font-mono" />
             </Field>
           </div>
         )}
