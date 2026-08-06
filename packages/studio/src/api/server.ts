@@ -4089,18 +4089,19 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     const endpoints = getAllEndpoints()
       .filter((ep) => ep.id !== "custom" && Boolean(secrets.services[ep.id]?.apiKey));
 
-    const groups = endpoints.map((ep) => ({
-      service: ep.id,
-      label: ep.label,
-      models: ep.models
-        .filter((m) => m.enabled !== false)
-        .filter((m) => isTextChatModelId(m.id))
-        .map((m) => ({
+    const groups = await Promise.all(endpoints.map(async (ep) => {
+      const apiKey = secrets.services[ep.id]?.apiKey ?? "";
+      const enriched = await listModelsForService(ep.id, apiKey);
+      return {
+        service: ep.id,
+        label: ep.label,
+        models: filterTextChatModels(enriched).map((m) => ({
           id: m.id,
-          name: m.id,
-          ...(typeof m.maxOutput === "number" ? { maxOutput: m.maxOutput } : {}),
-          ...(m.contextWindowTokens > 0 ? { contextWindow: m.contextWindowTokens } : {}),
+          name: m.name,
+          ...(m.maxOutput !== undefined ? { maxOutput: m.maxOutput } : {}),
+          ...(m.contextWindow > 0 ? { contextWindow: m.contextWindow } : {}),
         })),
+      };
     }));
 
     return c.json({ groups });
