@@ -61,6 +61,52 @@ export function filterModelGroups(
     .filter((group) => group.models.length > 0);
 }
 
+function modelIdKey(id: string): string {
+  return id.trim().toLowerCase();
+}
+
+function hasModel(models: ReadonlyArray<ChatPageModelInfo>, modelId: string): boolean {
+  const key = modelIdKey(modelId);
+  return models.some((model) => modelIdKey(model.id) === key);
+}
+
+/**
+ * Build the writing-page model picker groups from the saved snapshot ∪ bank.
+ * The configured global default is injected even when it is missing from that
+ * catalog, so setting it in project settings still makes the model selectable.
+ */
+export function buildChatPageModelGroups(
+  services: ReadonlyArray<{ readonly service: string; readonly label: string; readonly connected: boolean }>,
+  modelsByService: Record<string, ReadonlyArray<ChatPageModelInfo> | undefined>,
+  preference?: ChatPageModelPreference | null,
+): ChatPageModelGroup[] {
+  const preferredService = preference?.service?.trim() ?? "";
+  const preferredModel = preference?.model?.trim() ?? "";
+
+  const groups: ChatPageModelGroup[] = [];
+  for (const svc of services) {
+    if (!svc.connected) continue;
+    const models = [...(modelsByService[svc.service] ?? [])];
+    if (preferredModel && preferredService === svc.service && !hasModel(models, preferredModel)) {
+      models.unshift({ id: preferredModel, name: preferredModel });
+    }
+    if (models.length === 0) continue;
+    groups.push({ service: svc.service, label: svc.label, models });
+  }
+
+  if (preferredModel && !preferredService && groups.length > 0) {
+    const alreadyPresent = groups.some((group) => hasModel(group.models, preferredModel));
+    if (!alreadyPresent) {
+      groups[0] = {
+        ...groups[0],
+        models: [{ id: preferredModel, name: preferredModel }, ...groups[0].models],
+      };
+    }
+  }
+
+  return groups;
+}
+
 export function pickModelSelection(
   groupedModels: ReadonlyArray<ChatPageModelGroup>,
   selectedModel: string | null,

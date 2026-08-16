@@ -1106,6 +1106,27 @@ describe("createStudioServer daemon lifecycle", () => {
     ]);
   });
 
+  it("includes the global default model in bank groups even when it is not in the static catalog", async () => {
+    await writeFile(join(root, "inkos.json"), JSON.stringify({
+      ...projectConfig,
+      llm: {
+        ...projectConfig.llm,
+        service: "openrouter",
+        defaultModel: "google/gemini-3.7-flash",
+        services: [{ service: "openrouter" }],
+      },
+    }, null, 2), "utf-8");
+    loadSecretsMock.mockResolvedValue({ services: { openrouter: { apiKey: "sk-openrouter" } } });
+
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+    const response = await app.request("http://localhost/api/v1/services/models");
+    const body = await response.json() as { groups: Array<{ service: string; models: Array<{ id: string }> }> };
+
+    expect(body.groups.find((group) => group.service === "openrouter")?.models.map((model) => model.id))
+      .toEqual(["openrouter-model", "google/gemini-3.7-flash"]);
+  });
+
   it("merges persisted discovered/user models ahead of the static fallback catalog", async () => {
     await writeFile(join(root, "inkos.json"), JSON.stringify({
       ...projectConfig,
@@ -6203,6 +6224,36 @@ describe("createStudioServer daemon lifecycle", () => {
     expect(raw.llm.service).toBe("kkaiapi");
     expect(raw.llm.defaultModel).toBe("deepseek-v4-flash");
     expect(raw.llm.model).toBe("deepseek-v4-flash");
+    expect(raw.llm.services).toEqual([
+      { service: "kkaiapi", models: ["deepseek-v4-flash"] },
+    ]);
+  });
+
+  it("adds a newly configured default model to the existing service catalog without replacing it", async () => {
+    await writeFile(join(root, "inkos.json"), JSON.stringify({
+      ...projectConfig,
+      llm: {
+        ...projectConfig.llm,
+        service: "openrouter",
+        defaultModel: "openrouter/auto",
+        services: [{ service: "openrouter", models: ["openrouter/auto"] }],
+      },
+    }, null, 2), "utf-8");
+
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+    const save = await app.request("http://localhost/api/v1/project/default-model", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ service: "openrouter", defaultModel: "google/gemini-3.7-flash" }),
+    });
+    expect(save.status).toBe(200);
+
+    const raw = JSON.parse(await readFile(join(root, "inkos.json"), "utf-8"));
+    expect(raw.llm.defaultModel).toBe("google/gemini-3.7-flash");
+    expect(raw.llm.services).toEqual([
+      { service: "openrouter", models: ["openrouter/auto", "google/gemini-3.7-flash"] },
+    ]);
   });
 
   it("project advanced settings expose input governance and detection config", async () => {

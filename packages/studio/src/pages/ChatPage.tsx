@@ -50,6 +50,7 @@ import {
 } from "../components/ai-elements/message";
 import {
   type ChatPageModelPreference,
+  buildChatPageModelGroups,
   filterModelGroups,
   getChatScrollBehavior,
   getBookCreateSessionId,
@@ -502,23 +503,22 @@ export function ChatPage({ activeBookId, mode = activeBookId ? "book" : "book-cr
     };
   }, []);
 
+  const groupedModels = useMemo(
+    () => buildChatPageModelGroups(services, modelsByService, configuredModelSelection),
+    [configuredModelSelection, modelsByService, services],
+  );
+
   const modelPickerStatus = useMemo(() => {
     if (servicesLoading || services.length === 0) return "loading" as const;
     const connected = services.filter((s) => s.connected);
     if (connected.length === 0) return "no-models" as const;
     if (bankModelsLoading) return "loading" as const;
-    if (connected.some((s) => (modelsByService[s.service]?.length ?? 0) > 0)) return "ready" as const;
+    if (groupedModels.some((group) => group.models.length > 0)) return "ready" as const;
     const hasConnectedBank = connected.some((s) => !s.service.startsWith("custom"));
     const hasConnectedCustom = connected.some((s) => s.service.startsWith("custom"));
     if (!hasConnectedBank && hasConnectedCustom && customModelsLoading) return "loading" as const;
     return "no-models" as const;
-  }, [services, servicesLoading, bankModelsLoading, customModelsLoading, modelsByService]);
-
-  const groupedModels = useMemo(() => {
-    return services
-      .filter((s) => s.connected && (modelsByService[s.service]?.length ?? 0) > 0)
-      .map((s) => ({ service: s.service, label: s.label, models: modelsByService[s.service]! }));
-  }, [services, modelsByService]);
+  }, [customModelsLoading, groupedModels, services, servicesLoading, bankModelsLoading]);
 
   const selectedModelLabel = useMemo(() => {
     if (!selectedModel) return isZh ? "选择模型" : "Select model";

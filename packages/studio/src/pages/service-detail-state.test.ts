@@ -4,6 +4,7 @@ import {
   matchServiceConfigEntryForDetail,
   mergeServiceDetailModels,
   rehydrateServiceConnectionStatus,
+  resolveModelsToPersist,
   saveServiceConfig,
 } from "./service-detail-state";
 
@@ -16,6 +17,44 @@ describe("mergeServiceDetailModels", () => {
       { id: "MiniMax-M2.7" },
       { id: "MiniMax-M2.8" },
     ]);
+  });
+});
+
+describe("resolveModelsToPersist", () => {
+  it("keeps the on-screen live catalog when a later probe only returns the bank fallback", () => {
+    expect(resolveModelsToPersist({
+      displayedModels: [
+        { id: "google/gemini-3.7-flash" },
+        { id: "openrouter/auto" },
+      ],
+      probeModels: [{ id: "openrouter/auto" }],
+      modelsSource: "fallback",
+    }).map((model) => model.id)).toEqual([
+      "google/gemini-3.7-flash",
+      "openrouter/auto",
+    ]);
+  });
+
+  it("uses live probe results as the snapshot when modelsSource is api", () => {
+    expect(resolveModelsToPersist({
+      displayedModels: [{ id: "openrouter/auto" }],
+      probeModels: [
+        { id: "google/gemini-3.7-flash" },
+        { id: "openrouter/auto" },
+      ],
+      modelsSource: "api",
+    }).map((model) => model.id)).toEqual([
+      "google/gemini-3.7-flash",
+      "openrouter/auto",
+    ]);
+  });
+
+  it("falls back to the probe catalog when the screen has no models yet", () => {
+    expect(resolveModelsToPersist({
+      displayedModels: [],
+      probeModels: [{ id: "openrouter/auto" }],
+      modelsSource: "fallback",
+    }).map((model) => model.id)).toEqual(["openrouter/auto"]);
   });
 });
 
@@ -238,6 +277,49 @@ describe("saveServiceConfig", () => {
       detectedModel: "gpt-5.5",
       detectedConfig: { apiFormat: "chat", stream: true },
       status: { state: "connected", models: [{ id: "gpt-5.5" }] },
+    });
+  });
+
+  it("does not replace a tested live catalog with a bank-only fallback on save", async () => {
+    const bodies: unknown[] = [];
+    const fetchJsonImpl = vi.fn(async (path: string, init?: { body?: string }) => {
+      if (init?.body) bodies.push(JSON.parse(init.body));
+      if (path === "/services/openrouter/test") {
+        return {
+          ok: true,
+          models: [{ id: "openrouter/auto" }],
+          selectedModel: "openrouter/auto",
+          detected: { apiFormat: "chat", stream: true, modelsSource: "fallback" },
+        };
+      }
+      if (path === "/services/openrouter/secret") return { ok: true };
+      if (path === "/services/config") return { ok: true };
+      throw new Error(`unexpected path: ${path}`);
+    });
+
+    await saveServiceConfig({
+      effectiveServiceId: "openrouter",
+      serviceId: "openrouter",
+      isCustom: false,
+      resolvedCustomName: "",
+      apiKey: "sk-or",
+      baseUrl: "",
+      apiFormat: "chat",
+      stream: true,
+      temperature: "0.7",
+      detectedModel: "",
+      configuredModels: [
+        { id: "google/gemini-3.7-flash" },
+        { id: "openrouter/auto" },
+      ],
+      fetchJsonImpl: fetchJsonImpl as never,
+    });
+
+    expect(bodies[2]).toMatchObject({
+      services: [{
+        service: "openrouter",
+        models: ["google/gemini-3.7-flash", "openrouter/auto"],
+      }],
     });
   });
 
