@@ -231,6 +231,9 @@ INKOS_LLM_API_KEY=sk-...
 INKOS_LLM_MODEL=kimi-k2.5
 
 # 可选
+
+[![Listed on TakoAPI](https://img.shields.io/badge/Listed%20on-TakoAPI-7c3aed)](https://takoapi.com/agents/narcooo-inkos)
+
 INKOS_LLM_SERVICE=moonshot                         # 推荐写；不写时会尽量从 baseUrl 自动识别
 INKOS_LLM_TEMPERATURE=0.7
 INKOS_LLM_THINKING_BUDGET=0
