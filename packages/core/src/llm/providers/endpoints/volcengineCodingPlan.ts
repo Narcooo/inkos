@@ -24,23 +24,20 @@ export const VOLCENGINE_CODING_PLAN: InkosEndpoint = {
   id: "volcengineCodingPlan",
   label: "火山 Coding Plan",
   group: "codingPlan",
-  api: "anthropic-messages",
-  baseUrl: "https://ark.cn-beijing.volces.com/api/coding",
-  checkModel: "doubao-seed-2.0-code",
+  api: "openai-responses",
+  baseUrl: "https://ark.cn-beijing.volces.com/api/coding/v3",
+  checkModel: "doubao-seed-2.0-lite",
   temperatureRange: [0, 1],
   defaultTemperature: 0.7,
   writingTemperature: 1,
   models: [
     // --- Doubao 豆包（Seed 2.0 全系 + 老版均支持多模态视觉理解） ---
-    { id: "doubao-seed-2.0-code", maxOutput: 128000, contextWindowTokens: 256000, enabled: true, releasedAt: "2026-02-15" },
-    { id: "doubao-seed-2.0-pro", maxOutput: 128000, contextWindowTokens: 256000, enabled: true, releasedAt: "2026-02-15" },
+    { id: "doubao-seed-2.1-turbo", maxOutput: 128000, contextWindowTokens: 256000, enabled: true, releasedAt: "2026-02-15" },
     { id: "doubao-seed-2.0-lite", maxOutput: 128000, contextWindowTokens: 256000, enabled: true, releasedAt: "2026-02-15" },
-    { id: "doubao-seed-code", maxOutput: 32000, contextWindowTokens: 256000, enabled: true, releasedAt: "2025-11-01" },
 
     // --- MiniMax（M2.7 抵扣系数高，建议重难点用；M3 新一代） ---
     { id: "minimax-m2.7", maxOutput: 128000, contextWindowTokens: 200000, enabled: true},
     { id: "minimax-m3", maxOutput: 128000, contextWindowTokens: 512000, enabled: true},
-    { id: "minimax-m2.5", maxOutput: 128000, contextWindowTokens: 200000, enabled: false, status: "deprecated"},
 
     // --- Kimi（走 Moonshot，强制 temperature=1，违反 400） ---
     // K2.6 抵扣系数高；K2.7-Code 文本/图片/视频输入都支持
@@ -48,9 +45,8 @@ export const VOLCENGINE_CODING_PLAN: InkosEndpoint = {
     { id: "kimi-k2.7-code", maxOutput: 32000, contextWindowTokens: 256000, enabled: true, temperature:1},
 
     // --- GLM（智谱，5.2 公开名，API 实际走 glm-latest 别名） ---
-    { id: "glm-5.2", maxOutput: 128000, contextWindowTokens: 1024000, enabled: true, deploymentName: "glm-latest" },
-
-
+    { id: "glm-5.3", maxOutput: 128000, contextWindowTokens: 1024000, enabled: true, deploymentName: "glm-latest" },
+    { id: "glm-5.2", maxOutput: 128000, contextWindowTokens: 1024000, enabled: true },
     // --- DeepSeek（V4 默认开深度思考，尝鲜版遇拥堵建议切换） ---
     { id: "deepseek-v4-flash", maxOutput: 384000, contextWindowTokens: 1024000, enabled: true},
     { id: "deepseek-v4-pro", maxOutput: 384000, contextWindowTokens: 1024000, enabled: true},
