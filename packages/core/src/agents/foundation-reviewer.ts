@@ -12,6 +12,13 @@ export interface FoundationReviewResult {
   readonly overallFeedback: string;
 }
 
+export class FoundationReviewParseError extends Error {
+  constructor(readonly missingDimensions: ReadonlyArray<number>) {
+    super(`Foundation review output is missing dimension${missingDimensions.length === 1 ? "" : "s"}: ${missingDimensions.join(", ")}`);
+    this.name = "FoundationReviewParseError";
+  }
+}
+
 const PASS_THRESHOLD = 80;
 const DIMENSION_FLOOR = 60;
 
@@ -181,17 +188,26 @@ Be strict. 80 means "ready to write without changes."`;
     dimensions: ReadonlyArray<string>,
   ): FoundationReviewResult {
     const parsedDimensions: Array<{ readonly name: string; readonly score: number; readonly feedback: string }> = [];
+    const missingDimensions: number[] = [];
 
     for (let i = 0; i < dimensions.length; i++) {
       const regex = new RegExp(
         `=== DIMENSION: ${i + 1} ===\\s*[\\s\\S]*?(?:分数|Score)[：:]\\s*(\\d+)[\\s\\S]*?(?:意见|Feedback)[：:]\\s*([\\s\\S]*?)(?==== |$)`,
       );
       const match = content.match(regex);
+      if (!match) {
+        missingDimensions.push(i + 1);
+        continue;
+      }
       parsedDimensions.push({
         name: dimensions[i]!,
-        score: match ? parseInt(match[1]!, 10) : 50,
-        feedback: match ? match[2]!.trim() : "(parse failed)",
+        score: parseInt(match[1]!, 10),
+        feedback: match[2]!.trim(),
       });
+    }
+
+    if (missingDimensions.length > 0) {
+      throw new FoundationReviewParseError(missingDimensions);
     }
 
     const totalScore = parsedDimensions.length > 0

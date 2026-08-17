@@ -25,6 +25,13 @@ vi.mock("../pipeline/short-fiction-runner.js", async () => {
 import { ShortRunActionPayloadSchema, normalizeActionPayload } from "../interaction/action-envelope.js";
 import { createProposeActionTool, createShortFictionRunTool } from "../agent/agent-tools.js";
 
+function createPipelineStub() {
+  return {
+    createAgentContext: vi.fn(() => ({})),
+    runWithAgentContext: vi.fn(async (_context: unknown, task: () => Promise<unknown>) => task()),
+  };
+}
+
 describe("short_run charsPerChapter validation (envelope layer)", () => {
   it("rejects an English charsPerChapter in the zh char range (en+1100)", () => {
     const parsed = ShortRunActionPayloadSchema.safeParse({
@@ -106,7 +113,7 @@ describe("short_run charsPerChapter validation (tool layer, before pipeline star
   });
 
   it("throws before starting the pipeline when a zh session confirms en+1100", async () => {
-    const pipeline = { createAgentContext: vi.fn(() => ({})) };
+    const pipeline = createPipelineStub();
     const tool = createShortFictionRunTool(pipeline as never, root, {
       language: "zh",
       actionPayload: {
@@ -125,7 +132,7 @@ describe("short_run charsPerChapter validation (tool layer, before pipeline star
   });
 
   it("throws before starting the pipeline when an en session passes a zh-range params value", async () => {
-    const pipeline = { createAgentContext: vi.fn(() => ({})) };
+    const pipeline = createPipelineStub();
     const tool = createShortFictionRunTool(pipeline as never, root, { language: "en" });
 
     await expect(tool.execute("short-en-params-1100", {
@@ -136,7 +143,7 @@ describe("short_run charsPerChapter validation (tool layer, before pipeline star
   });
 
   it("keeps the en no-length behavior: runner receives undefined and applies its own 650 default", async () => {
-    const pipeline = { createAgentContext: vi.fn(() => ({})) };
+    const pipeline = createPipelineStub();
     const tool = createShortFictionRunTool(pipeline as never, root, {
       language: "zh",
       actionPayload: {

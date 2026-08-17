@@ -15,10 +15,10 @@ importers:
   packages/cli:
     dependencies:
       '@actalk/inkos-core':
-        specifier: 1.7.2
+        specifier: workspace:*
         version: link:../core
       '@actalk/inkos-studio':
-        specifier: 1.7.2
+        specifier: workspace:*
         version: link:../studio
       commander:
         specifier: ^13.0.0
@@ -110,7 +110,7 @@ importers:
   packages/studio:
     dependencies:
       '@actalk/inkos-core':
-        specifier: 1.7.2
+        specifier: workspace:*
         version: link:../core
       '@base-ui/react':
         specifier: ^1.3.0

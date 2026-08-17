@@ -26,6 +26,13 @@ describe("prompt pack loader", () => {
     expect(loaded.source).toBe("builtin");
     expect(loaded.content).toContain("long-form");
     expect(loaded.promptId).toBe("longform.writer");
+    expect(loaded.content).toContain("exact placement");
+    expect(loaded.content).toContain("Reuse supplied hook ids");
+  });
+
+  it("keeps longform audit and revision focused on binding intent before style", () => {
+    expect(getBuiltinPrompt("longform.auditor")?.content).toContain("critical structural failure");
+    expect(getBuiltinPrompt("longform.reviser")?.content).toContain("critical author-intent and canon issue");
   });
 
   it("uses project override before user override and built-in", async () => {

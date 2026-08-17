@@ -13,6 +13,7 @@ const repairChapterStateMock = vi.fn();
 const reviseFoundationMock = vi.fn();
 const initSpinoffBookMock = vi.fn();
 const initImitationBookMock = vi.fn();
+const importFanficCanonMock = vi.fn();
 const consolidateMock = vi.fn();
 const evaluateBookQualityMock = vi.fn();
 const reviseDraftMock = vi.fn();
@@ -26,6 +27,7 @@ const loadChapterIndexMock = vi.fn();
 const loadBookConfigMock = vi.fn();
 const createLLMClientMock = vi.fn(() => ({}));
 const chatCompletionMock = vi.fn();
+const runWorkerAgentMock = vi.fn();
 const loadProjectConfigMock = vi.fn();
 const pipelineConfigs: unknown[] = [];
 const pipelineAbortSignals: Array<AbortSignal | undefined> = [];
@@ -62,6 +64,52 @@ const createShortFictionRunToolMock = vi.fn((_pipeline: unknown, _root: string, 
     },
   })),
 }));
+function derivativeCreationToolMock(
+  name: string,
+  creationKind: string,
+  bookId: string,
+  title: string,
+) {
+  return vi.fn((_pipeline: unknown, projectRoot: string) => ({
+    name,
+    execute: vi.fn(async (_id: string, params: Record<string, unknown>) => {
+      await writeCompleteBookFixture(projectRoot, bookId, title);
+      return {
+        content: [{ type: "text", text: `Created ${title}.` }],
+        details: {
+          kind: "book_created",
+          creationKind,
+          bookId,
+          title,
+          params,
+        },
+      };
+    }),
+  }));
+}
+const createFanficBookToolMock = derivativeCreationToolMock("fanfic_create", "fanfic", "霜港来信", "霜港来信");
+const createContinuationImportToolMock = vi.fn((
+  _pipeline: unknown,
+  _activeBookId: string | null,
+  projectRoot: string,
+) => ({
+  name: "continuation_import",
+  execute: vi.fn(async (_id: string, params: Record<string, unknown>) => {
+    await writeCompleteBookFixture(projectRoot, "雾港续章", "雾港续章");
+    return {
+      content: [{ type: "text", text: "Created 雾港续章." }],
+      details: {
+        kind: "book_created",
+        creationKind: "continuation",
+        bookId: "雾港续章",
+        title: "雾港续章",
+        params,
+      },
+    };
+  }),
+}));
+const createSpinoffBookToolMock = derivativeCreationToolMock("spinoff_create", "spinoff", "雨夜旧账", "雨夜旧账");
+const createImitationBookToolMock = derivativeCreationToolMock("imitation_create", "imitation", "纸灯新案", "纸灯新案");
 type ServicePresetMock = {
   providerFamily: "openai" | "anthropic";
   baseUrl: string;
@@ -205,13 +253,18 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
       pipelineConfigs.push(config);
     }
 
-    // 与真实 PipelineRunner.runWithAbortSignal 行为一致（入口检查一次 signal），
-    // 并把 signal 记录下来供测试断言"任务控制器的中止信号传进了写作流程"。
-    runWithAbortSignal = vi.fn(async (signal: AbortSignal | undefined, task: () => Promise<unknown>) => {
-      pipelineAbortSignals.push(signal);
-      signal?.throwIfAborted();
+    // Match the shared execution context used by production tools and record
+    // the signal so cancellation tests can assert it reached the pipeline.
+    runWithAgentContext = vi.fn(async (
+      context: { readonly signal?: AbortSignal },
+      task: () => Promise<unknown>,
+    ) => {
+      pipelineAbortSignals.push(context.signal);
+      context.signal?.throwIfAborted();
       return task();
     });
+
+    createAgentContext = vi.fn(() => ({}));
 
     initBook = initBookMock;
     runRadar = runRadarMock;
@@ -221,6 +274,7 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
     reviseFoundation = reviseFoundationMock;
     initSpinoffBook = initSpinoffBookMock;
     initImitationBook = initImitationBookMock;
+    importFanficCanon = importFanficCanonMock;
     reviseDraft = reviseDraftMock;
     resyncChapterArtifacts = resyncChapterArtifactsMock;
     writeNextChapter = writeNextChapterMock;
@@ -272,8 +326,9 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
     normalizePlatformOrOther: actual.normalizePlatformOrOther,
     defaultChapterLength: actual.defaultChapterLength,
     inferLanguage: actual.inferLanguage,
-    isUsablePlayInitialScene: actual.isUsablePlayInitialScene,
+    ingestMaterial: actual.ingestMaterial,
     chatCompletion: chatCompletionMock,
+    runWorkerAgent: runWorkerAgentMock,
     loadProjectConfig: loadProjectConfigMock,
     processProjectInteractionRequest: processProjectInteractionRequestMock,
     createInteractionToolsFromDeps: createInteractionToolsFromDepsMock,
@@ -290,8 +345,27 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
     abortAgentSession: abortAgentSessionMock,
     createSubAgentTool: actual.createSubAgentTool,
     createShortFictionRunTool: createShortFictionRunToolMock,
+    createFanficBookTool: createFanficBookToolMock,
+    createContinuationImportTool: createContinuationImportToolMock,
+    createSpinoffBookTool: createSpinoffBookToolMock,
+    createImitationBookTool: createImitationBookToolMock,
     createGenerateCoverTool: actual.createGenerateCoverTool,
-    createPlayStartTool: actual.createPlayStartTool,
+    createPlayStartTool: (
+      pipeline: InstanceType<typeof MockPipelineRunner>,
+      projectRoot: string,
+      sessionId: string,
+      playMode?: "open" | "guided",
+      options: Parameters<typeof actual.createPlayStartTool>[4] = {},
+    ) => actual.createPlayStartTool(pipeline as never, projectRoot, sessionId, playMode, {
+      ...options,
+      runnerFactory: ({ db }) => ({
+        seedOpening: async () => {
+          db.upsertEntity({ id: "actor_player", type: "actor", label: "玩家", summary: "当前玩家。" });
+          db.upsertEntity({ id: "location_opening", type: "location", label: "开场地点", summary: "第一幕所在地点。" });
+          return null;
+        },
+      }),
+    }),
     PlayRunner: MockPlayRunner,
     ConsolidatorAgent: MockConsolidatorAgent,
     PlayStore: actual.PlayStore,
@@ -338,9 +412,6 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
     GLOBAL_ENV_PATH: join(tmpdir(), "inkos-global.env"),
     SessionKindSchema: actual.SessionKindSchema,
     DetectionConfigSchema: actual.DetectionConfigSchema,
-    InputGovernanceModeSchema: actual.InputGovernanceModeSchema,
-    isExplicitWriteChapterCommand: actual.isExplicitWriteChapterCommand,
-    isWriteNextInstruction: actual.isWriteNextInstruction,
     normalizeActionSource: actual.normalizeActionSource,
     normalizeActionPayload: actual.normalizeActionPayload,
     normalizePlayMode: actual.normalizePlayMode,
@@ -349,6 +420,10 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
     normalizeSkillIdList: actual.normalizeSkillIdList,
     createSkillRegistry: actual.createSkillRegistry,
     loadConfiguredAgentSkills: actual.loadConfiguredAgentSkills,
+    loadAvailableAgentSkills: actual.loadAvailableAgentSkills,
+    activatedSkillIds: actual.activatedSkillIds,
+    mergeActivatedSkillGuidance: actual.mergeActivatedSkillGuidance,
+    resolveProductionSkillActivations: actual.resolveProductionSkillActivations,
     createTranslationCreateTool: actual.createTranslationCreateTool,
     createLLMTranslationModel: createLLMTranslationModelMock,
     createTranslationProjectFromFile: actual.createTranslationProjectFromFile,
@@ -416,6 +491,9 @@ describe("createStudioServer daemon lifecycle", () => {
     await writeFile(join(root, "inkos.json"), JSON.stringify(projectConfig, null, 2), "utf-8");
     schedulerStartMock.mockReset();
     initBookMock.mockReset();
+    initBookMock.mockImplementation(async (book: { id: string; title: string }) => {
+      await writeCompleteBookFixture(root, book.id, book.title);
+    });
     runRadarMock.mockReset();
     planChapterMock.mockReset();
     composeChapterMock.mockReset();
@@ -423,6 +501,8 @@ describe("createStudioServer daemon lifecycle", () => {
     reviseFoundationMock.mockReset();
     initSpinoffBookMock.mockReset();
     initImitationBookMock.mockReset();
+    importFanficCanonMock.mockReset();
+    importFanficCanonMock.mockResolvedValue("# Imported Canon");
     consolidateMock.mockReset();
     evaluateBookQualityMock.mockReset();
     reviseDraftMock.mockReset();
@@ -519,8 +599,17 @@ describe("createStudioServer daemon lifecycle", () => {
       })),
     });
     createShortFictionRunToolMock.mockClear();
+    createFanficBookToolMock.mockClear();
+    createContinuationImportToolMock.mockClear();
+    createSpinoffBookToolMock.mockClear();
+    createImitationBookToolMock.mockClear();
     chatCompletionMock.mockReset();
     chatCompletionMock.mockResolvedValue({
+      content: "pong",
+      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+    });
+    runWorkerAgentMock.mockReset();
+    runWorkerAgentMock.mockResolvedValue({
       content: "pong",
       usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
     });
@@ -1100,6 +1189,25 @@ describe("createStudioServer daemon lifecycle", () => {
     ]);
   });
 
+  it("merges persisted discovered/user models ahead of the static fallback catalog", async () => {
+    await writeFile(join(root, "inkos.json"), JSON.stringify({
+      ...projectConfig,
+      llm: {
+        ...projectConfig.llm,
+        services: [{ service: "moonshot", models: ["moonshot-model", "kimi-k3-preview"] }],
+      },
+    }, null, 2), "utf-8");
+    loadSecretsMock.mockResolvedValue({ services: { moonshot: { apiKey: "sk-moonshot" } } });
+
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+    const response = await app.request("http://localhost/api/v1/services/models");
+    const body = await response.json() as { groups: Array<{ service: string; models: Array<{ id: string }> }> };
+
+    expect(body.groups.find((group) => group.service === "moonshot")?.models.map((model) => model.id))
+      .toEqual(["moonshot-model", "kimi-k3-preview"]);
+  });
+
   it("filters non-text models out of connected bank model groups", async () => {
     loadSecretsMock.mockResolvedValue({
       services: {
@@ -1284,7 +1392,7 @@ describe("createStudioServer daemon lifecycle", () => {
       ...projectConfig,
       llm: {
         services: [
-          { service: "moonshot", temperature: 1, apiFormat: "chat", stream: true },
+          { service: "moonshot", temperature: 1, apiFormat: "chat", stream: true, models: ["kimi-k3-preview"] },
           { service: "custom", name: "内网GPT", baseUrl: "https://llm.internal.corp/v1", temperature: 0.9, apiFormat: "responses", stream: false },
         ],
         defaultModel: "kimi-k2.5",
@@ -1312,7 +1420,7 @@ describe("createStudioServer daemon lifecycle", () => {
 
     const raw = JSON.parse(await readFile(join(root, "inkos.json"), "utf-8"));
     expect(raw.llm.services).toEqual([
-      { service: "moonshot", temperature: 0.5, apiFormat: "responses", stream: false },
+      { service: "moonshot", temperature: 0.5, apiFormat: "responses", stream: false, models: ["kimi-k3-preview"] },
       { service: "custom", name: "内网GPT", baseUrl: "https://llm.internal.corp/v1", temperature: 0.9, apiFormat: "responses", stream: false },
     ]);
   });
@@ -2794,7 +2902,7 @@ describe("createStudioServer daemon lifecycle", () => {
   });
 
   it("generates a non-mutating chapter inspiration card from the current manuscript", async () => {
-    chatCompletionMock.mockResolvedValueOnce({
+    runWorkerAgentMock.mockResolvedValueOnce({
       content: "## 灵感卡\n\n让证人先交出一页伪账，再由水印暴露替换时间。",
       usage: { inputTokens: 100, outputTokens: 30 },
     });
@@ -2817,7 +2925,7 @@ describe("createStudioServer daemon lifecycle", () => {
       chapterNumber: 3,
       card: expect.stringContaining("水印"),
     });
-    expect(chatCompletionMock).toHaveBeenCalledWith(
+    expect(runWorkerAgentMock).toHaveBeenCalledWith(
       expect.anything(),
       expect.any(String),
       expect.arrayContaining([
@@ -2826,7 +2934,7 @@ describe("createStudioServer daemon lifecycle", () => {
           content: expect.stringContaining("不要增加新角色"),
         }),
       ]),
-      expect.objectContaining({ temperature: 0.9 }),
+      expect.objectContaining({ temperature: 0.9, signal: expect.any(AbortSignal) }),
     );
     await expect(readFile(chapterPath, "utf-8")).resolves.toBe(before);
   });
@@ -3020,6 +3128,21 @@ describe("createStudioServer daemon lifecycle", () => {
     await expect(response.json()).resolves.toEqual({ ok: true, aborted: true });
   });
 
+  it("supports aborting only the cached chat agent during session navigation", async () => {
+    abortAgentSessionMock.mockReturnValueOnce(true);
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const response = await app.request(
+      "http://localhost/api/v1/sessions/agent-session-1/abort?scope=chat",
+      { method: "POST" },
+    );
+
+    expect(response.status).toBe(200);
+    expect(abortAgentSessionMock).toHaveBeenCalledWith(root, "agent-session-1");
+    await expect(response.json()).resolves.toEqual({ ok: true, aborted: true });
+  });
+
   it("routes /api/agent through runAgentSession and returns response + sessionId", async () => {
     runAgentSessionMock.mockImplementationOnce(async (config: { onEvent?: (event: unknown) => void }) => {
       config.onEvent?.({
@@ -3180,6 +3303,134 @@ describe("createStudioServer daemon lifecycle", () => {
     });
   });
 
+  it("executes confirmed derivative works as typed tools and binds their real book artifacts", async () => {
+    const session = {
+      sessionId: "derivative-session",
+      bookId: null,
+      sessionKind: "chat",
+      title: null,
+      messages: [],
+      events: [],
+      draftRounds: [],
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    loadBookSessionMock.mockResolvedValue(session);
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+    const cases = [
+      {
+        intent: "fanfic_init",
+        payload: { fanficCreate: { title: "霜港来信", sourceText: "正典片段", sourceName: "霜港" } },
+        factory: createFanficBookToolMock,
+        tool: "fanfic_create",
+        bookId: "霜港来信",
+      },
+      {
+        intent: "continuation_import",
+        payload: { continuationImport: { title: "雾港续章", sourcePath: ".inkos/uploads/novel.txt" } },
+        factory: createContinuationImportToolMock,
+        tool: "continuation_import",
+        bookId: "雾港续章",
+      },
+      {
+        intent: "spinoff_create",
+        payload: { spinoffCreate: { title: "雨夜旧账", parentBookId: "harbor", direction: "老船工视角" } },
+        factory: createSpinoffBookToolMock,
+        tool: "spinoff_create",
+        bookId: "雨夜旧账",
+      },
+      {
+        intent: "style_imitation",
+        payload: { imitationCreate: { title: "纸灯新案", referenceText: "参考片段", storyIdea: "原创县城悬疑" } },
+        factory: createImitationBookToolMock,
+        tool: "imitation_create",
+        bookId: "纸灯新案",
+      },
+    ] as const;
+
+    for (const [index, item] of cases.entries()) {
+      loadBookSessionMock.mockResolvedValue({ ...session, sessionId: `derivative-session-${index}` });
+      const response = await app.request("http://localhost/api/v1/agent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          instruction: `确认执行 ${item.intent}`,
+          sessionId: `derivative-session-${index}`,
+          sessionKind: "chat",
+          actionSource: "button",
+          requestedIntent: item.intent,
+          actionPayload: item.payload,
+        }),
+      });
+
+      const responseBody = await response.clone().json();
+      expect(response.status, `${item.intent}: ${JSON.stringify(responseBody)}`).toBe(200);
+      expect(runAgentSessionMock).not.toHaveBeenCalled();
+      expect(item.factory).toHaveBeenCalled();
+      const json = await response.json() as {
+        session: { activeBookId?: string };
+        details: { toolExecutions: Array<{ tool: string; details?: Record<string, unknown> }> };
+      };
+      expect(json.session.activeBookId).toBe(item.bookId);
+      expect(json.details.toolExecutions[0]).toMatchObject({
+        tool: item.tool,
+        details: { kind: "book_created", bookId: item.bookId },
+      });
+      expect(migrateBookSessionMock).toHaveBeenCalledWith(root, `derivative-session-${index}`, item.bookId);
+    }
+  });
+
+  it("does not bind a confirmed derivative result when its book artifact is missing", async () => {
+    loadBookSessionMock.mockResolvedValue({
+      sessionId: "missing-derivative-session",
+      bookId: null,
+      sessionKind: "chat",
+      title: null,
+      messages: [],
+      events: [],
+      draftRounds: [],
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    createFanficBookToolMock.mockImplementationOnce(() => ({
+      name: "fanfic_create",
+      execute: vi.fn(async () => ({
+        content: [{ type: "text", text: "Claimed success without files." }],
+        details: {
+          kind: "book_created",
+          creationKind: "fanfic",
+          bookId: "不存在的同人",
+          title: "不存在的同人",
+          params: { sourceText: "正典片段" },
+        },
+      })),
+    }));
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const response = await app.request("http://localhost/api/v1/agent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        instruction: "确认创建不存在的同人",
+        sessionId: "missing-derivative-session",
+        sessionKind: "chat",
+        actionSource: "button",
+        requestedIntent: "fanfic_init",
+        actionPayload: {
+          fanficCreate: { title: "不存在的同人", sourceText: "正典片段" },
+        },
+      }),
+    });
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "BOOK_CREATION_INCOMPLETE" },
+    });
+    expect(migrateBookSessionMock).not.toHaveBeenCalled();
+  });
+
   it("infers English before directly executing a confirmed short action", async () => {
     const shortSession = {
       sessionId: "short-en-session",
@@ -3220,7 +3471,68 @@ describe("createStudioServer daemon lifecycle", () => {
     expect(createShortFictionRunToolMock).toHaveBeenCalledWith(
       expect.anything(),
       root,
-      expect.objectContaining({ language: "en" }),
+      expect.objectContaining({
+        language: "en",
+        defaultSkills: [expect.objectContaining({
+          skill: expect.objectContaining({ id: "inkos-short-writing" }),
+        })],
+      }),
+    );
+  });
+
+  it("merges a forced project Skill into the mode-specific Skill for confirmed production", async () => {
+    await mkdir(join(root, ".agents", "skills", "evidence-tone"), { recursive: true });
+    await writeFile(
+      join(root, ".agents", "skills", "evidence-tone", "SKILL.md"),
+      [
+        "---",
+        "name: evidence-tone",
+        "description: Keep the requested evidence-driven tone.",
+        "---",
+        "# Evidence tone",
+        "Make every reversal depend on visible evidence.",
+      ].join("\n"),
+      "utf-8",
+    );
+    const shortSession = {
+      sessionId: "short-forced-skill-session",
+      bookId: null,
+      sessionKind: "short",
+      title: null,
+      messages: [],
+      events: [],
+      draftRounds: [],
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    loadBookSessionMock.mockResolvedValue(shortSession);
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const response = await app.request("http://localhost/api/v1/agent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        instruction: "写一篇证据驱动的短篇。",
+        sessionId: shortSession.sessionId,
+        sessionKind: "short",
+        actionSource: "button",
+        requestedIntent: "short_run",
+        requestedSkills: ["evidence-tone"],
+        actionPayload: { shortRun: { direction: "旧账本悬疑", cover: false } },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(createShortFictionRunToolMock).toHaveBeenCalledWith(
+      expect.anything(),
+      root,
+      expect.objectContaining({
+        defaultSkills: expect.arrayContaining([
+          expect.objectContaining({ skill: expect.objectContaining({ id: "inkos-short-writing" }) }),
+          expect.objectContaining({ skill: expect.objectContaining({ id: "evidence-tone" }) }),
+        ]),
+      }),
     );
   });
 
@@ -3265,6 +3577,7 @@ describe("createStudioServer daemon lifecycle", () => {
       });
     });
 
+    await writeCompleteBookFixture(root, "雨夜旧账", "雨夜旧账");
     resolveInitBook();
     const response = await pendingResponse;
     expect(response.status).toBe(200);
@@ -3370,6 +3683,7 @@ describe("createStudioServer daemon lifecycle", () => {
       },
     });
 
+    await writeCompleteBookFixture(root, "雨夜账本", "雨夜账本");
     resolveInitBook();
     await pendingResponse;
   });
@@ -3660,6 +3974,7 @@ describe("createStudioServer daemon lifecycle", () => {
     // 第二个任务没有真正启动
     expect(initBookMock).toHaveBeenCalledTimes(1);
 
+    await writeCompleteBookFixture(root, "第一本书", "第一本书");
     resolveInitBook();
     await pendingTask;
     // 第一个任务不受影响，正常完成
@@ -3695,8 +4010,9 @@ describe("createStudioServer daemon lifecycle", () => {
       return sessionRecord;
     });
     // 任务本体拖一拍，保证第二个请求做检查时第一个任务还在运行中
-    initBookMock.mockImplementation(async () => {
+    initBookMock.mockImplementation(async (book: { id: string; title: string }) => {
       await new Promise((resolve) => setTimeout(resolve, 25));
+      await writeCompleteBookFixture(root, book.id, book.title);
     });
     const { createStudioServer } = await import("./server.js");
     const app = createStudioServer(cloneProjectConfig() as never, root);
@@ -3788,6 +4104,7 @@ describe("createStudioServer daemon lifecycle", () => {
     expect(config.suppressProductionTools).toBe(true);
     expect(agentCall?.[1]).toBe("现在在写吗？");
 
+    await writeCompleteBookFixture(root, "并行验证", "并行验证");
     resolveInitBook();
     await pendingTask;
 
@@ -3932,6 +4249,7 @@ describe("createStudioServer daemon lifecycle", () => {
     expect(parallelChatLog.sessionId).toBe("tagged-log-session");
     expect(parallelChatLog.executionId).toBeUndefined();
 
+    await writeCompleteBookFixture(root, "日志打标验证", "日志打标验证");
     resolveInitBook();
     const taskResponse = await pendingTask;
     expect(taskResponse.status).toBe(200);
@@ -4053,7 +4371,7 @@ describe("createStudioServer daemon lifecycle", () => {
     await ssePump;
   });
 
-  it("aborts only the chat round when scope=chat and leaves the production task controller alive", async () => {
+  it("aborts the Pi turn and production task through the same session stop", async () => {
     let resolveRun!: () => void;
     let capturedSignal: AbortSignal | undefined;
     createShortFictionRunToolMock.mockImplementationOnce(() => ({
@@ -4100,20 +4418,10 @@ describe("createStudioServer daemon lifecycle", () => {
 
     const chatAbort = await app.request("http://localhost/api/v1/sessions/chat-scope-session/abort", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ scope: "chat" }),
     });
 
     expect(chatAbort.status).toBe(200);
     expect(abortAgentSessionMock).toHaveBeenCalledWith(root, "chat-scope-session");
-    // scope=chat 不触发任务控制器的 abort
-    expect(capturedSignal?.aborted).toBe(false);
-
-    // 默认（不带 scope）保持旧行为：任务控制器一起中止
-    const fullAbort = await app.request("http://localhost/api/v1/sessions/chat-scope-session/abort", {
-      method: "POST",
-    });
-    expect(fullAbort.status).toBe(200);
     expect(capturedSignal?.aborted).toBe(true);
 
     resolveRun();
@@ -4330,6 +4638,7 @@ describe("createStudioServer daemon lifecycle", () => {
             tool: "play_start",
             status: "completed",
             result: "暴雨敲着铁皮门，封存档案箱压在门口。",
+            details: expect.objectContaining({ skillIds: ["inkos-play-world"] }),
           }),
         ],
       },
@@ -4376,7 +4685,7 @@ describe("createStudioServer daemon lifecycle", () => {
     });
   });
 
-  it("falls back from a truncated confirmed play-start scene to the complete user instruction", async () => {
+  it("preserves the confirmed play-start scene without guessing whether its prose is complete", async () => {
     const playSession = {
       sessionId: "play-session-truncated",
       bookId: null,
@@ -4417,10 +4726,9 @@ describe("createStudioServer daemon lifecycle", () => {
     const body = await response.json();
     expect(response.status, JSON.stringify(body)).toBe(200);
     expect(body.response).toBe("");
-    expect(body.details?.toolExecutions?.[0]?.result).toContain("主演栏写着赵铁生");
-    expect(body.details?.toolExecutions?.[0]?.result).not.toContain("主演栏里有个名字叫");
+    expect(body.details?.toolExecutions?.[0]?.result).toContain("主演栏里有个名字叫");
     await expect(readFile(join(root, "worlds", "play-session-truncated", "runs", "main", "projections", "scene.md"), "utf-8"))
-      .resolves.toContain("主演栏写着赵铁生");
+      .resolves.toContain("主演栏里有个名字叫");
   });
 
   it("routes write-next button instructions directly to the shared writer pipeline", async () => {
@@ -4449,7 +4757,12 @@ describe("createStudioServer daemon lifecycle", () => {
         activeBookId: "demo-book",
       },
     });
-    expect(writeNextChapterMock).toHaveBeenCalledWith("demo-book");
+    expect(writeNextChapterMock).toHaveBeenCalledWith(
+      "demo-book",
+      undefined,
+      undefined,
+      "继续",
+    );
     expect(runAgentSessionMock).not.toHaveBeenCalled();
     // 任务开始时：指令作为 user 消息预写进 transcript。
     expect(appendManualSessionMessagesMock).toHaveBeenCalledWith(
@@ -4692,7 +5005,7 @@ describe("createStudioServer daemon lifecycle", () => {
 
     expect(abortResponse.status).toBe(200);
     await expect(abortResponse.json()).resolves.toMatchObject({ aborted: true });
-    // 任务控制器的中止信号已经通过 pipeline.runWithAbortSignal 传给了写章流程
+    // 任务控制器的中止信号已经通过统一 AgentContext 传给了写章流程
     expect(pipelineAbortSignals.at(-1)?.aborted).toBe(true);
 
     // 真实 pipeline 会在下一个检查点抛出中止错误，这里手动模拟这次拒绝
@@ -4701,6 +5014,53 @@ describe("createStudioServer daemon lifecycle", () => {
     expect(response.status).toBeGreaterThanOrEqual(400);
     await expect(loadStudioTaskSnapshot(root, "agent-session-1")).resolves.toMatchObject({
       execution: { status: "error", completedAt: expect.any(Number) },
+    });
+  });
+
+  it("keeps a running production task alive when only the parallel chat scope is aborted", async () => {
+    let resolveWrite!: (value: unknown) => void;
+    writeNextChapterMock.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveWrite = resolve;
+    }));
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const pendingResponse = app.request("http://localhost/api/v1/agent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        instruction: "继续",
+        activeBookId: "demo-book",
+        sessionId: "agent-session-1",
+        sessionKind: "book",
+        actionSource: "quick-action",
+        requestedIntent: "write_next",
+      }),
+    });
+    await vi.waitFor(async () => {
+      const task = await loadStudioTaskSnapshot(root, "agent-session-1");
+      expect(task?.execution.status).toBe("running");
+    });
+
+    const abortResponse = await app.request(
+      "http://localhost/api/v1/sessions/agent-session-1/abort?scope=chat",
+      { method: "POST" },
+    );
+
+    expect(abortResponse.status).toBe(200);
+    expect(pipelineAbortSignals.at(-1)?.aborted).toBe(false);
+    resolveWrite({
+      chapterNumber: 3,
+      title: "Still Running",
+      wordCount: 1800,
+      revised: false,
+      status: "ready-for-review",
+      auditResult: { passed: true, issues: [], summary: "ok" },
+    });
+    const response = await pendingResponse;
+    expect(response.status).toBe(200);
+    await expect(loadStudioTaskSnapshot(root, "agent-session-1")).resolves.toMatchObject({
+      execution: { status: "completed", completedAt: expect.any(Number) },
     });
   });
 
@@ -4786,7 +5146,7 @@ describe("createStudioServer daemon lifecycle", () => {
     );
   });
 
-  it("direct-runs explicit free-text chapter writing commands for the active book", async () => {
+  it("routes explicit free-text chapter writing requests through the Pi agent", async () => {
     const { createStudioServer } = await import("./server.js");
     const app = createStudioServer(cloneProjectConfig() as never, root);
 
@@ -4802,17 +5162,12 @@ describe("createStudioServer daemon lifecycle", () => {
       }),
     });
 
-    const body = await response.json();
-    expect(response.status, JSON.stringify(body)).toBe(200);
-    expect(body).toMatchObject({
-      response: expect.stringContaining("已为 demo-book 完成第 3 章"),
-      session: {
-        sessionId: "agent-session-1",
-        activeBookId: "demo-book",
-      },
-    });
-    expect(writeNextChapterMock).toHaveBeenCalledWith("demo-book");
-    expect(runAgentSessionMock).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(writeNextChapterMock).not.toHaveBeenCalled();
+    expect(runAgentSessionMock).toHaveBeenCalledWith(
+      expect.objectContaining({ bookId: "demo-book", sessionKind: "book" }),
+      "开始写第一章。写完后落盘，不要只在聊天里给我正文。",
+    );
   }, 60_000);
 
   it("forwards playMode to runAgentSession for play sessions", async () => {
@@ -4860,18 +5215,7 @@ describe("createStudioServer daemon lifecycle", () => {
     }));
   });
 
-  it("handles explicit chat chapter edits outside the InkOS writing agent", async () => {
-    loadChapterIndexMock.mockResolvedValueOnce([{
-      number: 3,
-      title: "Demo",
-      status: "ready-for-review",
-      wordCount: 4,
-      createdAt: "2026-04-12T00:00:00.000Z",
-      updatedAt: "2026-04-12T00:00:00.000Z",
-      auditIssues: [],
-      lengthWarnings: [],
-    }]);
-
+  it("routes explicit chapter edit requests through the Pi agent", async () => {
     const { createStudioServer } = await import("./server.js");
     const app = createStudioServer(cloneProjectConfig() as never, root);
 
@@ -4889,80 +5233,16 @@ describe("createStudioServer daemon lifecycle", () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
-      response: expect.stringContaining("已直接编辑 demo-book 第 3 章"),
-      session: {
-        sessionId: "agent-session-1",
-        activeBookId: "demo-book",
-      },
+      response: "Agent response.",
     });
     await expect(readFile(join(root, "books", "demo-book", "chapters", "0003_Demo.md"), "utf-8"))
-      .resolves.toContain("Body updated");
-    expect(saveChapterIndexMock).toHaveBeenCalledWith("demo-book", [
-      expect.objectContaining({
-        number: 3,
-        status: "audit-failed",
-        wordCount: expect.any(Number),
-        auditIssues: expect.arrayContaining(["[warning] Chat external edit requires review before continuation."]),
-      }),
-    ]);
-    expect(runAgentSessionMock).not.toHaveBeenCalled();
-    expect(writeNextChapterMock).not.toHaveBeenCalled();
-  });
-
-  it("handles explicit chat artifact edits only for content roots", async () => {
-    await mkdir(join(root, "covers", "demo"), { recursive: true });
-    await writeFile(join(root, "covers", "demo", "cover-prompt.md"), "标题字太小。\n", "utf-8");
-
-    const { createStudioServer } = await import("./server.js");
-    const app = createStudioServer(cloneProjectConfig() as never, root);
-
-    const response = await app.request("http://localhost/api/v1/agent", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        instruction: "把 covers/demo/cover-prompt.md 里的「标题字太小」改成「标题字压到最大」",
-        sessionId: "agent-session-1",
-        sessionKind: "edit",
-        requestedIntent: "edit_artifact",
-      }),
-    });
-
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({
-      response: expect.stringContaining("已直接编辑 covers/demo/cover-prompt.md"),
-    });
-    await expect(readFile(join(root, "covers", "demo", "cover-prompt.md"), "utf-8"))
-      .resolves.toContain("标题字压到最大");
+      .resolves.not.toContain("Body updated");
     expect(saveChapterIndexMock).not.toHaveBeenCalled();
-    expect(runAgentSessionMock).not.toHaveBeenCalled();
-  });
-
-  it("handles explicit chat edits against role-card truth files", async () => {
-    const rolePath = join(root, "books", "demo-book", "story", "roles", "主要角色", "林月.md");
-    await mkdir(join(root, "books", "demo-book", "story", "roles", "主要角色"), { recursive: true });
-    await writeFile(rolePath, "# 林月\n\n- 动机：守住旧账册。\n", "utf-8");
-
-    const { createStudioServer } = await import("./server.js");
-    const app = createStudioServer(cloneProjectConfig() as never, root);
-
-    const response = await app.request("http://localhost/api/v1/agent", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        instruction: "把 books/demo-book/story/roles/主要角色/林月.md 里的「守住旧账册」改成「查清账册里的失踪名单」",
-        activeBookId: "demo-book",
-        sessionId: "agent-session-1",
-        sessionKind: "edit",
-        requestedIntent: "edit_artifact",
-      }),
-    });
-
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({
-      response: expect.stringContaining("已直接编辑 books/demo-book/story/roles/主要角色/林月.md"),
-    });
-    await expect(readFile(rolePath, "utf-8")).resolves.toContain("查清账册里的失踪名单");
-    expect(runAgentSessionMock).not.toHaveBeenCalled();
+    expect(runAgentSessionMock).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionKind: "edit", bookId: "demo-book" }),
+      "第3章把「Body」改成「Body updated」",
+    );
+    expect(writeNextChapterMock).not.toHaveBeenCalled();
   });
 
   it("does not bypass the agent for edit-shaped questions", async () => {
@@ -4989,32 +5269,6 @@ describe("createStudioServer daemon lifecycle", () => {
       .resolves.toBe("标题字太小。\n");
     expect(runAgentSessionMock).toHaveBeenCalledOnce();
     expect(appendManualSessionMessagesMock).not.toHaveBeenCalled();
-  });
-
-  it("rejects chat artifact edits against source files instead of routing to the agent", async () => {
-    await mkdir(join(root, "packages", "core", "src"), { recursive: true });
-    await writeFile(join(root, "packages", "core", "src", "index.ts"), "export const value = 1;\n", "utf-8");
-
-    const { createStudioServer } = await import("./server.js");
-    const app = createStudioServer(cloneProjectConfig() as never, root);
-
-    const response = await app.request("http://localhost/api/v1/agent", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        instruction: "把 packages/core/src/index.ts 里的「value」改成「other」",
-        sessionId: "agent-session-1",
-        sessionKind: "edit",
-        requestedIntent: "edit_artifact",
-      }),
-    });
-
-    expect(response.status).toBe(400);
-    const body = await response.json() as { error: { code: string } };
-    expect(body.error.code).toBe("UNSUPPORTED_CHAT_EDIT_TARGET");
-    await expect(readFile(join(root, "packages", "core", "src", "index.ts"), "utf-8"))
-      .resolves.toContain("value");
-    expect(runAgentSessionMock).not.toHaveBeenCalled();
   });
 
   it("rejects unsafe activeBookId in the Studio agent API", async () => {
@@ -5721,8 +5975,81 @@ describe("createStudioServer daemon lifecycle", () => {
         sessionId: "agent-session-1",
         sessionKind: "play",
       },
+      details: {
+        toolExecutions: [expect.objectContaining({
+          id: "play-step-1",
+          tool: "play_step",
+          status: "completed",
+          details: expect.objectContaining({
+            kind: "play_turn_advanced",
+            worldId: "world-1",
+            runId: "main",
+          }),
+        })],
+      },
     });
     expect(chatCompletionMock).not.toHaveBeenCalled();
+  });
+
+  it("does not duplicate a play scene in the final HTTP response after the tool card owns it", async () => {
+    loadBookSessionMock.mockResolvedValue({
+      sessionId: "agent-session-1",
+      bookId: null,
+      sessionKind: "play",
+      playMode: "open",
+      title: null,
+      messages: [],
+      events: [],
+      draftRounds: [],
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    runAgentSessionMock.mockImplementationOnce(async (config: { onEvent?: (event: unknown) => void }) => {
+      config.onEvent?.({
+        type: "tool_execution_start",
+        toolCallId: "play-step-duplicate",
+        toolName: "play_step",
+        args: { input: "检查封条" },
+      });
+      config.onEvent?.({
+        type: "tool_execution_end",
+        toolCallId: "play-step-duplicate",
+        toolName: "play_step",
+        isError: false,
+        result: {
+          content: [{ type: "text", text: "封条背面有一道新鲜划痕。" }],
+          details: {
+            kind: "play_turn_advanced",
+            worldId: "world-1",
+            runId: "main",
+            sceneText: "封条背面有一道新鲜划痕。",
+          },
+        },
+      });
+      return {
+        responseText: "封条背面有一道新鲜划痕。",
+        messages: [{ role: "assistant", content: "封条背面有一道新鲜划痕。" }],
+      };
+    });
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const response = await app.request("http://localhost/api/v1/agent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        instruction: "检查封条",
+        sessionId: "agent-session-1",
+        sessionKind: "play",
+        playMode: "open",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      response: "",
+      session: { sessionId: "agent-session-1", sessionKind: "play" },
+    });
   });
 
   it("migrates and exposes a book created by architect even when the final agent text is empty", async () => {
@@ -6180,18 +6507,9 @@ describe("createStudioServer daemon lifecycle", () => {
     expect(raw.llm.model).toBe("deepseek-v4-flash");
   });
 
-  it("project advanced settings expose input governance and detection config", async () => {
+  it("project advanced settings expose detection config", async () => {
     const { createStudioServer } = await import("./server.js");
     const app = createStudioServer(cloneProjectConfig() as never, root);
-
-    const modeInitial = await app.request("http://localhost/api/v1/project/input-governance-mode");
-    await expect(modeInitial.json()).resolves.toMatchObject({ mode: "v2" });
-
-    const modePut = await app.request("http://localhost/api/v1/project/input-governance-mode", {
-      method: "PUT", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mode: "legacy" }),
-    });
-    await expect(modePut.json()).resolves.toMatchObject({ ok: true, mode: "legacy" });
 
     const detectionPut = await app.request("http://localhost/api/v1/project/detection", {
       method: "PUT", headers: { "Content-Type": "application/json" },
@@ -6251,6 +6569,39 @@ describe("createStudioServer daemon lifecycle", () => {
     });
     await expect(reviseFoundationRes.json()).resolves.toMatchObject({ ok: true });
     expect(reviseFoundationMock).toHaveBeenCalledWith("demo-book", "make the protagonist colder");
+  });
+
+  it("uploads an external motherbook and imports its extracted text as canon", async () => {
+    loadBookConfigMock.mockResolvedValue({ id: "demo-book", fanficMode: "canon" });
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+    const source = "# 第一章\n\n林舟在旧码头发现了母本中的关键规则。";
+
+    const upload = await app.request("http://localhost/api/v1/import/canon/upload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        filename: "motherbook.md",
+        dataUrl: `data:text/markdown;base64,${Buffer.from(source).toString("base64")}`,
+      }),
+    });
+    expect(upload.status).toBe(200);
+    const uploaded = await upload.json() as { storedPath: string };
+
+    const imported = await app.request("http://localhost/api/v1/books/demo-book/import/canon-file", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filePath: uploaded.storedPath, filename: "motherbook.md" }),
+    });
+    expect(imported.status).toBe(200);
+    const body = await imported.json() as { material: { id: string; markdownPath: string } };
+    await expect(access(join(root, body.material.markdownPath))).resolves.toBeUndefined();
+    expect(importFanficCanonMock).toHaveBeenCalledWith(
+      "demo-book",
+      expect.stringContaining("林舟在旧码头发现了母本中的关键规则"),
+      "motherbook",
+      "canon",
+    );
   });
 
   it("spinoff/init validates input, 404s a missing parent, and otherwise runs initSpinoffBook", async () => {

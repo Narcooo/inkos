@@ -5,7 +5,7 @@ import { findProjectRoot, log, logError, GLOBAL_ENV_PATH } from "../utils.js";
 import { fetchWithProxy } from "@actalk/inkos-core";
 import {
   ensureNodeRuntimePinFiles,
-  evaluateSqliteMemorySupport,
+  evaluateNodeRuntimeSupport,
   inspectNodeRuntimePinFiles,
 } from "../runtime-requirements.js";
 import {
@@ -123,15 +123,9 @@ export const doctorCommand = new Command("doctor")
 
     // 1. Check Node.js version
     const nodeVersion = process.version;
-    const major = parseInt(nodeVersion.slice(1).split(".")[0]!, 10);
     checks.push({
-      name: "Node.js >= 20",
-      ok: major >= 20,
-      detail: nodeVersion,
-    });
-    checks.push({
-      name: "SQLite memory index (Node 22+)",
-      ...evaluateSqliteMemorySupport({ nodeVersion }),
+      name: "Node.js >= 22",
+      ...evaluateNodeRuntimeSupport({ nodeVersion }),
     });
     checks.push({
       name: "Node runtime pin files",

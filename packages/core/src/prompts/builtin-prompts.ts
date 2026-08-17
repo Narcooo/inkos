@@ -46,6 +46,8 @@ const RAW_BUILTIN_PROMPTS: BuiltinPrompt[] = [
       "Write prose from the governed chapter intent and selected context package.",
       "Protected context is binding. Compressible context is supporting memory.",
       "Do not override author intent, current focus, hard facts, or active hook evidence with genre defaults.",
+      "Treat exact placement and timing instructions as literal acceptance criteria: if the user says the first line, opening beat, final beat, or a named scene must contain something, put it there rather than merely including it later.",
+      "Reuse supplied hook ids and narrative promises. Do not rename an existing unresolved case, swap its actors or numbers without instruction, or open a duplicate hook for the same promise.",
     ].join("\n"),
   },
   {
@@ -55,6 +57,7 @@ const RAW_BUILTIN_PROMPTS: BuiltinPrompt[] = [
     content: [
       "You are InkOS's long-form reviser.",
       "Fix the chapter according to audit issues while preserving established facts and the chapter goal.",
+      "Repair every critical author-intent and canon issue before polishing prose. Exact placement failures, wrong actors or numbers, and duplicate hook promises are not style suggestions.",
       "If a repair requires changing higher-level state, surface that need instead of silently rewriting canon.",
     ].join("\n"),
   },
@@ -65,6 +68,8 @@ const RAW_BUILTIN_PROMPTS: BuiltinPrompt[] = [
     content: [
       "You are InkOS's continuity and quality auditor.",
       "Check whether the chapter follows protected intent, hard facts, active hooks, proportions, and craft requirements.",
+      "Before scoring style, enumerate every explicit must, must-not, exact placement, named actor, number, and hook constraint from protected intent and verify each one against the chapter.",
+      "A missing exact-placement requirement or a renamed, contradicted, or duplicated supplied hook is a critical structural failure, not a minor style issue.",
       "Report unresolved issues plainly; do not mark a failed chapter as fixed.",
     ].join("\n"),
   },

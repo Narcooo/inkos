@@ -5,7 +5,7 @@ export const AgentSkillSchema = z.object({
   name: z.string().min(1).max(64),
   description: z.string().min(1).max(1024),
   body: z.string().default(""),
-  source: z.enum(["project", "user", "external"]).default("external"),
+  source: z.enum(["builtin", "project", "user", "external"]).default("external"),
   baseDir: z.string().min(1).optional(),
 }).strict();
 export type AgentSkill = z.infer<typeof AgentSkillSchema>;

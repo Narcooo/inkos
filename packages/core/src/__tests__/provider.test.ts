@@ -5,6 +5,7 @@ import {
   chatCompletion,
   type LLMClient,
 } from "../llm/provider.js";
+import { runWithAgentTrajectory } from "../llm/agent-trajectory.js";
 
 // ── Mock @mariozechner/pi-ai ──────────────────────────────────────────────────
 // We intercept streamSimple so tests don't hit the network.
@@ -88,6 +89,18 @@ function makeErrorStream(message: string): AsyncIterable<Record<string, unknown>
       return {
         async next() {
           throw new Error(message);
+        },
+      };
+    },
+  };
+}
+
+function makeNeverStream(): AsyncIterable<Record<string, unknown>> {
+  return {
+    [Symbol.asyncIterator](): AsyncIterator<Record<string, unknown>> {
+      return {
+        async next() {
+          return new Promise<IteratorResult<Record<string, unknown>>>(() => {});
         },
       };
     },
@@ -233,7 +246,7 @@ describe("chatCompletion via pi-ai", () => {
     expect(opts.maxTokens).toBe(256);
   });
 
-  it("passes the caller AbortSignal to pi-ai", async () => {
+  it("propagates caller aborts through the guarded signal passed to pi-ai", async () => {
     mockStreamSimple.mockReturnValue(makeTextStream("ok"));
     const controller = new AbortController();
 
@@ -242,7 +255,24 @@ describe("chatCompletion via pi-ai", () => {
     });
 
     const opts = mockStreamSimple.mock.calls[0]?.[2] as Record<string, unknown>;
-    expect(opts.signal).toBe(controller.signal);
+    const signal = opts.signal as AbortSignal;
+    expect(signal).toBeInstanceOf(AbortSignal);
+    expect(signal.aborted).toBe(false);
+    controller.abort();
+    expect(signal.aborted).toBe(true);
+  });
+
+  it("honors a caller-specific first-event deadline", async () => {
+    mockStreamSimple.mockReturnValue(makeNeverStream());
+
+    const error = await captureError(
+      chatCompletion(makeClient(), "test-model", [{ role: "user", content: "hi" }], {
+        firstEventTimeoutMs: 10,
+        retry: false,
+      }),
+    );
+
+    expect(error.message).toContain("LLM stream produced no event within 10ms");
   });
 
   it("drops non-ByteString headers before calling pi-ai", async () => {
@@ -423,6 +453,51 @@ describe("chatCompletion via pi-ai", () => {
     vi.unstubAllGlobals();
   });
 
+  it("keeps one model-call id while incrementing kkaiapi client retry attempts", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        statusText: "Unavailable",
+        headers: new Headers(),
+        text: async () => JSON.stringify({ error: { message: "temporary unavailable" } }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: "recovered" } }],
+          usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 },
+        }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+    const client = makeClient(0.7, {
+      service: "kkaiapi",
+      stream: false,
+      _piModel: { ...MOCK_PI_MODEL, baseUrl: "https://api.kkaiapi.com/v1" },
+    });
+
+    const result = await runWithAgentTrajectory({
+      conversationId: "inkos-conv",
+      runId: "run-7",
+      agentRole: "workflow",
+    }, () => chatCompletion(client, "deepseek-v4-flash", [{ role: "user", content: "write" }]));
+
+    expect(result.content).toBe("recovered");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const first = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+    expect(first["X-InkOS-Model-Call-ID"]).toBeTruthy();
+    expect(second["X-InkOS-Model-Call-ID"]).toBe(first["X-InkOS-Model-Call-ID"]);
+    expect(first["X-InkOS-Client-Attempt"]).toBe("1");
+    expect(second["X-InkOS-Client-Attempt"]).toBe("2");
+    expect(second).toMatchObject({
+      "X-InkOS-Conversation-ID": "inkos-conv",
+      "X-InkOS-Run-ID": "run-7",
+      "X-InkOS-Agent-Role": "workflow",
+    });
+    vi.unstubAllGlobals();
+  });
+
   it("aborts a pending kkaiapi request instead of leaving the writer blocked", async () => {
     const controller = new AbortController();
     const fetchMock = vi.fn((_url: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
@@ -513,7 +588,7 @@ describe("chatCompletion via pi-ai", () => {
     vi.unstubAllGlobals();
   });
 
-  it("uses reasoning_content for custom openai-compatible non-stream responses that omit content", async () => {
+  it("rejects reasoning-only custom non-stream responses instead of treating thinking as final text", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
@@ -532,15 +607,14 @@ describe("chatCompletion via pi-ai", () => {
         baseUrl: "https://gateway.example/v1",
       },
     });
-    const result = await chatCompletion(client, "glm-compat", [{ role: "user", content: "nihao" }]);
-
-    expect(result.content).toBe("推理通道文本");
+    await expect(chatCompletion(client, "glm-compat", [{ role: "user", content: "nihao" }], { retry: false }))
+      .rejects.toThrow(/final answer|empty response/i);
     expect(fetchMock).toHaveBeenCalledOnce();
 
     vi.unstubAllGlobals();
   });
 
-  it("uses reasoning_content for custom openai-compatible streams that omit content deltas", async () => {
+  it("rejects reasoning-only custom streams instead of persisting thinking as final text", async () => {
     const encoder = new TextEncoder();
     const sse = [
       "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"你\"}}]}\n\n",
@@ -568,12 +642,44 @@ describe("chatCompletion via pi-ai", () => {
         baseUrl: "https://gateway.example/v1",
       },
     });
-    const result = await chatCompletion(client, "glm-compat", [{ role: "user", content: "nihao" }]);
-
-    expect(result.content).toBe("你好");
-    expect(result.usage.totalTokens).toBe(5);
+    await expect(chatCompletion(client, "glm-compat", [{ role: "user", content: "nihao" }], { retry: false }))
+      .rejects.toThrow(/final answer|empty response/i);
     expect(fetchMock).toHaveBeenCalledOnce();
 
+    vi.unstubAllGlobals();
+  });
+
+  it("retries a reasoning-only non-stream response inside the same model stage", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { reasoning_content: "先分析但没有最终答案" } }],
+          usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: "完整最终答案" } }],
+          usage: { prompt_tokens: 3, completion_tokens: 4, total_tokens: 7 },
+        }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = makeClient(0.7, {
+      service: "custom",
+      stream: false,
+      _piModel: {
+        ...MOCK_PI_MODEL,
+        provider: "openai",
+        baseUrl: "https://gateway.example/v1",
+      },
+    });
+    const result = await chatCompletion(client, "glm-compat", [{ role: "user", content: "nihao" }]);
+
+    expect(result.content).toBe("完整最终答案");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     vi.unstubAllGlobals();
   });
 
@@ -1126,6 +1232,21 @@ describe("stream interruption detection", () => {
     vi.unstubAllGlobals();
   });
 
+  it("rejects a native chat stream that reaches the output limit", async () => {
+    const sse = [
+      "data: {\"choices\":[{\"delta\":{\"content\":\"写到上限的正文\"}}]}\n\n",
+      "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}]}\n\n",
+      "data: [DONE]\n\n",
+    ].join("");
+    const fetchMock = vi.fn().mockImplementation(async () => sseResponse(sse));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(chatCompletion(nativeStreamClient(), "glm-compat", [{ role: "user", content: "写正文" }]))
+      .rejects.toThrow(/output limit|length|Stream interrupted/i);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    vi.unstubAllGlobals();
+  });
+
   it("retries a pi-ai stream that errors after a long partial instead of silently keeping the truncation", async () => {
     const longPartial = "长".repeat(600);
     const partialMsg = makeAssistantMessage(longPartial);
@@ -1166,5 +1287,18 @@ describe("stream interruption detection", () => {
 
     expect(result.content).toBe("第二次完整");
     expect(mockStreamSimple).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a pi-ai done message whose stop reason is length", async () => {
+    const partial = makeAssistantMessage("只写到一半");
+    const lengthMessage = { ...partial, stopReason: "length" } as AssistantMessage;
+    mockStreamSimple.mockImplementation(() => makeEventStream([
+      { type: "text_delta", contentIndex: 0, delta: "只写到一半", partial },
+      { type: "done", reason: "length", message: lengthMessage },
+    ]) as never);
+
+    await expect(chatCompletion(makeClient(), "test-model", [{ role: "user", content: "写" }]))
+      .rejects.toThrow(/output limit|length|Stream interrupted/i);
+    expect(mockStreamSimple).toHaveBeenCalledTimes(3);
   });
 });

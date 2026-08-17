@@ -11,7 +11,10 @@ import {
   SHORT_FICTION_MAX_CHARS_PER_CHAPTER,
   SHORT_FICTION_MIN_CHAPTERS,
   SHORT_FICTION_MIN_CHARS_PER_CHAPTER,
+  activatedSkillIds,
   createLLMClient,
+  loadAvailableAgentSkills,
+  resolveProductionSkillActivations,
   runShortFictionProduction,
   type LLMConfig,
   type Logger,
@@ -73,6 +76,8 @@ shortCommand
           );
       const reference = opts.reference ? await readReference(root, opts.reference) : undefined;
       const models = resolveShortRunModels(opts);
+      const configuredSkills = await loadAvailableAgentSkills({ projectRoot: root });
+      const activatedSkills = resolveProductionSkillActivations(configuredSkills.skills, "shortWriting");
 
       const plannerRuntime = await createShortRuntime(root, {
         llmBaseUrl: opts.llmBaseUrl,
@@ -109,12 +114,12 @@ shortCommand
         projectRoot: root,
         direction: opts.direction,
         runtimes: {
-          planner: { ...plannerRuntime, projectRoot: root },
-          outlineReview: { ...outlineReviewRuntime, projectRoot: root },
-          writer: { ...writerRuntime, projectRoot: root },
-          draftReview: { ...draftReviewRuntime, projectRoot: root },
-          revise: { ...reviseRuntime, projectRoot: root },
-          package: { ...packageRuntime, projectRoot: root },
+          planner: { ...plannerRuntime, projectRoot: root, activatedSkills },
+          outlineReview: { ...outlineReviewRuntime, projectRoot: root, activatedSkills },
+          writer: { ...writerRuntime, projectRoot: root, activatedSkills },
+          draftReview: { ...draftReviewRuntime, projectRoot: root, activatedSkills },
+          revise: { ...reviseRuntime, projectRoot: root, activatedSkills },
+          package: { ...packageRuntime, projectRoot: root, activatedSkills },
         },
         reference,
         storyId: opts.storyId,
@@ -139,6 +144,7 @@ shortCommand
       if (opts.json) {
         log(JSON.stringify(payload, null, 2));
       } else {
+        log(`Skills: ${activatedSkillIds(activatedSkills).join(", ")}`);
         log(`Short run complete: ${result.storyId}`);
         log(`Final: ${payload.finalMarkdownPath}`);
         log(`Sales package: ${payload.salesPackagePath}`);

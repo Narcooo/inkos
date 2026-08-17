@@ -1,13 +1,13 @@
 /**
- * Verify that source manifests are publishable as registry manifests.
+ * Verify that internal dependencies resolve to the current workspace version.
  *
  * Usage:
  *   node scripts/verify-no-workspace-protocol.mjs packages/cli packages/core
  *   node ../../scripts/verify-no-workspace-protocol.mjs .
  *
  * Checks two invariants before publish:
- * 1. dependencies / optionalDependencies / peerDependencies contain no workspace: specifiers
- * 2. internal workspace dependencies point at the current workspace version
+ * Source manifests may use workspace:* so local builds cannot silently resolve an
+ * older registry package. The prepack hook replaces it before prepublishOnly runs.
  */
 
 import { access, readdir, readFile } from "node:fs/promises";
@@ -83,11 +83,13 @@ for (const dirArg of dirs) {
       }
 
       if (specifier.startsWith("workspace:")) {
-        process.stderr.write(
-          `FAIL: ${dir} — ${field}.${name}: ${specifier} (workspace protocol is not allowed in publish manifests)\n`,
-        );
-        dirFailed = true;
-        failed = true;
+        if (!workspaceVersion || !["workspace:*", "workspace:^", "workspace:~"].includes(specifier)) {
+          process.stderr.write(
+            `FAIL: ${dir} — ${field}.${name}: invalid workspace dependency ${specifier}\n`,
+          );
+          dirFailed = true;
+          failed = true;
+        }
         continue;
       }
 

@@ -32,7 +32,7 @@ const GENRE: GenreProfile = {
 };
 
 describe("buildWriterSystemPrompt", () => {
-  it("includes writing methodology blocks in governed mode", () => {
+  it("keeps governed inputs and leaves reusable craft to the activated Skill", () => {
     const prompt = buildWriterSystemPrompt(
       BOOK,
       GENRE,
@@ -50,27 +50,9 @@ describe("buildWriterSystemPrompt", () => {
 
     expect(prompt).toContain("## 输入治理契约");
     expect(prompt).toContain("卷纲是默认规划");
-    // v10: compact craft card replaces full methodology modules
-    expect(prompt).toContain("写作铁律");
-    expect(prompt).toContain("盐溶于汤");
-    expect(prompt).toContain("黄金3章");
-  });
-
-  it("injects cross-theme prose-execution rules: simile restraint + dramatize the climax (zh)", () => {
-    const prompt = buildWriterSystemPrompt(
-      BOOK, GENRE, null, "", "", "", undefined, 5, "creative", undefined, "zh", "governed",
-    );
-    expect(prompt).toContain("明喻节制");
-    expect(prompt).toContain("高潮必须演出");
-    expect(prompt).toContain("不许概述");
-  });
-
-  it("injects cross-theme prose-execution rules into the English prompt", () => {
-    const prompt = buildWriterSystemPrompt(
-      { ...BOOK }, { ...GENRE, language: "en" }, null, "", "", "", undefined, 5, "creative", undefined, "en", "governed",
-    );
-    expect(prompt).toContain("Simile restraint");
-    expect(prompt).toContain("Play out the climax");
+    expect(prompt).not.toContain("## 核心规则");
+    expect(prompt).not.toContain("## 创作宪法");
+    expect(prompt).not.toContain("## 代入感六支柱");
   });
 
   it("enforces narrative person only when the user explicitly set one (#290)", () => {
@@ -104,7 +86,6 @@ describe("buildWriterSystemPrompt", () => {
       hardMin: 1600,
       hardMax: 2800,
       countingMode: "zh_chars",
-      normalizeMode: "none",
     });
 
     const prompt = buildWriterSystemPrompt(
@@ -144,65 +125,8 @@ describe("buildWriterSystemPrompt", () => {
       "governed",
     );
 
-    expect(prompt).toContain("## 核心规则");
-    expect(prompt).toContain("## 硬性禁令");
     expect(prompt).toContain("Do not reveal the mastermind");
     expect(prompt).toContain("Keep the prose restrained");
-  });
-
-  it("injects the creative constitution and six pillars of immersion as prose (zh)", () => {
-    const prompt = buildWriterSystemPrompt(
-      BOOK,
-      GENRE,
-      null,
-      "# Book Rules",
-      "# Genre Body",
-      "# Style Guide",
-      undefined,
-      3,
-      "creative",
-      undefined,
-      "zh",
-      "governed",
-    );
-
-    // Constitution and pillars appear as prose section headings.
-    expect(prompt).toContain("## 创作宪法");
-    expect(prompt).toContain("## 代入感六支柱");
-    // Constitution prose beats — verify a few load-bearing phrases ship.
-    expect(prompt).toContain("盐溶于汤");
-    expect(prompt).toContain("全员智商在线");
-    expect(prompt).toContain("拒绝流水账");
-    // Pillar prose beats — ensure six-pillar content is present.
-    expect(prompt).toContain("基础信息标签化");
-    expect(prompt).toContain("可视化熟悉感");
-    expect(prompt).toContain("五感钩子");
-    // Must NOT be rendered as a numbered checklist — writer must internalise.
-    expect(prompt).not.toContain("1. 基础信息标签化");
-    expect(prompt).not.toContain("- 基础信息标签化");
-  });
-
-  it("injects the creative constitution and six pillars of immersion as prose (en)", () => {
-    const prompt = buildWriterSystemPrompt(
-      { ...BOOK, language: "en" },
-      { ...GENRE, language: "en", name: "General" },
-      null,
-      "# Book Rules",
-      "# Genre Body",
-      "# Style Guide",
-      undefined,
-      3,
-      "creative",
-      undefined,
-      "en",
-      "governed",
-    );
-
-    expect(prompt).toContain("## Creative Constitution");
-    expect(prompt).toContain("## Six Pillars of Immersion");
-    expect(prompt).toContain("salt in soup");
-    expect(prompt).toContain("Refuse chronicle drift");
-    expect(prompt).toContain("core tag plus one contrasting detail");
   });
 
   it("injects golden opening discipline into zh writer system prompt for ch<=3", () => {

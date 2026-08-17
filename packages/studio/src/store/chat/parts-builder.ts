@@ -1,6 +1,7 @@
 import type { MessagePart, ToolExecution, PipelineStage } from "./types";
 import { localizeKnownRuntimeMessage } from "../../lib/error-copy";
 import { tr } from "../../lib/app-language";
+import { summarizeToolResult } from "../../shared/tool-result";
 
 // -- Event types for the builder --
 
@@ -59,25 +60,6 @@ function resolveToolLabel(tool: string, agent?: string): string {
   }
   const label = TOOL_LABELS[tool];
   return label ? tr(label[0], label[1]) : tool;
-}
-
-function summarizeToolResult(result: unknown): string {
-  if (typeof result === "string") return result.slice(0, 2000);
-  if (result && typeof result === "object") {
-    const record = result as Record<string, unknown>;
-    if (typeof record.content === "string") return record.content.slice(0, 2000);
-    if (Array.isArray(record.content)) {
-      const text = record.content
-        .map((part) => {
-          const item = part as { type?: unknown; text?: unknown };
-          return item.type === "text" && typeof item.text === "string" ? item.text : "";
-        })
-        .filter(Boolean)
-        .join("\n");
-      if (text.trim()) return text.slice(0, 2000);
-    }
-  }
-  return String(result ?? "").slice(0, 2000);
 }
 
 function compressionLabel(category: ContextCompressionCategory): string {

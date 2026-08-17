@@ -12,7 +12,7 @@ import {
   type StateManifest,
 } from "../models/runtime-state.js";
 import type { Fact, StoredHook } from "./memory-db.js";
-import { normalizeHookPayoffTiming } from "../utils/hook-lifecycle.js";
+import { normalizeHookPayoffTiming, resolveHookStatusAlias } from "../utils/hook-lifecycle.js";
 import {
   inferFactSubject,
   isCurrentChapterLabel,
@@ -575,12 +575,9 @@ export function resolveContiguousChapterPrefix(chapterNumbers: ReadonlyArray<num
 }
 
 function normalizeHookStatus(value: string | undefined, warnings: string[], hookId: string): HookStatus {
-  const normalized = (value ?? "").trim().toLowerCase();
-  if (!normalized) return "open";
-  if (/(resolved|closed|done|paid[_ -]?off|已回收|回收|完成|已解决|已兑现|兑现)/i.test(normalized)) return "resolved";
-  if (/(deferred|paused|hold|dormant|inactive|unplanted|unseeded|not[_ -]?started|not[_ -]?active|搁置|延后|延期|暂缓|休眠|未激活|未启动|待启动|未推进|尚未推进)/i.test(normalized)) return "deferred";
-  if (/(confirmed[_ -]?hit|confirmed|advanced|progressing|progress|active|pressured|命中|已确认命中|已推进|推进|进行中|持续推进|重大推进)/i.test(normalized)) return "progressing";
-  if (/(open|pending|seeded|planted|待定|未回收|已埋|已种下|已铺垫)/i.test(normalized)) return "open";
+  const normalized = resolveHookStatusAlias(value);
+  if (normalized) return normalized;
+  if (!(value ?? "").trim()) return "open";
   appendWarning(warnings, `${hookId}:status normalized from "${value ?? ""}" to "open"`);
   return "open";
 }

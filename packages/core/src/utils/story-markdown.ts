@@ -1,6 +1,7 @@
 import type { Fact, StoredHook, StoredSummary } from "../state/memory-db.js";
 import {
   localizeHookPayoffTiming,
+  normalizeStoredHookStatus,
   normalizeHookPayoffTiming,
   resolveHookPayoffTiming,
 } from "./hook-lifecycle.js";
@@ -284,7 +285,7 @@ function parsePendingHookRow(row: ReadonlyArray<string | undefined>): StoredHook
     hookId: normalizeHookId(row[0]),
     startChapter: parseStrictChapterInteger(row[1]),
     type: row[2] ?? "",
-    status: row[3] ?? "open",
+    status: normalizeStoredHookStatus(row[3] ?? "open"),
     lastAdvancedChapter: parseStrictChapterInteger(row[4]),
     expectedPayoff: row[5] ?? "",
     payoffTiming,

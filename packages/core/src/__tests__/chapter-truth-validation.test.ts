@@ -64,6 +64,40 @@ const BOOK: BookConfig = {
 };
 
 describe("validateChapterTruthPersistence", () => {
+  it("retries settlement when the validator requests repair without a hard contradiction", async () => {
+    const validator = {
+      validate: vi.fn()
+        .mockResolvedValueOnce(createValidationResult({
+          passed: false,
+          repairRequired: true,
+          warnings: [{ category: "missing_state_update", description: "位置尚未更新。" }],
+        }))
+        .mockResolvedValueOnce(createValidationResult()),
+    };
+    const writer = {
+      settleChapterState: vi.fn().mockResolvedValue(createWriterOutput({ updatedState: "码头" })),
+    };
+
+    const result = await validateChapterTruthPersistence({
+      writer,
+      validator,
+      book: BOOK,
+      bookDir: "/tmp/book",
+      chapterNumber: 2,
+      title: "抵达码头",
+      content: "林舟抵达码头。",
+      persistenceOutput: createWriterOutput({ updatedState: "车站" }),
+      auditResult: createAuditResult(),
+      previousTruth: { oldState: "车站", oldHooks: "hooks", oldLedger: "ledger" },
+      language: "zh",
+      logWarn: vi.fn(),
+    });
+
+    expect(writer.settleChapterState).toHaveBeenCalledTimes(1);
+    expect(result.chapterStatus).toBeNull();
+    expect(result.persistenceOutput.updatedState).toBe("码头");
+  });
+
   it("uses recovered settlement output when retry succeeds", async () => {
     const validator = {
       validate: vi.fn()

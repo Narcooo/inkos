@@ -5,7 +5,7 @@ import {
   extractCollaboratorRows,
   extractOpponentRows,
   extractProtagonistRow,
-  extractRelevantThreads,
+  formatRelevantThreads,
 } from "../agents/planner-context.js";
 
 // Real column layouts match the production truth-file schemas under story/.
@@ -114,23 +114,26 @@ describe("extractOpponentRows / extractCollaboratorRows", () => {
   });
 });
 
-describe("extractRelevantThreads", () => {
-  it("selects active hooks and subplots, filtering dormant/stale", () => {
-    const hooks = `
-| hook_id | 状态 | 最近推进 |
-|---------|------|----------|
-| H001 | activating | ch38 |
-| H002 | dormant | ch20 |
-| H003 | partial_payoff | ch37 |
-`;
+describe("formatRelevantThreads", () => {
+  it("uses the unified retrieval result for hooks and keeps active subplots", () => {
+    const hooks = [
+      {
+        hookId: "H002",
+        startChapter: 0,
+        type: "单元案",
+        status: "deferred",
+        lastAdvancedChapter: 0,
+        expectedPayoff: "卷内回收",
+        notes: "本章明确激活的休眠种子",
+      },
+    ];
     const subplots = `
 | S001 | 主线追查 | 推进 |
 | S007 | 旁线 | 暂挂 |
 `;
-    const threads = extractRelevantThreads(hooks, subplots);
-    expect(threads).toContain("H001");
-    expect(threads).toContain("H003");
-    expect(threads).not.toContain("H002");
+    const threads = formatRelevantThreads(hooks, subplots);
+    expect(threads).toContain("H002");
+    expect(threads).toContain("本章明确激活的休眠种子");
     expect(threads).toContain("S001");
     expect(threads).not.toContain("S007");
   });

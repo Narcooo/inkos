@@ -1,14 +1,16 @@
-import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import {
+  commitProductionArtifacts,
+  createProductionRunSnapshot,
+  writeProductionRunSnapshot,
+} from "../production/harness.js";
 import {
   loadTranslationChapter,
   loadTranslationGlossary,
   loadTranslationManifest,
   mergeGlossaryTerms,
-  saveTranslationChapter,
-  saveTranslationGlossary,
+  saveTranslationProgress,
   saveTranslationManifest,
-  translationProjectDir,
 } from "./run-store.js";
 import type {
   RunTranslationProjectResult,
@@ -26,12 +28,31 @@ export async function runTranslationProject(
     readonly batchSize?: number;
   },
 ): Promise<RunTranslationProjectResult> {
-  let manifest = await loadTranslationManifest(projectRoot, projectId);
-  let glossary = [...await loadTranslationGlossary(projectRoot, projectId)];
-  const reportLines = [`# Translation Review`, ""];
-  let translatedSegments = 0;
-  let reviewedChapters = 0;
-  const batchSize = Math.max(1, Math.min(options.batchSize ?? 8, 32));
+  const runPath = join("translations", projectId, "status.json");
+  const baseArtifacts = [
+    join("translations", projectId, "manifest.json"),
+    join("translations", projectId, "glossary.json"),
+  ];
+  await writeProductionRunSnapshot({
+    rootDir: projectRoot,
+    runPath,
+    run: createProductionRunSnapshot({
+      kind: "translation",
+      id: projectId,
+      status: "running",
+      stage: "translate",
+      artifacts: baseArtifacts,
+      observations: [],
+    }),
+  });
+
+  try {
+    let manifest = await loadTranslationManifest(projectRoot, projectId);
+    let glossary = [...await loadTranslationGlossary(projectRoot, projectId)];
+    const reportLines = [`# Translation Review`, ""];
+    let translatedSegments = 0;
+    let reviewedChapters = 0;
+    const batchSize = Math.max(1, Math.min(options.batchSize ?? 8, 32));
 
   for (const chapterInfo of manifest.chapters) {
     const source = await loadTranslationChapter(projectRoot, chapterInfo.sourcePath);
@@ -64,10 +85,22 @@ export async function runTranslationProject(
       if (result.glossary?.length) {
         glossary = [...mergeGlossaryTerms([...glossary, ...result.glossary])];
       }
-      await saveTranslationGlossary(projectRoot, projectId, glossary);
-      await saveTranslationChapter(projectRoot, chapterInfo.translatedPath, {
+      await saveTranslationProgress(projectRoot, projectId, chapterInfo.translatedPath, {
         ...source,
         segments: orderedTranslatedSegments(source.segments, translatedByIndex),
+      }, glossary);
+      await writeProductionRunSnapshot({
+        rootDir: projectRoot,
+        runPath,
+        run: createProductionRunSnapshot({
+          kind: "translation",
+          id: projectId,
+          status: "running",
+          stage: "translate",
+          artifacts: [...baseArtifacts, chapterInfo.translatedPath],
+          observations: [],
+          resumeCursor: `${chapterInfo.number}:${offset + batch.length}`,
+        }),
       });
     }
 
@@ -93,14 +126,50 @@ export async function runTranslationProject(
     await saveTranslationManifest(projectRoot, manifest);
   }
 
-  const reportPathAbs = join(translationProjectDir(projectRoot, projectId), "review-report.md");
-  await writeFile(reportPathAbs, reportLines.join("\n").trimEnd() + "\n", "utf-8");
-  return {
-    projectId,
-    translatedSegments,
-    reviewedChapters,
-    reportPath: `translations/${projectId}/review-report.md`,
-  };
+    const reportPath = `translations/${projectId}/review-report.md`;
+    const artifacts = [
+      ...baseArtifacts,
+      ...manifest.chapters.map((chapter) => chapter.translatedPath),
+      reportPath,
+    ];
+    await commitProductionArtifacts({
+      rootDir: projectRoot,
+      artifacts: [{
+        relativePath: reportPath,
+        content: `${reportLines.join("\n").trimEnd()}\n`,
+      }],
+      runPath,
+      run: createProductionRunSnapshot({
+        kind: "translation",
+        id: projectId,
+        status: "complete",
+        stage: "complete",
+        artifacts,
+        observations: [],
+      }),
+    });
+    return {
+      projectId,
+      translatedSegments,
+      reviewedChapters,
+      reportPath,
+    };
+  } catch (error) {
+    await writeProductionRunSnapshot({
+      rootDir: projectRoot,
+      runPath,
+      run: createProductionRunSnapshot({
+        kind: "translation",
+        id: projectId,
+        status: "failed",
+        stage: "translate",
+        artifacts: baseArtifacts,
+        observations: [],
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    }).catch(() => undefined);
+    throw error;
+  }
 }
 
 function orderedTranslatedSegments(

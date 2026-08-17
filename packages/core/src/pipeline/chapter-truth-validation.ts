@@ -98,7 +98,7 @@ export async function validateChapterTruthPersistence(params: {
     }
   }
 
-  if (!validation.passed) {
+  if (!validation.passed || validation.repairRequired) {
     const recovery = await retrySettlementAfterValidationFailure({
       writer: params.writer,
       validator: params.validator,

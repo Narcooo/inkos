@@ -74,7 +74,6 @@ function buildProjectConfig(projectDir: string, language: "zh" | "en") {
       stream: true,
     },
     notify: [],
-    inputGovernanceMode: "v2" as const,
     daemon: {
       schedule: {
         radarCron: "0 */6 * * *",

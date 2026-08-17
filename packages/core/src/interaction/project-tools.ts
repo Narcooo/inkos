@@ -9,7 +9,7 @@ import type {
   LLMClient,
   BookConfig,
 } from "../index.js";
-import { chatCompletion } from "../index.js";
+import { runWorkerAgent } from "../agent/worker-agent.js";
 import { executeEditTransaction } from "./edit-controller.js";
 import { defaultChapterLength } from "../utils/length-metrics.js";
 import type { InteractionRuntimeTools } from "./runtime.js";
@@ -398,10 +398,10 @@ export function createInteractionToolsFromDeps(
     chat: async (input, options) => {
       const bookLabel = options.bookId ?? "none";
       const chatRequestOptions = hooks?.getChatRequestOptions?.() ?? {};
-      let response: Awaited<ReturnType<typeof chatCompletion>> | undefined;
+      let response: Awaited<ReturnType<typeof runWorkerAgent>> | undefined;
       if (instrumentedPipeline.config?.client && instrumentedPipeline.config?.model) {
         try {
-          response = await chatCompletion(
+          response = await runWorkerAgent(
             instrumentedPipeline.config.client,
             instrumentedPipeline.config.model,
             [

@@ -1089,7 +1089,6 @@ export async function runInteractionRequest(params: {
     }
     case "chat": {
       const bookId = request.bookId ?? session.activeBookId;
-      const prompt = request.instruction?.trim().toLowerCase() ?? "";
       const toolResult = params.tools.chat
         ? await params.tools.chat(request.instruction ?? "", {
             bookId,
@@ -1097,27 +1096,15 @@ export async function runInteractionRequest(params: {
           })
         : undefined;
       const metadata = extractToolMetadata(toolResult);
-      const responseText = metadata.responseText ?? (
-        /^(hi|hello|hey|你好|嗨|哈喽)$/i.test(prompt)
-          ? (bookId
-              ? localize(language, {
-                  zh: `你好。当前作品是 ${bookId}。你可以让我继续写、修订章节，或者解释当前卡住的原因。`,
-                  en: `Hi. Active book is ${bookId}. Ask me to continue, revise a chapter, or explain what is blocked.`,
-                })
-              : localize(language, {
-                  zh: "你好。当前还没有激活作品。你可以先打开作品、列出作品，或者直接告诉我你要写什么。",
-                  en: "Hi. No active book yet. Open a book, list books, or tell me what you want to write.",
-                }))
-          : (bookId
-              ? localize(language, {
-                  zh: `我在。当前作品是 ${bookId}。你可以让我继续写、修订章节、重写、调整焦点，或者查看流水线为何停止。`,
-                  en: `I’m here. Active book is ${bookId}. You can ask me to continue, revise a chapter, rewrite, change focus, or inspect why the pipeline stopped.`,
-                })
-              : localize(language, {
-                  zh: "我在。当前还没有绑定作品。先打开作品、列出作品，或者直接描述你要写什么。",
-                  en: "I’m here. No active book is bound yet. Open a book, list books, or describe what you want to write.",
-                }))
-      );
+      const responseText = metadata.responseText ?? (bookId
+        ? localize(language, {
+            zh: `我在。当前作品是 ${bookId}。你可以让我继续写、修订章节、重写、调整焦点，或者查看流水线为何停止。`,
+            en: `I’m here. Active book is ${bookId}. You can ask me to continue, revise a chapter, rewrite, change focus, or inspect why the pipeline stopped.`,
+          })
+        : localize(language, {
+            zh: "我在。当前还没有绑定作品。先打开作品、列出作品，或者直接描述你要写什么。",
+            en: "I’m here. No active book is bound yet. Open a book, list books, or describe what you want to write.",
+          }));
       const completed = markCompleted(session);
       return {
         session: addEvent(completed, "task.completed", "completed", responseText),

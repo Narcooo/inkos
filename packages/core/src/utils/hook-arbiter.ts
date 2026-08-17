@@ -9,7 +9,7 @@ import { evaluateHookAdmission } from "./hook-governance.js";
 import { resolveHookPayoffTiming } from "./hook-lifecycle.js";
 
 export interface HookArbiterDecision {
-  readonly action: "created" | "mapped" | "mentioned" | "rejected";
+  readonly action: "created" | "rejected";
   readonly reason: string;
   readonly hookId?: string;
   readonly candidate: NewHookCandidate;
@@ -22,6 +22,7 @@ interface PendingHookCandidate extends NewHookCandidate {
 export function arbitrateRuntimeStateDeltaHooks(params: {
   readonly hooks: ReadonlyArray<HookRecord>;
   readonly delta: RuntimeStateDelta;
+  readonly allowNewHooks?: boolean;
 }): {
   readonly resolvedDelta: RuntimeStateDelta;
   readonly decisions: ReadonlyArray<HookArbiterDecision>;
@@ -53,51 +54,20 @@ export function arbitrateRuntimeStateDeltaHooks(params: {
   }
 
   for (const candidate of [...fallbackCandidates, ...delta.newHookCandidates]) {
-    const activeHooks = workingHooks.filter((hook) => hook.status !== "resolved");
+    if (params.allowNewHooks === false) {
+      decisions.push({
+        action: "rejected",
+        reason: "new_hooks_disabled",
+        candidate,
+      });
+      continue;
+    }
+
     const admission = evaluateHookAdmission({
       candidate,
-      activeHooks,
     });
 
     if (!admission.admit) {
-      if (admission.reason === "duplicate_family" && admission.matchedHookId) {
-        const matched = workingHooks.find((hook) => hook.hookId === admission.matchedHookId);
-        if (!matched) {
-          decisions.push({
-            action: "rejected",
-            reason: "duplicate_family_without_match",
-            candidate,
-          });
-          continue;
-        }
-
-        if (isPureRestatement(candidate, matched)) {
-          if (!upsertsById.has(matched.hookId) && !resolves.includes(matched.hookId) && !defers.includes(matched.hookId)) {
-            mentions.add(matched.hookId);
-          }
-          decisions.push({
-            action: "mentioned",
-            reason: "restated_existing_family",
-            hookId: matched.hookId,
-            candidate,
-          });
-          continue;
-        }
-
-        const base = upsertsById.get(matched.hookId) ?? matched;
-        const mapped = mergeCandidateIntoExistingHook(base, candidate, delta.chapter);
-        upsertsById.set(mapped.hookId, mapped);
-        mentions.delete(mapped.hookId);
-        replaceWorkingHook(workingHooks, mapped);
-        decisions.push({
-          action: "mapped",
-          reason: "duplicate_family_with_novelty",
-          hookId: matched.hookId,
-          candidate,
-        });
-        continue;
-      }
-
       decisions.push({
         action: "rejected",
         reason: admission.reason,
@@ -142,26 +112,6 @@ export function arbitrateRuntimeStateDeltaHooks(params: {
   return {
     resolvedDelta,
     decisions,
-  };
-}
-
-function mergeCandidateIntoExistingHook(
-  existing: HookRecord,
-  candidate: NewHookCandidate,
-  chapter: number,
-): HookRecord {
-  return {
-    ...existing,
-    type: preferRicherText(existing.type, candidate.type),
-    status: existing.status === "resolved" ? "resolved" : "progressing",
-    lastAdvancedChapter: Math.max(existing.lastAdvancedChapter, chapter),
-    expectedPayoff: preferRicherText(existing.expectedPayoff, candidate.expectedPayoff),
-    payoffTiming: resolveHookPayoffTiming({
-      payoffTiming: candidate.payoffTiming ?? existing.payoffTiming,
-      expectedPayoff: preferRicherText(existing.expectedPayoff, candidate.expectedPayoff),
-      notes: preferRicherText(existing.notes, candidate.notes),
-    }),
-    notes: preferRicherText(existing.notes, candidate.notes),
   };
 }
 
@@ -222,32 +172,6 @@ function slugifyHookStem(value: string): string {
   return stem || "hook";
 }
 
-function isPureRestatement(candidate: NewHookCandidate, existing: HookRecord): boolean {
-  const candidateText = normalizeText([
-    candidate.type,
-    candidate.expectedPayoff,
-    candidate.notes,
-  ].join(" "));
-  const existingText = normalizeText([
-    existing.type,
-    existing.expectedPayoff,
-    existing.notes,
-  ].join(" "));
-
-  if (!candidateText) return true;
-  if (candidateText === existingText) return true;
-
-  const candidateTerms = extractTerms(candidateText);
-  const existingTerms = extractTerms(existingText);
-  const novelTerms = [...candidateTerms].filter((term) => !existingTerms.has(term));
-
-  const candidateChinese = extractChineseBigrams(candidateText);
-  const existingChinese = extractChineseBigrams(existingText);
-  const novelChinese = [...candidateChinese].filter((term) => !existingChinese.has(term));
-
-  return novelTerms.length === 0 && novelChinese.length < 2;
-}
-
 function replaceWorkingHook(workingHooks: HookRecord[], hook: HookRecord): void {
   const index = workingHooks.findIndex((candidate) => candidate.hookId === hook.hookId);
   if (index >= 0) {
@@ -266,52 +190,6 @@ function sortHooks(left: HookRecord, right: HookRecord): number {
 
 function uniqueStrings(values: ReadonlyArray<string>): string[] {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
-}
-
-function preferRicherText(primary: string, fallback: string): string {
-  const left = primary.trim();
-  const right = fallback.trim();
-
-  if (!left) return right;
-  if (!right) return left;
-  if (left === right) return left;
-  return right.length > left.length ? right : left;
-}
-
-function normalizeText(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9\u4e00-\u9fff]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function extractTerms(value: string): Set<string> {
-  const english = value
-    .split(" ")
-    .map((term) => term.trim())
-    .filter((term) => term.length >= 4)
-    .filter((term) => !STOP_WORDS.has(term));
-  const chinese = value.match(/[\u4e00-\u9fff]{2,6}/g) ?? [];
-  return new Set([...english, ...chinese]);
-}
-
-function extractChineseBigrams(value: string): Set<string> {
-  const segments = value.match(/[\u4e00-\u9fff]+/g) ?? [];
-  const terms = new Set<string>();
-
-  for (const segment of segments) {
-    if (segment.length < 2) {
-      continue;
-    }
-
-    for (let index = 0; index <= segment.length - 2; index += 1) {
-      terms.add(segment.slice(index, index + 2));
-    }
-  }
-
-  return terms;
 }
 
 const STOP_WORDS = new Set([

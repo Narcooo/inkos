@@ -15,7 +15,7 @@ describe("Studio skill endpoints", () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  it("lists project and external SKILL.md folders without implicit built-ins", async () => {
+  it("lists built-in professional skills alongside editable project skills", async () => {
     await mkdir(join(root, ".agents", "skills", "detective-play"), { recursive: true });
     await writeFile(
       join(root, ".agents", "skills", "detective-play", "SKILL.md"),
@@ -34,7 +34,11 @@ describe("Studio skill endpoints", () => {
     const json = await res.json() as { skills: Array<{ id: string; source: string; editable: boolean; body?: string }> };
 
     expect(res.status).toBe(200);
-    expect(json.skills.map((skill) => skill.source)).not.toContain("builtin");
+    expect(json.skills).toContainEqual(expect.objectContaining({
+      id: "inkos-long-writing",
+      source: "builtin",
+      editable: false,
+    }));
     expect(json.skills).toContainEqual(expect.objectContaining({
       id: "detective-play",
       source: "project",
@@ -42,6 +46,40 @@ describe("Studio skill endpoints", () => {
       body: "Track evidence before twists.",
     }));
     expect(json.skills.find((skill) => skill.id === "detective-play")).not.toHaveProperty("whenToUse");
+  });
+
+  it("lets an imported project skill override a built-in skill", async () => {
+    const app = createStudioServer({} as never, root);
+    const manifest = Buffer.from([
+      "---",
+      "name: inkos-story-review",
+      "description: Review with this project's acceptance standard.",
+      "---",
+      "Apply the project-specific review standard.",
+    ].join("\n")).toString("base64");
+
+    const imported = await app.request("/api/v1/skills/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        files: [
+          { path: "inkos-story-review/SKILL.md", dataUrl: `data:text/markdown;base64,${manifest}` },
+        ],
+      }),
+    });
+    expect(imported.status).toBe(200);
+
+    const listed = await app.request("/api/v1/skills");
+    const json = await listed.json() as {
+      skills: Array<{ id: string; source: string; editable: boolean; body: string }>;
+    };
+    const reviewSkills = json.skills.filter((skill) => skill.id === "inkos-story-review");
+
+    expect(reviewSkills).toEqual([expect.objectContaining({
+      source: "project",
+      editable: true,
+      body: "Apply the project-specific review standard.",
+    })]);
   });
 
   it("does not expose the legacy JSON skill create or update protocol", async () => {

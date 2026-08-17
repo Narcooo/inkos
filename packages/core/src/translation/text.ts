@@ -60,11 +60,44 @@ function splitMarkdownHeadings(text: string): ReadonlyArray<TranslationTextChapt
 }
 
 function splitLongParagraph(paragraph: string, maxChars: number): string[] {
+  const sentences = [...new Intl.Segmenter(undefined, { granularity: "sentence" }).segment(paragraph)]
+    .map((item) => item.segment)
+    .filter((sentence) => sentence.trim().length > 0);
+  return packBoundaryUnits(sentences.length > 0 ? sentences : [paragraph], maxChars);
+}
+
+function packBoundaryUnits(units: ReadonlyArray<string>, maxChars: number): string[] {
   const chunks: string[] = [];
-  for (let start = 0; start < paragraph.length; start += maxChars) {
-    chunks.push(paragraph.slice(start, start + maxChars).trim());
+  let current = "";
+
+  for (const unit of units) {
+    if (unit.length > maxChars) {
+      if (current) {
+        chunks.push(current);
+        current = "";
+      }
+      const words = [...new Intl.Segmenter(undefined, { granularity: "word" }).segment(unit)]
+        .map((item) => item.segment)
+        .filter((word) => word.length > 0);
+      if (words.length <= 1) {
+        chunks.push(unit);
+      } else {
+        chunks.push(...packBoundaryUnits(words, maxChars));
+      }
+      continue;
+    }
+
+    const candidate = current ? `${current}${unit}` : unit;
+    if (candidate.length <= maxChars) {
+      current = candidate;
+    } else {
+      if (current) chunks.push(current);
+      current = unit;
+    }
   }
-  return chunks.filter(Boolean);
+
+  if (current) chunks.push(current);
+  return chunks.map((chunk) => chunk.trim()).filter(Boolean);
 }
 
 export function stripHtml(html: string): string {

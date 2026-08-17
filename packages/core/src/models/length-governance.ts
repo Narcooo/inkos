@@ -3,9 +3,6 @@ import { z } from "zod";
 export const LengthCountingModeSchema = z.enum(["zh_chars", "en_words"]);
 export type LengthCountingMode = z.infer<typeof LengthCountingModeSchema>;
 
-export const LengthNormalizeModeSchema = z.enum(["expand", "compress", "none"]);
-export type LengthNormalizeMode = z.infer<typeof LengthNormalizeModeSchema>;
-
 export const LengthSpecSchema = z.object({
   target: z.number().int().min(1),
   softMin: z.number().int().min(1),
@@ -13,7 +10,6 @@ export const LengthSpecSchema = z.object({
   hardMin: z.number().int().min(1),
   hardMax: z.number().int().min(1),
   countingMode: LengthCountingModeSchema,
-  normalizeMode: LengthNormalizeModeSchema,
 });
 
 export type LengthSpec = z.infer<typeof LengthSpecSchema>;
@@ -26,10 +22,9 @@ export const LengthTelemetrySchema = z.object({
   hardMax: z.number().int().min(1),
   countingMode: LengthCountingModeSchema,
   writerCount: z.number().int().min(0),
-  postWriterNormalizeCount: z.number().int().min(0),
   postReviseCount: z.number().int().min(0),
   finalCount: z.number().int().min(0),
-  normalizeApplied: z.boolean(),
+  repairApplied: z.boolean(),
   lengthWarning: z.boolean(),
 });
 

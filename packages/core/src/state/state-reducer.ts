@@ -94,17 +94,10 @@ function applyHookOps(hooksState: HooksState, delta: RuntimeStateDelta): HooksSt
         expectedPayoff: hook.expectedPayoff,
         notes: hook.notes,
       },
-      activeHooks: [...hooksById.values()].filter((candidate) => candidate.status !== "resolved"),
     });
 
-    if (!admission.admit && admission.reason === "duplicate_family") {
-      const matchedHookId = admission.matchedHookId;
-      const existing = matchedHookId ? hooksById.get(matchedHookId) : undefined;
-      if (!existing) {
-        throw new Error(`duplicate active hook family: ${hook.hookId} overlaps ${admission.matchedHookId}`);
-      }
-      hooksById.set(existing.hookId, mergeDuplicateHookFamily(existing, hook));
-      continue;
+    if (!admission.admit) {
+      throw new Error(`invalid hook ${hook.hookId}: ${admission.reason}`);
     }
 
     hooksById.set(hook.hookId, { ...hook });
@@ -142,10 +135,6 @@ function applyHookOps(hooksState: HooksState, delta: RuntimeStateDelta): HooksSt
       || left.hookId.localeCompare(right.hookId)
     )),
   };
-}
-
-function mergeDuplicateHookFamily(existing: HookRecord, incoming: HookRecord): HookRecord {
-  return mergeHookRecord(existing, incoming);
 }
 
 function mergeHookRecord(existing: HookRecord, incoming: HookRecord): HookRecord {

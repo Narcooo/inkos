@@ -2,6 +2,10 @@ import { describe, it, expect } from "vitest";
 import { parseMemo, PlannerParseError } from "../utils/chapter-memo-parser.js";
 
 const SECTIONS = `
+## 场景与篇幅预算
+- 现场勘查（约 900 字）：主角复核锁芯和监控时间线，找到能排除自然磨损的证据。
+- 证据交锋（约 700 字）：阿泽试图把异常解释成维护疏漏，主角用时间戳逼出破绽。
+
 ## 当前任务
 主角进入七号门现场，比对锁芯刮痕与监控时间线，把"被动过手脚"从猜测钉成实证。
 
@@ -101,6 +105,7 @@ describe("parseMemo", () => {
 
   it.each([
     "## 本章目标",
+    "## 场景与篇幅预算",
     "## 当前任务",
     "## 读者此刻在等什么",
     "## 该兑现的 / 暂不掀的",
@@ -130,6 +135,8 @@ describe("parseMemo", () => {
   describe("empty section detection", () => {
     it("rejects a memo where every heading is present but payloads are blank", () => {
       const blankBody = [
+        "## 场景与篇幅预算",
+        "",
         "## 当前任务",
         "",
         "## 读者此刻在等什么",
@@ -173,6 +180,9 @@ describe("parseMemo", () => {
       // Each section just barely meets the threshold — this is the
       // breath/transition chapter case the principle wants to keep legal.
       const sparseBody = [
+        "## 场景与篇幅预算",
+        "码头会合约八百字，交换情报并让协作者的犹豫显形；离场约四百字，埋下下一步行动压力。",
+        "",
         "## 当前任务",
         "主角与协作者在码头会合，交换上一案的情报与下一步行动安排。",
         "",

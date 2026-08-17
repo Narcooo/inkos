@@ -14,7 +14,7 @@ const EMPTY_USAGE = {
 
 const { agentInstances, streamCalls, heldStreamCompletions, heldStreamWaiters } = vi.hoisted(() => ({
   agentInstances: [] as any[],
-  streamCalls: [] as Array<{ model: any; context: any }>,
+  streamCalls: [] as Array<{ model: any; context: any; options: any }>,
   heldStreamCompletions: [] as Array<() => void>,
   heldStreamWaiters: [] as Array<() => void>,
 }));
@@ -74,8 +74,8 @@ vi.mock("@mariozechner/pi-ai", async () => {
     };
   }
 
-  const streamSimple = vi.fn((model: any, context: any) => {
-    streamCalls.push({ model: clone(model), context: clone(context) });
+  const streamSimple = vi.fn((model: any, context: any, options: any) => {
+    streamCalls.push({ model: clone(model), context: clone(context), options: clone(options) });
     const stream = actual.createAssistantMessageEventStream();
     const last = context.messages.at(-1);
     const prompt = lastVisibleUserText(context.messages);
@@ -135,6 +135,15 @@ vi.mock("@mariozechner/pi-ai", async () => {
               id: "play-revise-1",
               name: "play_revise",
               arguments: { action: "regenerate_last" },
+            },
+          ], timestamp)
+        : prompt === "resync failure"
+        ? assistant([
+            {
+              type: "toolCall",
+              id: "resync-failure-1",
+              name: "resync_chapter_state",
+              arguments: { chapterNumber: 1 },
             },
           ], timestamp)
         : prompt === "use tool"
@@ -220,6 +229,7 @@ import {
 } from "../interaction/session-transcript.js";
 import { restoreAgentMessagesFromTranscript } from "../interaction/session-transcript-restore.js";
 import { PlayStore } from "../play/play-store.js";
+import { opaqueConversationId } from "../llm/agent-trajectory.js";
 
 async function writeProjectAgentSkill(
   projectRoot: string,
@@ -272,6 +282,7 @@ describe("runAgentSession cache — bookId switch", () => {
     evictAgentCache("s-project-root-cache");
     evictAgentCache("s-interleave-seq");
     evictAgentCache("s-context-window");
+    evictAgentCache("trace-session");
     evictAgentCache("book-create-session");
     evictAgentCache("book-create-confirmed-session");
     evictAgentCache("short-session");
@@ -519,6 +530,34 @@ describe("runAgentSession cache — bookId switch", () => {
 
     expect(agentInstances).toHaveLength(2);
     expect(streamCalls.at(-1)?.model.baseUrl).toBe("https://two.example/v1");
+  });
+
+  it("adds main-agent trajectory metadata only for kkaiapi streams", async () => {
+    const pipeline = {} as any;
+    const model = {
+      provider: "openai",
+      id: "deepseek-v4-flash",
+      api: "openai-completions",
+      baseUrl: "https://api.kkaiapi.com/v1",
+      input: ["text"],
+    } as any;
+
+    await runAgentSession(
+      { sessionId: "trace-session", bookId: "book-a", language: "zh", pipeline, projectRoot, model },
+      "hi",
+    );
+
+    const headers = streamCalls.at(-1)?.options?.headers;
+    expect(headers).toMatchObject({
+      "X-InkOS-Trace-Version": "1",
+      "X-InkOS-Scaffold": "pi-inkos",
+      "X-InkOS-Conversation-ID": opaqueConversationId("trace-session"),
+      "X-InkOS-Agent-Role": "main",
+      "X-InkOS-Pi-Turn-Index": "1",
+      "X-InkOS-Client-Attempt": "1",
+    });
+    expect(headers["X-InkOS-Run-ID"]).toBeTruthy();
+    expect(headers["X-InkOS-Model-Call-ID"]).toBeTruthy();
   });
 
   it("rebuilds cached Agent when transcript committed seq changes outside cache", async () => {
@@ -827,6 +866,58 @@ describe("runAgentSession cache — bookId switch", () => {
     ]);
   });
 
+  it("exposes exactly one derivative-work tool after its confirmation", async () => {
+    const model = { provider: "x", id: "y", api: "anthropic-messages" } as any;
+    const pipeline = {} as any;
+    const cases = [
+      ["fanfic_init", "fanfic_create"],
+      ["continuation_import", "continuation_import"],
+      ["spinoff_create", "spinoff_create"],
+      ["style_imitation", "imitation_create"],
+    ] as const;
+
+    for (const [index, [requestedIntent, toolName]] of cases.entries()) {
+      const sessionId = `derivative-confirmed-session-${index}`;
+      await runAgentSession(
+        {
+          sessionId,
+          bookId: null,
+          sessionKind: "chat",
+          actionSource: "button",
+          requestedIntent,
+          language: "zh",
+          pipeline,
+          projectRoot,
+          model,
+        },
+        `确认执行 ${requestedIntent}`,
+      );
+      expect(agentInstances.at(-1).state.tools.map((tool: any) => tool.name)).toEqual([toolName]);
+      evictAgentCache(sessionId);
+    }
+  });
+
+  it("lets production discussions read project-local sources before confirmation", async () => {
+    const model = { provider: "x", id: "y", api: "anthropic-messages" } as any;
+    const pipeline = {} as any;
+
+    for (const sessionKind of ["script", "storyboard", "interactive-film"] as const) {
+      const sessionId = `project-source-${sessionKind}`;
+      await runAgentSession(
+        { sessionId, bookId: null, sessionKind, language: "zh", pipeline, projectRoot, model },
+        "先读项目里的素材，只讨论，不创建",
+      );
+      expect(agentInstances.at(-1).state.tools.map((tool: any) => tool.name)).toEqual([
+        "propose_action",
+        "read",
+        "ingest_material",
+        "retrieve_material",
+        "use_skill",
+      ]);
+      evictAgentCache(sessionId);
+    }
+  });
+
   it("gates short and play production behind in-session confirmation proposals", async () => {
     const model = { provider: "x", id: "y", api: "anthropic-messages" } as any;
     const pipeline = {} as any;
@@ -905,6 +996,7 @@ describe("runAgentSession cache — bookId switch", () => {
   it("treats successful production tool results as terminal for the current turn", async () => {
     const model = { provider: "x", id: "y", api: "anthropic-messages" } as any;
     const pipeline = {
+      runWithAgentContext: vi.fn(async (_context: unknown, task: () => Promise<unknown>) => task()),
       writeNextChapter: vi.fn(async () => ({
         chapterNumber: 1,
         title: "第一章",
@@ -928,10 +1020,44 @@ describe("runAgentSession cache — bookId switch", () => {
     );
   });
 
-  it("treats narrative forecast cards as terminal tool answers", () => {
-    expect(isTerminalProductionToolName("create_narrative_forecast")).toBe(true);
-    expect(isTerminalProductionToolName("get_narrative_forecast")).toBe(true);
-    expect(isTerminalProductionToolName("select_narrative_branch")).toBe(true);
+  it("treats failed production tool results as terminal instead of improvising another write path", async () => {
+    const model = { provider: "x", id: "y", api: "anthropic-messages" } as any;
+    const pipeline = {
+      runWithAgentContext: vi.fn(async (_context: unknown, task: () => Promise<unknown>) => task()),
+      resyncChapterStateAndAudit: vi.fn(async () => {
+        throw new Error("invalid hook lifecycle state");
+      }),
+    } as any;
+
+    const result = await runAgentSession(
+      { sessionId: "book-terminal-failure-session", bookId: "book-a", sessionKind: "book", language: "zh", pipeline, projectRoot, model },
+      "resync failure",
+    );
+
+    expect(pipeline.resyncChapterStateAndAudit).toHaveBeenCalledTimes(1);
+    expect(streamCalls).toHaveLength(1);
+    expect(result.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ role: "toolResult", toolName: "resync_chapter_state", isError: true }),
+      ]),
+    );
+  });
+
+  it("treats host-owned production results as terminal tool answers", () => {
+    for (const toolName of [
+      "resync_chapter_state",
+      "create_narrative_forecast",
+      "get_narrative_forecast",
+      "select_narrative_branch",
+      "translation_create",
+      "fanfic_create",
+      "continuation_import",
+      "spinoff_create",
+      "imitation_create",
+    ]) {
+      expect(isTerminalProductionToolName(toolName)).toBe(true);
+    }
+    expect(isTerminalProductionToolName("patch_chapter_text")).toBe(false);
   });
 
   it("treats play revise results as terminal instead of asking the model for extra prose", async () => {
@@ -960,7 +1086,7 @@ describe("runAgentSession cache — bookId switch", () => {
     );
   });
 
-  it("blocks raw chapter prose in book chat when no production tool ran", async () => {
+  it("does not rewrite assistant prose by guessing whether it looks like a chapter", async () => {
     const model = { provider: "x", id: "y", api: "anthropic-messages" } as any;
     const pipeline = {} as any;
 
@@ -969,9 +1095,8 @@ describe("runAgentSession cache — bookId switch", () => {
       "raw chapter",
     );
 
-    expect(result.responseText).toContain("没有调用落盘工具");
-    expect(result.responseText).toContain("修改旧章");
-    expect(result.responseText).not.toContain("# 第2章");
+    expect(result.responseText).toContain("# 第2章");
+    expect(result.responseText).not.toContain("没有调用落盘工具");
   });
 
   it("does not replace chapter-scoped revision instructions as raw chapter prose", async () => {
@@ -1094,10 +1219,12 @@ describe("runAgentSession cache — bookId switch", () => {
       "rename_entity",
       "patch_chapter_text",
       "replace_chapter_text",
+      "resync_chapter_state",
       "delete_latest_chapter",
       "research_web",
       "ingest_material",
       "retrieve_material",
+      "manage_book_reference",
       "import_chapters",
       "create_narrative_forecast",
       "get_narrative_forecast",
@@ -1124,6 +1251,7 @@ describe("runAgentSession cache — bookId switch", () => {
       "research_web",
       "ingest_material",
       "retrieve_material",
+      "manage_book_reference",
       "create_narrative_forecast",
       "get_narrative_forecast",
       "select_narrative_branch",
@@ -1146,10 +1274,12 @@ describe("runAgentSession cache — bookId switch", () => {
       "rename_entity",
       "patch_chapter_text",
       "replace_chapter_text",
+      "resync_chapter_state",
       "delete_latest_chapter",
       "research_web",
       "ingest_material",
       "retrieve_material",
+      "manage_book_reference",
       "import_chapters",
       "create_narrative_forecast",
       "get_narrative_forecast",
@@ -1175,9 +1305,11 @@ describe("runAgentSession cache — bookId switch", () => {
       "rename_entity",
       "patch_chapter_text",
       "replace_chapter_text",
+      "resync_chapter_state",
       "delete_latest_chapter",
       "ingest_material",
       "retrieve_material",
+      "manage_book_reference",
       "grep",
       "ls",
       "use_skill",

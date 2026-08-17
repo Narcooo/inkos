@@ -1,13 +1,17 @@
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { access, mkdir, readFile } from "node:fs/promises";
+import { basename, join } from "node:path";
 import type { AgentContext } from "../agents/base.js";
 import { generateStoryGraph } from "../interactive-film/generate.js";
-import { saveStoryGraph } from "../interactive-film/graph-store.js";
 import type { StoryGraph } from "../interactive-film/graph-schema.js";
+import {
+  commitProductionArtifacts,
+  createProductionRunSnapshot,
+} from "../production/harness.js";
 import {
   InteractiveFilmCreationAgent,
   ScriptCreationAgent,
   StoryboardCreationAgent,
+  countMarkdownSections,
   extractStoryboardImagePrompts,
   extractMarkdownSection,
   normalizeScriptEpisodeEndLabels,
@@ -164,18 +168,29 @@ export async function runScriptCreation(
 
   options.onProgress?.("Writing script creation spec...");
   const spec = renderScriptSpec(input);
-  await writeProjectText(options.projectRoot, join(baseDir, "script-spec.md"), spec);
 
   options.onProgress?.("Writing script draft...");
   const agent = new ScriptCreationAgent(options.runtime);
   const script = normalizeScriptEpisodeEndLabels(await agent.writeScript(input));
-  await writeProjectText(options.projectRoot, join(baseDir, "script.md"), script);
-  await writeProjectText(options.projectRoot, join(baseDir, "status.json"), JSON.stringify({
-    status: "completed",
-    kind: "script",
-    title: options.title,
-    completedAt: new Date().toISOString(),
-  }, null, 2));
+  assertScriptDeliverable(script, options.language ?? "zh");
+  const artifacts = [
+    textArtifact(join(baseDir, "script-spec.md"), spec),
+    textArtifact(join(baseDir, "script.md"), script),
+  ];
+  await commitProductionArtifacts({
+    rootDir: options.projectRoot,
+    artifacts,
+    runPath: join(baseDir, "status.json"),
+    run: createProductionRunSnapshot({
+      kind: "script",
+      id: projectId,
+      status: "complete",
+      stage: "commit",
+      artifacts: artifacts.map((artifact) => artifact.relativePath),
+      observations: [],
+    }),
+    validate: () => assertNonEmptyArtifacts(artifacts),
+  });
 
   return {
     projectId,
@@ -183,6 +198,24 @@ export async function runScriptCreation(
     specPath: relPath(baseDir, "script-spec.md"),
     scriptPath: relPath(baseDir, "script.md"),
   };
+}
+
+function assertScriptDeliverable(script: string, language: "zh" | "en"): void {
+  const characterHeadings = language === "en" ? ["Characters"] : ["人物", "Characters"];
+  const scriptHeadings = language === "en" ? ["Script"] : ["剧本正文", "Script"];
+  const body = extractMarkdownSection(
+    script,
+    scriptHeadings,
+  );
+  const characterSectionCount = countMarkdownSections(script, characterHeadings);
+  const scriptSectionCount = countMarkdownSections(script, scriptHeadings);
+  if (!body?.trim() || characterSectionCount !== 1 || scriptSectionCount !== 1) {
+    throw new Error(
+      language === "en"
+        ? "Script production did not return exactly one `## Characters` and one non-empty `## Script` deliverable. No artifacts were committed."
+        : "剧本生产没有返回且仅返回一份 `## 人物` 和一份非空 `## 剧本正文` 交付段，未提交任何产物。",
+    );
+  }
 }
 
 export async function runInteractiveFilmCreation(
@@ -206,7 +239,6 @@ export async function runInteractiveFilmCreation(
 
   options.onProgress?.("Writing interactive-film creation spec...");
   const spec = renderInteractiveFilmSpec(input);
-  await writeProjectText(options.projectRoot, join(baseDir, "interactive-spec.md"), spec);
 
   options.onProgress?.("Writing story tree, flags, script, storyboard, and image prompts...");
   const agent = new InteractiveFilmCreationAgent(options.runtime);
@@ -239,27 +271,18 @@ export async function runInteractiveFilmCreation(
   const imagePrompts = extractStoryboardImagePrompts(storyboard);
   const storyGraphPath = relPath("interactive-films", projectId, "story-graph.json");
 
-  await writeProjectText(options.projectRoot, join(baseDir, "story-tree.md"), storyTree);
-  await writeProjectText(options.projectRoot, join(baseDir, "flags.md"), flags);
-  await writeProjectText(options.projectRoot, join(baseDir, "script.md"), normalizeScriptEpisodeEndLabels(script));
-  await writeProjectText(options.projectRoot, join(baseDir, "storyboard.md"), storyboard);
-  await writeProjectText(options.projectRoot, join(baseDir, "image-prompts.md"), imagePrompts);
   await ensureProjectDir(options.projectRoot, join(baseDir, "assets", "source"));
   await ensureProjectDir(options.projectRoot, join(baseDir, "assets", "generated"));
   await ensureProjectDir(options.projectRoot, join(baseDir, "assets", "selected"));
-  await writeProjectText(options.projectRoot, join(baseDir, "assets.json"), JSON.stringify(
-    createStoryboardAssetsManifest({
-      title: options.title,
-      projectId,
-      baseDir,
-      storyboardPath: join(baseDir, "storyboard.md"),
-      imagePromptsPath: join(baseDir, "image-prompts.md"),
-      imagePrompts,
-      createdAt: new Date().toISOString(),
-    }),
-    null,
-    2,
-  ));
+  const assetsManifest = createStoryboardAssetsManifest({
+    title: options.title,
+    projectId,
+    baseDir,
+    storyboardPath: join(baseDir, "storyboard.md"),
+    imagePromptsPath: join(baseDir, "image-prompts.md"),
+    imagePrompts,
+    createdAt: new Date().toISOString(),
+  });
 
   options.onProgress?.("Writing interactive-film story graph...");
   const graph = await createInteractiveFilmStoryGraph(options.runtime, {
@@ -272,14 +295,30 @@ export async function runInteractiveFilmCreation(
     imagePrompts,
     onProgress: options.onProgress,
   });
-  await saveStoryGraph(options.projectRoot, projectId, graph);
-
-  await writeProjectText(options.projectRoot, join(baseDir, "status.json"), JSON.stringify({
-    status: "completed",
-    kind: "interactive_film",
-    title: options.title,
-    completedAt: new Date().toISOString(),
-  }, null, 2));
+  const artifacts = [
+    textArtifact(join(baseDir, "interactive-spec.md"), spec),
+    textArtifact(join(baseDir, "story-tree.md"), storyTree),
+    textArtifact(join(baseDir, "flags.md"), flags),
+    textArtifact(join(baseDir, "script.md"), normalizeScriptEpisodeEndLabels(script)),
+    textArtifact(join(baseDir, "storyboard.md"), storyboard),
+    textArtifact(join(baseDir, "image-prompts.md"), imagePrompts),
+    textArtifact(join(baseDir, "assets.json"), JSON.stringify(assetsManifest, null, 2)),
+    textArtifact(storyGraphPath, JSON.stringify(graph, null, 2)),
+  ];
+  await commitProductionArtifacts({
+    rootDir: options.projectRoot,
+    artifacts,
+    runPath: join(baseDir, "status.json"),
+    run: createProductionRunSnapshot({
+      kind: "interactive-film",
+      id: projectId,
+      status: "complete",
+      stage: "commit",
+      artifacts: artifacts.map((artifact) => artifact.relativePath),
+      observations: [],
+    }),
+    validate: () => assertNonEmptyArtifacts(artifacts),
+  });
 
   return {
     projectId,
@@ -316,36 +355,67 @@ export async function runStoryboardCreation(
 
   options.onProgress?.("Writing storyboard creation spec...");
   const spec = renderStoryboardSpec(input);
-  await writeProjectText(options.projectRoot, join(baseDir, "storyboard-spec.md"), spec);
 
   options.onProgress?.("Writing storyboard and image prompts...");
   const agent = new StoryboardCreationAgent(options.runtime);
-  const storyboard = await agent.writeStoryboard(input);
-  await writeProjectText(options.projectRoot, join(baseDir, "storyboard.md"), storyboard);
-  const imagePrompts = extractStoryboardImagePrompts(storyboard);
-  await writeProjectText(options.projectRoot, join(baseDir, "image-prompts.md"), imagePrompts);
+  const segments = splitStoryboardSource(input.sourceText, input.maxShots);
+  const storyboardParts: string[] = [];
+  for (const [index, segment] of segments.entries()) {
+    if (segments.length > 1) {
+      options.onProgress?.(`Writing storyboard segment ${index + 1}/${segments.length}: ${segment.label}...`);
+    }
+    storyboardParts.push(await agent.writeStoryboard({
+      ...input,
+      sourceText: segment.sourceText,
+      ...(segments.length > 1 ? {
+        segment: {
+          label: segment.label,
+          index,
+          count: segments.length,
+          estimatedShots: Math.ceil((input.maxShots ?? 24) / segments.length),
+        },
+      } : {}),
+    }));
+  }
+  const storyboard = storyboardParts.join("\n\n");
+  // Extract each segment before concatenation because a Markdown section
+  // extractor correctly returns only the first matching heading.
+  const imagePrompts = storyboardParts
+    .map((part) => extractStoryboardImagePrompts(part))
+    .filter(Boolean)
+    .join("\n\n");
   await ensureProjectDir(options.projectRoot, join(baseDir, "assets", "source"));
   await ensureProjectDir(options.projectRoot, join(baseDir, "assets", "generated"));
   await ensureProjectDir(options.projectRoot, join(baseDir, "assets", "selected"));
-  await writeProjectText(options.projectRoot, join(baseDir, "assets.json"), JSON.stringify(
-    createStoryboardAssetsManifest({
-      title: options.title,
-      projectId,
-      baseDir,
-      storyboardPath: join(baseDir, "storyboard.md"),
-      imagePromptsPath: join(baseDir, "image-prompts.md"),
-      imagePrompts,
-      createdAt: new Date().toISOString(),
-    }),
-    null,
-    2,
-  ));
-  await writeProjectText(options.projectRoot, join(baseDir, "status.json"), JSON.stringify({
-    status: "completed",
-    kind: "storyboard",
+  const assetsManifest = createStoryboardAssetsManifest({
     title: options.title,
-    completedAt: new Date().toISOString(),
-  }, null, 2));
+    projectId,
+    baseDir,
+    storyboardPath: join(baseDir, "storyboard.md"),
+    imagePromptsPath: join(baseDir, "image-prompts.md"),
+    imagePrompts,
+    createdAt: new Date().toISOString(),
+  });
+  const artifacts = [
+    textArtifact(join(baseDir, "storyboard-spec.md"), spec),
+    textArtifact(join(baseDir, "storyboard.md"), storyboard),
+    textArtifact(join(baseDir, "image-prompts.md"), imagePrompts),
+    textArtifact(join(baseDir, "assets.json"), JSON.stringify(assetsManifest, null, 2)),
+  ];
+  await commitProductionArtifacts({
+    rootDir: options.projectRoot,
+    artifacts,
+    runPath: join(baseDir, "status.json"),
+    run: createProductionRunSnapshot({
+      kind: "storyboard",
+      id: projectId,
+      status: "complete",
+      stage: "commit",
+      artifacts: artifacts.map((artifact) => artifact.relativePath),
+      observations: [],
+    }),
+    validate: () => assertNonEmptyArtifacts(artifacts),
+  });
 
   return {
     projectId,
@@ -356,6 +426,74 @@ export async function runStoryboardCreation(
     assetsManifestPath: relPath(baseDir, "assets.json"),
     assetsDir: relPath(baseDir, "assets"),
   };
+}
+
+interface StoryboardSourceSegment {
+  readonly label: string;
+  readonly sourceText: string;
+}
+
+/**
+ * Large storyboards are generated one explicit document section at a time so
+ * no model call has to emit the entire deliverable. This parses Markdown
+ * structure only; it does not infer story meaning or discard source text.
+ */
+function splitStoryboardSource(
+  sourceText: string | undefined,
+  maxShots: number | undefined,
+): StoryboardSourceSegment[] {
+  const source = sourceText?.trim();
+  if (!source || (maxShots ?? 24) * 700 <= 24_000) {
+    return [{ label: "full storyboard", sourceText: source ?? "" }];
+  }
+
+  const lines = source.split(/\r?\n/);
+  const headings: Array<{ readonly line: number; readonly label: string }> = [];
+  for (const [line, raw] of lines.entries()) {
+    const heading = /^#{1,6}\s+(.+?)\s*$/u.exec(raw.trim());
+    if (!heading) continue;
+    const label = heading[1]!.trim();
+    if (/^第\s*[一二三四五六七八九十百千万\d]+\s*集(?:\s|《|$)/u.test(label)
+      || /^episode\s+\d+(?:\s|[:：\-—]|$)/iu.test(label)) {
+      headings.push({ line, label });
+    }
+  }
+  if (headings.length < 2) {
+    return [{ label: "full storyboard", sourceText: source }];
+  }
+
+  const episodeSegments = headings.map((heading, index) => {
+    const start = index === 0 ? 0 : heading.line;
+    const end = headings[index + 1]?.line ?? lines.length;
+    return {
+      label: heading.label,
+      sourceText: lines.slice(start, end).join("\n").trim(),
+    };
+  });
+  return episodeSegments.flatMap(splitStoryboardEpisodeScenes);
+}
+
+function splitStoryboardEpisodeScenes(episode: StoryboardSourceSegment): StoryboardSourceSegment[] {
+  const lines = episode.sourceText.split(/\r?\n/);
+  const boundaries: Array<{ readonly line: number; readonly label: string }> = [];
+  for (const [line, raw] of lines.entries()) {
+    const text = raw.trim();
+    const bold = /^\*\*(.+?)\*\*(?:\s.*)?$/u.exec(text);
+    const label = bold?.[1]?.trim();
+    if (!label) continue;
+    if (/^(?:场次\s*\d+|集尾钩子)(?:\s|[：:／/]|$)/u.test(label)
+      || /^(?:scene\s+\d+|episode[- ]end hook)(?:\s|[：:/\-—]|$)/iu.test(label)) {
+      boundaries.push({ line, label });
+    }
+  }
+  if (boundaries.length < 2) return [episode];
+  return boundaries.map((boundary, index) => ({
+    label: `${episode.label} / ${boundary.label}`,
+    sourceText: lines
+      .slice(index === 0 ? 0 : boundary.line, boundaries[index + 1]?.line ?? lines.length)
+      .join("\n")
+      .trim(),
+  }));
 }
 
 async function createInteractiveFilmStoryGraph(
@@ -371,16 +509,18 @@ async function createInteractiveFilmStoryGraph(
     readonly onProgress?: (message: string) => void;
   },
 ): Promise<StoryGraph> {
-  try {
-    return await generateStoryGraph(runtime.client, runtime.model, {
-      projectId: args.projectId,
-      title: args.title,
-      premise: buildInteractiveFilmGraphPremise(args.input, args.storyTree, args.flags, args.script, args.imagePrompts),
-    });
-  } catch (error) {
-    args.onProgress?.(`Story graph JSON generation failed; writing a minimal playable graph. ${formatError(error)}`);
-    return buildFallbackStoryGraph(args.projectId, args.title, args.input, args.imagePrompts);
-  }
+  args.onProgress?.(args.input.language === "en"
+    ? "Building the playable story graph through the structured authoring harness..."
+    : "正在通过结构化创作内核生成可玩故事图谱……");
+  return generateStoryGraph(runtime.client, runtime.model, {
+    projectId: args.projectId,
+    title: args.title,
+    premise: buildInteractiveFilmGraphPremise(args.input, args.storyTree, args.flags, args.script, args.imagePrompts),
+  }, {
+    language: args.input.language,
+    activatedSkills: runtime.activatedSkills,
+    signal: runtime.signal,
+  });
 }
 
 function buildInteractiveFilmGraphPremise(
@@ -416,112 +556,6 @@ function buildInteractiveFilmGraphPremise(
     `互动剧本：\n${script}`,
     `图像提示词：\n${imagePrompts}`,
   ].filter(Boolean).join("\n\n");
-}
-
-function buildFallbackStoryGraph(
-  projectId: string,
-  title: string,
-  input: InteractiveFilmCreationInput,
-  imagePrompts: string,
-): StoryGraph {
-  const en = (input.language ?? "zh") === "en";
-  const prompts = parseStoryboardPromptLines(imagePrompts);
-  const actCount = Math.max(2, Math.min(8, (input.episodeCount ?? prompts.length) || 3));
-  const nodes: StoryGraph["nodes"] = [
-    {
-      id: "start",
-      title: en ? "Opening" : "开场",
-      type: "start",
-      sceneDesc: input.requirements || title,
-      dialogue: [],
-      choices: [{ id: "start-act-1", text: en ? "Enter Act 1" : "进入第一幕", targetNodeId: "act-1", effects: [] }],
-      imageSlot: { prompt: prompts[0] ?? input.requirements ?? title },
-      act: "start",
-      position: { x: 0, y: 0 },
-    },
-  ];
-
-  for (let index = 1; index <= actCount; index += 1) {
-    const isLast = index === actCount;
-    nodes.push({
-      id: `act-${index}`,
-      title: en ? `Act ${index}` : `第 ${index} 幕`,
-      type: isLast ? "branch" : "normal",
-      sceneDesc: en ? `Act ${index} of the interactive film "${title}".` : `互动影游《${title}》第 ${index} 幕。`,
-      dialogue: [],
-      choices: isLast
-        ? [
-          { id: "to-ending-a", text: en ? "Complete the main objective" : "完成主线目标", targetNodeId: "ending-a", effects: [{ var: "story_progress", op: "add", value: 1 }] },
-          { id: "to-ending-b", text: en ? "Take the other aftermath" : "进入另一条余波", targetNodeId: "ending-b", effects: [{ var: "story_progress", op: "add", value: 1 }] },
-        ]
-        : [{ id: `act-${index}-next`, text: en ? "Keep going" : "继续推进", targetNodeId: `act-${index + 1}`, effects: [{ var: "story_progress", op: "add", value: 1 }] }],
-      imageSlot: { prompt: prompts[index - 1] ?? prompts[0] ?? input.requirements ?? title },
-      act: `act-${index}`,
-      position: { x: index * 260, y: index % 2 === 0 ? 120 : 0 },
-    });
-  }
-
-  nodes.push(
-    {
-      id: "ending-a",
-      title: en ? "Ending One" : "结局一",
-      type: "ending",
-      sceneDesc: en ? "The main objective is completed and the story converges." : "主线目标被完成，故事进入收束。",
-      dialogue: [],
-      choices: [],
-      act: "ending",
-      position: { x: (actCount + 1) * 260, y: -80 },
-    },
-    {
-      id: "ending-b",
-      title: en ? "Ending Two" : "结局二",
-      type: "ending",
-      sceneDesc: en
-        ? "The player keeps the other aftermath and the story closes on the forked path."
-        : "玩家选择保留另一条余波，故事进入分岔收束。",
-      dialogue: [],
-      choices: [],
-      act: "ending",
-      position: { x: (actCount + 1) * 260, y: 120 },
-    },
-  );
-
-  return {
-    schemaVersion: 1,
-    projectId,
-    title,
-    worldAnchor: {
-      storyCore: input.requirements || title,
-      theme: "",
-      genre: "interactive-film",
-      worldRules: input.referenceMode ?? "",
-      durationMinutes: 0,
-    },
-    characters: [],
-    variables: [{
-      name: "story_progress",
-      type: "counter",
-      default: 0,
-      desc: en ? "Story progression" : "剧情推进进度",
-    }],
-    nodes,
-    endings: [
-      {
-        id: "ending-a",
-        nodeId: "ending-a",
-        title: en ? "Ending One" : "结局一",
-        type: "neutral",
-        description: en ? "The main objective is completed." : "主线目标被完成。",
-      },
-      {
-        id: "ending-b",
-        nodeId: "ending-b",
-        title: en ? "Ending Two" : "结局二",
-        type: "secret",
-        description: en ? "The player keeps the other aftermath." : "玩家选择保留另一条余波。",
-      },
-    ],
-  };
 }
 
 function formatError(error: unknown): string {
@@ -577,10 +611,24 @@ async function resolveSourceText(
   return readFile(safeChildPath(projectRoot, path), "utf-8");
 }
 
-async function writeProjectText(projectRoot: string, relativePath: string, content: string): Promise<void> {
-  const fullPath = safeChildPath(projectRoot, relativePath);
-  await mkdir(dirname(fullPath), { recursive: true });
-  await writeFile(fullPath, content.endsWith("\n") ? content : `${content}\n`, "utf-8");
+function textArtifact(relativePath: string, content: string): {
+  readonly relativePath: string;
+  readonly content: string;
+} {
+  return {
+    relativePath,
+    content: content.endsWith("\n") ? content : `${content}\n`,
+  };
+}
+
+function assertNonEmptyArtifacts(
+  artifacts: ReadonlyArray<{ readonly relativePath: string; readonly content: string }>,
+): void {
+  for (const artifact of artifacts) {
+    if (!artifact.content.trim()) {
+      throw new Error(`Production artifact is empty: ${artifact.relativePath}`);
+    }
+  }
 }
 
 async function ensureProjectDir(projectRoot: string, relativePath: string): Promise<void> {

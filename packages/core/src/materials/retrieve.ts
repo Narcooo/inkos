@@ -3,6 +3,11 @@ import { join } from "node:path";
 import { safeChildPath } from "../utils/path-safety.js";
 import { toPosixPath } from "../utils/posix-path.js";
 import type { MaterialAsset, MaterialPurpose } from "./ingest.js";
+import {
+  LocalSearchIndex,
+  splitMarkdownForSearch,
+  type SearchDocument,
+} from "../retrieval/local-search.js";
 
 export interface RetrieveMaterialsInput {
   readonly query: string;
@@ -25,17 +30,15 @@ export interface RetrievedMaterial {
 
 const DEFAULT_LIMIT = 5;
 const MAX_LIMIT = 12;
-const SNIPPET_RADIUS = 700;
+const MATERIAL_SCOPE = "archived-materials";
 
 export async function retrieveMaterials(
   projectRoot: string,
   input: RetrieveMaterialsInput,
 ): Promise<RetrievedMaterial[]> {
-  const queryTerms = extractTerms(input.query);
   const assets = await listMaterialAssets(projectRoot);
-  const results: RetrievedMaterial[] = [];
+  const documents: SearchDocument[] = [];
   for (const asset of assets) {
-    if (input.purpose && asset.purpose !== input.purpose) continue;
     const markdownPath = safeChildPath(projectRoot, asset.markdownPath);
     let markdown = "";
     try {
@@ -43,26 +46,47 @@ export async function retrieveMaterials(
     } catch {
       continue;
     }
-    const score = scoreMaterial(asset, markdown, queryTerms);
-    if (queryTerms.length > 0 && score <= 0) continue;
-    const snippet = buildSnippet(markdown, queryTerms);
-    results.push({
-      id: asset.id,
-      title: asset.title,
-      kind: asset.kind,
-      purpose: asset.purpose,
-      source: asset.source,
-      // Manifests written by older Windows builds may contain "\" separators.
-      markdownPath: toPosixPath(asset.markdownPath),
-      score,
-      excerpt: snippet.excerpt,
-      charStart: snippet.charStart,
-      charEnd: snippet.charEnd,
+    const normalizedPath = toPosixPath(asset.markdownPath);
+    splitMarkdownForSearch(markdown).forEach((segment, index) => {
+      documents.push({
+        id: `material:${asset.id}:${index}`,
+        scope: MATERIAL_SCOPE,
+        kind: `material:${asset.purpose}`,
+        source: `${normalizedPath}:${segment.charStart}-${segment.charEnd}`,
+        title: [asset.title, segment.heading].filter(Boolean).join(" · "),
+        body: segment.body,
+        metadata: {
+          assetId: asset.id,
+          assetTitle: asset.title,
+          assetKind: asset.kind,
+          purpose: asset.purpose,
+          source: asset.source,
+          markdownPath: normalizedPath,
+          charStart: segment.charStart,
+          charEnd: segment.charEnd,
+        },
+      });
     });
   }
-  return results
-    .sort((a, b) => b.score - a.score || a.title.localeCompare(b.title))
-    .slice(0, normalizeLimit(input.limit));
+
+  const searchIndex = new LocalSearchIndex(join(projectRoot, ".inkos", "retrieval.db"));
+  try {
+    searchIndex.replaceScope(MATERIAL_SCOPE, documents);
+    const limit = normalizeLimit(input.limit);
+    const ranked = searchIndex.search(input.query, {
+      scope: MATERIAL_SCOPE,
+      kinds: input.purpose ? [`material:${input.purpose}`] : undefined,
+      limit: Math.min(MAX_LIMIT * 4, limit * 4),
+    }).map((hit) => materialFromHit(hit.metadata, hit.score, hit.body));
+    const seen = new Set<string>();
+    return ranked.filter((result) => {
+      if (seen.has(result.id)) return false;
+      seen.add(result.id);
+      return true;
+    }).slice(0, limit);
+  } finally {
+    searchIndex.close();
+  }
 }
 
 async function listMaterialAssets(projectRoot: string): Promise<MaterialAsset[]> {
@@ -87,50 +111,27 @@ async function listMaterialAssets(projectRoot: string): Promise<MaterialAsset[]>
   return assets;
 }
 
-function scoreMaterial(asset: MaterialAsset, markdown: string, terms: readonly string[]): number {
-  if (terms.length === 0) return 1;
-  const title = asset.title.toLowerCase();
-  const source = asset.source.toLowerCase();
-  const body = markdown.toLowerCase();
-  let score = 0;
-  for (const term of terms) {
-    const normalized = term.toLowerCase();
-    if (title.includes(normalized)) score += 8;
-    if (source.includes(normalized)) score += 4;
-    const first = body.indexOf(normalized);
-    if (first >= 0) score += 2 + Math.max(0, 2 - first / 4000);
-  }
-  return score;
-}
-
-function buildSnippet(markdown: string, terms: readonly string[]): { excerpt: string; charStart: number; charEnd: number } {
-  const lower = markdown.toLowerCase();
-  let hit = -1;
-  for (const term of terms) {
-    const idx = lower.indexOf(term.toLowerCase());
-    if (idx >= 0 && (hit < 0 || idx < hit)) hit = idx;
-  }
-  const center = hit >= 0 ? hit : Math.min(markdown.length, 500);
-  const charStart = Math.max(0, center - SNIPPET_RADIUS);
-  const charEnd = Math.min(markdown.length, center + SNIPPET_RADIUS);
-  return {
-    excerpt: markdown.slice(charStart, charEnd).trim(),
-    charStart,
-    charEnd,
-  };
-}
-
 function normalizeLimit(limit: number | undefined): number {
   if (!Number.isFinite(limit ?? DEFAULT_LIMIT)) return DEFAULT_LIMIT;
   return Math.max(1, Math.min(MAX_LIMIT, Math.floor(limit ?? DEFAULT_LIMIT)));
 }
 
-function extractTerms(query: string): string[] {
-  const raw = query.normalize("NFKC").trim().toLowerCase();
-  if (!raw) return [];
-  const terms = new Set<string>();
-  for (const match of raw.matchAll(/[\p{L}\p{N}]{2,}/gu)) {
-    terms.add(match[0]);
-  }
-  return [...terms].slice(0, 24);
+function materialFromHit(
+  metadata: Readonly<Record<string, unknown>> | undefined,
+  score: number,
+  excerpt: string,
+): RetrievedMaterial {
+  const value = metadata ?? {};
+  return {
+    id: String(value.assetId ?? ""),
+    title: String(value.assetTitle ?? ""),
+    kind: String(value.assetKind ?? "text") as MaterialAsset["kind"],
+    purpose: String(value.purpose ?? "general") as MaterialPurpose,
+    source: String(value.source ?? ""),
+    markdownPath: String(value.markdownPath ?? ""),
+    score,
+    excerpt,
+    charStart: Number(value.charStart ?? 0),
+    charEnd: Number(value.charEnd ?? excerpt.length),
+  };
 }

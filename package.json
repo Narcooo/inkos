@@ -1,8 +1,8 @@
 {
   "name": "inkos",
-  "version": "1.7.2",
+  "version": "1.8.0",
   "private": true,
-  "description": "Story Creation AI Agent for long-form and short fiction, scripts, interactive games, and IP content",
+  "description": "Story Creation AI Agent for novels, short fiction, scripts, interactive worlds, and multilingual translation",
   "keywords": [
     "story-creation-ai-agent",
     "story-agent",
@@ -35,7 +35,7 @@
     "release": "pnpm build && pnpm test"
   },
   "engines": {
-    "node": ">=20.0.0",
+    "node": ">=22.0.0",
     "pnpm": ">=9.0.0"
   },
   "pnpm": {

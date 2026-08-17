@@ -22,12 +22,12 @@ export interface ChapterReviewCycleControlInput {
 export interface ChapterReviewCycleResult {
   readonly finalContent: string;
   readonly finalWordCount: number;
-  readonly preAuditNormalizedWordCount: number;
+  readonly preAuditWordCount: number;
   readonly revised: boolean;
   readonly auditResult: AuditResult;
   readonly totalUsage: ChapterReviewCycleUsage;
   readonly postReviseCount: number;
-  readonly normalizeApplied: boolean;
+  readonly repairApplied: boolean;
 }
 
 const DEFAULT_MAX_REVIEW_ITERATIONS = 1;
@@ -83,12 +83,6 @@ export async function runChapterReviewCycle(params: {
       },
     ) => Promise<AuditResult>;
   };
-  readonly normalizeDraftLengthIfNeeded: (chapterContent: string) => Promise<{
-    content: string;
-    wordCount: number;
-    applied: boolean;
-    tokenUsage?: ChapterReviewCycleUsage;
-  }>;
   readonly normalizePostWriteSurface?: (chapterContent: string) => string;
   readonly assertChapterContentNotEmpty: (content: string, stage: string) => void;
   readonly addUsage: (
@@ -107,9 +101,10 @@ export async function runChapterReviewCycle(params: {
   readonly logStage: (message: { zh: string; en: string }) => void;
 }): Promise<ChapterReviewCycleResult> {
   let totalUsage = params.initialUsage;
-  let normalizeApplied = false;
-  let finalContent = params.initialOutput.content;
-  let finalWordCount = params.initialOutput.wordCount;
+  let finalContent = params.normalizePostWriteSurface?.(params.initialOutput.content)
+    ?? params.initialOutput.content;
+  let finalWordCount = countChapterLength(finalContent, params.lengthSpec.countingMode);
+  const preAuditWordCount = finalWordCount;
 
   // Convert initial postWriteErrors into AuditIssues as fallback when runPostWriteChecks isn't provided.
   const initialPostWriteIssues: ReadonlyArray<AuditIssue> = params.initialOutput.postWriteErrors.map((violation) => ({
@@ -119,28 +114,6 @@ export async function runChapterReviewCycle(params: {
     suggestion: violation.suggestion,
   }));
 
-  // ---------------------------------------------------------------------------
-  // Length normalization: dedicated step, only runs for clear hard-range drift.
-  // Length is NOT mixed into the reviser's issues — normalize handles it.
-  // ---------------------------------------------------------------------------
-  const normalizeIfHardDrift = async (content: string): Promise<{
-    content: string;
-    wordCount: number;
-    applied: boolean;
-  }> => {
-    const wordCount = countChapterLength(content, params.lengthSpec.countingMode);
-    if (!isOutsideHardRange(wordCount, params.lengthSpec)) {
-      return { content, wordCount, applied: false };
-    }
-    const result = await params.normalizeDraftLengthIfNeeded(content);
-    totalUsage = params.addUsage(totalUsage, result.tokenUsage);
-    return result;
-  };
-
-  const normalizedBeforeAudit = await normalizeIfHardDrift(finalContent);
-  finalContent = params.normalizePostWriteSurface?.(normalizedBeforeAudit.content) ?? normalizedBeforeAudit.content;
-  finalWordCount = countChapterLength(finalContent, params.lengthSpec.countingMode);
-  normalizeApplied = normalizeApplied || normalizedBeforeAudit.applied;
   params.assertChapterContentNotEmpty(finalContent, "draft generation");
 
   // ---------------------------------------------------------------------------
@@ -165,6 +138,12 @@ export async function runChapterReviewCycle(params: {
     const hasBlockedWords = sensitiveResult.found.some((item) => item.severity === "block");
     const wordCount = countChapterLength(content, params.lengthSpec.countingMode);
     const lengthInRange = !isOutsideHardRange(wordCount, params.lengthSpec);
+    const lengthIssues: AuditIssue[] = lengthInRange ? [] : [{
+      severity: "critical",
+      category: "length-budget",
+      description: `Chapter length ${wordCount} is outside the required range ${params.lengthSpec.hardMin}-${params.lengthSpec.hardMax}.`,
+      suggestion: `Repair only the scenes that are underdeveloped or redundant, then land near ${params.lengthSpec.target} without changing established facts.`,
+    }];
 
     // Deterministic post-write checks: run every round, not just the first.
     // If runPostWriteChecks is provided, use it; otherwise fall back to initial postWriteErrors.
@@ -177,14 +156,12 @@ export async function runChapterReviewCycle(params: {
       ...aiTellsResult.issues,
       ...sensitiveResult.issues,
       ...postWriteIssues,
+      ...lengthIssues,
     ];
-
-    // Length is NOT added to reviser issues — normalize handles it as a dedicated step.
-    // lengthInRange is only used in isPassed() as a hard gate.
 
     const hasPostWriteCritical = postWriteIssues.some((i) => i.severity === "critical");
     const auditResult: AuditResult = {
-      passed: (hasBlockedWords || hasPostWriteCritical) ? false : llmAudit.passed,
+      passed: (hasBlockedWords || hasPostWriteCritical || !lengthInRange) ? false : llmAudit.passed,
       issues: allIssues,
       summary: llmAudit.summary,
       parseFailed: llmAudit.parseFailed,
@@ -226,12 +203,12 @@ export async function runChapterReviewCycle(params: {
     return {
       finalContent,
       finalWordCount,
-      preAuditNormalizedWordCount: finalWordCount,
+      preAuditWordCount,
       revised: false,
       auditResult: initial.auditResult,
       totalUsage,
       postReviseCount,
-      normalizeApplied,
+      repairApplied: false,
     };
   }
 
@@ -342,11 +319,11 @@ export async function runChapterReviewCycle(params: {
   return {
     finalContent,
     finalWordCount,
-    preAuditNormalizedWordCount: finalWordCount,
+    preAuditWordCount,
     revised: snapshots.length > 1 && finalContent !== params.initialOutput.content,
     auditResult: currentAudit.auditResult,
     totalUsage,
     postReviseCount,
-    normalizeApplied,
+    repairApplied: snapshots.length > 1 && finalContent !== params.initialOutput.content,
   };
 }

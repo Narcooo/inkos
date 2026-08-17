@@ -117,13 +117,13 @@ describe.sequential("publish packaging", () => {
     }
   });
 
-  it("keeps source publish dependencies registry-installable", async () => {
+  it("links internal source dependencies through the workspace", async () => {
     const cliPackageJson = await sourceCliPackageJsonPromise;
     const studioPackageJson = await sourceStudioPackageJsonPromise;
 
-    expect(cliPackageJson.dependencies["@actalk/inkos-core"]).not.toMatch(/^workspace:/);
-    expect(cliPackageJson.dependencies["@actalk/inkos-studio"]).not.toMatch(/^workspace:/);
-    expect(studioPackageJson.dependencies["@actalk/inkos-core"]).not.toMatch(/^workspace:/);
+    expect(cliPackageJson.dependencies["@actalk/inkos-core"]).toBe("workspace:*");
+    expect(cliPackageJson.dependencies["@actalk/inkos-studio"]).toBe("workspace:*");
+    expect(studioPackageJson.dependencies["@actalk/inkos-core"]).toBe("workspace:*");
   });
 
   it("verifies publishable manifests before npm publish runs", async () => {
@@ -140,7 +140,7 @@ describe.sequential("publish packaging", () => {
     );
   });
 
-  it("rejects workspace protocol in source publish manifests", async () => {
+  it("accepts canonical workspace protocol in source manifests", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "inkos-publish-verify-pass-"));
     const tempPackagesDir = join(tempRoot, "packages");
     const tempCoreDir = join(tempPackagesDir, "core");
@@ -184,7 +184,7 @@ describe.sequential("publish packaging", () => {
             encoding: "utf-8",
             stdio: "pipe",
           },
-        )).toThrow(/workspace protocol is not allowed/);
+        )).not.toThrow();
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }
@@ -233,7 +233,7 @@ describe.sequential("publish packaging", () => {
             encoding: "utf-8",
             stdio: "pipe",
           },
-        )).toThrow(/workspace protocol is not allowed/);
+        )).toThrow(/invalid workspace dependency/);
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }
@@ -269,6 +269,26 @@ describe.sequential("publish packaging", () => {
 
       expect(archiveListing).toContain("package/dist/index.html");
       expect(archiveListing).toContain("package/dist/api/index.js");
+    } finally {
+      await rm(packDir, { recursive: true, force: true });
+    }
+  });
+
+  it("packs the built-in professional skills with core", { timeout: STUDIO_PACK_TEST_TIMEOUT_MS }, async () => {
+    const packDir = await mkdtemp(join(tmpdir(), "inkos-core-pack-"));
+
+    try {
+      const coreDir = resolve(workspaceRoot, "packages", "core");
+      const tarballPath = await packPackage(coreDir, packDir);
+      const tarArgs = [...tarForceLocalArgs(), "-tf"];
+      const archiveListing = execFileSync("tar", [...tarArgs, tarballPath], {
+        cwd: workspaceRoot,
+        encoding: "utf-8",
+      });
+
+      expect(archiveListing).toContain("package/skills/inkos-long-writing/SKILL.md");
+      expect(archiveListing).toContain("package/skills/inkos-story-review/references/review-matrix.md");
+      expect(archiveListing).toContain("package/skills/inkos-story-cover/SKILL.md");
     } finally {
       await rm(packDir, { recursive: true, force: true });
     }

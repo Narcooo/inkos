@@ -1,4 +1,4 @@
-import type { LengthCountingMode, LengthNormalizeMode, LengthSpec } from "../models/length-governance.js";
+import type { LengthCountingMode, LengthSpec } from "../models/length-governance.js";
 
 export type LengthLanguage = "zh" | "en";
 
@@ -61,7 +61,6 @@ export function buildLengthSpec(
     hardMin,
     hardMax,
     countingMode: resolveLengthCountingMode(language),
-    normalizeMode: "none",
   };
 }
 
@@ -81,15 +80,6 @@ export function isOutsideHardRange(
   spec: Pick<LengthSpec, "hardMin" | "hardMax">,
 ): boolean {
   return count < spec.hardMin || count > spec.hardMax;
-}
-
-export function chooseNormalizeMode(
-  count: number,
-  spec: Pick<LengthSpec, "softMin" | "softMax">,
-): LengthNormalizeMode {
-  if (count < spec.softMin) return "expand";
-  if (count > spec.softMax) return "compress";
-  return "none";
 }
 
 function stripMarkdownMetadata(content: string): string {

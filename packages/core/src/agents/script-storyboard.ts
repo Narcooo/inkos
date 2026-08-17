@@ -1,4 +1,5 @@
 import { BaseAgent } from "./base.js";
+import { completeLongForm } from "../llm/long-form-completion.js";
 
 export type ScriptTargetFormat =
   | "vertical_short_drama"
@@ -28,6 +29,12 @@ export interface StoryboardCreationInput {
   readonly granularity?: string;
   readonly maxShots?: number;
   readonly language?: "zh" | "en";
+  readonly segment?: {
+    readonly label: string;
+    readonly index: number;
+    readonly count: number;
+    readonly estimatedShots: number;
+  };
 }
 
 export interface InteractiveFilmCreationInput {
@@ -43,57 +50,133 @@ export interface InteractiveFilmCreationInput {
   readonly language?: "zh" | "en";
 }
 
-export class ScriptCreationAgent extends BaseAgent {
+abstract class LongFormProductionAgent extends BaseAgent {
+  protected async recoverProductionMarkdown(
+    fragments: string,
+    language: "zh" | "en",
+    requiredHeadings: readonly string[],
+  ): Promise<string> {
+    const response = await this.chat([
+      {
+        role: "system",
+        content: language === "en"
+          ? [
+              "You recover one canonical production document after a transport-confirmed output-limit continuation.",
+              "The fragments may contain scratch analysis, overlapping suffixes, and complete-document restarts.",
+              "Return exactly one complete Markdown deliverable. Preserve the user's requirements and the most developed usable content; remove process notes, scratch analysis, wrappers, duplicate document roots, and repeated sections.",
+              "Do not summarize or shorten the actual deliverable.",
+            ].join("\n")
+          : [
+              "你负责在模型因输出上限续写后，恢复唯一一份规范生产文档。",
+              "输入片段可能包含思考草稿、重叠后缀和从头重写的完整文档。",
+              "返回且只返回一份完整 Markdown 交付稿。保留用户要求和完成度最高的可用内容；删除流程说明、思考草稿、包装文本、重复文档开头和重复小节。",
+              "不得概括或缩短实际交付内容。",
+            ].join("\n"),
+      },
+      {
+        role: "user",
+        content: [
+          language === "en" ? "## Required Headings" : "## 必需标题",
+          ...requiredHeadings.map((heading) => `- ${heading}`),
+          "",
+          language === "en" ? "## Output Fragments" : "## 输出片段",
+          fragments,
+        ].join("\n"),
+      },
+    ], {
+      temperature: 0.1,
+      maxTokens: 32_000,
+    });
+    return response.content.trim();
+  }
+}
+
+export class ScriptCreationAgent extends LongFormProductionAgent {
   get name(): string {
     return "script-creation-writer";
   }
 
   async writeScript(input: ScriptCreationInput): Promise<string> {
     const language = input.language ?? "zh";
-    const response = await this.chat([
+    const messages = [
       { role: "system", content: buildScriptCreationSystemPrompt(language) },
       { role: "user", content: buildScriptCreationUserPrompt(input, language) },
-    ], {
-      temperature: 0.55,
-      maxTokens: estimateScriptMaxTokens(input),
+    ] as const;
+    const response = await completeLongForm({
+      messages,
+      language,
+      generate: (continuationMessages) => this.chat(continuationMessages, {
+        temperature: 0.55,
+        maxTokens: estimateScriptMaxTokens(input),
+      }),
+      onContinuation: (pass) => this.log?.warn(`[script] Output limit reached; continuing pass ${pass}.`),
+      recoverAfterContinuation: (fragments) => this.recoverProductionMarkdown(
+        fragments,
+        language,
+        language === "en" ? ["## Characters", "## Script"] : ["## 人物", "## 剧本正文"],
+      ),
     });
-    return response.content.trim();
+    return extractProductionDocument(response.content, input.title);
   }
 }
 
-export class StoryboardCreationAgent extends BaseAgent {
+export class StoryboardCreationAgent extends LongFormProductionAgent {
   get name(): string {
     return "storyboard-creation-writer";
   }
 
   async writeStoryboard(input: StoryboardCreationInput): Promise<string> {
     const language = input.language ?? "zh";
-    const response = await this.chat([
+    const messages = [
       { role: "system", content: buildStoryboardCreationSystemPrompt(language) },
       { role: "user", content: buildStoryboardCreationUserPrompt(input, language) },
-    ], {
-      temperature: 0.45,
-      maxTokens: estimateStoryboardMaxTokens(input),
+    ] as const;
+    const response = await completeLongForm({
+      messages,
+      language,
+      generate: (continuationMessages) => this.chat(continuationMessages, {
+        temperature: 0.45,
+        maxTokens: estimateStoryboardMaxTokens(input),
+      }),
+      onContinuation: (pass) => this.log?.warn(`[storyboard] Output limit reached; continuing pass ${pass}.`),
+      recoverAfterContinuation: (fragments) => this.recoverProductionMarkdown(
+        fragments,
+        language,
+        language === "en" ? ["## Storyboard", "## Image Prompts"] : ["## 分镜表", "## 图像提示词"],
+      ),
     });
-    return response.content.trim();
+    return extractProductionDocument(response.content, input.title);
   }
 }
 
-export class InteractiveFilmCreationAgent extends BaseAgent {
+export class InteractiveFilmCreationAgent extends LongFormProductionAgent {
   get name(): string {
     return "interactive-film-creation-writer";
   }
 
   async writeInteractiveFilm(input: InteractiveFilmCreationInput): Promise<string> {
     const language = input.language ?? "zh";
-    const response = await this.chat([
+    const messages = [
       { role: "system", content: buildInteractiveFilmCreationSystemPrompt(language) },
       { role: "user", content: buildInteractiveFilmCreationUserPrompt(input, language) },
-    ], {
-      temperature: 0.5,
-      maxTokens: estimateInteractiveFilmMaxTokens(input),
+    ] as const;
+    const response = await completeLongForm({
+      messages,
+      language,
+      generate: (continuationMessages) => this.chat(continuationMessages, {
+        temperature: 0.5,
+        maxTokens: estimateInteractiveFilmMaxTokens(input),
+      }),
+      onContinuation: (pass) => this.log?.warn(`[interactive-film] Output limit reached; continuing pass ${pass}.`),
+      recoverAfterContinuation: (fragments) => this.recoverProductionMarkdown(
+        fragments,
+        language,
+        language === "en"
+          ? ["## Story Tree", "## Variables and Flags", "## Ending Paths", "## Interactive Script", "## Storyboard and Image Prompts"]
+          : ["## 剧情树", "## 变量与旗标表", "## 多结局路径", "## 互动剧本", "## 分镜与图像提示词"],
+      ),
     });
-    return response.content.trim();
+    return extractProductionDocument(response.content, input.title);
   }
 }
 
@@ -120,8 +203,6 @@ export function renderScriptSpec(input: ScriptCreationInput): string {
       "## Adaptation Boundaries",
       "- Preserve the characters, relationships, conflicts, key events, and taboos the user explicitly specified.",
       "- Never decide adaptation intensity (\"faithful adaptation / commercial punch-up / low-budget shoot\") on the user's behalf; execute only the spec the user has confirmed.",
-      "- If the source material is a novel, convert interiority into playable action, dialogue, evidence, objects, or on-screen consequences.",
-      "- If the target is a short drama, every episode needs visible conflict and an end-of-episode reason to keep watching.",
       "",
       "## Source Material Summary",
       summarizeSourceForSpec(input.sourceText, "en"),
@@ -142,8 +223,6 @@ export function renderScriptSpec(input: ScriptCreationInput): string {
     "## 改编边界",
     "- 优先保留用户明确指定的人物、关系、冲突、关键事件和禁忌。",
     "- 不替用户擅自决定“忠实改编 / 商业强化 / 低成本拍摄”等强度；只执行用户已确认的规格。",
-    "- 如果原素材是小说，内心戏要转成可演的动作、对白、证据、物件或场面后果。",
-    "- 如果目标是短剧，每集必须有可见冲突和集尾继续看的理由。",
     "",
     "## 源素材摘要",
     summarizeSourceForSpec(input.sourceText),
@@ -169,8 +248,6 @@ export function renderStoryboardSpec(input: StoryboardCreationInput): string {
       "",
       "## Storyboard Boundaries",
       "- A storyboard is a creative tool, not a locked-in shooting plan; the output must stay easy to discuss, extend, trim, and re-shoot.",
-      "- Each shot carries only what the frame can show, an actor can play, and a camera can express.",
-      "- Image prompts serve image generation: subject, action, shot size, setting, lighting, mood, and key props must be explicit.",
       "- Follow only the art style, format, composition, and visual constraints the user has confirmed; never turn unstated preferences into default hard constraints.",
       "",
       "## Source Material Summary",
@@ -192,8 +269,6 @@ export function renderStoryboardSpec(input: StoryboardCreationInput): string {
     "",
     "## 分镜边界",
     "- 分镜是创作工具，不替用户锁死最终拍法；输出要便于继续讨论、增删、改镜头。",
-    "- 每个镜头只写画面能看见、角色能演、镜头能表达的信息。",
-    "- 分镜图提示词服务图像生成：角色、动作、景别、场景、光线、情绪和关键道具要清楚。",
     "- 只遵循用户已确认的画风、格式、构图和视觉限制；用户没说的，不写成默认硬限制。",
     "",
     "## 源素材摘要",
@@ -208,6 +283,7 @@ export function renderInteractiveFilmSpec(input: InteractiveFilmCreationInput): 
       "",
       "## Goal",
       "- Deliverable: interactive film / interactive narrative game / film-game script",
+      "- Scope: story tree, variables/flags, playable node scripts, multiple endings, storyboards, and image assets",
       input.episodeCount
         ? `- Story segments/episodes: ${input.episodeCount}`
         : "- Story segments/episodes: unspecified; judge from the source material and user requirements",
@@ -227,10 +303,7 @@ export function renderInteractiveFilmSpec(input: InteractiveFilmCreationInput): 
       input.requirements?.trim() || "Not separately specified; follow the instruction the user confirmed.",
       "",
       "## Interactive Film Boundaries",
-      "- This is a creative deliverable, not a hard-numbers RPG engine design; variables, flags, relationships, and ending conditions must serve story branching.",
-      "- It must include branching storylines, key player choices, how variables/flags change later plot, and the conditions for reaching each of the multiple endings.",
-      "- Describe the variable system in natural language: states, relationships, secret/public status, evidence, items, identities, affinity/trust, and the like; never force fixed numeric stats or equipment tiers.",
-      "- The deliverable must fit interactive film/drama production: a clear story tree, shootable nodes, playable dialogue, drawable storyboards, and image prompts usable for asset generation.",
+      "- Do not impose RPG stats, combat formulas, equipment tiers, or any other mechanics the user did not request.",
       "- Never decide subject matter, budget, art style, or commercial punch-up intensity on the user's behalf; mark anything unspecified as adjustable.",
       "",
       "## Source Material Summary",
@@ -242,6 +315,7 @@ export function renderInteractiveFilmSpec(input: InteractiveFilmCreationInput): 
     "",
     "## 目标",
     "- 交付类型：互动影游 / 互动叙事类游戏 / 影游剧本",
+    "- 交付范围：剧情树、变量/旗标、可玩节点剧本、多结局、分镜与图片资产",
     input.episodeCount ? `- 剧情段落/集数：${input.episodeCount}` : "- 剧情段落/集数：未指定，按素材和用户要求判断",
     input.episodeDuration ? `- 单段/单集时长：${input.episodeDuration}` : "- 单段/单集时长：未指定",
     input.budget ? `- 预算约束：${input.budget}` : "- 预算约束：未指定",
@@ -253,10 +327,7 @@ export function renderInteractiveFilmSpec(input: InteractiveFilmCreationInput): 
     input.requirements?.trim() || "未单独指定；以用户确认时的 instruction 为准。",
     "",
     "## 互动影游边界",
-    "- 这是创作交付稿，不是硬数值 RPG 引擎设计；变量、旗标、关系和结局条件必须服务剧情分支。",
-    "- 必须包含多分支剧情、玩家关键选择、变量/旗标如何改变后续剧情，以及多结局达成条件。",
-    "- 变量系统用自然语言说明即可：状态、关系、隐瞒/公开、证据、物品、身份、好感/信任等；不要强行套固定数值或装备等级。",
-    "- 交付要适配影游/互动剧制作：剧情树清晰、节点可拍、对白可演、分镜可画、图片提示词可用于资产生成。",
+    "- 不擅自加入用户没有要求的 RPG 数值、战斗公式、装备等级或其他玩法系统。",
     "- 不替用户擅自决定题材、预算、画风和商业强化强度；未指定处写为可调整。",
     "",
     "## 源素材摘要",
@@ -303,6 +374,29 @@ export function extractMarkdownSection(raw: string, headings: readonly string[])
   return lines.slice(start, end).join("\n");
 }
 
+export function countMarkdownSections(raw: string, headings: readonly string[]): number {
+  const normalizedHeadings = headings.map(normalizeHeadingText);
+  let count = 0;
+  for (const line of raw.split(/\r?\n/)) {
+    const match = /^(#{1,6})\s*(.+?)\s*$/u.exec(line);
+    if (!match) continue;
+    const text = normalizeHeadingText(match[2]!);
+    if (normalizedHeadings.some((heading) => headingMatches(text, heading))) count += 1;
+  }
+  return count;
+}
+
+export function extractProductionDocument(raw: string, title: string): string {
+  const lines = raw.split(/\r?\n/);
+  const normalizedTitle = normalizeHeadingText(title);
+  const start = lines.findIndex((line) => {
+    const match = /^#\s+(.+?)\s*$/u.exec(line);
+    if (!match) return false;
+    return normalizeHeadingText(match[1]!).startsWith(normalizedTitle);
+  });
+  return (start >= 0 ? lines.slice(start).join("\n") : raw).trim();
+}
+
 function normalizeHeadingText(text: string): string {
   return text
     .trim()
@@ -337,19 +431,17 @@ function buildScriptCreationSystemPrompt(language: "zh" | "en" = "zh"): string {
   if (language === "en") {
     return [
       "You are a script-creation tool, not a novel-continuation engine.",
-      "Your job is to adapt a novel, concept, outline, or existing text into a script that production can keep working from, following the spec the user has confirmed.",
-      "Never decide adaptation intensity on the user's behalf; execute only the goals, format, boundaries, and constraints already confirmed in the spec.",
-      "Action lines carry only what the audience can see, an actor can play, and a camera can shoot; convert interiority into behavior, dialogue, objects, evidence, or on-screen consequences.",
-      "Dialogue must serve conflict, relationships, information flow, or emotional shifts; no hollow exposition.",
+      "This is a non-interactive production call after user confirmation. Execute the confirmed creation spec and source material now.",
+      "Never ask a question, offer options for the user to choose, or defer writing. Resolve unspecified creative details with a coherent working choice; they remain editable later.",
+      "The deliverable must include the exact Markdown headings `## Characters` and `## Script`, followed by a complete performable script rather than a proposal or outline.",
       "Output Markdown. No process notes, no model self-narration, no \"Here is\" preamble.",
     ].join("\n");
   }
   return [
     "你是剧本创作工具，不是小说续写器。",
-    "你的任务是根据用户确认过的规格，把小说、创意、大纲或已有文本改成可继续制作的剧本。",
-    "不要替用户擅自决定改编强度；只执行规格里已经确认的目标、格式、边界和限制。",
-    "动作行只写观众能看见、演员能演、镜头能拍的信息；内心戏要转成行为、对白、物件、证据或场面后果。",
-    "对白要服务冲突、关系、信息推进或情绪变化，不写空泛解释。",
+    "这是用户确认后的非交互生产调用。现在执行已确认的创作规格和源素材。",
+    "不得提问、给用户列待选方案或推迟落笔。未指定的创意细节采用连贯的工作版本，后续仍可编辑。",
+    "交付稿必须包含准确的 Markdown 标题 `## 人物` 和 `## 剧本正文`，并在其后给出完整可排演剧本，不能只交方案或大纲。",
     "输出 Markdown。不要写流程说明、模型自述或“以下是”。",
   ].join("\n");
 }
@@ -367,6 +459,8 @@ function buildScriptCreationUserPrompt(input: ScriptCreationInput, language: "zh
       "## Output Format",
       `# ${input.title}`,
       "",
+      "## Characters",
+      "",
       "## Script",
       "",
       "Follow the target format. Vertical short drama: \"Episode N / scene slug / characters / action / dialogue / end-of-episode hook\". Standard screenplay: \"scene heading / action / character / dialogue\".",
@@ -382,6 +476,8 @@ function buildScriptCreationUserPrompt(input: ScriptCreationInput, language: "zh
     "## 输出格式",
     `# ${input.title}`,
     "",
+    "## 人物",
+    "",
     "## 剧本正文",
     "",
     "按目标格式输出。竖屏短剧使用“第N集 / 场次 / 人物 / 动作 / 对白 / 集尾钩子”；标准剧本使用“场景标题 / 动作 / 角色 / 对白”。",
@@ -391,18 +487,12 @@ function buildScriptCreationUserPrompt(input: ScriptCreationInput, language: "zh
 function buildStoryboardCreationSystemPrompt(language: "zh" | "en" = "zh"): string {
   if (language === "en") {
     return [
-      "You are a storyboard-creation tool: you break a script, novel excerpt, or concept into shots that can be filmed, drawn, and fed to image generation.",
-      "A storyboard is not a plot summary; every shot needs a visual, character placement, action, shot size, or a visual focus.",
-      "Keep the visual spec the user has confirmed; never promote visual constraints the user did not confirm into default requirements.",
-      "Image prompts must be generation-ready: subject, action, setting, lighting, composition, mood, and key props all explicit.",
+      "You are a storyboard-creation tool. Execute the confirmed visual spec and source material; unconfirmed choices remain adjustable.",
       "Output Markdown. No model self-narration or process explanation.",
     ].join("\n");
   }
   return [
-    "你是分镜创作工具，负责把剧本、小说片段或创意拆成可拍、可画、可生图的分镜。",
-    "分镜不是剧情摘要；每个镜头都要有画面、角色位置、动作、景别或视觉重点。",
-    "保留用户确认的视觉规格；不要把用户没有确认的视觉限制写成默认要求。",
-    "图像提示词要便于生图：主体、动作、场景、光线、构图、情绪、关键道具明确。",
+    "你是分镜创作工具。执行用户确认的视觉规格和源素材；未确认的选择保持可调整。",
     "输出 Markdown。不要写模型自述或流程解释。",
   ].join("\n");
 }
@@ -417,6 +507,11 @@ function buildStoryboardCreationUserPrompt(input: StoryboardCreationInput, langu
       "## Full Source Material",
       input.sourceText?.trim()
         || "The user did not provide full source material; write an extensible storyboard draft strictly from the storyboard spec and user requirements.",
+      ...(input.segment ? [
+        "",
+        "## Current Production Segment",
+        `Write only ${input.segment.label} (${input.segment.index + 1}/${input.segment.count}) in this call. The global shot cap is NOT the shot count for this call. Preserve all global requirements and follow the exact scene/segment shot count when the user confirmed one. Do not summarize or write any other segment.`,
+      ] : []),
       "",
       "## Output Format",
       `# ${input.title} Storyboard`,
@@ -436,6 +531,11 @@ function buildStoryboardCreationUserPrompt(input: StoryboardCreationInput, langu
     "",
     "## 完整源素材",
     input.sourceText?.trim() || "用户没有提供完整源素材；请严格根据分镜规格和用户要求写一个可继续扩展的分镜稿。",
+    ...(input.segment ? [
+      "",
+      "## 当前生产分段",
+      `本次只写${input.segment.label}（${input.segment.index + 1}/${input.segment.count}）。全局镜头上限不是本次镜头数。保留全部全局要求；用户已确认本场/本段镜头数时严格按该数量执行。不要概括或生成任何其他分段。`,
+    ] : []),
     "",
     "## 输出格式",
     `# ${input.title} 分镜`,
@@ -453,17 +553,13 @@ function buildStoryboardCreationUserPrompt(input: StoryboardCreationInput, langu
 function buildInteractiveFilmCreationSystemPrompt(language: "zh" | "en" = "zh"): string {
   if (language === "en") {
     return [
-      "You are an interactive-film creation tool: you turn a concept, novel, script, or user brief into an interactive-film deliverable that production can build from.",
-      "An interactive film is not an ordinary script: it must have a story tree, key player choices, variables/flags, relationship/evidence/item states, and the conditions for reaching each of the multiple endings.",
-      "The variable system exists only to drive plot progression and branch unlocking; no default RPG stats, combat formulas, or equipment tiers. Write such rules only when the user explicitly asks for them.",
+      "You are an interactive-film creation tool. Execute the confirmed spec and source material; unconfirmed choices remain adjustable.",
       "Output must be Markdown with the specified sections. No model self-narration, process notes, or \"Here is\" preamble.",
       "Every storyboard image prompt must be its own standalone `Prompt: ...` line so downstream asset management can pick it up; include only the visual constraints the user has confirmed.",
     ].join("\n");
   }
   return [
-    "你是互动影游创作工具，负责把创意、小说、剧本或用户需求整理成可制作的互动影游交付稿。",
-    "互动影游不是普通剧本：必须有剧情树、关键选择、变量/旗标、关系/证据/物品状态、多结局达成条件。",
-    "变量系统只服务剧情推进和分支解锁，不要默认 RPG 数值、战斗公式或装备等级；只有用户明确要求时才写对应规则。",
+    "你是互动影游创作工具。执行用户确认的规格和源素材；未确认的选择保持可调整。",
     "输出必须是 Markdown，包含指定小节。不要写模型自述、流程说明或“以下是”。",
     "分镜图提示词必须写成单独的 `Prompt: ...` 行，便于后续资产管理；只写用户确认过的视觉限制。",
   ].join("\n");
@@ -572,8 +668,10 @@ function estimateScriptMaxTokens(input: ScriptCreationInput): number {
 }
 
 function estimateStoryboardMaxTokens(input: StoryboardCreationInput): number {
-  const shots = input.maxShots ?? 24;
-  return Math.min(24000, Math.max(10000, shots * 700));
+  const shots = input.segment?.estimatedShots ?? input.maxShots ?? 24;
+  // Each shot includes both an editable shot record and a standalone image
+  // prompt. The old 700-token estimate cut off complete 13-shot scenes.
+  return Math.min(48000, Math.max(12000, shots * 1800));
 }
 
 function estimateInteractiveFilmMaxTokens(input: InteractiveFilmCreationInput): number {
@@ -585,7 +683,11 @@ function extractPromptLines(markdown: string): string[] {
   const prompts: string[] = [];
   let promptColumnIndex = -1;
   for (const rawLine of markdown.split(/\r?\n/)) {
-    const line = rawLine.trim();
+    const line = rawLine
+      .trim()
+      .replace(/^`{1,3}\s*/u, "")
+      .replace(/\s*`{1,3}$/u, "")
+      .trim();
     if (!line) {
       promptColumnIndex = -1;
       continue;
@@ -631,6 +733,8 @@ function isPromptColumnHeader(cell: string): boolean {
 
 function cleanPromptText(text: string): string {
   return text
+    .replace(/^`{1,3}\s*/u, "")
+    .replace(/\s*`{1,3}$/u, "")
     .replace(/\s*\|\s*$/u, "")
     .replace(/\*\*$/u, "")
     .replace(/^(?:Prompt(?:\s+for\s+[^:*：]+)?|提示词(?:\s*[^:*：]+)?|图像提示词|分镜图提示词)\s*[：:]\s*/iu, "")

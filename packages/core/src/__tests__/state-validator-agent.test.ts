@@ -51,6 +51,41 @@ describe("StateValidatorAgent", () => {
     )).resolves.toEqual({
       warnings: [],
       passed: true,
+      repairRequired: false,
+    });
+  });
+
+  it("returns a structured repair verdict without classifying warning text in code", async () => {
+    const agent = new StateValidatorAgent({
+      client: {
+        provider: "openai",
+        apiFormat: "chat",
+        stream: false,
+        defaults: { temperature: 0.7, maxTokens: 4096, thinkingBudget: 0, extra: {} },
+      },
+      model: "test-model",
+      projectRoot: process.cwd(),
+    });
+    vi.spyOn(agent as unknown as { chat: (...args: unknown[]) => Promise<unknown> }, "chat")
+      .mockResolvedValue({
+        content: "REPAIR\n[missing_state_update] 角色已到码头，但状态卡仍在车站",
+        usage: ZERO_USAGE,
+      });
+
+    await expect(agent.validate(
+      "林舟抵达码头。",
+      3,
+      "位置：家中",
+      "位置：车站",
+      "H1 未推进",
+      "H1 未推进",
+    )).resolves.toEqual({
+      passed: false,
+      repairRequired: true,
+      warnings: [{
+        category: "missing_state_update",
+        description: "角色已到码头，但状态卡仍在车站",
+      }],
     });
   });
 

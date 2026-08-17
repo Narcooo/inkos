@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyLocalTuiCommand, parseDepthCommand } from "../tui/local-commands.js";
+import { classifyLocalTuiCommand, parseDepthCommand, parseModelCommand } from "../tui/local-commands.js";
 
 describe("tui local commands", () => {
   it("recognizes help aliases", () => {
@@ -43,5 +43,12 @@ describe("tui local commands", () => {
     expect(parseDepthCommand("/深度 标准")).toBe("normal");
     expect(parseDepthCommand("深度 深入")).toBe("deep");
     expect(parseDepthCommand("/depth weird")).toBeUndefined();
+  });
+
+  it("parses model commands without treating ordinary model discussion as a command", () => {
+    expect(parseModelCommand("/model")).toEqual({ kind: "show" });
+    expect(parseModelCommand("/model deepseek-v4-pro")).toEqual({ kind: "set", model: "deepseek-v4-pro" });
+    expect(parseModelCommand("model gemini-3.1-pro-preview")).toBeUndefined();
+    expect(parseModelCommand("我们讨论一下模型选择")).toBeUndefined();
   });
 });

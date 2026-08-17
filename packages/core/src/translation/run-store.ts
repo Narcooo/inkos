@@ -5,6 +5,7 @@ import type {
   TranslationGlossaryTerm,
   TranslationProjectManifest,
 } from "./types.js";
+import { commitAtomicFileSet } from "../utils/atomic-file-set.js";
 
 export function translationProjectDir(projectRoot: string, projectId: string): string {
   return join(projectRoot, "translations", projectId);
@@ -67,6 +68,28 @@ export async function saveTranslationGlossary(
     JSON.stringify({ terms: mergeGlossaryTerms(terms) }, null, 2),
     "utf-8",
   );
+}
+
+export async function saveTranslationProgress(
+  projectRoot: string,
+  projectId: string,
+  chapterPath: string,
+  chapter: TranslationChapterFile,
+  terms: ReadonlyArray<TranslationGlossaryTerm>,
+): Promise<void> {
+  await commitAtomicFileSet({
+    rootDir: projectRoot,
+    writes: [
+      {
+        relativePath: chapterPath,
+        content: `${JSON.stringify(chapter, null, 2)}\n`,
+      },
+      {
+        relativePath: join("translations", projectId, "glossary.json"),
+        content: `${JSON.stringify({ terms: mergeGlossaryTerms(terms) }, null, 2)}\n`,
+      },
+    ],
+  });
 }
 
 export function mergeGlossaryTerms(terms: ReadonlyArray<TranslationGlossaryTerm>): ReadonlyArray<TranslationGlossaryTerm> {

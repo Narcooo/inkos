@@ -1,7 +1,7 @@
 {
   "name": "@actalk/inkos-studio",
-  "version": "1.7.2",
-  "description": "InkOS Studio — web workbench for story creation, InkOS Short, covers, and open-world interactive play",
+  "version": "1.8.0",
+  "description": "InkOS Studio web workbench for novels, short fiction, scripts, interactive film and worlds, and translation",
   "type": "module",
   "main": "dist/api/index.js",
   "types": "dist/api/index.d.ts",
@@ -31,7 +31,7 @@
     "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit"
   },
   "dependencies": {
-    "@actalk/inkos-core": "1.7.2",
+    "@actalk/inkos-core": "workspace:*",
     "@base-ui/react": "^1.3.0",
     "@fontsource-variable/geist": "^5.2.8",
     "@hono/node-server": "^1.13.0",

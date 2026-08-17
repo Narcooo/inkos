@@ -58,6 +58,7 @@ interface TranslationRunResponse {
   readonly translatedSegments: number;
   readonly reviewedChapters: number;
   readonly reportPath: string;
+  readonly skillIds?: ReadonlyArray<string>;
 }
 
 interface TranslationExportResponse {
@@ -223,8 +224,8 @@ export function TranslationManager({ nav, theme, t }: { nav: Nav; theme: Theme; 
         body: JSON.stringify({ batchSize: 8 }),
       });
       setStatus(isZh
-        ? `翻译 ${res.translatedSegments} 段，审校 ${res.reviewedChapters} 章。报告：${res.reportPath}`
-        : `Translated ${res.translatedSegments} segments, reviewed ${res.reviewedChapters} chapters. Report: ${res.reportPath}`);
+        ? `翻译 ${res.translatedSegments} 段，审校 ${res.reviewedChapters} 章。${res.skillIds?.length ? `Skill：${res.skillIds.join(" · ")}。` : ""}报告：${res.reportPath}`
+        : `Translated ${res.translatedSegments} segments, reviewed ${res.reviewedChapters} chapters. ${res.skillIds?.length ? `Skills: ${res.skillIds.join(" · ")}. ` : ""}Report: ${res.reportPath}`);
       await refetch();
       const updated = await fetchJson<TranslationDetailResponse>(`/translations/${encodeURIComponent(selected.projectId)}`);
       setDetail(updated);

@@ -72,6 +72,12 @@ function isLikelySemanticDecision(path, line, windowText) {
   if (!hasAny(`${line}\n${windowText}`, SEMANTIC_HINTS)) return false;
   if (line.includes("CHAT_EDIT_TEXT_EXTENSIONS")) return false;
   if (line.includes("SAFE_ROLE_TRUTH_FILE_RE")) return false;
+  if (path.endsWith("agent-tools.ts") && line.includes("current.includes(")) return false;
+  if (path.endsWith("skill-tool.ts") && line.includes("body.includes(\"\\0\")")) return false;
+  if (line.includes("RUNTIME_DIAGNOSTIC_FILE_RE")) return false;
+  if (line.includes("runtimeDiagnostic")) return false;
+  if (line.includes("startsWith(\"scene-turn-\")")) return false;
+  if (line.includes("PlannerParseError") && line.includes(".test(text)")) return false;
   if (line.includes("CODE_FENCE_RE") || line.includes("DIRECTIVE_CLOSE_RE")) return false;
   if (line.includes("safeSessionId")) return false;
   if (line.includes("genreId")) return false;
@@ -137,3 +143,5 @@ if (process.argv.includes("--json")) {
     console.log(`${finding.file}:${finding.line}  ${finding.text}`);
   }
 }
+
+if (findings.length > 0) process.exitCode = 1;

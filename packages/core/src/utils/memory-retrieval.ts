@@ -12,6 +12,7 @@ import {
   filterActiveHooks,
   isFuturePlannedHook,
   isHookWithinChapterWindow,
+  normalizeStoredHookStatus,
 } from "./hook-lifecycle.js";
 import {
   parseChapterSummariesMarkdown,
@@ -20,6 +21,11 @@ import {
   renderHookSnapshot,
   renderSummarySnapshot,
 } from "./story-markdown.js";
+import {
+  LocalSearchIndex,
+  type SearchDocument,
+  type SearchHit,
+} from "../retrieval/local-search.js";
 export {
   isFuturePlannedHook,
   isHookWithinChapterWindow,
@@ -44,8 +50,37 @@ export interface MemorySelection {
   readonly recyclableHooks: ReadonlyArray<StoredHook>;
   readonly facts: ReadonlyArray<Fact>;
   readonly volumeSummaries: ReadonlyArray<VolumeSummarySelection>;
-  readonly dbPath?: string;
+  readonly dbPath: string;
+  readonly retrievalTrace: MemoryRetrievalTrace;
 }
+
+export interface MemoryRetrievalTrace {
+  readonly engine: "sqlite-fts5-bm25";
+  readonly query: string;
+  readonly candidates: ReadonlyArray<{
+    readonly id: string;
+    readonly kind: string;
+    readonly source: string;
+    readonly score: number;
+  }>;
+  readonly semanticSelectedIds?: ReadonlyArray<string>;
+}
+
+export interface MemorySemanticSelectionRequest {
+  readonly chapterNumber: number;
+  readonly query: string;
+  readonly candidates: ReadonlyArray<{
+    readonly id: string;
+    readonly kind: string;
+    readonly source: string;
+    readonly title: string;
+    readonly excerpt: string;
+  }>;
+}
+
+export type MemorySemanticSelector = (
+  request: MemorySemanticSelectionRequest,
+) => Promise<ReadonlyArray<string>>;
 
 export interface VolumeSummarySelection {
   readonly heading: string;
@@ -59,6 +94,7 @@ export async function retrieveMemorySelection(params: {
   readonly goal: string;
   readonly outlineNode?: string;
   readonly mustKeep?: ReadonlyArray<string>;
+  readonly semanticSelector?: MemorySemanticSelector;
 }): Promise<MemorySelection> {
   const storyDir = join(params.bookDir, "story");
   const stateDir = join(storyDir, "state");
@@ -88,81 +124,112 @@ export async function retrieveMemorySelection(params: {
     currentStateMarkdown,
     fallbackChapter,
   );
-  const narrativeQueryTerms = extractQueryTerms(
-    params.goal,
-    params.outlineNode,
-    [],
-  );
-  const factQueryTerms = extractQueryTerms(
-    params.goal,
-    params.outlineNode,
-    params.mustKeep ?? [],
-  );
-  const volumeSummaries = selectRelevantVolumeSummaries(
-    parseVolumeSummariesMarkdown(volumeSummariesMarkdown),
-    narrativeQueryTerms,
-  );
+  const narrativeQuery = [params.goal, params.outlineNode ?? ""].filter(Boolean).join("\n");
+  const retrievalQuery = [narrativeQuery, ...(params.mustKeep ?? [])].filter(Boolean).join("\n");
+  const parsedVolumeSummaries = parseVolumeSummariesMarkdown(volumeSummariesMarkdown);
   // Hooks stay on the authority path instead of the SQLite acceleration path:
   // the DB table intentionally stores only a small subset and cannot preserve
   // promoted/core/dependency metadata, which is load-bearing for hook debt.
   const hooks = structuredHooks?.hooks ?? parsePendingHooksMarkdown(hooksMarkdown);
   const activeHooks = filterActiveHooks(hooks);
+  // Dormant architect seeds are not active debt, but they remain searchable
+  // canon. A chapter can explicitly activate one of them; excluding deferred
+  // rows from retrieval makes the planner invent a duplicate hook instead.
+  const searchableHooks = hooks.filter((hook) => normalizeStoredHookStatus(hook.status) !== "resolved");
 
-  const memoryDb = openMemoryDB(params.bookDir);
-  if (memoryDb) {
+  const summaries = structuredSummaries?.rows ?? parseChapterSummariesMarkdown(
+    await readFile(join(storyDir, "chapter_summaries.md"), "utf-8").catch(() => ""),
+  );
+  const memoryDb = new MemoryDB(params.bookDir);
+  try {
+    memoryDb.replaceSummaries(summaries);
+    memoryDb.replaceCurrentFacts(facts);
+
+    // Markdown/structured hook state is authoritative. SQLite is a rebuildable
+    // search projection and is never allowed to resurrect stale hook rows.
+    const effectiveActiveHooks = activeHooks;
+    const dbPath = join(storyDir, "memory.db");
+    const searchIndex = new LocalSearchIndex(dbPath);
     try {
-      if (memoryDb.getChapterCount() === 0) {
-        const summaries = structuredSummaries?.rows ?? parseChapterSummariesMarkdown(
-          await readFile(join(storyDir, "chapter_summaries.md"), "utf-8").catch(() => ""),
-        );
-        if (summaries.length > 0) {
-          memoryDb.replaceSummaries(summaries);
-        }
-      }
-      if (memoryDb.getCurrentFacts().length === 0 && facts.length > 0) {
-        memoryDb.replaceCurrentFacts(facts);
-      }
-
-      // Structured/markdown hook state is authoritative because it preserves
-      // metadata the SQLite acceleration table does not. In migration/minimal
-      // projects that projection can be absent or empty while SQLite already
-      // has usable hook rows, so fall back only when the authority path yields
-      // no active hooks at all.
-      const effectiveActiveHooks = activeHooks.length > 0
-        ? activeHooks
-        : filterActiveHooks(memoryDb.getActiveHooks());
+      searchIndex.replaceScope(
+        STORY_MEMORY_SCOPE,
+        buildMemorySearchDocuments({
+          summaries,
+          hooks: searchableHooks,
+          facts,
+          volumeSummaries: parsedVolumeSummaries,
+        }),
+      );
+      const hits = searchIndex.search(retrievalQuery, {
+        scope: STORY_MEMORY_SCOPE,
+        limit: 32,
+      });
+      const semanticSelectedIds = await selectSemanticCandidateIds({
+        selector: params.semanticSelector,
+        chapterNumber: params.chapterNumber,
+        query: retrievalQuery,
+        hits,
+      });
+      const selectedSet = semanticSelectedIds ? new Set(semanticSelectedIds) : null;
+      const rankedHits = selectedSet ? hits.filter((hit) => selectedSet.has(hit.id)) : hits;
+      const rankScores = buildRankScores(rankedHits);
 
       return {
-        summaries: selectRelevantSummaries(
-          memoryDb.getSummaries(1, Math.max(1, params.chapterNumber - 1)),
+        summaries: selectRelevantSummaries(summaries, params.chapterNumber, rankScores),
+        hooks: selectRelevantHooks(
+          searchableHooks,
+          effectiveActiveHooks,
+          rankScores,
           params.chapterNumber,
-          narrativeQueryTerms,
         ),
-        hooks: selectRelevantHooks(effectiveActiveHooks, narrativeQueryTerms, params.chapterNumber),
         activeHooks: effectiveActiveHooks,
         recyclableHooks: computeRecyclableHooks(effectiveActiveHooks, params.chapterNumber),
-        facts: selectRelevantFacts(memoryDb.getCurrentFacts(), factQueryTerms),
-        volumeSummaries,
-        dbPath: join(storyDir, "memory.db"),
+        facts: selectRelevantFacts(facts, rankScores),
+        volumeSummaries: selectRelevantVolumeSummaries(parsedVolumeSummaries, rankScores),
+        dbPath,
+        retrievalTrace: {
+          engine: "sqlite-fts5-bm25",
+          query: retrievalQuery,
+          candidates: hits.map(({ id, kind, source, score }) => ({ id, kind, source, score })),
+          ...(semanticSelectedIds ? { semanticSelectedIds } : {}),
+        },
       };
     } finally {
-      memoryDb.close();
+      searchIndex.close();
     }
+  } finally {
+    memoryDb.close();
   }
+}
 
-  const [summariesMarkdown] = await Promise.all([
-    readFile(join(storyDir, "chapter_summaries.md"), "utf-8").catch(() => ""),
-  ]);
-  const summaries = structuredSummaries?.rows ?? parseChapterSummariesMarkdown(summariesMarkdown);
+const STORY_MEMORY_SCOPE = "story-memory";
 
-  return {
-    summaries: selectRelevantSummaries(summaries, params.chapterNumber, narrativeQueryTerms),
-    hooks: selectRelevantHooks(activeHooks, narrativeQueryTerms, params.chapterNumber),
-    activeHooks,
-    recyclableHooks: computeRecyclableHooks(activeHooks, params.chapterNumber),
-    facts: selectRelevantFacts(facts, factQueryTerms),
-    volumeSummaries,
-  };
+async function selectSemanticCandidateIds(params: {
+  readonly selector?: MemorySemanticSelector;
+  readonly chapterNumber: number;
+  readonly query: string;
+  readonly hits: ReadonlyArray<SearchHit>;
+}): Promise<ReadonlyArray<string> | undefined> {
+  if (!params.selector || params.hits.length <= 1) return undefined;
+  try {
+    const allowed = new Set(params.hits.map((hit) => hit.id));
+    const selected = await params.selector({
+      chapterNumber: params.chapterNumber,
+      query: params.query,
+      candidates: params.hits.map((hit) => ({
+        id: hit.id,
+        kind: hit.kind,
+        source: hit.source,
+        title: hit.title,
+        excerpt: hit.body,
+      })),
+    });
+    return [...new Set(selected)].filter((id) => allowed.has(id));
+  } catch {
+    // Retrieval remains available if the semantic selector is temporarily
+    // unavailable; BM25 and deterministic story-state priorities still apply.
+    return undefined;
+  }
 }
 
 /**
@@ -210,30 +277,6 @@ function recycleThreshold(hook: StoredHook): number {
   return 10;
 }
 
-export function extractQueryTerms(goal: string, outlineNode: string | undefined, mustKeep: ReadonlyArray<string>): string[] {
-  const primaryTerms = uniqueTerms([
-    ...extractTermsFromText(stripNegativeGuidance(goal)),
-    ...mustKeep.flatMap((item) => extractTermsFromText(item)),
-  ]);
-
-  if (primaryTerms.length >= 2) {
-    return primaryTerms.slice(0, 12);
-  }
-
-  return uniqueTerms([
-    ...primaryTerms,
-    ...extractTermsFromText(stripNegativeGuidance(outlineNode ?? "")),
-  ]).slice(0, 12);
-}
-
-function openMemoryDB(bookDir: string): MemoryDB | null {
-  try {
-    return new MemoryDB(bookDir);
-  } catch {
-    return null;
-  }
-}
-
 async function readStructuredState<T>(
   path: string,
   schema: { parse(value: unknown): T },
@@ -246,90 +289,81 @@ async function readStructuredState<T>(
   }
 }
 
-function buildLegacyQueryTerms(goal: string, outlineNode: string | undefined, mustKeep: ReadonlyArray<string>): string[] {
-  const stopWords = new Set([
-    "bring", "focus", "back", "chapter", "clear", "narrative", "before", "opening",
-    "track", "the", "with", "from", "that", "this", "into", "still", "cannot",
-    "current", "state", "advance", "conflict", "story", "keep", "must", "local",
-  ]);
-
-  const source = [goal, outlineNode ?? "", ...mustKeep].join(" ");
-  const english = source.match(/[a-z]{4,}/gi) ?? [];
-  const chinese = source.match(/[\u4e00-\u9fff]{2,4}/g) ?? [];
-
-  return [...new Set(
-    [...english, ...chinese]
-      .map((term) => term.trim())
-      .filter((term) => term.length >= 2)
-      .filter((term) => !stopWords.has(term.toLowerCase())),
-  )].slice(0, 12);
+function buildMemorySearchDocuments(input: {
+  readonly summaries: ReadonlyArray<StoredSummary>;
+  readonly hooks: ReadonlyArray<StoredHook>;
+  readonly facts: ReadonlyArray<Fact>;
+  readonly volumeSummaries: ReadonlyArray<VolumeSummarySelection>;
+}): SearchDocument[] {
+  return [
+    ...input.summaries.map((summary) => ({
+      id: summaryDocumentId(summary.chapter),
+      scope: STORY_MEMORY_SCOPE,
+      kind: "chapter-summary",
+      source: `story/chapter_summaries.md#${summary.chapter}`,
+      title: summary.title || `Chapter ${summary.chapter}`,
+      body: [
+        summary.characters,
+        summary.events,
+        summary.stateChanges,
+        summary.hookActivity,
+        summary.mood,
+        summary.chapterType,
+      ].filter(Boolean).join("\n"),
+      metadata: { chapter: summary.chapter },
+    })),
+    ...input.hooks.map((hook) => ({
+      id: hookDocumentId(hook.hookId),
+      scope: STORY_MEMORY_SCOPE,
+      kind: "hook",
+      source: `story/pending_hooks.md#${hook.hookId}`,
+      title: [hook.hookId, hook.type].filter(Boolean).join(" "),
+      body: [hook.status, hook.expectedPayoff, hook.payoffTiming, hook.notes].filter(Boolean).join("\n"),
+      metadata: { hookId: hook.hookId },
+    })),
+    ...input.facts.map((fact, index) => ({
+      id: factDocumentId(index),
+      scope: STORY_MEMORY_SCOPE,
+      kind: "fact",
+      source: `story/current_state.md#${toFactSourceAnchor(fact.predicate)}`,
+      title: [fact.subject, fact.predicate].filter(Boolean).join(" "),
+      body: fact.object,
+      metadata: { index },
+    })),
+    ...input.volumeSummaries.map((summary, index) => ({
+      id: volumeSummaryDocumentId(index),
+      scope: STORY_MEMORY_SCOPE,
+      kind: "volume-summary",
+      source: `story/volume_summaries.md#${summary.anchor}`,
+      title: summary.heading,
+      body: summary.content,
+      metadata: { index },
+    })),
+  ];
 }
 
-function extractTermsFromText(text: string): string[] {
-  if (!text.trim()) return [];
-
-  const stopWords = new Set([
-    "bring", "focus", "back", "chapter", "clear", "narrative", "before", "opening",
-    "track", "the", "with", "from", "that", "this", "into", "still", "cannot",
-    "current", "state", "advance", "conflict", "story", "keep", "must", "local",
-    "does", "not", "only", "just", "then", "than",
-  ]);
-
-  const normalized = text.replace(/第\d+章/g, " ");
-  const english = (normalized.match(/[a-z]{4,}/gi) ?? [])
-    .map((term) => term.trim())
-    .filter((term) => term.length >= 2)
-    .filter((term) => !stopWords.has(term.toLowerCase()));
-
-  const chineseSegments = normalized.match(/[\u4e00-\u9fff]{2,}/g) ?? [];
-  const chinese = chineseSegments.flatMap((segment) => extractChineseFocusTerms(segment));
-
-  return [...english, ...chinese];
+function buildRankScores(hits: ReadonlyArray<SearchHit>): ReadonlyMap<string, number> {
+  return new Map(hits.map((hit, index) => [hit.id, (hits.length - index) * 10]));
 }
 
-function extractChineseFocusTerms(segment: string): string[] {
-  const stripped = segment
-    .replace(/^(本章|继续|重新|拉回|回到|推进|优先|围绕|聚焦|坚持|保持|把注意力|注意力|将注意力|请把注意力|先把注意力)+/, "")
-    .replace(/^(处理|推进|回拉|拉回到)+/, "")
-    .trim();
-
-  const target = stripped.length >= 2 ? stripped : segment;
-  const terms = new Set<string>();
-
-  if (target.length <= 4) {
-    terms.add(target);
-  }
-
-  for (let size = 2; size <= 4; size += 1) {
-    if (target.length >= size) {
-      terms.add(target.slice(-size));
-    }
-  }
-
-  return [...terms].filter((term) => term.length >= 2);
+function summaryDocumentId(chapter: number): string {
+  return `summary:${chapter}`;
 }
 
-function stripNegativeGuidance(text: string): string {
-  if (!text) return "";
-
-  return text
-    .replace(/\b(do not|don't|avoid|without|instead of)\b[\s\S]*$/i, " ")
-    .replace(/(?:不要|不让|别|禁止|避免|但不允许)[\s\S]*$/u, " ")
-    .trim();
+function hookDocumentId(hookId: string): string {
+  return `hook:${hookId}`;
 }
 
-function uniqueTerms(terms: ReadonlyArray<string>): string[] {
-  const result: string[] = [];
-  const seen = new Set<string>();
+function factDocumentId(index: number): string {
+  return `fact:${index}`;
+}
 
-  for (const term of terms) {
-    const normalized = term.trim().toLowerCase();
-    if (!normalized || seen.has(normalized)) continue;
-    seen.add(normalized);
-    result.push(term.trim());
-  }
+function volumeSummaryDocumentId(index: number): string {
+  return `volume-summary:${index}`;
+}
 
-  return result;
+function toFactSourceAnchor(value: string): string {
+  return value.trim().replaceAll(/\s+/g, "-") || "fact";
 }
 
 function parseVolumeSummariesMarkdown(markdown: string): VolumeSummarySelection[] {
@@ -360,97 +394,99 @@ function isUnresolvedHook(status: string): boolean {
 function selectRelevantSummaries(
   summaries: ReadonlyArray<StoredSummary>,
   chapterNumber: number,
-  queryTerms: ReadonlyArray<string>,
+  rankScores: ReadonlyMap<string, number>,
 ): StoredSummary[] {
-  return summaries
+  const ranked = summaries
     .filter((summary) => summary.chapter < chapterNumber)
-    .map((summary) => ({
-      summary,
-      score: scoreSummary(summary, chapterNumber, queryTerms),
-      matched: matchesAny([
-        summary.title,
-        summary.characters,
-        summary.events,
-        summary.stateChanges,
-        summary.hookActivity,
-        summary.chapterType,
-      ].join(" "), queryTerms),
-    }))
-    .filter((entry) => entry.matched || entry.summary.chapter >= chapterNumber - 3)
+    .map((summary) => {
+      const age = Math.max(0, chapterNumber - summary.chapter);
+      const retrievalScore = rankScores.get(summaryDocumentId(summary.chapter)) ?? 0;
+      return {
+        summary,
+        score: retrievalScore + Math.max(0, 12 - age),
+        retrieved: retrievalScore > 0,
+      };
+    });
+  const recent = ranked
+    .filter((entry) => entry.summary.chapter >= chapterNumber - 3)
+    .sort((left, right) => right.summary.chapter - left.summary.chapter)
+    .slice(0, 3);
+  const recalled = ranked
+    .filter((entry) => entry.retrieved)
     .sort((left, right) => right.score - left.score || right.summary.chapter - left.summary.chapter)
-    .slice(0, 4)
-    .map((entry) => entry.summary)
+    .slice(0, 1);
+
+  return [...new Map([...recent, ...recalled].map((entry) => [entry.summary.chapter, entry.summary])).values()]
     .sort((left, right) => left.chapter - right.chapter);
 }
 
 function selectRelevantHooks(
   hooks: ReadonlyArray<StoredHook>,
-  queryTerms: ReadonlyArray<string>,
+  activeHooks: ReadonlyArray<StoredHook>,
+  rankScores: ReadonlyMap<string, number>,
   chapterNumber: number,
 ): StoredHook[] {
+  const activeHookIds = new Set(activeHooks.map((hook) => hook.hookId));
   const ranked = hooks
-    .map((hook) => ({
-      hook,
-      score: scoreHook(hook, queryTerms, chapterNumber),
-      matched: matchesAny(
-        [hook.hookId, hook.type, hook.expectedPayoff, hook.payoffTiming ?? "", hook.notes].join(" "),
-        queryTerms,
-      ),
-    }))
-    .filter((entry: { hook: StoredHook; score: number; matched: boolean }) =>
-      entry.matched || isUnresolvedHook(entry.hook.status),
-    );
+    .map((hook) => {
+      const retrievalScore = rankScores.get(hookDocumentId(hook.hookId)) ?? 0;
+      return {
+        hook,
+        score: retrievalScore + Math.max(0, hook.lastAdvancedChapter),
+        retrieved: retrievalScore > 0,
+      };
+    })
+    .filter((entry) => entry.retrieved || activeHookIds.has(entry.hook.hookId));
 
   const primary = ranked
-    .filter((entry: { hook: StoredHook; score: number; matched: boolean }) =>
-      entry.matched || isHookWithinChapterWindow(entry.hook, chapterNumber, 5),
+    .filter((entry) =>
+      entry.retrieved
+      || (activeHookIds.has(entry.hook.hookId) && isHookWithinChapterWindow(entry.hook, chapterNumber, 5)),
     )
     .sort((left, right) => right.score - left.score || right.hook.lastAdvancedChapter - left.hook.lastAdvancedChapter)
     .slice(0, 6);
 
-  const selectedIds = new Set(primary.map((entry: { hook: StoredHook; score: number; matched: boolean }) => entry.hook.hookId));
+  const selectedIds = new Set(primary.map((entry) => entry.hook.hookId));
   const stale = ranked
-    .filter((entry: { hook: StoredHook; score: number; matched: boolean }) =>
+    .filter((entry) =>
       !selectedIds.has(entry.hook.hookId)
+      && activeHookIds.has(entry.hook.hookId)
       && !isFuturePlannedHook(entry.hook, chapterNumber)
       && isUnresolvedHook(entry.hook.status),
     )
     .sort((left, right) => left.hook.lastAdvancedChapter - right.hook.lastAdvancedChapter || right.score - left.score)
     .slice(0, 2);
 
-  return [...primary, ...stale].map((entry: { hook: StoredHook; score: number; matched: boolean }) => entry.hook);
+  return [...primary, ...stale].map((entry) => entry.hook);
 }
 
 function selectRelevantFacts(
   facts: ReadonlyArray<Fact>,
-  queryTerms: ReadonlyArray<string>,
+  rankScores: ReadonlyMap<string, number>,
 ): Fact[] {
   const prioritizedPredicates = [
-    /^(当前冲突|current conflict)$/i,
-    /^(当前目标|current goal)$/i,
-    /^(主角状态|protagonist state)$/i,
-    /^(当前限制|current constraint)$/i,
-    /^(当前位置|current location)$/i,
-    /^(当前敌我|current alliances|current relationships)$/i,
+    ["当前冲突", "current conflict"],
+    ["当前目标", "current goal"],
+    ["主角状态", "protagonist state"],
+    ["当前限制", "current constraint"],
+    ["当前位置", "current location"],
+    ["当前敌我", "current alliances", "current relationships"],
   ];
 
   return facts
-    .map((fact) => {
-      const text = [fact.subject, fact.predicate, fact.object].join(" ");
-      const priority = prioritizedPredicates.findIndex((pattern) => pattern.test(fact.predicate));
+    .map((fact, index) => {
+      const normalizedPredicate = fact.predicate.trim().toLocaleLowerCase();
+      const priority = prioritizedPredicates.findIndex((values) => values.includes(normalizedPredicate));
       const baseScore = priority === -1 ? 5 : 20 - priority * 2;
-      const termScore = queryTerms.reduce(
-        (score, term) => score + (includesTerm(text, term) ? Math.max(8, term.length * 2) : 0),
-        0,
-      );
+      const retrievalScore = rankScores.get(factDocumentId(index)) ?? 0;
 
       return {
         fact,
-        score: baseScore + termScore,
-        matched: matchesAny(text, queryTerms),
+        score: baseScore + retrievalScore,
+        retrieved: retrievalScore > 0,
       };
     })
-    .filter((entry) => entry.matched || entry.score >= 14)
+    .filter((entry) => entry.retrieved || entry.score >= 14)
     .sort((left, right) => right.score - left.score)
     .slice(0, 4)
     .map((entry) => entry.fact);
@@ -458,66 +494,27 @@ function selectRelevantFacts(
 
 function selectRelevantVolumeSummaries(
   summaries: ReadonlyArray<VolumeSummarySelection>,
-  queryTerms: ReadonlyArray<string>,
+  rankScores: ReadonlyMap<string, number>,
 ): VolumeSummarySelection[] {
   if (summaries.length === 0) return [];
 
   const ranked = summaries
     .map((summary, index) => {
-      const text = `${summary.heading} ${summary.content}`;
-      const termScore = queryTerms.reduce(
-        (score, term) => score + (includesTerm(text, term) ? Math.max(8, term.length * 2) : 0),
-        0,
-      );
-
+      const retrievalScore = rankScores.get(volumeSummaryDocumentId(index)) ?? 0;
       return {
         index,
         summary,
-        score: termScore + index,
-        matched: matchesAny(text, queryTerms),
+        score: retrievalScore + index,
+        retrieved: retrievalScore > 0,
       };
     })
-    .filter((entry, index, all) => entry.matched || index === all.length - 1)
+    .filter((entry, index, all) => entry.retrieved || index === all.length - 1)
     .sort((left, right) => right.score - left.score)
     .slice(0, 2)
     .sort((left, right) => left.index - right.index)
     .map((entry) => entry.summary);
 
   return ranked;
-}
-
-function scoreSummary(summary: StoredSummary, chapterNumber: number, queryTerms: ReadonlyArray<string>): number {
-  const text = [
-    summary.title,
-    summary.characters,
-    summary.events,
-    summary.stateChanges,
-    summary.hookActivity,
-    summary.chapterType,
-  ].join(" ");
-  const age = Math.max(0, chapterNumber - summary.chapter);
-  const recencyScore = Math.max(0, 12 - age);
-  const termScore = queryTerms.reduce((score, term) => score + (includesTerm(text, term) ? Math.max(8, term.length * 2) : 0), 0);
-  return recencyScore + termScore;
-}
-
-function scoreHook(
-  hook: StoredHook,
-  queryTerms: ReadonlyArray<string>,
-  _chapterNumber: number,
-): number {
-  const text = [hook.hookId, hook.type, hook.expectedPayoff, hook.payoffTiming ?? "", hook.notes].join(" ");
-  const freshness = Math.max(0, hook.lastAdvancedChapter);
-  const termScore = queryTerms.reduce((score, term) => score + (includesTerm(text, term) ? Math.max(8, term.length * 2) : 0), 0);
-  return termScore + freshness;
-}
-
-function matchesAny(text: string, queryTerms: ReadonlyArray<string>): boolean {
-  return queryTerms.some((term) => includesTerm(text, term));
-}
-
-function includesTerm(text: string, term: string): boolean {
-  return text.toLowerCase().includes(term.toLowerCase());
 }
 
 function slugifyAnchor(value: string): string {

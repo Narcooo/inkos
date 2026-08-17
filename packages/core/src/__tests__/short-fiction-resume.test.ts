@@ -21,7 +21,7 @@ const DRAFT_MD = `
 ${Array.from({ length: CH }, (_, i) => `=== CHAPTER ${i + 1} TITLE ===
 第${i + 1}章
 === CHAPTER ${i + 1} CONTENT ===
-${"深夜的电梯停在不存在的十三层，门开了。".repeat(20)}`).join("\n")}
+${"深夜的电梯停在不存在的十三层，门开了。".repeat(50)}`).join("\n")}
 `;
 const PARTIAL_DRAFT_MD = `
 === SHORT_FICTION_TITLE ===
@@ -110,6 +110,65 @@ describe("short fiction resume + failure marker (C2)", () => {
     const status = JSON.parse(await readFile(join(root, "shorts", "elevator", "status.json"), "utf-8"));
     expect(status.status).toBe("failed");
     expect(status.error).toContain("503");
+  });
+
+  it("keeps the complete first outline when the optional outline revision fails", async () => {
+    const firstOutline = { storyTitle: "电梯多一层", rawContent: "# 电梯多一层\n\n## 12章方案\n完整第一版方案" };
+    vi.spyOn(ShortFictionOutlineAgent.prototype, "createOutline").mockResolvedValue(firstOutline);
+    vi.spyOn(ShortFictionOutlineReviewerAgent.prototype, "reviewOutline").mockResolvedValue("第六章需要加强反扑");
+    vi.spyOn(ShortFictionOutlineReviserAgent.prototype, "reviseOutline")
+      .mockRejectedValue(new Error("model reached the output limit (length)"));
+    const complete = parseShortFictionBatchDraft(DRAFT_MD, { expectedChapters: CH });
+    const writeDraft = vi.spyOn(ShortFictionWriterAgent.prototype, "writeDraft").mockResolvedValue(complete);
+    vi.spyOn(ShortFictionDraftReviewerAgent.prototype, "reviewDraft").mockResolvedValue("looks fine");
+    vi.spyOn(ShortFictionDraftReviserAgent.prototype, "reviseDraft").mockResolvedValue(complete);
+    vi.spyOn(ShortFictionPackagingAgent.prototype, "generatePackage").mockResolvedValue({
+      title: "电梯多一层", intro: "钩子", sellingPoints: ["反转"], coverPrompt: "", rawContent: "",
+    });
+
+    const result = await runShortFictionProduction({
+      projectRoot: root, direction: "恐怖短篇", chapterCount: CH,
+      charsPerChapter: 1000, cover: false, runtimes: runtimes(root),
+    });
+
+    expect(writeDraft).toHaveBeenCalledWith(expect.objectContaining({ outlineMarkdown: firstOutline.rawContent }));
+    expect((await readFile(join(root, result.outlinePath), "utf-8")).trim()).toBe(firstOutline.rawContent);
+    expect(await readFile(join(root, "shorts", result.storyId, "reviews", "outline-v002-warning.md"), "utf-8"))
+      .toContain("model reached the output limit");
+    const status = JSON.parse(await readFile(join(root, "shorts", result.storyId, "status.json"), "utf-8"));
+    expect(status).toMatchObject({ status: "complete" });
+    expect(status.observations).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        metric: "optional-revision",
+        severity: "warning",
+        actual: expect.stringContaining("outline revision skipped"),
+      }),
+    ]));
+  });
+
+  it("uses the confirmed title as project identity instead of a malformed generated heading", async () => {
+    const malformedOutline = {
+      storyTitle: "one-line-platform-title",
+      rawContent: "# One line platform title\n\n## 12章方案\n完整方案",
+    };
+    vi.spyOn(ShortFictionOutlineAgent.prototype, "createOutline").mockResolvedValue(malformedOutline);
+    vi.spyOn(ShortFictionOutlineReviewerAgent.prototype, "reviewOutline").mockResolvedValue("可执行");
+    vi.spyOn(ShortFictionOutlineReviserAgent.prototype, "reviseOutline").mockResolvedValue(malformedOutline);
+    stubDownstream();
+
+    const result = await runShortFictionProduction({
+      projectRoot: root,
+      title: "《没有录音的承认》",
+      direction: "现实婚姻悬疑",
+      chapterCount: CH,
+      charsPerChapter: 1000,
+      cover: false,
+      runtimes: runtimes(root),
+    });
+
+    expect(result.storyId).toBe("没有录音的承认");
+    await expect(access(join(root, "shorts", "没有录音的承认", "final", "full.md"))).resolves.toBeUndefined();
+    await expect(access(join(root, "shorts", "one-line-platform-title"))).rejects.toThrow();
   });
 
   it("continues a truncated first draft before review instead of reviewing empty chapters", async () => {

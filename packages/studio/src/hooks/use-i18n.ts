@@ -293,8 +293,6 @@ const strings = {
   // Project Settings
   "settings.title": { zh: "项目设置", en: "Project Settings" },
   "settings.subtitle": { zh: "集中管理写作运行时的项目级开关，不替代模型服务商配置。", en: "Manage project-level runtime switches without replacing model service configuration." },
-  "settings.inputGovernance": { zh: "输入治理", en: "Input Governance" },
-  "settings.inputGovernanceHint": { zh: "控制 planner/composer 对用户意图、约束和上下文的组装方式。", en: "Controls how planner/composer assemble user intent, constraints, and context." },
   "settings.modelOverrides": { zh: "Agent 模型路由", en: "Agent Model Routing" },
   "settings.modelOverridesHint": { zh: "为每个 agent 指定模型（贵模型写正文、便宜模型审稿等）。服务商、密钥和基础 URL 仍在模型配置页管理。", en: "Route each agent to a model (e.g. premium model for drafting, cheaper for review). Providers, keys, and base URLs stay in Model Config." },
   "settings.notify": { zh: "通知渠道", en: "Notification Channels" },

@@ -28,6 +28,9 @@ _*.md
 .inkos/
 books/
 worlds/
+dramas/
+storyboards/
+translations/
 inkos.json
 prompt/
 CLAUDE.md

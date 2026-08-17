@@ -4,8 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   ensureNodeRuntimePinFiles,
-  evaluateSqliteMemorySupport,
-  formatSqliteMemorySupportWarning,
+  evaluateNodeRuntimeSupport,
   inspectNodeRuntimePinFiles,
   parseNodeMajor,
 } from "../runtime-requirements.js";
@@ -26,8 +25,8 @@ describe("runtime requirements", () => {
     expect(parseNodeMajor("v22.19.0")).toBe(22);
   });
 
-  it("marks sqlite memory acceleration unavailable below Node 22", () => {
-    const result = evaluateSqliteMemorySupport({
+  it("rejects runtimes below Node 22", () => {
+    const result = evaluateNodeRuntimeSupport({
       nodeVersion: "v20.17.0",
       hasNodeSqlite: false,
     });
@@ -37,34 +36,14 @@ describe("runtime requirements", () => {
     expect(result.detail).toContain("v20.17.0");
   });
 
-  it("marks sqlite memory acceleration available on supported runtimes", () => {
-    const result = evaluateSqliteMemorySupport({
+  it("accepts supported runtimes", () => {
+    const result = evaluateNodeRuntimeSupport({
       nodeVersion: "v22.19.0",
       hasNodeSqlite: true,
     });
 
     expect(result.ok).toBe(true);
     expect(result.detail).toContain("v22.19.0");
-  });
-
-  it("formats an early warning for unsupported sqlite memory runtimes", () => {
-    const warning = formatSqliteMemorySupportWarning({
-      nodeVersion: "v20.17.0",
-      hasNodeSqlite: false,
-    });
-
-    expect(warning).toContain("v20.17.0");
-    expect(warning).toContain("Node 22+");
-    expect(warning).toContain("memory.db live sync");
-  });
-
-  it("does not format a warning on supported runtimes", () => {
-    const warning = formatSqliteMemorySupportWarning({
-      nodeVersion: "v22.19.0",
-      hasNodeSqlite: true,
-    });
-
-    expect(warning).toBeNull();
   });
 
   it("reports missing node runtime pin files", async () => {

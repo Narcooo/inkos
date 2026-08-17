@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import JSZip from "jszip";
 import { createTranslationProjectFromFile } from "../translation/index.js";
+import { segmentTranslationText } from "../translation/text.js";
 
 vi.mock("unpdf", () => ({
   getDocumentProxy: vi.fn(async () => ({ fake: true })),
@@ -58,6 +59,23 @@ describe("translation ingestion", () => {
 
   afterEach(async () => {
     await rm(root, { recursive: true, force: true });
+  });
+
+  it("segments long prose at semantic sentence or word boundaries without truncation", () => {
+    const english = "The courier crossed the frozen bridge before dawn. She kept the sealed letter inside her coat. Nobody at the gate knew her name.";
+    const englishSegments = segmentTranslationText(english, 58);
+    expect(englishSegments.length).toBeGreaterThan(1);
+    expect(englishSegments.join(" ").replace(/\s+/g, " ")).toBe(english);
+    expect(englishSegments.every((segment) => !/\w$/.test(segment) || segment.endsWith("name"))).toBe(true);
+
+    const chinese = "林秋先核对门禁记录。她随后把账页夹进档案袋。走廊尽头的脚步声越来越近。";
+    const chineseSegments = segmentTranslationText(chinese, 16);
+    expect(chineseSegments).toEqual([
+      "林秋先核对门禁记录。",
+      "她随后把账页夹进档案袋。",
+      "走廊尽头的脚步声越来越近。",
+    ]);
+    expect(chineseSegments.join("")).toBe(chinese);
   });
 
   it("creates a persistent translation project from Markdown chapters", async () => {

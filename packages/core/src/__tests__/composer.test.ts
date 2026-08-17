@@ -121,6 +121,41 @@ describe("ComposerAgent", () => {
     await expect(readFile(result.contextPath, "utf-8")).resolves.toContain("current_focus.md");
   });
 
+  it("adds semantically selected book references as traceable compressible context", async () => {
+    const result = await composeGovernedChapter({
+      book,
+      bookDir,
+      chapterNumber: 4,
+      plan,
+      referenceContextProvider: async (request) => {
+        expect(request).toMatchObject({
+          chapterNumber: 4,
+          goal: "Bring the focus back to the mentor conflict.",
+          outlineNode: "Track the merchant guild trail.",
+          language: "zh",
+        });
+        expect(request.mustKeep).toContain("The jade seal cannot be destroyed.");
+        return {
+          entries: [{
+            source: "reference/material-1#relationship-arc",
+            reason: "User-bound reference for relationship pacing.",
+            excerpt: "# Relationship Arc\nCooperate before trust.",
+          }],
+          notes: ["book-reference-context-selected"],
+        };
+      },
+    });
+
+    const reference = result.contextPackage.selectedContext.find((entry) =>
+      entry.source === "reference/material-1#relationship-arc",
+    );
+    expect(reference?.excerpt).toContain("Cooperate before trust");
+    expect(result.trace.selectedSources).toContain("reference/material-1#relationship-arc");
+    expect(result.trace.contextTiers.compressibleSources).toContain("reference/material-1#relationship-arc");
+    expect(result.trace.contextTiers.protectedSources).not.toContain("reference/material-1#relationship-arc");
+    expect(result.trace.notes).toContain("book-reference-context-selected");
+  });
+
   it("preserves later author-intent constraints instead of reducing them to the first line", async () => {
     await writeFile(
       join(storyDir, "author_intent.md"),

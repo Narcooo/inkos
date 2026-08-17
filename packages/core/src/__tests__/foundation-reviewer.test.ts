@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { FoundationReviewerAgent } from "../agents/foundation-reviewer.js";
+import {
+  FoundationReviewerAgent,
+  FoundationReviewParseError,
+} from "../agents/foundation-reviewer.js";
 import type { LLMClient } from "../llm/provider.js";
 
 const TEST_CLIENT: LLMClient = {
@@ -128,5 +131,41 @@ describe("FoundationReviewerAgent", () => {
     expect(messages[1]?.content).toContain("BOOK_RULES_TAIL_MARKER");
     expect(messages[1]?.content).toContain("CURRENT_STATE_TAIL_MARKER");
     expect(messages[1]?.content).toContain("PENDING_HOOKS_TAIL_MARKER");
+  });
+
+  it("does not turn a malformed review into fake 50-point quality scores", async () => {
+    const agent = new FoundationReviewerAgent({
+      client: TEST_CLIENT,
+      model: "test-model",
+      projectRoot: process.cwd(),
+    });
+
+    vi.spyOn(
+      agent as unknown as { chat: (...args: unknown[]) => Promise<unknown> },
+      "chat",
+    ).mockResolvedValue({
+      content: [
+        "### 核心冲突",
+        "分数：82",
+        "意见：主线清楚，但模型没有遵守约定的分项边界。",
+      ].join("\n"),
+      usage: ZERO_USAGE,
+    });
+
+    await expect(agent.review({
+      language: "zh",
+      mode: "original",
+      targetChapters: 60,
+      foundation: {
+        storyBible: "故事框架",
+        volumeOutline: "60章大纲",
+        bookRules: "规则",
+        currentState: "状态",
+        pendingHooks: "伏笔",
+      },
+    })).rejects.toEqual(expect.objectContaining<Partial<FoundationReviewParseError>>({
+      name: "FoundationReviewParseError",
+      missingDimensions: [1, 2, 3, 4, 5],
+    }));
   });
 });

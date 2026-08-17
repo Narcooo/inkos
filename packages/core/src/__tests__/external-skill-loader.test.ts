@@ -4,10 +4,30 @@ import { delimiter, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   createSkillRegistry,
+  loadAvailableAgentSkills,
+  loadBuiltinAgentSkills,
   loadConfiguredAgentSkills,
   loadExternalAgentSkills,
   parseAgentSkillDocument,
 } from "../skills/index.js";
+
+const BUILTIN_SKILL_IDS = [
+  "inkos-interactive-film",
+  "inkos-long-market-research",
+  "inkos-long-story-analysis",
+  "inkos-long-writing",
+  "inkos-play-world",
+  "inkos-script-writing",
+  "inkos-short-market-research",
+  "inkos-short-story-analysis",
+  "inkos-short-writing",
+  "inkos-story-cover",
+  "inkos-story-deslop",
+  "inkos-story-import",
+  "inkos-story-review",
+  "inkos-storyboard",
+  "inkos-translation",
+] as const;
 
 describe("external skill loader", () => {
   let root: string;
@@ -18,6 +38,66 @@ describe("external skill loader", () => {
 
   afterEach(async () => {
     await import("node:fs/promises").then(({ rm }) => rm(root, { recursive: true, force: true }));
+  });
+
+  it("loads the built-in professional story skill pack", async () => {
+    const loaded = await loadBuiltinAgentSkills();
+
+    expect(loaded.diagnostics).toEqual([]);
+    expect(loaded.skills.map((skill) => skill.id)).toEqual(BUILTIN_SKILL_IDS);
+    expect(loaded.skills).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "inkos-long-writing",
+        source: "builtin",
+        body: expect.stringContaining("objective, resistance"),
+        baseDir: expect.stringMatching(/skills[\\/]inkos-long-writing$/),
+      }),
+      expect.objectContaining({
+        id: "inkos-story-review",
+        source: "builtin",
+        body: expect.stringContaining("parser or model-format failure"),
+      }),
+      expect.objectContaining({
+        id: "inkos-play-world",
+        source: "builtin",
+        body: expect.stringContaining("world contract as authority"),
+      }),
+      expect.objectContaining({
+        id: "inkos-interactive-film",
+        source: "builtin",
+        body: expect.stringContaining("Variables and flags serve story causality"),
+      }),
+    ]));
+  });
+
+  it("lets a project skill replace a built-in skill with the same id", async () => {
+    const skillDir = join(root, ".agents", "skills", "inkos-story-review");
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(
+      join(skillDir, "SKILL.md"),
+      [
+        "---",
+        "name: inkos-story-review",
+        "description: Project-specific review standard.",
+        "---",
+        "Use the project's own review standard.",
+      ].join("\n"),
+      "utf-8",
+    );
+
+    const loaded = await loadAvailableAgentSkills({
+      projectRoot: root,
+      env: {},
+      homeDir: join(root, "home"),
+    });
+    const registry = createSkillRegistry({ skills: loaded.skills });
+
+    expect(registry.getSkill("inkos-story-review")).toMatchObject({
+      source: "project",
+      body: "Use the project's own review standard.",
+      baseDir: skillDir,
+    });
+    expect(registry.listSkills()).toHaveLength(BUILTIN_SKILL_IDS.length);
   });
 
   it("loads only the standard AgentSkills discovery fields and body", async () => {

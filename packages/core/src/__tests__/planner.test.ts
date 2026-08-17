@@ -8,6 +8,11 @@ import type { LLMClient } from "../llm/provider.js";
 import type { BookConfig } from "../models/book.js";
 
 const VALID_BODY = `
+## 场景与篇幅预算
+- 场景一（900字）：进入七号门现场，确认锁芯刮痕并排除自然磨损。
+- 场景二（1200字）：对照监控时间线与门禁记录，形成可复核的证据链。
+- 场景三（900字）：带着实证离场，同时让幕后主使的压力逼近但不揭底。
+
 ## 当前任务
 主角进入七号门现场，比对锁芯刮痕与监控时间线，把"被动过手脚"从猜测钉成实证。
 
@@ -227,6 +232,11 @@ describe("PlannerAgent.planChapter memo generation", () => {
   // and English golden-opening guidance for chapters ≤ 3.
   it("uses English prompts end-to-end when book.language is en", async () => {
     const VALID_EN_BODY = `
+## Scene and length budget
+- Scene one (600 words): enter Door 7, inspect the lock, and rule out ordinary wear.
+- Scene two (800 words): compare access logs with surveillance timing and establish a verifiable chain of evidence.
+- Scene three (600 words): leave with proof while the mastermind's pressure closes in without revealing them.
+
 ## Current task
 Pin the Door 7 tampering from suspicion to live evidence.
 

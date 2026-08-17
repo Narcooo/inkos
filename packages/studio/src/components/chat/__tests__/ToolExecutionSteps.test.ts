@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ToolExecution } from "../../../store/chat/types";
-import { PipelineResultDetails, ToolExecutionSteps, UtilityExecutionRow, buildPlayRunStatusUrl, buildPlaySceneImageUrl, getGeneratedArtifactDetails, getPlayEditDetails, getPlayToolDetails, getProposedActionContractRows, getProposedActionDetails, groupToolExecutionsChronologically } from "../ToolExecutionSteps";
+import { PipelineResultDetails, ToolExecutionSteps, UtilityExecutionRow, buildPlayRunStatusUrl, buildPlaySceneImageUrl, getChapterContextTraceDetails, getChapterRevisionDetails, getChapterStateResyncDetails, getExecutionSkillIds, getGeneratedArtifactDetails, getPlayEditDetails, getPlayToolDetails, getProposedActionContractRows, getProposedActionDetails, groupToolExecutionsChronologically } from "../ToolExecutionSteps";
 import { usePreferencesStore } from "../../../store/preferences";
 import { setAppLanguage } from "../../../lib/app-language";
 
@@ -177,6 +177,135 @@ describe("groupChronologically", () => {
 
     expect(html).toContain("查看操作结果");
     expect(html).toContain("已完成第 1 章：雨棚");
+  });
+
+  it("renders applied revision audit status and concrete remaining issues", () => {
+    const exec = makeExec({
+      id: "revision-1",
+      tool: "sub_agent",
+      agent: "reviser",
+      label: "重写第一章",
+      result: "Revision complete.",
+      details: {
+        kind: "chapter_revision",
+        chapterNumber: 1,
+        applied: true,
+        status: "audit-failed",
+        auditPassed: false,
+        fixedIssues: ["统一了孙玉珍和十一分钟的单元案"],
+        auditIssues: [{
+          severity: "warning",
+          category: "continuity",
+          description: "第一句仍未直接落到孙玉珍抱钟进店。",
+          suggestion: "把该动作放到首句。",
+        }],
+      },
+    });
+
+    expect(getChapterRevisionDetails(exec)).toEqual(expect.objectContaining({
+      chapterNumber: 1,
+      applied: true,
+      auditPassed: false,
+    }));
+    const html = renderToStaticMarkup(React.createElement(ToolExecutionSteps, { executions: [exec] }));
+    expect(html).toContain("第 1 章修订");
+    expect(html).toContain("仍需复核");
+    expect(html).toContain("第一句仍未直接落到孙玉珍抱钟进店");
+    expect(html).not.toContain("查看操作结果");
+  });
+
+  it("renders chapter state resync audit status and concrete issues", () => {
+    const exec = makeExec({
+      id: "resync-1",
+      tool: "resync_chapter_state",
+      label: "同步章节状态",
+      result: "State resynced.",
+      details: {
+        kind: "chapter_state_resynced",
+        chapterNumber: 1,
+        status: "audit-failed",
+        auditPassed: false,
+        summary: "状态已重建，正文仍有一个连续性问题。",
+        auditIssues: [{
+          severity: "warning",
+          category: "continuity",
+          description: "末段还没有体现 H012 的十一分钟证据。",
+          suggestion: "让末段与已落盘伏笔保持一致。",
+        }],
+      },
+    });
+
+    expect(getChapterStateResyncDetails(exec)).toEqual(expect.objectContaining({
+      chapterNumber: 1,
+      auditPassed: false,
+    }));
+    const html = renderToStaticMarkup(React.createElement(ToolExecutionSteps, { executions: [exec] }));
+    expect(html).toContain("第 1 章状态已同步");
+    expect(html).toContain("仍需修订");
+    expect(html).toContain("末段还没有体现 H012 的十一分钟证据");
+    expect(html).not.toContain("查看操作结果");
+  });
+
+  it("renders the writer retrieval trace from structured tool details", () => {
+    const exec = makeExec({
+      id: "writer-trace",
+      tool: "sub_agent",
+      agent: "writer",
+      label: "写下一章",
+      details: {
+        kind: "chapter_written",
+        chapterNumber: 8,
+        skillIds: ["longform-pacing"],
+        contextTrace: {
+          tracePath: "runtime/chapter-0008.trace.json",
+          selectedSources: ["story/author_intent.md", "story/pending_hooks.md#H7"],
+          protectedSources: ["story/author_intent.md"],
+          compressibleSources: ["story/pending_hooks.md#H7"],
+          tokenBudget: { protectedTokens: 1200, compressibleTokens: 800, totalSelectedTokens: 2000 },
+          retrieval: {
+            engine: "sqlite-fts5-bm25",
+            query: "第八章 证据反噬",
+            candidates: [{ id: "H7", kind: "hook", source: "story/pending_hooks.md#H7", score: 1.4 }],
+            semanticSelectedIds: ["H7"],
+          },
+          compression: {
+            compiledSource: "runtime/compiled-compressible-context",
+            protectedSources: ["story/author_intent.md"],
+            compressedSources: ["story/pending_hooks.md#H7"],
+            protectedTokens: 1200,
+            compressibleTokens: 800,
+            budgetTokens: 1800,
+          },
+        },
+      },
+    });
+
+    expect(getChapterContextTraceDetails(exec)).toHaveLength(1);
+    const html = renderToStaticMarkup(React.createElement(ToolExecutionSteps, { executions: [exec] }));
+    expect(html).toContain("本轮参考依据");
+    expect(html).toContain("longform-pacing");
+    expect(html).toContain("sqlite-fts5-bm25");
+    expect(html).toContain("story/author_intent.md");
+    expect(html).toContain("runtime/chapter-0008.trace.json");
+    expect(html).toContain("语义压缩");
+  });
+
+  it("shows the actual professional Skill for non-chapter production tools", () => {
+    const exec = makeExec({
+      id: "play-skilled",
+      tool: "play_step",
+      label: "推进互动世界",
+      details: {
+        kind: "play_turn_advanced",
+        sceneText: "雨雾里的钟声停了一拍。",
+        skillIds: ["inkos-play-world"],
+      },
+    });
+
+    expect(getExecutionSkillIds(exec)).toEqual(["inkos-play-world"]);
+    const html = renderToStaticMarkup(React.createElement(ToolExecutionSteps, { executions: [exec] }));
+    expect(html).toContain("专业 Skill");
+    expect(html).toContain("inkos-play-world");
   });
 
   it("extracts generated cover details from public short fiction tools", () => {
@@ -402,41 +531,6 @@ describe("groupChronologically", () => {
     });
   });
 
-  it("extracts proposed route actions for existing Studio workflows", () => {
-    const cases = [
-      { action: "fanfic_init", route: "import:fanfic", title: "打开同人创作" },
-      { action: "spinoff_create", route: "import:spinoff", title: "打开番外创作" },
-      { action: "style_imitation", route: "import:imitation", title: "打开仿写创作" },
-    ] as const;
-
-    for (const item of cases) {
-      const exec = makeExec({
-        id: `proposal-route-${item.action}`,
-        tool: "propose_action",
-        label: "确认动作",
-        details: {
-          kind: "proposed_action",
-          action: item.action,
-          targetSessionKind: "chat",
-          targetRoute: item.route,
-          title: item.title,
-          summary: "确认后打开对应工具入口。",
-          instruction: "打开对应工具，等待用户补充材料。",
-        },
-      });
-
-      expect(getProposedActionDetails(exec)).toMatchObject({
-        kind: "proposed_action",
-        execId: `proposal-route-${item.action}`,
-        action: item.action,
-        targetSessionKind: "chat",
-        targetRoute: item.route,
-        title: item.title,
-        instruction: "打开对应工具，等待用户补充材料。",
-      });
-    }
-  });
-
   it("extracts Play world and visual contracts for confirmation cards", () => {
     const exec = makeExec({
       id: "proposal-play-contract",
@@ -472,25 +566,6 @@ describe("groupChronologically", () => {
     ]);
   });
 
-  it("ignores invalid proposed target routes", () => {
-    const exec = makeExec({
-      id: "proposal-bad-route",
-      tool: "propose_action",
-      label: "确认动作",
-      details: {
-        kind: "proposed_action",
-        action: "fanfic_init",
-        targetSessionKind: "chat",
-        targetRoute: "https://example.com",
-        instruction: "打开同人工具。",
-      },
-    });
-
-    expect(getProposedActionDetails(exec)).toMatchObject({
-      action: "fanfic_init",
-      targetRoute: undefined,
-    });
-  });
 });
 
 describe("tool details default-open preference", () => {
@@ -613,6 +688,26 @@ describe("English app language", () => {
       "World contract",
       "Visual contract",
     ]);
+  });
+
+  it("does not repeat raw results when a structured Play preview is available", () => {
+    const exec = makeExec({
+      id: "play-start-structured",
+      tool: "play_start",
+      label: "启动互动世界",
+      status: "completed",
+      result: "雨夜开场正文",
+      details: {
+        kind: "play_world_started",
+        worldId: "rain-world",
+        runId: "run-1",
+        sceneText: "雨夜开场正文",
+      },
+    });
+
+    const html = renderToStaticMarkup(React.createElement(ToolExecutionSteps, { executions: [exec] }));
+    expect(html).toContain("Interactive world started");
+    expect(html).not.toContain("View result");
   });
 });
 

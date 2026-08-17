@@ -727,7 +727,7 @@ You MUST emit all **5 SECTION blocks in order**: story_frame → volume_map → 
 
     // Synthesize legacy-facing content from new prose (so back-compat callers
     // still receive real content instead of empty strings).
-    const storyBible = legacyStoryBible || this.buildStoryBibleShim(effectiveStoryFrame, language);
+    const storyBible = legacyStoryBible || this.buildStoryBibleShim(language);
     const volumeOutline = legacyVolumeOutline || effectiveVolumeMap;
 
     return {
@@ -817,11 +817,11 @@ You MUST emit all **5 SECTION blocks in order**: story_frame → volume_map → 
     return roles;
   }
 
-  private buildStoryBibleShim(storyFrame: string, language: "zh" | "en"): string {
+  private buildStoryBibleShim(language: "zh" | "en"): string {
     if (language === "en") {
-      return `# Story Bible (compat pointer — deprecated)\n\n> This file is kept for external readers only. The authoritative source is now:\n> - outline/story_frame.md (theme / tonal ground / core conflict / world rules / endgame)\n> - outline/volume_map.md (chapter-granular plot map)\n> - roles/ directory (one-file-per-character sheets)\n\n## Excerpt from story_frame\n\n${storyFrame.slice(0, 2000)}\n`;
+      return `# Story Bible (compat pointer — deprecated)\n\n> This file is kept for external readers only. The authoritative source is now:\n> - outline/story_frame.md (theme / tonal ground / core conflict / world rules / endgame)\n> - outline/volume_map.md (chapter-granular plot map)\n> - roles/ directory (one-file-per-character sheets)\n`;
     }
-    return `# 故事圣经（兼容指针——已废弃）\n\n> 本文件仅为外部读取保留。权威来源已迁移至：\n> - outline/story_frame.md（主题 / 基调 / 核心冲突 / 世界铁律 / 终局）\n> - outline/volume_map.md（章级别的分卷地图）\n> - roles/ 文件夹（一人一卡角色档案）\n\n## story_frame 摘录\n\n${storyFrame.slice(0, 2000)}\n`;
+    return `# 故事圣经（兼容指针——已废弃）\n\n> 本文件仅为外部读取保留。权威来源已迁移至：\n> - outline/story_frame.md（主题 / 基调 / 核心冲突 / 世界铁律 / 终局）\n> - outline/volume_map.md（章级别的分卷地图）\n> - roles/ 文件夹（一人一卡角色档案）\n`;
   }
 
   private buildCharacterMatrixShim(roles: ReadonlyArray<ArchitectRole>, language: "zh" | "en"): string {
@@ -942,7 +942,7 @@ You MUST emit all **5 SECTION blocks in order**: story_frame → volume_map → 
     // Compat shims — these are pointer files, not authoritative content.
     writes.push(writeFile(
       join(storyDir, "story_bible.md"),
-      this.buildStoryBibleShim(storyFrame, language),
+      this.buildStoryBibleShim(language),
       "utf-8",
     ));
     writes.push(writeFile(

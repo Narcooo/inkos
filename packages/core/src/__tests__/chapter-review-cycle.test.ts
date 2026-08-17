@@ -10,7 +10,6 @@ const LENGTH_SPEC: LengthSpec = {
   hardMin: 160,
   hardMax: 280,
   countingMode: "zh_chars",
-  normalizeMode: "none",
 };
 
 const ZERO_USAGE: { promptTokens: number; completionTokens: number; totalTokens: number } = {
@@ -64,14 +63,6 @@ describe("runChapterReviewCycle v9", () => {
       updatedHooks: "",
       tokenUsage: ZERO_USAGE,
     });
-    const normalizeDraftLengthIfNeeded = vi.fn()
-      .mockImplementation(async (content: string) => ({
-        content,
-        wordCount: content.length,
-        applied: false,
-        tokenUsage: ZERO_USAGE,
-      }));
-
     const result = await runChapterReviewCycle({
       ...baseParams,
       initialOutput: {
@@ -86,7 +77,6 @@ describe("runChapterReviewCycle v9", () => {
       },
       createReviser: () => ({ reviseChapter }),
       auditor: { auditChapter },
-      normalizeDraftLengthIfNeeded,
       // Simulates: the reviser fixed the chapter-ref, so re-check returns empty
       runPostWriteChecks: (content) =>
         content === "b".repeat(200)
@@ -124,14 +114,6 @@ describe("runChapterReviewCycle v9", () => {
       updatedHooks: "",
       tokenUsage: ZERO_USAGE,
     });
-    const normalizeDraftLengthIfNeeded = vi.fn()
-      .mockImplementation(async (content: string) => ({
-        content,
-        wordCount: content.length,
-        applied: false,
-        tokenUsage: ZERO_USAGE,
-      }));
-
     const result = await runChapterReviewCycle({
       ...baseParams,
       initialOutput: {
@@ -141,7 +123,6 @@ describe("runChapterReviewCycle v9", () => {
       },
       createReviser: () => ({ reviseChapter }),
       auditor: { auditChapter },
-      normalizeDraftLengthIfNeeded,
       maxReviewIterations: 1,
     });
 
@@ -149,6 +130,39 @@ describe("runChapterReviewCycle v9", () => {
     expect(result.finalContent).toBe(originalContent);
     expect(result.revised).toBe(false);
     expect(result.auditResult.parseFailed).toBe(true);
+  });
+
+  it("turns hard-range drift into an explicit reviser issue and only passes after repair", async () => {
+    const shortDraft = "短".repeat(80);
+    const repairedDraft = "修".repeat(220);
+    const auditChapter = vi.fn().mockResolvedValue(createAuditResult({ passed: true, overallScore: 90 }));
+    const reviseChapter = vi.fn().mockResolvedValue({
+      revisedContent: repairedDraft,
+      wordCount: repairedDraft.length,
+      fixedIssues: ["length-budget"],
+      updatedState: "",
+      updatedLedger: "",
+      updatedHooks: "",
+      tokenUsage: ZERO_USAGE,
+    });
+
+    const result = await runChapterReviewCycle({
+      ...baseParams,
+      initialOutput: {
+        content: shortDraft,
+        wordCount: shortDraft.length,
+        postWriteErrors: [],
+      },
+      createReviser: () => ({ reviseChapter }),
+      auditor: { auditChapter },
+    });
+
+    expect(reviseChapter.mock.calls[0]?.[3]).toEqual(expect.arrayContaining([
+      expect.objectContaining({ category: "length-budget", severity: "critical" }),
+    ]));
+    expect(result.finalContent).toBe(repairedDraft);
+    expect(result.auditResult.passed).toBe(true);
+    expect(result.repairApplied).toBe(true);
   });
 
   it("runs repair loop when score is below threshold, picks best version", async () => {
@@ -185,14 +199,6 @@ describe("runChapterReviewCycle v9", () => {
         tokenUsage: ZERO_USAGE,
       });
 
-    const normalizeDraftLengthIfNeeded = vi.fn()
-      .mockImplementation(async (content: string) => ({
-        content,
-        wordCount: content.length,
-        applied: false,
-        tokenUsage: ZERO_USAGE,
-      }));
-
     const result = await runChapterReviewCycle({
       ...baseParams,
       initialOutput: {
@@ -202,7 +208,6 @@ describe("runChapterReviewCycle v9", () => {
       },
       createReviser: () => ({ reviseChapter }),
       auditor: { auditChapter },
-      normalizeDraftLengthIfNeeded,
       maxReviewIterations: 2,
     });
 
@@ -241,14 +246,6 @@ describe("runChapterReviewCycle v9", () => {
       tokenUsage: ZERO_USAGE,
     });
 
-    const normalizeDraftLengthIfNeeded = vi.fn()
-      .mockImplementation(async (content: string) => ({
-        content,
-        wordCount: content.length,
-        applied: false,
-        tokenUsage: ZERO_USAGE,
-      }));
-
     const result = await runChapterReviewCycle({
       ...baseParams,
       initialOutput: {
@@ -258,7 +255,6 @@ describe("runChapterReviewCycle v9", () => {
       },
       createReviser: () => ({ reviseChapter }),
       auditor: { auditChapter },
-      normalizeDraftLengthIfNeeded,
       maxReviewIterations: 1,
     });
 
@@ -301,14 +297,6 @@ describe("runChapterReviewCycle v9", () => {
         tokenUsage: ZERO_USAGE,
       });
 
-    const normalizeDraftLengthIfNeeded = vi.fn()
-      .mockImplementation(async (content: string) => ({
-        content,
-        wordCount: content.length,
-        applied: false,
-        tokenUsage: ZERO_USAGE,
-      }));
-
     const result = await runChapterReviewCycle({
       ...baseParams,
       initialOutput: {
@@ -318,7 +306,6 @@ describe("runChapterReviewCycle v9", () => {
       },
       createReviser: () => ({ reviseChapter }),
       auditor: { auditChapter },
-      normalizeDraftLengthIfNeeded,
     });
 
     expect(reviseChapter).toHaveBeenCalledTimes(1);
@@ -330,14 +317,6 @@ describe("runChapterReviewCycle v9", () => {
     const auditChapter = vi.fn()
       .mockResolvedValue(createAuditResult({ overallScore: 88 }));
     const reviseChapter = vi.fn();
-    const normalizeDraftLengthIfNeeded = vi.fn()
-      .mockImplementation(async (content: string) => ({
-        content,
-        wordCount: content.length,
-        applied: false,
-        tokenUsage: ZERO_USAGE,
-      }));
-
     const result = await runChapterReviewCycle({
       ...baseParams,
       initialOutput: {
@@ -347,7 +326,6 @@ describe("runChapterReviewCycle v9", () => {
       },
       createReviser: () => ({ reviseChapter }),
       auditor: { auditChapter },
-      normalizeDraftLengthIfNeeded,
     });
 
     // No revision should have been called
@@ -360,13 +338,6 @@ describe("runChapterReviewCycle v9", () => {
     const auditChapter = vi.fn()
       .mockResolvedValue(createAuditResult({ overallScore: 90, passed: true }));
     const reviseChapter = vi.fn();
-    const normalizeDraftLengthIfNeeded = vi.fn()
-      .mockImplementation(async (content: string) => ({
-        content,
-        wordCount: content.length,
-        applied: false,
-        tokenUsage: ZERO_USAGE,
-      }));
     const unsafe = `${"雨".repeat(100)}——${"夜".repeat(98)}`;
 
     const result = await runChapterReviewCycle({
@@ -378,7 +349,6 @@ describe("runChapterReviewCycle v9", () => {
       },
       createReviser: () => ({ reviseChapter }),
       auditor: { auditChapter },
-      normalizeDraftLengthIfNeeded,
       normalizePostWriteSurface: (content) => content.replace(/——+/g, "，"),
       runPostWriteChecks: (content) =>
         content.includes("——")

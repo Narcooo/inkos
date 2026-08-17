@@ -32,7 +32,7 @@ function createDelta(overrides: Partial<RuntimeStateDelta> = {}): RuntimeStateDe
 }
 
 describe("arbitrateRuntimeStateDeltaHooks", () => {
-  it("maps a duplicate-family candidate back onto the matched existing hook", () => {
+  it("updates an existing hook only when the settler names its canonical id", () => {
     const result = arbitrateRuntimeStateDeltaHooks({
       hooks: [
         createHook({
@@ -45,13 +45,20 @@ describe("arbitrateRuntimeStateDeltaHooks", () => {
         }),
       ],
       delta: createDelta({
-        newHookCandidates: [
-          {
+        hookOps: {
+          upsert: [createHook({
+            hookId: "anonymous-source-scope",
             type: "source-risk",
+            startChapter: 3,
+            lastAdvancedChapter: 12,
+            status: "progressing",
             expectedPayoff: "Reveal how much the anonymous source already knew about the route and address.",
             notes: "This chapter adds the address angle to the anonymous source question.",
-          },
-        ],
+          })],
+          mention: [],
+          resolve: [],
+          defer: [],
+        },
       }),
     });
 
@@ -64,7 +71,7 @@ describe("arbitrateRuntimeStateDeltaHooks", () => {
     expect(result.resolvedDelta.newHookCandidates).toEqual([]);
   });
 
-  it("downgrades a pure restatement candidate into a mention instead of opening a new hook", () => {
+  it("does not infer semantic identity for an unnamed candidate", () => {
     const result = arbitrateRuntimeStateDeltaHooks({
       hooks: [
         createHook({
@@ -85,9 +92,12 @@ describe("arbitrateRuntimeStateDeltaHooks", () => {
       }),
     });
 
-    expect(result.resolvedDelta.hookOps.upsert).toEqual([]);
-    expect(result.resolvedDelta.hookOps.mention).toContain("mentor-debt");
+    expect(result.resolvedDelta.hookOps.upsert).toHaveLength(1);
+    expect(result.resolvedDelta.hookOps.upsert[0]?.hookId).not.toBe("mentor-debt");
     expect(result.resolvedDelta.newHookCandidates).toEqual([]);
+    expect(result.decisions).toEqual([
+      expect.objectContaining({ action: "created", reason: "admit" }),
+    ]);
   });
 
   it("creates a canonical hook when the candidate is genuinely new", () => {
@@ -120,5 +130,50 @@ describe("arbitrateRuntimeStateDeltaHooks", () => {
     }));
     expect(result.resolvedDelta.hookOps.upsert[0]?.hookId).not.toBe("mentor-debt");
     expect(result.resolvedDelta.newHookCandidates).toEqual([]);
+  });
+
+  it("can structurally forbid hook-set expansion without guessing semantic identity", () => {
+    const result = arbitrateRuntimeStateDeltaHooks({
+      hooks: [createHook({ hookId: "H012" })],
+      allowNewHooks: false,
+      delta: createDelta({
+        hookOps: {
+          upsert: [createHook({ hookId: "H012", status: "progressing", lastAdvancedChapter: 12 })],
+          mention: [],
+          resolve: [],
+          defer: [],
+        },
+        newHookCandidates: [{
+          type: "mystery",
+          expectedPayoff: "Explain why the clock moved eleven minutes.",
+          notes: "The same chapter-ending question as H012.",
+        }],
+      }),
+    });
+
+    expect(result.resolvedDelta.hookOps.upsert).toEqual([
+      expect.objectContaining({ hookId: "H012", status: "progressing" }),
+    ]);
+    expect(result.decisions).toEqual([
+      expect.objectContaining({ action: "rejected", reason: "new_hooks_disabled" }),
+    ]);
+  });
+
+  it("rejects structurally incomplete candidates without inventing content", () => {
+    const result = arbitrateRuntimeStateDeltaHooks({
+      hooks: [],
+      delta: createDelta({
+        newHookCandidates: [{
+          type: "mystery",
+          expectedPayoff: "",
+          notes: "",
+        }],
+      }),
+    });
+
+    expect(result.resolvedDelta.hookOps.upsert).toEqual([]);
+    expect(result.decisions).toEqual([
+      expect.objectContaining({ action: "rejected", reason: "missing_payoff_signal" }),
+    ]);
   });
 });

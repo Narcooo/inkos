@@ -11,7 +11,6 @@ import { filterSummaries } from "../utils/context-filter.js";
 import {
   buildGovernedCharacterMatrixWorkingSet,
   buildGovernedHookWorkingSet,
-  mergeTableMarkdownByKey,
 } from "../utils/governed-working-set.js";
 import { applySpotFixPatches, parseSpotFixPatches } from "../utils/spot-fix-patches.js";
 import {
@@ -37,9 +36,6 @@ export interface ReviseOutput {
   readonly revisedContent: string;
   readonly wordCount: number;
   readonly fixedIssues: ReadonlyArray<string>;
-  readonly updatedState: string;
-  readonly updatedLedger: string;
-  readonly updatedHooks: string;
   readonly tokenUsage?: {
     readonly promptTokens: number;
     readonly completionTokens: number;
@@ -127,19 +123,25 @@ export class ReviserAgent extends BaseAgent {
       contextPackage?: ContextPackage;
       ruleStack?: RuleStack;
       lengthSpec?: LengthSpec;
+      baselineChapter?: number;
     },
   ): Promise<ReviseOutput> {
+    const baselineStoryDir = options?.baselineChapter === undefined
+      ? join(bookDir, "story")
+      : join(bookDir, "story", "snapshots", String(options.baselineChapter));
     const [currentState, ledger, hooks, styleGuideRaw, volumeOutline, storyBible, characterMatrix, chapterSummaries, parentCanon, fanficCanon] = await Promise.all([
-      // Phase 5 consolidation: derive initial state from roles + seed hooks
-      // when current_state.md is still the architect seed placeholder.
-      readCurrentStateWithFallback(bookDir, "(文件不存在)"),
-      this.readFileSafe(join(bookDir, "story/particle_ledger.md")),
-      this.readFileSafe(join(bookDir, "story/pending_hooks.md")),
+      options?.baselineChapter === undefined
+        ? readCurrentStateWithFallback(bookDir, "(文件不存在)")
+        : this.readFileSafe(join(baselineStoryDir, "current_state.md")),
+      this.readFileSafe(join(baselineStoryDir, "particle_ledger.md")),
+      this.readFileSafe(join(baselineStoryDir, "pending_hooks.md")),
       this.readFileSafe(join(bookDir, "story/style_guide.md")),
       readVolumeMap(bookDir, "(文件不存在)"),
       readStoryFrame(bookDir, "(文件不存在)"),
-      readCharacterContext(bookDir, "(文件不存在)"),
-      this.readFileSafe(join(bookDir, "story/chapter_summaries.md")),
+      options?.baselineChapter === undefined
+        ? readCharacterContext(bookDir, "(文件不存在)")
+        : this.readSnapshotCharacterContext(bookDir, baselineStoryDir),
+      this.readFileSafe(join(baselineStoryDir, "chapter_summaries.md")),
       this.readFileSafe(join(bookDir, "story/parent_canon.md")),
       this.readFileSafe(join(bookDir, "story/fanfic_canon.md")),
     ]);
@@ -190,7 +192,7 @@ export class ReviserAgent extends BaseAgent {
           : "\n8. 保持章节字数在目标区间内；只有在修复关键问题确实需要时才允许轻微偏离")
       : "";
     const langPrefix = isEnglish
-      ? `【LANGUAGE OVERRIDE】ALL output (FIXED_ISSUES, PATCHES, REVISED_CONTENT, UPDATED_STATE, UPDATED_HOOKS) MUST be in English.\n\n`
+      ? `【LANGUAGE OVERRIDE】ALL output (FIXED_ISSUES, PATCHES, REVISED_CONTENT) MUST be in English.\n\n`
       : "";
     const governedMode = Boolean(options?.chapterIntent && options?.contextPackage && options?.ruleStack);
     const hooksWorkingSet = governedMode && options?.contextPackage
@@ -287,26 +289,18 @@ ${chapterContent}`;
 
     const output = this.parseOutput(
       response.content,
-      gp,
       mode,
       chapterContent,
       autoOutputMode,
     );
-    const mergedOutput = governedMode
-      ? {
-          ...output,
-          updatedHooks: mergeTableMarkdownByKey(hooks, output.updatedHooks, [0]),
-        }
-      : output;
     const wordCount = options?.lengthSpec
-      ? countChapterLength(mergedOutput.revisedContent, options.lengthSpec.countingMode)
-      : mergedOutput.wordCount;
-    return { ...mergedOutput, wordCount, tokenUsage: response.usage };
+      ? countChapterLength(output.revisedContent, options.lengthSpec.countingMode)
+      : output.wordCount;
+    return { ...output, wordCount, tokenUsage: response.usage };
   }
 
   private parseOutput(
     content: string,
-    gp: GenreProfile,
     mode: ReviseMode,
     originalChapter: string,
     autoOutputMode: AutoOutputMode = "allow-full",
@@ -329,15 +323,10 @@ ${chapterContent}`;
       revisedContent,
       wordCount: revisedContent.length,
       fixedIssues: applied ? fixedIssues : [],
-      updatedState: extract("UPDATED_STATE") || "(状态卡未更新)",
-      updatedLedger: gp.numericalSystem
-        ? (extract("UPDATED_LEDGER") || "(账本未更新)")
-        : "",
-      updatedHooks: extract("UPDATED_HOOKS") || "(伏笔池未更新)",
     });
 
-    // Auto mode: route by issue type — structural issues require REVISED_CONTENT,
-    // local-only issues only accept PATCHES, mixed sets accept either.
+    // Auto mode obeys the auditor's structured repair scope. It never infers
+    // semantic intent from issue prose.
     if (mode === "auto") {
       if (autoOutputMode === "patch-only") {
         const patchesRaw = extract("PATCHES");
@@ -406,9 +395,6 @@ ${chapterContent}`;
     const { langPrefix, gp, protagonistBlock, numericalRule, resolvedLanguage, lengthSpec, autoOutputMode } = params;
     // lengthGuardrail intentionally not used in auto mode — length constraint is embedded in REVISED_CONTENT description
     const en = resolvedLanguage === "en";
-    const ledgerSection = gp.numericalSystem
-      ? (en ? "\n=== UPDATED_LEDGER ===\n(Full updated resource ledger)" : "\n=== UPDATED_LEDGER ===\n(更新后的完整资源账本)")
-      : "";
     const rewriteLengthConstraint = lengthSpec
       ? (en
           ? `\n  HARD CONSTRAINT: The revised chapter must stay within ${lengthSpec.softMin}-${lengthSpec.softMax} characters (target: ${lengthSpec.target}, ±25%). This is non-negotiable — do not exceed this range.`
@@ -468,13 +454,7 @@ REPLACEMENT_TEXT:
 --- END PATCH ---
 
 === REVISED_CONTENT ===
-(Full revised chapter content — only when PATCHES cannot solve the problem. Omit this section if using PATCHES)
-
-=== UPDATED_STATE ===
-(Full updated state card)
-${ledgerSection}
-=== UPDATED_HOOKS ===
-(Full updated hooks board)`
+(Full revised chapter content — only when PATCHES cannot solve the problem. Omit this section if using PATCHES)`
       : `${langPrefix}你是一位专业的${gp.name}网络小说修稿编辑。你的任务是根据审稿意见对章节进行修正。${protagonistBlock}${routingDirectiveZh}
 
 PATCHES 和 REVISED_CONTENT 分别处理不同类型的问题——按问题类型选择，不是按偏好：
@@ -516,13 +496,7 @@ REPLACEMENT_TEXT:
 --- END PATCH ---
 
 === REVISED_CONTENT ===
-(修正后的完整正文——用于字数/结构/节奏等全章级问题。仅局部问题时省略此区块)
-
-=== UPDATED_STATE ===
-(更新后的完整状态卡)
-${ledgerSection}
-=== UPDATED_HOOKS ===
-(更新后的完整伏笔池)`;
+(修正后的完整正文——用于字数/结构/节奏等全章级问题。仅局部问题时省略此区块)`;
   }
 
   private buildLegacySystemPrompt(params: {
@@ -546,24 +520,12 @@ TARGET_TEXT:
 (必须从原文中精确复制、且能唯一命中的原句或原段)
 REPLACEMENT_TEXT:
 (替换后的局部文本)
---- END PATCH ---
-
-=== UPDATED_STATE ===
-(更新后的完整状态卡)
-${gp.numericalSystem ? "\n=== UPDATED_LEDGER ===\n(更新后的完整资源账本)" : ""}
-=== UPDATED_HOOKS ===
-(更新后的完整伏笔池)`
+--- END PATCH ---`
       : `=== FIXED_ISSUES ===
 (逐条说明修正了什么，一行一条)
 
 === REVISED_CONTENT ===
-(修正后的完整正文)
-
-=== UPDATED_STATE ===
-(更新后的完整状态卡)
-${gp.numericalSystem ? "\n=== UPDATED_LEDGER ===\n(更新后的完整资源账本)" : ""}
-=== UPDATED_HOOKS ===
-(更新后的完整伏笔池)`;
+(修正后的完整正文)`;
 
     return `${langPrefix}你是一位专业的${gp.name}网络小说修稿编辑。你的任务是根据审稿意见对章节进行修正。${protagonistBlock}
 
@@ -572,10 +534,9 @@ ${gp.numericalSystem ? "\n=== UPDATED_LEDGER ===\n(更新后的完整资源账�
 修稿原则：
 1. 按模式控制修改幅度
 2. 修根因，不做表面润色${numericalRule}
-4. 伏笔状态必须与伏笔池同步
+4. 正文必须服从既有事实和伏笔约束，但不要输出或重写状态文件；宿主会根据修订正文重新结算
 5. 不改变剧情走向和核心冲突
 6. 保持原文的语言风格和节奏
-7. 修改后同步更新状态卡${gp.numericalSystem ? "、账本" : ""}、伏笔池
 ${lengthGuardrail}
 ${mode === "spot-fix" ? "\n9. spot-fix 只能输出局部补丁，禁止输出整章改写；TARGET_TEXT 必须能在原文中唯一命中\n10. 如果需要大面积改写，说明无法安全 spot-fix，并让 PATCHES 留空" : ""}
 
@@ -590,6 +551,15 @@ ${outputFormat}`;
     } catch {
       return "(文件不存在)";
     }
+  }
+
+  private async readSnapshotCharacterContext(
+    bookDir: string,
+    snapshotStoryDir: string,
+  ): Promise<string> {
+    const snapshotMatrix = await this.readFileSafe(join(snapshotStoryDir, "character_matrix.md"));
+    if (snapshotMatrix !== "(文件不存在)") return snapshotMatrix;
+    return readCharacterContext(bookDir, "(文件不存在)");
   }
 
   private buildReducedControlBlock(
@@ -629,38 +599,6 @@ ${overrides}\n`;
   }
 }
 
-// Local-only categories: reviser produces line/paragraph patches. Fixing these
-// with a full rewrite risks introducing new issues, so we force patch-only.
-const LOCAL_ONLY_PATTERNS: ReadonlyArray<RegExp> = [
-  /Paragraph uniformity|段落等长/i,
-  /Hedge density|套话密度/i,
-  /Formulaic transitions|公式化转折/i,
-  /List-like structure|列表式结构/i,
-  /Cross-chapter repetition|跨章重复/i,
-  /AI-tell word density/i,
-  /Fatigue word|高疲劳词/i,
-  /Information Boundary Check|信息越界/i,
-  /Knowledge Base Pollution|知识库污染/i,
-];
-
-// Structural/semantic categories: character collapse, mainline drift, conflict
-// absence, timeline breaks, unpaid hooks, memo drift. These cannot be patched;
-// the reviser must rewrite the chapter in full.
-const STRUCTURAL_PATTERNS: ReadonlyArray<RegExp> = [
-  /OOC|人设|Character Fidelity|Character Matrix|Character.*Consistency/i,
-  /Mainline.*Drift|主线偏离|Outline Drift|大纲偏离|Chapter Memo Drift|章节备忘偏离/i,
-  /Conflict|冲突乏力|Payoff Dilution|爽点虚化/i,
-  /Timeline|时间线/i,
-  /Hook Check|伏笔检查|Hook.*Debt|伏笔.*债|未兑现/i,
-  /Power Scaling|战力崩坏|金手指/i,
-  /Pacing|节奏/i,
-  /POV Consistency|视角/i,
-  /Subplot Stagnation|支线停滞|Arc Flatline|弧线平坦/i,
-  /Relationship Dynamics|关系动态|情感表达/i,
-  /Incentive Chain|利益链/i,
-  /Canon Event|正典|Mainline Canon/i,
-];
-
 function resolveAutoOutputMode(issues: ReadonlyArray<AuditIssue>): AutoOutputMode {
   if (issues.length === 0) {
     return "allow-full";
@@ -678,37 +616,11 @@ function resolveAutoOutputMode(issues: ReadonlyArray<AuditIssue>): AutoOutputMod
     }
   }
 
-  const isStructural = (issue: AuditIssue): boolean => {
-    const text = `${issue.category} ${issue.description}`;
-    return STRUCTURAL_PATTERNS.some((pattern) => pattern.test(text));
-  };
-  const isLocal = (issue: AuditIssue): boolean => {
-    const text = `${issue.category} ${issue.description}`;
-    return LOCAL_ONLY_PATTERNS.some((pattern) => pattern.test(text));
-  };
-
-  // Count blocking (critical + warning) structural vs local issues. Info-level
-  // findings are reviewer hints for the Polisher — they do not drive routing.
   const blocking = issues.filter((issue) => issue.severity !== "info");
   if (blocking.length === 0) {
     return "patch-only"; // only hints / info — at most local polish
   }
-
-  const structuralCount = blocking.filter(isStructural).length;
-  const localOnlyCount = blocking.filter(isLocal).length;
-
-  // Any structural issue forces a rewrite — patches cannot fix character
-  // collapse, mainline drift, missing payoff, or timeline breaks.
-  if (structuralCount > 0) {
-    return "rewrite-only";
-  }
-
-  // All blocking issues are in the local-only list → safe to patch.
-  if (localOnlyCount === blocking.length) {
-    return "patch-only";
-  }
-
-  // Mixed / unknown blocking issue set — let the reviser pick (usually ends
-  // up rewriting when critical, patching when warning).
+  // Unknown scope is intentionally not guessed from natural-language labels.
+  // The reviser may choose the safest representation from the actual issue text.
   return "allow-full";
 }

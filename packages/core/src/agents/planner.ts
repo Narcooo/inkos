@@ -2,6 +2,8 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { BaseAgent } from "./base.js";
 import type { BookConfig } from "../models/book.js";
+import type { LengthSpec } from "../models/length-governance.js";
+import { buildLengthSpec } from "../utils/length-metrics.js";
 import { readBookRules as readAuthoritativeBookRules } from "./rules-reader.js";
 import {
   ChapterIntentSchema,
@@ -26,13 +28,12 @@ import {
   extractCollaboratorRows,
   extractOpponentRows,
   extractProtagonistRow,
-  extractRelevantThreads,
+  formatRelevantThreads,
   formatRecentSummaries,
   formatRecyclableHooks,
   readBookRules,
   readCharacterMatrix,
   readEmotionalArcs,
-  readPendingHooks,
   readSubplotBoard,
 } from "./planner-context.js";
 import type { StoredHook } from "../state/memory-db.js";
@@ -130,6 +131,10 @@ export class PlannerAgent extends BaseAgent {
     });
 
     const isGoldenOpening = this.isGoldenOpeningChapter(input.book.language, input.chapterNumber);
+    const lengthSpec = buildLengthSpec(
+      input.book.chapterWordCount,
+      input.book.language ?? "zh",
+    );
     const memo = await this.planChapterMemo({
       storyDir,
       bookDir: input.bookDir,
@@ -140,11 +145,13 @@ export class PlannerAgent extends BaseAgent {
       previousEndingExcerpt: seedMaterials.previousEndingExcerpt,
       brief: seedMaterials.brief,
       chapterContext: input.externalContext,
+      relevantHooks: memorySelection.hooks,
       recyclableHooks: memorySelection.recyclableHooks,
       // Phase hotfix 4: thread book language through so the planner uses
       // English prompts (system + user template + golden opening guidance)
       // for English books instead of always-Chinese.
       language: input.book.language ?? "zh",
+      lengthSpec,
     });
 
     // memo.goal is LLM-produced and specific (<=50 chars, validated).
@@ -187,14 +194,15 @@ export class PlannerAgent extends BaseAgent {
     readonly previousEndingExcerpt?: string;
     readonly brief?: string;
     readonly chapterContext?: string;
+    readonly relevantHooks?: ReadonlyArray<StoredHook>;
     readonly recyclableHooks?: ReadonlyArray<StoredHook>;
     readonly language?: "zh" | "en";
+    readonly lengthSpec: LengthSpec;
   }): Promise<ChapterMemo> {
-    const [characterMatrix, subplotBoard, emotionalArcs, pendingHooks, bookRulesRaw] = await Promise.all([
+    const [characterMatrix, subplotBoard, emotionalArcs, bookRulesRaw] = await Promise.all([
       readCharacterMatrix(input.storyDir),
       readSubplotBoard(input.storyDir),
       readEmotionalArcs(input.storyDir),
-      readPendingHooks(input.storyDir),
       readBookRules(input.storyDir),
     ]);
 
@@ -222,7 +230,7 @@ export class PlannerAgent extends BaseAgent {
       protagonistMatrixRow: extractProtagonistRow(characterMatrix),
       opponentRows: extractOpponentRows(characterMatrix, 3),
       collaboratorRows: extractCollaboratorRows(characterMatrix, 3),
-      relevantThreads: extractRelevantThreads(pendingHooks, subplotBoard),
+      relevantThreads: formatRelevantThreads(input.relevantHooks ?? [], subplotBoard, language),
       recyclableHooks: formatRecyclableHooks(
         input.recyclableHooks ?? [],
         input.chapterNumber,
@@ -230,6 +238,14 @@ export class PlannerAgent extends BaseAgent {
       ),
       isGoldenOpening: input.isGoldenOpening,
       bookRulesRelevant: bookRulesRaw.trim().length > 0 ? bookRulesRaw.trim() : noBookRules,
+      lengthBudget: {
+        target: input.lengthSpec.target,
+        softMin: input.lengthSpec.softMin,
+        softMax: input.lengthSpec.softMax,
+        hardMin: input.lengthSpec.hardMin,
+        hardMax: input.lengthSpec.hardMax,
+        unit: input.lengthSpec.countingMode === "en_words" ? "words" : "字",
+      },
       brief: input.brief ?? "",
       chapterContext: input.chapterContext ?? "",
       language,
@@ -270,6 +286,7 @@ export class PlannerAgent extends BaseAgent {
         fallbackGoal: input.fallbackGoal,
         errorMessage: fallbackError.message,
         language,
+        lengthSpec: input.lengthSpec,
       }),
       input.chapterNumber,
       input.isGoldenOpening,
@@ -282,6 +299,7 @@ export class PlannerAgent extends BaseAgent {
     readonly fallbackGoal: string;
     readonly errorMessage: string;
     readonly language: "zh" | "en";
+    readonly lengthSpec: LengthSpec;
   }): string {
     if (input.language === "en") {
       return [
@@ -292,6 +310,9 @@ export class PlannerAgent extends BaseAgent {
         "",
         "## Thread refs",
         "none",
+        "",
+        "## Scene and length budget",
+        `Plan 2-5 concrete scenes whose combined draft length stays within ${input.lengthSpec.hardMin}-${input.lengthSpec.hardMax} words and aims for ${input.lengthSpec.target} words. Give each scene a distinct action, consequence, and approximate word budget.`,
         "",
         "## Current task",
         `Use the current chapter goal and authoritative book context to continue chapter ${input.chapterNumber} without inventing a new direction.`,
@@ -330,6 +351,9 @@ export class PlannerAgent extends BaseAgent {
       "",
       "## 关联线索",
       "无",
+      "",
+      "## 场景与篇幅预算",
+      `规划 2-5 个有明确行动与后果的真实场景，总篇幅控制在 ${input.lengthSpec.hardMin}-${input.lengthSpec.hardMax} 字，目标约 ${input.lengthSpec.target} 字；为每个场景分配动态字数预算，不靠总结和重复内心戏凑字数。`,
       "",
       "## 当前任务",
       `沿用当前章节目标和权威设定推进第 ${input.chapterNumber} 章，不临时改方向，也不把章节写成泛泛过渡。`,

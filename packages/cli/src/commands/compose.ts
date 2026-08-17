@@ -23,7 +23,6 @@ composeCommand
       const pipeline = new PipelineRunner(
         buildPipelineConfig(config, root, {
           externalContext: context,
-          inputGovernanceMode: "v2",
           quiet: opts.quiet,
         }),
       );

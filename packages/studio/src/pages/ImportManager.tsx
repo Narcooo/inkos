@@ -5,7 +5,7 @@ import type { TFunction } from "../hooks/use-i18n";
 import { useI18n } from "../hooks/use-i18n";
 import { useColors } from "../hooks/use-colors";
 import { tr } from "../lib/app-language";
-import { FileInput, BookCopy, Feather, BookMarked, Wand2 } from "lucide-react";
+import { FileInput, BookCopy, Feather, BookMarked, Upload, Wand2 } from "lucide-react";
 import { waitForStudioBookReady } from "../lib/book-ready";
 
 interface BookSummary {
@@ -16,6 +16,15 @@ interface BookSummary {
 interface Nav { toDashboard: () => void; toBook: (bookId: string) => void }
 
 type Tab = "chapters" | "canon" | "fanfic" | "spinoff" | "imitation";
+
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.onerror = () => reject(reader.error ?? new Error("Failed to read file"));
+    reader.readAsDataURL(file);
+  });
+}
 
 export function ImportManager({ nav, theme, t, initialTab }: { nav: Nav; theme: Theme; t: TFunction; initialTab?: Tab }) {
   const c = useColors(theme);
@@ -33,6 +42,8 @@ export function ImportManager({ nav, theme, t, initialTab }: { nav: Nav; theme: 
   // Canon state
   const [canonTarget, setCanonTarget] = useState("");
   const [canonFrom, setCanonFrom] = useState("");
+  const [canonSourceType, setCanonSourceType] = useState<"book" | "file">("book");
+  const [canonFile, setCanonFile] = useState<File | null>(null);
 
   // Fanfic state
   const [ffTitle, setFfTitle] = useState("");
@@ -78,12 +89,24 @@ export function ImportManager({ nav, theme, t, initialTab }: { nav: Nav; theme: 
   };
 
   const handleImportCanon = async () => {
-    if (!canonTarget || !canonFrom) return;
+    if (!canonTarget || (canonSourceType === "book" ? !canonFrom : !canonFile)) return;
     setLoading(true);
     setStatus("");
     try {
-      await postApi(`/books/${canonTarget}/import/canon`, { fromBookId: canonFrom });
-      setStatus("Canon imported successfully!");
+      if (canonSourceType === "book") {
+        await postApi(`/books/${canonTarget}/import/canon`, { fromBookId: canonFrom });
+      } else if (canonFile) {
+        const uploaded = await fetchJson<{ storedPath: string }>("/import/canon/upload", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filename: canonFile.name, dataUrl: await fileToDataUrl(canonFile) }),
+        });
+        await postApi(`/books/${canonTarget}/import/canon-file`, {
+          filePath: uploaded.storedPath,
+          filename: canonFile.name,
+        });
+      }
+      setStatus(tr("母本导入成功", "Canon imported successfully"));
     } catch (e) {
       setStatus(`Error: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -217,17 +240,47 @@ export function ImportManager({ nav, theme, t, initialTab }: { nav: Nav; theme: 
 
         {tab === "canon" && (
           <>
-            <select value={canonFrom} onChange={(e) => setCanonFrom(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg bg-secondary/30 border border-border text-sm">
-              <option value="">{t("import.selectSource")}</option>
-              {booksData?.books.map((b) => <option key={b.id} value={b.id}>{b.title}</option>)}
-            </select>
+            <p className="text-sm text-muted-foreground">
+              {tr("母本可以来自已有 InkOS 书籍，也可以直接上传外部 TXT、Markdown 或 PDF 小说。", "Use an existing InkOS book or upload an external TXT, Markdown, or PDF novel as canon.")}
+            </p>
+            <div className="inline-flex rounded-lg border border-border bg-secondary/20 p-1">
+              {(["book", "file"] as const).map((sourceType) => (
+                <button
+                  key={sourceType}
+                  type="button"
+                  onClick={() => setCanonSourceType(sourceType)}
+                  className={`rounded-md px-3 py-1.5 text-sm ${canonSourceType === sourceType ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"}`}
+                >
+                  {sourceType === "book" ? tr("已有书籍", "Existing book") : tr("上传外部母本", "Upload external canon")}
+                </button>
+              ))}
+            </div>
+            {canonSourceType === "book" ? (
+              <select value={canonFrom} onChange={(e) => setCanonFrom(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg bg-secondary/30 border border-border text-sm">
+                <option value="">{t("import.selectSource")}</option>
+                {booksData?.books.map((b) => <option key={b.id} value={b.id}>{b.title}</option>)}
+              </select>
+            ) : (
+              <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-dashed border-border bg-secondary/20 px-4 py-4 text-sm hover:bg-secondary/30">
+                <Upload size={18} className="text-primary" />
+                <span className="min-w-0 flex-1 truncate">
+                  {canonFile?.name ?? tr("选择 TXT、Markdown 或 PDF 文件", "Choose a TXT, Markdown, or PDF file")}
+                </span>
+                <input
+                  type="file"
+                  accept=".txt,.md,.markdown,.pdf,text/plain,text/markdown,application/pdf"
+                  className="sr-only"
+                  onChange={(event) => setCanonFile(event.target.files?.[0] ?? null)}
+                />
+              </label>
+            )}
             <select value={canonTarget} onChange={(e) => setCanonTarget(e.target.value)}
               className="w-full px-3 py-2 rounded-lg bg-secondary/30 border border-border text-sm">
               <option value="">{t("import.selectDerivative")}</option>
               {booksData?.books.map((b) => <option key={b.id} value={b.id}>{b.title}</option>)}
             </select>
-            <button onClick={handleImportCanon} disabled={loading || !canonTarget || !canonFrom}
+            <button onClick={handleImportCanon} disabled={loading || !canonTarget || (canonSourceType === "book" ? !canonFrom : !canonFile)}
               className={`px-4 py-2 text-sm rounded-lg ${c.btnPrimary} disabled:opacity-30`}>
               {loading ? t("import.importing") : t("import.canon")}
             </button>

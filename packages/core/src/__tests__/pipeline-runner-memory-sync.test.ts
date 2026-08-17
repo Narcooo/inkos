@@ -93,6 +93,11 @@ class FakeMemoryDB {
     this.store.summaries = summaries.map((summary) => ({ ...summary }));
   }
 
+  replaceCurrentFacts(facts: FakeStore["facts"]): void {
+    this.store.facts = facts.map((fact) => ({ ...fact }));
+    this.store.nextFactId = Math.max(0, ...facts.map((fact) => fact.id)) + 1;
+  }
+
   replaceHooks(hooks: FakeStore["hooks"]): void {
     this.store.hooks = hooks.map((hook) => ({ ...hook }));
   }
@@ -143,6 +148,8 @@ describe("PipelineRunner structured-state memory sync", () => {
     const { WriterAgent } = await import("../agents/writer.js");
     const { ContinuityAuditor } = await import("../agents/continuity.js");
     const { StateValidatorAgent } = await import("../agents/state-validator.js");
+    const { PlannerAgent } = await import("../agents/planner.js");
+    const { ComposerAgent } = await import("../agents/composer.js");
 
     root = await mkdtemp(join(tmpdir(), "inkos-runner-memory-sync-"));
     const state = new StateManager(root);
@@ -160,6 +167,33 @@ describe("PipelineRunner structured-state memory sync", () => {
       createdAt: now,
       updatedAt: now,
     };
+
+    vi.spyOn(PlannerAgent.prototype, "planChapter").mockImplementation(async (input) => ({
+      intent: {
+        chapter: input.chapterNumber,
+        goal: "Trace the debt through the watchtower archive.",
+        mustKeep: [],
+        mustAvoid: [],
+        styleEmphasis: [],
+      },
+      memo: {
+        chapter: input.chapterNumber,
+        goal: "Trace the debt through the archive",
+        isGoldenOpening: false,
+        body: "## Current task\nTrace the debt through the watchtower archive.",
+        threadRefs: [],
+      },
+      intentMarkdown: "# Chapter Intent\n\n## Goal\nTrace the debt through the watchtower archive.",
+      plannerInputs: [],
+      runtimePath: join(input.bookDir, "story", "runtime", "chapter-0001.intent.md"),
+    }));
+    vi.spyOn(ComposerAgent.prototype, "selectMemoryCandidates").mockImplementation(async (request) =>
+      request.candidates.map((candidate) => candidate.id));
+    vi.spyOn(ComposerAgent.prototype, "selectOutlineSections").mockImplementation(async (request) =>
+      request.candidates.map((candidate) => candidate.source));
+    vi.spyOn(ComposerAgent.prototype, "selectReferenceSections").mockImplementation(async (request) =>
+      request.candidates.map((candidate) => candidate.source));
+    vi.spyOn(ComposerAgent.prototype, "compileCompressibleContext").mockResolvedValue("## Compiled context\n- test");
 
     await state.saveBookConfig(bookId, book);
     const bookDir = state.bookDir(bookId);
@@ -192,7 +226,6 @@ describe("PipelineRunner structured-state memory sync", () => {
       } as ConstructorParameters<typeof PipelineRunner>[0]["client"],
       model: "test-model",
       projectRoot: root,
-      inputGovernanceMode: "legacy",
     });
 
     const originalSaveChapter = WriterAgent.prototype.saveChapter;

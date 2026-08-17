@@ -1,9 +1,15 @@
-import { lstat, readFile } from "node:fs/promises";
+import { lstat, readFile, readdir } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import { Type, type Static } from "@mariozechner/pi-ai";
 import type { AgentMessage, AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
-import type { SkillRegistry } from "../skills/index.js";
+import type { AgentSkill, SkillRegistry } from "../skills/index.js";
 import { safeChildPath } from "../utils/path-safety.js";
+import {
+  LocalSearchIndex,
+  splitMarkdownForSearch,
+  type SearchDocument,
+} from "../retrieval/local-search.js";
+import { toPosixPath } from "../utils/posix-path.js";
 
 const MAX_SKILL_RESOURCE_BYTES = 512 * 1024;
 const EXPIRED_SKILL_GUIDANCE = "This skill was used for its original turn only. Its instructions are not active for later turns.";
@@ -15,6 +21,9 @@ const UseSkillParams = Type.Object({
   resourcePath: Type.Optional(Type.String({
     description: "Optional relative text resource inside the skill folder, after the main skill has been activated.",
   })),
+  query: Type.Optional(Type.String({
+    description: "Natural-language query for retrieving relevant sections from this skill's references. Prefer this when the exact resource path is unknown.",
+  })),
 });
 
 type UseSkillParamsType = Static<typeof UseSkillParams>;
@@ -22,7 +31,20 @@ type UseSkillParamsType = Static<typeof UseSkillParams>;
 export interface CreateUseSkillToolOptions {
   readonly registry: SkillRegistry;
   readonly disabledSkillIds?: ReadonlyArray<string>;
-  readonly onActivate?: (skillId: string) => void;
+  readonly onActivate?: (activation: ActivatedSkillGuidance) => void;
+}
+
+export interface ActivatedSkillResource {
+  readonly path: string;
+  readonly heading?: string;
+  readonly body: string;
+  readonly charStart: number;
+  readonly charEnd: number;
+}
+
+export interface ActivatedSkillGuidance {
+  readonly skill: AgentSkill;
+  readonly resources: ReadonlyArray<ActivatedSkillResource>;
 }
 
 export function createUseSkillTool(
@@ -44,6 +66,14 @@ export function createUseSkillTool(
         throw new Error(`Skill is not available: ${skillId}`);
       }
       let resource: { readonly path: string; readonly body: string } | undefined;
+      let retrievedResources: ReadonlyArray<{
+        readonly path: string;
+        readonly heading: string;
+        readonly body: string;
+        readonly charStart: number;
+        readonly charEnd: number;
+        readonly score: number;
+      }> = [];
       if (params.resourcePath?.trim()) {
         if (!skill.baseDir) {
           throw new Error(`Skill has no readable resource directory: ${skill.id}`);
@@ -60,9 +90,30 @@ export function createUseSkillTool(
           throw new Error(`Skill resource is not UTF-8 text: ${resourcePath}`);
         }
         resource = { path: resourcePath, body };
+      } else if (params.query?.trim()) {
+        if (!skill.baseDir) {
+          throw new Error(`Skill has no readable resource directory: ${skill.id}`);
+        }
+        retrievedResources = await retrieveSkillResources(skill.id, skill.baseDir, params.query.trim());
       }
 
-      options.onActivate?.(skill.id);
+      options.onActivate?.({
+        skill,
+        resources: resource
+          ? [{
+              path: resource.path,
+              body: resource.body,
+              charStart: 0,
+              charEnd: resource.body.length,
+            }]
+          : retrievedResources.map(({ path, heading, body, charStart, charEnd }) => ({
+              path,
+              heading,
+              body,
+              charStart,
+              charEnd,
+            })),
+      });
       return textResult(
         [
           `Skill activated: ${skill.id}`,
@@ -76,6 +127,16 @@ export function createUseSkillTool(
                 resource.body,
               ]
             : []),
+          ...(retrievedResources.length > 0
+            ? [
+                "",
+                "Relevant static references:",
+                ...retrievedResources.flatMap((item) => [
+                  `## ${item.path}:${item.charStart}-${item.charEnd}${item.heading ? ` · ${item.heading}` : ""}`,
+                  item.body,
+                ]),
+              ]
+            : []),
           "",
           "This skill provides instructions only. Continue using the current session's existing tools and confirmation rules.",
         ].filter(Boolean).join("\n"),
@@ -83,10 +144,118 @@ export function createUseSkillTool(
           kind: "skill_activated",
           skillId: skill.id,
           ...(resource ? { resourcePath: resource.path } : {}),
+          ...(params.query?.trim()
+            ? {
+                query: params.query.trim(),
+                retrievedResources: retrievedResources.map(({ path, heading, charStart, charEnd, score }) => ({
+                  path,
+                  heading,
+                  charStart,
+                  charEnd,
+                  score,
+                })),
+              }
+            : {}),
         },
       );
     },
   };
+}
+
+export async function retrieveSkillResources(
+  skillId: string,
+  baseDir: string,
+  query: string,
+  limit = 4,
+) {
+  const files = await listSkillTextFiles(baseDir);
+  const documents: SearchDocument[] = [];
+  for (const path of files) {
+    const fullPath = safeChildPath(baseDir, path);
+    const info = await lstatWithoutSymlinks(baseDir, fullPath);
+    if (!info.isFile() || info.size > MAX_SKILL_RESOURCE_BYTES) continue;
+    const body = await readFile(fullPath, "utf-8");
+    if (body.includes("\0")) continue;
+    splitMarkdownForSearch(body).forEach((segment, index) => {
+      documents.push({
+        id: `skill:${skillId}:${path}:${index}`,
+        scope: `skill:${skillId}`,
+        kind: "skill-reference",
+        source: `${path}:${segment.charStart}-${segment.charEnd}`,
+        title: [path, segment.heading].filter(Boolean).join(" · "),
+        body: segment.body,
+        metadata: {
+          path,
+          heading: segment.heading,
+          charStart: segment.charStart,
+          charEnd: segment.charEnd,
+        },
+      });
+    });
+  }
+
+  const index = new LocalSearchIndex(":memory:");
+  try {
+    const scope = `skill:${skillId}`;
+    index.replaceScope(scope, documents);
+    return index.search(query, { scope, limit }).map((hit) => ({
+      path: String(hit.metadata?.path ?? ""),
+      heading: String(hit.metadata?.heading ?? ""),
+      body: hit.body,
+      charStart: Number(hit.metadata?.charStart ?? 0),
+      charEnd: Number(hit.metadata?.charEnd ?? hit.body.length),
+      score: hit.score,
+    }));
+  } finally {
+    index.close();
+  }
+}
+
+/**
+ * Production workers receive the skill itself from the host. Resolve the
+ * relevant static reference sections from the actual task text just before a
+ * model call, instead of copying large craft prompts into every pipeline.
+ */
+export async function hydrateActivatedSkillGuidance(
+  activations: ReadonlyArray<ActivatedSkillGuidance> | undefined,
+  query: string,
+): Promise<ReadonlyArray<ActivatedSkillGuidance> | undefined> {
+  if (!activations || activations.length === 0 || !query.trim()) return activations;
+  return Promise.all(activations.map(async (activation) => {
+    if (activation.resources.length > 0 || !activation.skill.baseDir) return activation;
+    const resources = await retrieveSkillResources(
+      activation.skill.id,
+      activation.skill.baseDir,
+      query,
+    );
+    return {
+      skill: activation.skill,
+      resources: resources.map(({ path, heading, body, charStart, charEnd }) => ({
+        path,
+        heading,
+        body,
+        charStart,
+        charEnd,
+      })),
+    };
+  }));
+}
+
+async function listSkillTextFiles(root: string, current = root): Promise<string[]> {
+  const files: string[] = [];
+  for (const entry of await readdir(current, { withFileTypes: true })) {
+    const fullPath = join(current, entry.name);
+    const relativePath = toPosixPath(relative(root, fullPath));
+    if (entry.isSymbolicLink()) continue;
+    if (entry.isDirectory()) {
+      files.push(...await listSkillTextFiles(root, fullPath));
+      continue;
+    }
+    if (!entry.isFile() || relativePath === "SKILL.md") continue;
+    if (!/\.(?:md|txt)$/i.test(entry.name)) continue;
+    files.push(relativePath);
+  }
+  return files.sort();
 }
 
 function textResult<T>(text: string, details: T): AgentToolResult<T> {

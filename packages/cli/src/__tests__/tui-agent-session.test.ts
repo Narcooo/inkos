@@ -156,7 +156,7 @@ describe("tui agent session bridge", () => {
     expect(persisted.activeBookId).toBe("night-harbor");
   });
 
-  it("routes create-book text through the unified agent session instead of parsing it locally", async () => {
+  it("keeps ordinary creation language in chat so the agent can propose a confirmed action", async () => {
     runAgentSessionMock.mockResolvedValue({
       responseText: "我理解你想创建《雾灯小巷》，请确认后我再建书。",
       messages: [
@@ -174,9 +174,8 @@ describe("tui agent session bridge", () => {
 
     expect(runAgentSessionMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        sessionKind: "book-create",
+        sessionKind: "chat",
         actionSource: "free-text",
-        requestedIntent: undefined,
       }),
       expect.stringContaining("雾灯小巷"),
       [],
@@ -185,6 +184,139 @@ describe("tui agent session bridge", () => {
     expect(result.responseText).toContain("请确认");
     const persisted = await loadProjectSession(projectRoot);
     expect(persisted.activeBookId).toBeUndefined();
+  });
+
+  it("uses explicit slash entries to select book, short, and play surfaces without parsing free text", async () => {
+    runAgentSessionMock.mockResolvedValue({
+      responseText: "先讨论并确认方向。",
+      messages: [{ role: "assistant", content: "先讨论并确认方向。" }],
+    });
+    const { processTuiAgentInput } = await import("../tui/agent-input.js");
+
+    const withBook = { ...createProjectSession(projectRoot), activeBookId: "old-book" };
+    const newBook = await processTuiAgentInput({
+      projectRoot,
+      input: "/new 一部海港悬疑长篇",
+      session: withBook,
+      activeBookId: "old-book",
+    });
+    expect(runAgentSessionMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ bookId: null, sessionKind: "book-create", actionSource: "slash" }),
+      "一部海港悬疑长篇",
+      [],
+    );
+    expect(newBook.session.activeBookId).toBeUndefined();
+
+    await processTuiAgentInput({
+      projectRoot,
+      input: "/short 婚姻背叛后的证据反杀",
+      session: createProjectSession(projectRoot),
+    });
+    expect(runAgentSessionMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ bookId: null, sessionKind: "short", actionSource: "slash" }),
+      "婚姻背叛后的证据反杀",
+      [],
+    );
+
+    await processTuiAgentInput({
+      projectRoot,
+      input: "/play open 雨夜便利店里时间停止",
+      session: createProjectSession(projectRoot),
+    });
+    expect(runAgentSessionMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ bookId: null, sessionKind: "play", playMode: "open" }),
+      "雨夜便利店里时间停止",
+      [],
+    );
+  });
+
+  it("persists a structured proposal and replays its payload and skills only after confirmation", async () => {
+    runAgentSessionMock.mockResolvedValueOnce({
+      responseText: "",
+      messages: [{
+        role: "toolResult",
+        details: {
+          kind: "proposed_action",
+          action: "interactive_film_create",
+          targetSessionKind: "interactive-film",
+          title: "创建互动影游",
+          summary: "确认后生成项目。",
+          instruction: "把上传的故事改成三幕互动影游",
+          requestedSkills: ["interactive-film-authoring"],
+          actionPayload: {
+            interactiveFilmCreate: {
+              title: "回声航线",
+              sourcePath: ".inkos/uploads/echo.md",
+              episodeCount: 3,
+            },
+          },
+        },
+      }],
+    });
+    runAgentSessionMock.mockResolvedValueOnce({
+      responseText: "互动影游项目已生成。",
+      messages: [{ role: "assistant", content: "互动影游项目已生成。" }],
+    });
+    const { processTuiAgentInput } = await import("../tui/agent-input.js");
+
+    const proposed = await processTuiAgentInput({
+      projectRoot,
+      input: "把这个故事做成互动影游",
+      session: createProjectSession(projectRoot),
+    });
+    expect(proposed.responseText).toContain("输入 /confirm");
+    expect(proposed.session.pendingProposedAction).toEqual(expect.objectContaining({
+      action: "interactive_film_create",
+      targetSessionKind: "interactive-film",
+      requestedSkills: ["interactive-film-authoring"],
+      actionPayload: expect.objectContaining({
+        interactiveFilmCreate: expect.objectContaining({ title: "回声航线" }),
+      }),
+    }));
+
+    const confirmed = await processTuiAgentInput({
+      projectRoot,
+      input: "/confirm",
+      session: proposed.session,
+    });
+    expect(runAgentSessionMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        bookId: null,
+        sessionKind: "interactive-film",
+        actionSource: "slash",
+        requestedIntent: "interactive_film_create",
+        requestedSkills: ["interactive-film-authoring"],
+        actionPayload: {
+          interactiveFilmCreate: {
+            title: "回声航线",
+            sourcePath: ".inkos/uploads/echo.md",
+            episodeCount: 3,
+          },
+        },
+      }),
+      "把上传的故事改成三幕互动影游",
+      expect.any(Array),
+    );
+    expect(confirmed.session.pendingProposedAction).toBeUndefined();
+  });
+
+  it("uses the per-session model override when resolving the model client", async () => {
+    runAgentSessionMock.mockResolvedValue({
+      responseText: "已按当前模型回复。",
+      messages: [{ role: "assistant", content: "已按当前模型回复。" }],
+    });
+    const { processTuiAgentInput } = await import("../tui/agent-input.js");
+    await processTuiAgentInput({
+      projectRoot,
+      input: "概括当前进度",
+      session: { ...createProjectSession(projectRoot), modelOverride: "deepseek-v4-pro" },
+    });
+
+    expect(loadConfigMock).toHaveBeenCalledWith(expect.objectContaining({
+      requireApiKey: false,
+      projectRoot,
+      cli: { model: "deepseek-v4-pro" },
+    }));
   });
 
   it("passes explicit slash write-next as a requested intent to the unified agent session", async () => {
@@ -213,7 +345,7 @@ describe("tui agent session bridge", () => {
         actionSource: "slash",
         requestedIntent: "write_next",
       }),
-      "/write",
+      "写下一章",
       [],
     );
     expect(result.responseText).toContain("完成下一章");

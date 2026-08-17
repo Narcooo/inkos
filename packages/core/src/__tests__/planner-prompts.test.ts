@@ -6,6 +6,15 @@ import {
   buildGoldenOpeningGuidance,
 } from "../agents/planner-prompts.js";
 
+const LENGTH_BUDGET = {
+  target: 2200,
+  softMin: 1900,
+  softMax: 2500,
+  hardMin: 1600,
+  hardMax: 2800,
+  unit: "字",
+} as const;
+
 describe("PLANNER_MEMO_SYSTEM_PROMPT", () => {
   it("contains key mobile web-fiction craft phrases", () => {
     expect(PLANNER_MEMO_SYSTEM_PROMPT).toContain("1 主线 + 1 支线");
@@ -13,6 +22,7 @@ describe("PLANNER_MEMO_SYSTEM_PROMPT", () => {
     expect(PLANNER_MEMO_SYSTEM_PROMPT).toContain("不要 YAML frontmatter");
     expect(PLANNER_MEMO_SYSTEM_PROMPT).toContain("## 本章目标");
     expect(PLANNER_MEMO_SYSTEM_PROMPT).toContain("## 关联线索");
+    expect(PLANNER_MEMO_SYSTEM_PROMPT).toContain("## 场景与篇幅预算");
     expect(PLANNER_MEMO_SYSTEM_PROMPT).toContain("不超过 50 字");
     expect(PLANNER_MEMO_SYSTEM_PROMPT).toContain("## 当前任务");
     expect(PLANNER_MEMO_SYSTEM_PROMPT).toContain("## 不要做");
@@ -36,6 +46,12 @@ describe("PLANNER_MEMO_USER_TEMPLATE", () => {
       "{{relevant_threads}}",
       "{{recyclable_hooks}}",
       "{{isGoldenOpening}}",
+      "{{lengthTarget}}",
+      "{{lengthSoftMin}}",
+      "{{lengthSoftMax}}",
+      "{{lengthHardMin}}",
+      "{{lengthHardMax}}",
+      "{{lengthUnit}}",
       "{{book_rules_relevant}}",
     ];
     for (const ph of placeholders) {
@@ -57,6 +73,7 @@ describe("buildPlannerUserMessage", () => {
       relevantThreads: "- H03: 未解码信\n- S004: 七号门异常",
       recyclableHooks: "（暂无陈旧 hook——账本干净）",
       isGoldenOpening: false,
+      lengthBudget: LENGTH_BUDGET,
       bookRulesRelevant: "- 禁止主角降智",
     });
 
@@ -69,6 +86,8 @@ describe("buildPlannerUserMessage", () => {
     expect(out).toContain("| 小白 | 盟友 | ... |");
     expect(out).toContain("- H03: 未解码信");
     expect(out).toContain("是否黄金三章：否");
+    expect(out).toContain("目标 2200 字");
+    expect(out).toContain("硬区间 1600-2800");
     expect(out).toContain("- 禁止主角降智");
     expect(out).not.toContain("{{");
   });
@@ -85,6 +104,7 @@ describe("buildPlannerUserMessage", () => {
       relevantThreads: "",
       recyclableHooks: "",
       isGoldenOpening: true,
+      lengthBudget: LENGTH_BUDGET,
       bookRulesRelevant: "",
     });
     expect(out).toContain("是否黄金三章：是");
@@ -160,6 +180,7 @@ describe("buildGoldenOpeningGuidance", () => {
       relevantThreads: "",
       recyclableHooks: "",
       isGoldenOpening: false,
+      lengthBudget: LENGTH_BUDGET,
       bookRulesRelevant: "",
     };
 

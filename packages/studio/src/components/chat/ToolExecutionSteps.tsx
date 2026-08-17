@@ -114,6 +114,7 @@ export interface GeneratedArtifactDetails {
   readonly flagsPath?: string;
   readonly imagePromptsPath?: string;
   readonly assetsManifestPath?: string;
+  readonly skillIds?: ReadonlyArray<string>;
 }
 
 export interface PlayToolDetails {
@@ -126,6 +127,7 @@ export interface PlayToolDetails {
   readonly sceneText?: string;
   readonly suggestedActions?: readonly string[];
   readonly variantId?: string;
+  readonly skillIds?: ReadonlyArray<string>;
 }
 
 export interface PlayEditDetails {
@@ -143,7 +145,6 @@ export interface ProposedActionDetails {
   readonly execId: string;
   readonly action: ChatRequestedIntent;
   readonly targetSessionKind: ChatSessionKind;
-  readonly targetRoute?: "import:fanfic" | "import:chapters" | "import:canon" | "import:spinoff" | "import:imitation" | "style";
   readonly sameSession?: boolean;
   readonly title?: string;
   readonly summary?: string;
@@ -191,19 +192,282 @@ function stringArrayField(record: Record<string, unknown>, key: string): string[
   return out.length > 0 ? out : undefined;
 }
 
-function proposedTargetRouteField(record: Record<string, unknown>): ProposedActionDetails["targetRoute"] {
-  const value = stringField(record, "targetRoute");
-  if (
-    value === "import:fanfic"
-    || value === "import:chapters"
-    || value === "import:canon"
-    || value === "import:spinoff"
-    || value === "import:imitation"
-    || value === "style"
-  ) {
-    return value;
+function rawStringArrayField(record: Record<string, unknown>, key: string): string[] {
+  const value = record[key];
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+export function getExecutionSkillIds(exec: ToolExecution): ReadonlyArray<string> {
+  if (!exec.details || typeof exec.details !== "object" || Array.isArray(exec.details)) return [];
+  return rawStringArrayField(exec.details as Record<string, unknown>, "skillIds");
+}
+
+function SkillUsagePreview({ exec }: { exec: ToolExecution }) {
+  const skills = getExecutionSkillIds(exec);
+  if (skills.length === 0) return null;
+  return (
+    <div className="mx-3 mb-2 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+      <span className="font-semibold text-foreground/80">{tr("专业 Skill", "Professional skills")}</span>
+      {skills.map((skill) => (
+        <span key={skill} className="rounded-full border border-border/50 bg-background/60 px-2 py-0.5 font-mono text-[11px]">
+          {skill}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+interface ChapterContextTraceDetails {
+  readonly chapterNumber?: number;
+  readonly tracePath: string;
+  readonly selectedSources: ReadonlyArray<string>;
+  readonly protectedSources: ReadonlyArray<string>;
+  readonly compressibleSources: ReadonlyArray<string>;
+  readonly protectedTokens?: number;
+  readonly compressibleTokens?: number;
+  readonly totalSelectedTokens?: number;
+  readonly retrievalEngine?: string;
+  readonly retrievalCandidateCount: number;
+  readonly semanticSelectedCount: number;
+  readonly compressedSources: ReadonlyArray<string>;
+}
+
+function parseChapterContextTrace(value: unknown, chapterNumber?: number): ChapterContextTraceDetails | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const tracePath = stringField(record, "tracePath");
+  if (!tracePath) return null;
+  const tokenBudget = record.tokenBudget && typeof record.tokenBudget === "object" && !Array.isArray(record.tokenBudget)
+    ? record.tokenBudget as Record<string, unknown>
+    : {};
+  const retrieval = record.retrieval && typeof record.retrieval === "object" && !Array.isArray(record.retrieval)
+    ? record.retrieval as Record<string, unknown>
+    : {};
+  const compression = record.compression && typeof record.compression === "object" && !Array.isArray(record.compression)
+    ? record.compression as Record<string, unknown>
+    : {};
+  return {
+    chapterNumber,
+    tracePath,
+    selectedSources: rawStringArrayField(record, "selectedSources"),
+    protectedSources: rawStringArrayField(record, "protectedSources"),
+    compressibleSources: rawStringArrayField(record, "compressibleSources"),
+    protectedTokens: numberField(tokenBudget, "protectedTokens"),
+    compressibleTokens: numberField(tokenBudget, "compressibleTokens"),
+    totalSelectedTokens: numberField(tokenBudget, "totalSelectedTokens"),
+    retrievalEngine: stringField(retrieval, "engine"),
+    retrievalCandidateCount: Array.isArray(retrieval.candidates) ? retrieval.candidates.length : 0,
+    semanticSelectedCount: rawStringArrayField(retrieval, "semanticSelectedIds").length,
+    compressedSources: rawStringArrayField(compression, "compressedSources"),
+  };
+}
+
+export function getChapterContextTraceDetails(exec: ToolExecution): ReadonlyArray<ChapterContextTraceDetails> {
+  if (exec.tool !== "sub_agent" || !exec.details || typeof exec.details !== "object" || Array.isArray(exec.details)) return [];
+  const details = exec.details as Record<string, unknown>;
+  if (details.kind === "chapter_written") {
+    const trace = parseChapterContextTrace(details.contextTrace, numberField(details, "chapterNumber"));
+    return trace ? [trace] : [];
   }
-  return undefined;
+  if (details.kind !== "chapters_written" || !Array.isArray(details.chapters)) return [];
+  return details.chapters.flatMap((chapter) => {
+    if (!chapter || typeof chapter !== "object" || Array.isArray(chapter)) return [];
+    const record = chapter as Record<string, unknown>;
+    const trace = parseChapterContextTrace(record.contextTrace, numberField(record, "chapterNumber"));
+    return trace ? [trace] : [];
+  });
+}
+
+function ChapterContextTracePreview({ exec }: { exec: ToolExecution }) {
+  const traces = getChapterContextTraceDetails(exec);
+  if (traces.length === 0) return null;
+  return (
+    <div className="mx-3 mb-3 mt-1 rounded-xl border border-border/50 bg-background/55 px-3 py-2.5 text-xs">
+      <div className="font-semibold text-foreground">{tr("本轮参考依据", "Context used this turn")}</div>
+      <div className="mt-2 space-y-2">
+        {traces.map((trace) => (
+          <details key={`${trace.chapterNumber ?? 0}:${trace.tracePath}`} className="rounded-lg border border-border/40 px-2.5 py-2">
+            <summary className="cursor-pointer select-none font-medium text-foreground">
+              {trace.chapterNumber ? tr(`第 ${trace.chapterNumber} 章`, `Chapter ${trace.chapterNumber}`) : tr("章节", "Chapter")}
+              {trace.retrievalEngine ? ` · ${trace.retrievalEngine}` : ""}
+            </summary>
+            <div className="mt-2 space-y-1.5 text-muted-foreground">
+              <div>
+                {tr("预算", "Budget")}: {trace.totalSelectedTokens ?? 0}
+                {` · ${tr("保护", "protected")} ${trace.protectedTokens ?? 0}`}
+                {` · ${tr("可压缩", "compressible")} ${trace.compressibleTokens ?? 0}`}
+              </div>
+              <div>
+                {tr("检索", "Retrieval")}: {trace.retrievalCandidateCount} {tr("个 BM25 候选", "BM25 candidates")}
+                {trace.semanticSelectedCount > 0 ? ` · ${trace.semanticSelectedCount} ${tr("个语义选择", "semantic selections")}` : ""}
+              </div>
+              {trace.compressedSources.length > 0 && (
+                <div>{tr("语义压缩", "Semantic compaction")}: {trace.compressedSources.join(" · ")}</div>
+              )}
+              <div>{tr("完整来源", "All sources")}:</div>
+              <ul className="space-y-0.5 font-mono text-[11px]">
+                {trace.selectedSources.map((source) => <li key={source}>{source}</li>)}
+              </ul>
+              <div className="font-mono text-[11px]">{trace.tracePath}</div>
+            </div>
+          </details>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+interface ChapterRevisionIssueDetails {
+  readonly severity: string;
+  readonly category: string;
+  readonly description: string;
+  readonly suggestion?: string;
+}
+
+interface ChapterRevisionDetails {
+  readonly chapterNumber?: number;
+  readonly applied: boolean;
+  readonly status?: string;
+  readonly auditPassed?: boolean;
+  readonly fixedIssues: ReadonlyArray<string>;
+  readonly auditIssues: ReadonlyArray<ChapterRevisionIssueDetails>;
+  readonly skippedReason?: string;
+}
+
+interface ChapterStateResyncDetails {
+  readonly chapterNumber?: number;
+  readonly status?: string;
+  readonly auditPassed?: boolean;
+  readonly auditIssues: ReadonlyArray<ChapterRevisionIssueDetails>;
+  readonly summary?: string;
+}
+
+function parseChapterAuditIssues(value: unknown): ReadonlyArray<ChapterRevisionIssueDetails> {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((issue) => {
+    if (!issue || typeof issue !== "object" || Array.isArray(issue)) return [];
+    const record = issue as Record<string, unknown>;
+    const description = stringField(record, "description");
+    if (!description) return [];
+    return [{
+      severity: stringField(record, "severity") ?? "warning",
+      category: stringField(record, "category") ?? "review",
+      description,
+      suggestion: stringField(record, "suggestion"),
+    }];
+  });
+}
+
+export function getChapterRevisionDetails(exec: ToolExecution): ChapterRevisionDetails | null {
+  if (exec.tool !== "sub_agent" || !exec.details || typeof exec.details !== "object" || Array.isArray(exec.details)) return null;
+  const details = exec.details as Record<string, unknown>;
+  if (details.kind !== "chapter_revision") return null;
+  return {
+    chapterNumber: numberField(details, "chapterNumber"),
+    applied: details.applied === true,
+    status: stringField(details, "status"),
+    auditPassed: typeof details.auditPassed === "boolean" ? details.auditPassed : undefined,
+    fixedIssues: rawStringArrayField(details, "fixedIssues"),
+    auditIssues: parseChapterAuditIssues(details.auditIssues),
+    skippedReason: stringField(details, "skippedReason"),
+  };
+}
+
+export function getChapterStateResyncDetails(exec: ToolExecution): ChapterStateResyncDetails | null {
+  if (exec.tool !== "resync_chapter_state" || !exec.details || typeof exec.details !== "object" || Array.isArray(exec.details)) return null;
+  const details = exec.details as Record<string, unknown>;
+  if (details.kind !== "chapter_state_resynced") return null;
+  return {
+    chapterNumber: numberField(details, "chapterNumber"),
+    status: stringField(details, "status"),
+    auditPassed: typeof details.auditPassed === "boolean" ? details.auditPassed : undefined,
+    auditIssues: parseChapterAuditIssues(details.auditIssues),
+    summary: stringField(details, "summary"),
+  };
+}
+
+function ChapterAuditIssues({
+  issues,
+  title,
+}: {
+  readonly issues: ReadonlyArray<ChapterRevisionIssueDetails>;
+  readonly title: string;
+}) {
+  if (issues.length === 0) return null;
+  return (
+    <div className="mt-2 space-y-1.5">
+      <div className="text-[13px] font-medium text-foreground">{title}</div>
+      {issues.map((issue, index) => (
+        <div key={`${issue.category}:${index}`} className="rounded-lg border border-border/40 bg-background/55 px-2.5 py-2 text-[12px] leading-5 text-muted-foreground">
+          <div className="font-medium text-foreground">[{issue.severity}] {issue.category}</div>
+          <div>{issue.description}</div>
+          {issue.suggestion && <div className="mt-0.5">{tr("建议", "Suggestion")}{tr("：", ": ")}{issue.suggestion}</div>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ChapterRevisionPreview({ exec }: { exec: ToolExecution }) {
+  const details = getChapterRevisionDetails(exec);
+  if (!details) return null;
+  const passed = details.applied && details.auditPassed === true;
+  return (
+    <div
+      data-testid="chapter-revision-preview"
+      className={`mx-3 mb-3 mt-1 rounded-xl border px-3 py-2.5 ${passed ? "border-emerald-500/25 bg-emerald-500/5" : "border-amber-500/25 bg-amber-500/5"}`}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-[15px] font-semibold text-foreground">
+          {details.chapterNumber ? tr(`第 ${details.chapterNumber} 章修订`, `Chapter ${details.chapterNumber} revision`) : tr("章节修订", "Chapter revision")}
+        </div>
+        <div className={`rounded-full px-2 py-0.5 text-[12px] font-semibold ${passed ? "bg-emerald-500/15 text-emerald-600" : "bg-amber-500/15 text-amber-600"}`}>
+          {!details.applied
+            ? tr("保留原稿", "Original kept")
+            : details.auditPassed
+              ? tr("审稿通过", "Audit passed")
+              : tr("仍需复核", "Review required")}
+        </div>
+      </div>
+      {details.skippedReason && (
+        <div className="mt-2 text-[13px] leading-5 text-muted-foreground">{details.skippedReason}</div>
+      )}
+      {details.fixedIssues.length > 0 && (
+        <div className="mt-2 text-[13px] leading-5 text-muted-foreground">
+          <span className="font-medium text-foreground">{tr("已处理", "Fixed")}{tr("：", ": ")}</span>
+          {details.fixedIssues.join("；")}
+        </div>
+      )}
+      <ChapterAuditIssues issues={details.auditIssues} title={tr("剩余审稿问题", "Remaining audit issues")} />
+    </div>
+  );
+}
+
+function ChapterStateResyncPreview({ exec }: { exec: ToolExecution }) {
+  const details = getChapterStateResyncDetails(exec);
+  if (!details) return null;
+  const passed = details.auditPassed === true;
+  return (
+    <div
+      data-testid="chapter-state-resync-preview"
+      className={`mx-3 mb-3 mt-1 rounded-xl border px-3 py-2.5 ${passed ? "border-emerald-500/25 bg-emerald-500/5" : "border-amber-500/25 bg-amber-500/5"}`}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-[15px] font-semibold text-foreground">
+          {details.chapterNumber ? tr(`第 ${details.chapterNumber} 章状态已同步`, `Chapter ${details.chapterNumber} state resynced`) : tr("章节状态已同步", "Chapter state resynced")}
+        </div>
+        <div className={`rounded-full px-2 py-0.5 text-[12px] font-semibold ${passed ? "bg-emerald-500/15 text-emerald-600" : "bg-amber-500/15 text-amber-600"}`}>
+          {passed ? tr("审稿通过", "Audit passed") : tr("仍需修订", "Revision required")}
+        </div>
+      </div>
+      {details.summary && <div className="mt-2 text-[13px] leading-5 text-muted-foreground">{details.summary}</div>}
+      <ChapterAuditIssues issues={details.auditIssues} title={tr("审稿问题", "Audit issues")} />
+    </div>
+  );
 }
 
 export function getGeneratedArtifactDetails(exec: ToolExecution): GeneratedArtifactDetails | null {
@@ -235,6 +499,7 @@ export function getGeneratedArtifactDetails(exec: ToolExecution): GeneratedArtif
     flagsPath: stringField(record, "flagsPath"),
     imagePromptsPath: stringField(record, "imagePromptsPath"),
     assetsManifestPath: stringField(record, "assetsManifestPath"),
+    skillIds: stringArrayField(record, "skillIds"),
   };
 }
 
@@ -361,6 +626,7 @@ export function getPlayToolDetails(exec: ToolExecution): PlayToolDetails | null 
     sceneText: stringField(record, "sceneText"),
     suggestedActions: suggested,
     variantId: stringField(record, "variantId"),
+    skillIds: stringArrayField(record, "skillIds"),
   };
 }
 
@@ -485,7 +751,6 @@ export function getProposedActionDetails(exec: ToolExecution): ProposedActionDet
     execId: exec.id,
     action,
     targetSessionKind,
-    targetRoute: proposedTargetRouteField(record),
     sameSession: booleanField(record, "sameSession"),
     title: stringField(record, "title"),
     summary: stringField(record, "summary"),
@@ -549,7 +814,7 @@ function ProposedActionPreview({
       {resolution === "confirmed" ? (
         <div className="mt-3 flex items-center gap-1.5 text-[15px] leading-6 font-medium text-primary">
           <Check size={15} className="shrink-0" />
-          {details.targetRoute ? tr("已打开", "Opened") : tr("已执行", "Executed")}
+          {tr("已执行", "Executed")}
         </div>
       ) : resolution === "rejected" ? (
         <div className="mt-3 text-[15px] leading-6 font-medium text-muted-foreground">{tr("已取消", "Cancelled")}</div>
@@ -562,7 +827,7 @@ function ProposedActionPreview({
             disabled={!onProposedAction || streaming || locked}
             className="rounded-lg bg-primary px-3.5 py-2 text-[15px] leading-6 font-medium text-primary-foreground disabled:opacity-50"
           >
-            {streaming ? tr("执行中…", "Running…") : details.targetRoute ? tr("打开入口", "Open entry") : tr("继续执行", "Continue")}
+            {streaming ? tr("执行中…", "Running…") : tr("继续执行", "Continue")}
           </button>
           <button
             type="button"
@@ -622,8 +887,17 @@ function PlayEditPreview({ exec }: { exec: ToolExecution }) {
   );
 }
 
+function hasStructuredResultPreview(exec: ToolExecution): boolean {
+  if (getProposedActionDetails(exec)) return true;
+  if (getPlayToolDetails(exec)?.sceneText) return true;
+  if (getChapterRevisionDetails(exec)) return true;
+  if (getChapterStateResyncDetails(exec)) return true;
+  return Boolean(getPlayEditDetails(exec));
+}
+
 function isPipelineTool(tool: string): boolean {
   return tool === "sub_agent"
+    || tool === "resync_chapter_state"
     || tool === "context_compression"
     || tool === "propose_action"
     || tool === "short_fiction_run"
@@ -733,16 +1007,20 @@ function PipelineExecution({
         onProposedAction={onProposedAction}
         onRejectProposedAction={onRejectProposedAction}
       />
+      <SkillUsagePreview exec={exec} />
       <ShortFictionResultPreview exec={exec} />
       <ScriptStoryboardResultPreview exec={exec} onOpenFilmStudio={onOpenFilmStudio} />
       <PlayResultPreview exec={exec} />
       <PlayEditPreview exec={exec} />
+      <ChapterContextTracePreview exec={exec} />
+      <ChapterRevisionPreview exec={exec} />
+      <ChapterStateResyncPreview exec={exec} />
       <NarrativeForecastPreview
         exec={exec}
         onSelectBranch={onSelectNarrativeBranch}
         onRecheck={onRecheckNarrativeForecast}
       />
-      {!forecastDetails && typeof exec.result === "string" && exec.result.trim() && (
+      {!forecastDetails && !hasStructuredResultPreview(exec) && typeof exec.result === "string" && exec.result.trim() && (
         <PipelineResultDetails result={exec.result} defaultOpen={toolDetailsDefaultOpen} />
       )}
       <CollapsibleContent>

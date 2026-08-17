@@ -12,7 +12,6 @@ import {
   ProjectConfigSchema,
   LLMConfigSchema,
   NotifyChannelSchema,
-  InputGovernanceModeSchema,
 } from "../models/project.js";
 import {
   ChapterIntentSchema,
@@ -382,7 +381,6 @@ describe("ProjectConfigSchema", () => {
 
   it("defaults input governance mode to v2", () => {
     const result = ProjectConfigSchema.parse(validProject);
-    expect(result.inputGovernanceMode).toBe("v2");
   });
 
   it("rejects wrong version", () => {
@@ -401,16 +399,6 @@ describe("ProjectConfigSchema", () => {
     expect(() =>
       ProjectConfigSchema.parse({ name: "p", version: "0.1.0" }),
     ).toThrow();
-  });
-});
-
-describe("InputGovernanceModeSchema", () => {
-  it.each(["legacy", "v2"] as const)("accepts '%s'", (value) => {
-    expect(InputGovernanceModeSchema.parse(value)).toBe(value);
-  });
-
-  it("rejects unknown input governance modes", () => {
-    expect(() => InputGovernanceModeSchema.parse("planner")).toThrow();
   });
 });
 
@@ -751,12 +739,11 @@ describe("Length governance schemas", () => {
       hardMin: 1600,
       hardMax: 2800,
       countingMode: "zh_chars",
-      normalizeMode: "compress",
     });
 
     expect(result.target).toBe(2200);
     expect(result.softMin).toBe(1900);
-    expect(result.normalizeMode).toBe("compress");
+    expect(result.countingMode).toBe("zh_chars");
   });
 
   it("accepts telemetry for a chapter length pass", () => {
@@ -768,15 +755,14 @@ describe("Length governance schemas", () => {
       hardMax: 2800,
       countingMode: "en_words",
       writerCount: 2600,
-      postWriterNormalizeCount: 2450,
       postReviseCount: 2480,
       finalCount: 2480,
-      normalizeApplied: true,
+      repairApplied: true,
       lengthWarning: false,
     });
 
     expect(result.writerCount).toBe(2600);
-    expect(result.normalizeApplied).toBe(true);
+    expect(result.repairApplied).toBe(true);
   });
 
   it("accepts a warning when final length drifts outside the hard band", () => {

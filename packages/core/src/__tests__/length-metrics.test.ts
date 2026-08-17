@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
   buildLengthSpec,
-  chooseNormalizeMode,
   countChapterLength,
   defaultChapterLength,
   isOutsideHardRange,
@@ -47,7 +46,6 @@ describe("length metrics", () => {
       hardMin: 1600,
       hardMax: 2800,
       countingMode: "zh_chars",
-      normalizeMode: "none",
     });
   });
 
@@ -79,11 +77,4 @@ describe("length metrics", () => {
     expect(isOutsideHardRange(2200, spec)).toBe(false);
   });
 
-  it("chooses normalization direction from the measured length", () => {
-    const spec = buildLengthSpec(2200, "zh");
-
-    expect(chooseNormalizeMode(1800, spec)).toBe("expand");
-    expect(chooseNormalizeMode(2200, spec)).toBe("none");
-    expect(chooseNormalizeMode(2600, spec)).toBe("compress");
-  });
 });

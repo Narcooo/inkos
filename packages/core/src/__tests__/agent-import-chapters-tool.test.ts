@@ -7,7 +7,10 @@ import { createImportChaptersTool } from "../agent/agent-tools.js";
 
 function mockPipeline() {
   return {
-    runWithAbortSignal: vi.fn(async (_signal: AbortSignal, task: () => Promise<unknown>) => task()),
+    runWithAgentContext: vi.fn(async (
+      _context: { readonly signal?: AbortSignal },
+      task: () => Promise<unknown>,
+    ) => task()),
     importChapters: vi.fn(async (input: { bookId: string; chapters: ReadonlyArray<{ title: string; content: string }> }) => ({
       bookId: input.bookId,
       importedCount: input.chapters.length,
@@ -89,7 +92,10 @@ describe("import_chapters agent tool", () => {
 
     await tool.execute("tool-import-abort", { sourcePath: sourceDir }, controller.signal);
 
-    expect(pipeline.runWithAbortSignal).toHaveBeenCalledWith(controller.signal, expect.any(Function));
+    expect(pipeline.runWithAgentContext).toHaveBeenCalledWith(
+      { signal: controller.signal, activatedSkills: [] },
+      expect.any(Function),
+    );
     expect(pipeline.importChapters).toHaveBeenCalledOnce();
   });
 

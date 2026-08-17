@@ -15,7 +15,7 @@ import { buildDashboardViewModel, type DashboardMessageRow } from "./dashboard-m
 import { buildInputHistory, moveHistoryCursor } from "./input-history.js";
 import { formatModeLabel, getTuiCopy, normalizeStageLabel, type TuiLocale } from "./i18n.js";
 import { loadProjectSession, persistProjectSession, resolveSessionActiveBook } from "./session-store.js";
-import { classifyLocalTuiCommand, parseDepthCommand } from "./local-commands.js";
+import { classifyLocalTuiCommand, parseDepthCommand, parseModelCommand } from "./local-commands.js";
 import {
   applySlashSuggestion,
   getNextSlashSelection,
@@ -175,6 +175,11 @@ export function InkTuiApp(props: InkTuiAppProps): React.JSX.Element {
   });
   const [activityFrameIndex, setActivityFrameIndex] = useState(0);
   const [chatDepth, setChatDepth] = useState<ChatDepth>("normal");
+  const [modelLabel, setModelLabel] = useState(
+    props.initialSession.modelOverride
+      ? formatModelOverrideLabel(props.initialSession.modelOverride, props.modelLabel)
+      : props.modelLabel,
+  );
   const assistantDraftTimestampRef = useRef<number | null>(null);
   const submitLockRef = useRef(false);
   const slashSuggestions = getSlashSuggestions(inputValue, SLASH_COMMANDS);
@@ -304,6 +309,7 @@ export function InkTuiApp(props: InkTuiAppProps): React.JSX.Element {
     try {
       const localCommand = classifyLocalTuiCommand(input);
       const depthCommand = parseDepthCommand(input);
+      const modelCommand = parseModelCommand(input);
       if (localCommand) {
         setInputValue("");
 
@@ -336,6 +342,28 @@ export function InkTuiApp(props: InkTuiAppProps): React.JSX.Element {
           appendSystemNote(copy.notes.config);
           return;
         }
+      }
+
+      if (modelCommand) {
+        setInputValue("");
+        if (modelCommand.kind === "show") {
+          appendSystemNote(copy.notes.modelCurrent(modelLabel));
+          return;
+        }
+
+        const nextModelLabel = formatModelOverrideLabel(modelCommand.model, props.modelLabel);
+        const nextSession = appendInteractionMessage({
+          ...session,
+          modelOverride: modelCommand.model,
+        }, {
+          role: "system",
+          content: copy.notes.modelSet(modelCommand.model),
+          timestamp: Date.now(),
+        });
+        setSession(nextSession);
+        setModelLabel(nextModelLabel);
+        await persistProjectSession(props.projectRoot, nextSession);
+        return;
       }
 
       if (depthCommand) {
@@ -395,7 +423,7 @@ export function InkTuiApp(props: InkTuiAppProps): React.JSX.Element {
       locale={props.locale}
       projectName={props.projectName}
       activeBookTitle={activitySession.activeBookId}
-      modelLabel={props.modelLabel}
+      modelLabel={modelLabel}
       depthLabel={copy.depthLabels[chatDepth]}
       session={activitySession}
       inputValue={inputValue}
@@ -416,6 +444,11 @@ export function InkTuiApp(props: InkTuiAppProps): React.JSX.Element {
       }}
     />
   );
+}
+
+function formatModelOverrideLabel(model: string, defaultLabel: string): string {
+  const provider = defaultLabel.match(/\(([^)]+)\)$/)?.[1];
+  return provider ? `${model} (${provider})` : model;
 }
 
 function ConversationRow(props: { readonly row: DashboardMessageRow }): React.JSX.Element {

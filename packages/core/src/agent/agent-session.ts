@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { Agent } from "@mariozechner/pi-agent-core";
 import type { AgentEvent, AgentMessage } from "@mariozechner/pi-agent-core";
-import { streamSimple, getModel, getEnvApiKey, createAssistantMessageEventStream } from "@mariozechner/pi-ai";
+import { getModel, getEnvApiKey, createAssistantMessageEventStream } from "@mariozechner/pi-ai";
 import type {
   Model,
   Api,
@@ -15,11 +15,11 @@ import type {
   UserMessage,
 } from "@mariozechner/pi-ai";
 import type { PipelineRunner } from "../pipeline/runner.js";
-import { assertWithinContextWindow, estimatePiContextTokens } from "../llm/provider.js";
 import { buildAgentSystemPrompt } from "./agent-system-prompt.js";
 import {
   createPatchChapterTextTool,
   createReplaceChapterTextTool,
+  createResyncChapterStateTool,
   createDeleteLatestChapterTool,
   createRenameEntityTool,
   createSubAgentTool,
@@ -38,9 +38,14 @@ import {
   createStoryboardCreationTool,
   createInteractiveFilmCreationTool,
   createTranslationCreateTool,
+  createFanficBookTool,
+  createContinuationImportTool,
+  createSpinoffBookTool,
+  createImitationBookTool,
   createResearchWebTool,
   createIngestMaterialTool,
   createRetrieveMaterialTool,
+  createManageBookReferenceTool,
   createImportChaptersTool,
 } from "./agent-tools.js";
 import { createFilmAuthoringTools, filmLLMDepsFromClient } from "./film-authoring-tools.js";
@@ -49,7 +54,7 @@ import {
   createNarrativeForecastGetTool,
   createNarrativeForecastSelectTool,
 } from "./forecast-tools.js";
-import { createBookContextTransform } from "./context-transform.js";
+import { createBookContextTransform, createInteractiveFilmContextTransform } from "./context-transform.js";
 import {
   appendTranscriptEvents,
   readTranscriptEvents,
@@ -64,7 +69,13 @@ import type { TranscriptEvent, TranscriptRole } from "../interaction/session-tra
 import type { PlayMode, SessionKind } from "../interaction/session.js";
 import type { ActionPayload, ActionSource, RequestedIntent } from "../interaction/action-envelope.js";
 import type { ContextCompressionCallback } from "../models/context-compression.js";
-import { createSkillRegistry, loadConfiguredAgentSkills } from "../skills/index.js";
+import {
+  createSkillRegistry,
+  loadAvailableAgentSkills,
+  mergeActivatedSkillGuidance,
+  resolveProductionSkillActivations,
+  type ProductionSkillCapability,
+} from "../skills/index.js";
 import { assertSafeBookId } from "../utils/book-id.js";
 import { PlayStore } from "../play/play-store.js";
 import { isLlmStubEnabled, stubAgentStream } from "./llm-stub.js";
@@ -72,7 +83,10 @@ import {
   assistantInvokesSkill,
   createUseSkillTool,
   sanitizeSkillTurnMessage,
+  type ActivatedSkillGuidance,
 } from "./skill-tool.js";
+import { opaqueConversationId, runWithAgentTrajectory } from "../llm/agent-trajectory.js";
+import { guardedPiStream } from "./pi-stream.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -169,7 +183,7 @@ interface CachedAgent {
   requestedIntent: AgentSessionConfig["requestedIntent"];
   actionPayloadKey: string;
   skillResolutionKey: string;
-  turnSkillIds: Set<string>;
+  turnSkills: Map<string, ActivatedSkillGuidance>;
   playWorldExists: boolean;
   language: string;
   modelIdentity: string;
@@ -177,6 +191,7 @@ interface CachedAgent {
   allowSystemFileRead: boolean;
   backgroundTaskContext: string | undefined;
   suppressProductionTools: boolean;
+  currentAttachmentPaths: string[];
   lastCommittedSeq: number;
   lastActive: number;
 }
@@ -343,25 +358,6 @@ function attachmentImages(attachments: ReadonlyArray<AgentSessionAttachment> | u
     }));
 }
 
-function guardedStreamSimple<TApi extends Api>(
-  model: Model<TApi>,
-  context: PiContext,
-  options?: SimpleStreamOptions,
-): AssistantMessageEventStream {
-  const reservedOutputTokens = Number.isFinite(options?.maxTokens)
-    ? options!.maxTokens!
-    : Number.isFinite(model.maxTokens)
-      ? model.maxTokens
-      : 4096;
-  assertWithinContextWindow({
-    piModel: model,
-    model: model.id,
-    estimatedInputTokens: estimatePiContextTokens(context),
-    reservedOutputTokens,
-  });
-  return streamSimple(model, context, options);
-}
-
 function localAssistantStopStream(model: Model<Api>): AssistantMessageEventStream {
   const stream = createAssistantMessageEventStream();
   const message: AssistantMessage = {
@@ -384,10 +380,16 @@ function localAssistantStopStream(model: Model<Api>): AssistantMessageEventStrea
 export function isTerminalProductionToolName(toolName: unknown): boolean {
   return toolName === "propose_action"
     || toolName === "sub_agent"
+    || toolName === "resync_chapter_state"
     || toolName === "short_fiction_run"
     || toolName === "script_create"
     || toolName === "storyboard_create"
     || toolName === "interactive_film_create"
+    || toolName === "translation_create"
+    || toolName === "fanfic_create"
+    || toolName === "continuation_import"
+    || toolName === "spinoff_create"
+    || toolName === "imitation_create"
     || toolName === "generate_cover"
     || toolName === "play_start"
     || toolName === "play_edit"
@@ -412,8 +414,7 @@ function hasUnansweredTerminalToolResult(messages: AgentMessage[]): boolean {
     }
     if (role !== "toolResult") continue;
     const toolName = (message as { toolName?: unknown }).toolName;
-    const isError = (message as { isError?: unknown }).isError;
-    if (isTerminalProductionToolName(toolName) && isError !== true) {
+    if (isTerminalProductionToolName(toolName)) {
       return !assistantTextAfterTool;
     }
   }
@@ -540,40 +541,6 @@ function extractTextFromAssistant(msg: AssistantMessage): string {
     .filter((c): c is { type: "text"; text: string } => c.type === "text")
     .map((c) => c.text)
     .join("");
-}
-
-function looksLikeUnsavedChapterProse(text: string): boolean {
-  const trimmed = text.trim();
-  if (trimmed.length < 800) return false;
-  if (looksLikeChapterRevisionPlan(trimmed)) return false;
-  return /(^|\n)\s{0,3}#{1,3}\s*(?:第\s*[0-9一二三四五六七八九十百千]+\s*章|Chapter\s+\d+)/i.test(trimmed);
-}
-
-function looksLikeChapterRevisionPlan(text: string): boolean {
-  const headingLines = text
-    .split(/\n+/)
-    .filter((line) => /^\s{0,3}#{1,3}\s*(?:第\s*[0-9一二三四五六七八九十百千]+\s*章|Chapter\s+\d+)/i.test(line))
-    .slice(0, 8);
-  if (headingLines.length === 0) return false;
-  const planSignals = [
-    /修改指令|修订指令|重写指令|执行指令|改稿指令|具体修改|修改方案|修订方案|重写方案/,
-    /问题|目标|处理方式|调整|建议|要求|保留|删除|新增|强化|弱化/,
-    /revision brief|revision plan|rewrite plan|edit instruction|actionable instruction|change request/i,
-  ];
-  return headingLines.some((line) => planSignals.some((signal) => signal.test(line)))
-    || planSignals.some((signal) => signal.test(text.slice(0, 1200)));
-}
-
-function bookRawChapterBoundaryText(language: string): string {
-  return language === "zh"
-    ? "这次模型输出了疑似章节正文的聊天文本，但没有调用落盘工具。InkOS 不会把聊天正文当成已保存章节：如果要续写新章，请发送“继续写下一章”；如果要修改旧章，请发送“重写/修订第 N 章 + 具体要求”，系统会走 reviser/writer 管线落盘。"
-    : "The model produced chapter-like prose in chat without calling a persistence tool. InkOS will not treat chat prose as a saved chapter. Ask to write the next chapter only when you want to append; ask to rewrite/revise chapter N with concrete requirements when you want to change existing chapters.";
-}
-
-function replaceAssistantText(message: AssistantMessage, text: string): void {
-  message.content = [{ type: "text", text }];
-  message.stopReason = "stop";
-  delete message.errorMessage;
 }
 
 function lastAssistantMessage(messages: AgentMessage[]): AssistantMessage | undefined {
@@ -792,8 +759,13 @@ const PRODUCTION_MUTATION_TOOL_NAMES = new Set([
   "rename_entity",
   "patch_chapter_text",
   "replace_chapter_text",
+  "resync_chapter_state",
   "delete_latest_chapter",
   "import_chapters",
+  "fanfic_create",
+  "continuation_import",
+  "spinoff_create",
+  "imitation_create",
 ]);
 
 type CreateAgentToolsForModeParams = {
@@ -811,6 +783,10 @@ type CreateAgentToolsForModeParams = {
   readonly playWorldExists: boolean;
   readonly intentSkillTool?: ReturnType<typeof createUseSkillTool>;
   readonly requestedSkillIds?: () => ReadonlyArray<string>;
+  readonly attachmentPaths?: () => ReadonlyArray<string>;
+  readonly activeSkills?: () => ReadonlyArray<ActivatedSkillGuidance>;
+  readonly workerSkills?: (agent: string) => ReadonlyArray<ActivatedSkillGuidance>;
+  readonly productionSkills?: (capability: ProductionSkillCapability) => ReadonlyArray<ActivatedSkillGuidance>;
 };
 
 function createAgentToolsForMode(params: CreateAgentToolsForModeParams) {
@@ -823,14 +799,18 @@ function createModeTools(params: CreateAgentToolsForModeParams) {
   const subAgentTool = createSubAgentTool(params.pipeline, params.bookId, params.projectRoot, {
     actionPayload: params.actionPayload,
     language: lang,
+    activeSkills: params.activeSkills,
+    workerSkills: params.workerSkills,
   });
   const proposalTool = createProposeActionTool(lang, {
     sameSession: params.sessionKind !== "chat",
     requestedSkillIds: params.requestedSkillIds,
+    attachmentPaths: params.attachmentPaths,
   });
   const researchTool = createResearchWebTool(params.projectRoot);
   const materialTool = createIngestMaterialTool(params.projectRoot);
   const materialRetrievalTool = createRetrieveMaterialTool(params.projectRoot);
+  const projectReadTool = createReadTool(params.projectRoot, { scope: "project" });
   const importChaptersTool = createImportChaptersTool(params.pipeline, params.bookId, params.projectRoot);
   const isConfirmed = (
     intent: NonNullable<AgentSessionConfig["requestedIntent"]>,
@@ -843,12 +823,41 @@ function createModeTools(params: CreateAgentToolsForModeParams) {
     if (isConfirmed("translation_create")) {
       return [createTranslationCreateTool(params.projectRoot, { actionPayload: params.actionPayload })];
     }
+    if (isConfirmed("fanfic_init")) {
+      return [createFanficBookTool(params.pipeline, params.projectRoot, {
+        defaultSkills: params.productionSkills?.("longWriting"),
+        activeSkills: params.activeSkills,
+      })];
+    }
+    if (isConfirmed("continuation_import")) {
+      return [createContinuationImportTool(params.pipeline, params.bookId, params.projectRoot, {
+        defaultSkills: params.productionSkills?.("longWriting"),
+        activeSkills: params.activeSkills,
+      })];
+    }
+    if (isConfirmed("spinoff_create")) {
+      return [createSpinoffBookTool(params.pipeline, params.projectRoot, {
+        defaultSkills: params.productionSkills?.("longWriting"),
+        activeSkills: params.activeSkills,
+      })];
+    }
+    if (isConfirmed("style_imitation")) {
+      return [createImitationBookTool(params.pipeline, params.projectRoot, {
+        defaultSkills: params.productionSkills?.("longWriting"),
+        activeSkills: params.activeSkills,
+      })];
+    }
     return [proposalTool, researchTool, materialTool, materialRetrievalTool, importChaptersTool];
   }
 
   if (params.sessionKind === "short") {
     if (isConfirmed("short_run")) {
-      return [createShortFictionRunTool(params.pipeline, params.projectRoot, { actionPayload: params.actionPayload, language: lang })];
+      return [createShortFictionRunTool(params.pipeline, params.projectRoot, {
+        actionPayload: params.actionPayload,
+        language: lang,
+        defaultSkills: params.productionSkills?.("shortWriting"),
+        activeSkills: params.activeSkills,
+      })];
     }
     if (isConfirmed("generate_cover")) {
       return [createGenerateCoverTool(params.projectRoot, { actionPayload: params.actionPayload })];
@@ -858,23 +867,38 @@ function createModeTools(params: CreateAgentToolsForModeParams) {
 
   if (params.sessionKind === "script") {
     if (isConfirmed("script_create")) {
-      return [createScriptCreationTool(params.pipeline, params.projectRoot, { actionPayload: params.actionPayload, language: lang })];
+      return [createScriptCreationTool(params.pipeline, params.projectRoot, {
+        actionPayload: params.actionPayload,
+        language: lang,
+        defaultSkills: params.productionSkills?.("script"),
+        activeSkills: params.activeSkills,
+      })];
     }
-    return [proposalTool, materialTool, materialRetrievalTool];
+    return [proposalTool, projectReadTool, materialTool, materialRetrievalTool];
   }
 
   if (params.sessionKind === "storyboard") {
     if (isConfirmed("storyboard_create")) {
-      return [createStoryboardCreationTool(params.pipeline, params.projectRoot, { actionPayload: params.actionPayload, language: lang })];
+      return [createStoryboardCreationTool(params.pipeline, params.projectRoot, {
+        actionPayload: params.actionPayload,
+        language: lang,
+        defaultSkills: params.productionSkills?.("storyboard"),
+        activeSkills: params.activeSkills,
+      })];
     }
-    return [proposalTool, materialTool, materialRetrievalTool];
+    return [proposalTool, projectReadTool, materialTool, materialRetrievalTool];
   }
 
   if (params.sessionKind === "interactive-film") {
     if (isConfirmed("interactive_film_create")) {
-      return [createInteractiveFilmCreationTool(params.pipeline, params.projectRoot, { actionPayload: params.actionPayload, language: lang })];
+      return [createInteractiveFilmCreationTool(params.pipeline, params.projectRoot, {
+        actionPayload: params.actionPayload,
+        language: lang,
+        defaultSkills: params.productionSkills?.("interactiveFilm"),
+        activeSkills: params.activeSkills,
+      })];
     }
-    return [proposalTool, materialTool, materialRetrievalTool];
+    return [proposalTool, projectReadTool, materialTool, materialRetrievalTool];
   }
 
   if (params.sessionKind === "interactive-film-authoring") {
@@ -883,7 +907,12 @@ function createModeTools(params: CreateAgentToolsForModeParams) {
       throw new Error("interactive-film-authoring session requires a non-null bookId");
     }
     const agentCtx = params.pipeline.createAgentContext("film-authoring", projectId);
-    const llm = filmLLMDepsFromClient(agentCtx.client, agentCtx.model);
+    const llm = filmLLMDepsFromClient(agentCtx.client, agentCtx.model, {
+      activatedSkills: () => mergeActivatedSkillGuidance(
+        params.productionSkills?.("interactiveFilm") ?? [],
+        params.activeSkills?.() ?? [],
+      ),
+    });
     return createFilmAuthoringTools({
       projectRoot: params.projectRoot,
       projectId,
@@ -897,13 +926,25 @@ function createModeTools(params: CreateAgentToolsForModeParams) {
 
   if (params.sessionKind === "play") {
     if (isConfirmed("play_start")) {
-      return [createPlayStartTool(params.pipeline, params.projectRoot, params.sessionId, params.playMode, { actionPayload: params.actionPayload })];
+      return [createPlayStartTool(params.pipeline, params.projectRoot, params.sessionId, params.playMode, {
+        actionPayload: params.actionPayload,
+        defaultSkills: params.productionSkills?.("play"),
+        activeSkills: params.activeSkills,
+      })];
     }
     if (params.playWorldExists) {
       return [
         createPlayEditTool(params.projectRoot, params.sessionId, lang),
-        createPlayReviseTool(params.pipeline, params.projectRoot, params.sessionId, { language: lang }),
-        createPlayStepTool(params.pipeline, params.projectRoot, params.sessionId, { language: lang }),
+        createPlayReviseTool(params.pipeline, params.projectRoot, params.sessionId, {
+          language: lang,
+          defaultSkills: params.productionSkills?.("play"),
+          activeSkills: params.activeSkills,
+        }),
+        createPlayStepTool(params.pipeline, params.projectRoot, params.sessionId, {
+          language: lang,
+          defaultSkills: params.productionSkills?.("play"),
+          activeSkills: params.activeSkills,
+        }),
         materialTool,
         materialRetrievalTool,
       ];
@@ -917,6 +958,8 @@ function createModeTools(params: CreateAgentToolsForModeParams) {
         actionPayload: params.actionPayload,
         architectCreateOnly: true,
         language: lang,
+        activeSkills: params.activeSkills,
+        workerSkills: params.workerSkills,
       })];
     }
     return [proposalTool, researchTool, materialTool, materialRetrievalTool];
@@ -934,10 +977,16 @@ function createModeTools(params: CreateAgentToolsForModeParams) {
     createRenameEntityTool(params.pipeline, params.projectRoot, params.bookId),
     createPatchChapterTextTool(params.pipeline, params.projectRoot, params.bookId),
     createReplaceChapterTextTool(params.pipeline, params.projectRoot, params.bookId),
+    createResyncChapterStateTool(params.pipeline, params.bookId, {
+      language: lang,
+      defaultSkills: params.productionSkills?.("longWriting"),
+      activeSkills: params.activeSkills,
+    }),
     createDeleteLatestChapterTool(params.projectRoot, params.bookId),
     researchTool,
     materialTool,
     materialRetrievalTool,
+    createManageBookReferenceTool(params.projectRoot, params.bookId),
     importChaptersTool,
     createNarrativeForecastCreateTool(params.pipeline, params.bookId, params.projectRoot),
     createNarrativeForecastGetTool(params.bookId, params.projectRoot),
@@ -998,7 +1047,7 @@ async function runAgentSessionUnlocked(
   const requestedIntent = config.requestedIntent;
   const actionPayload = config.actionPayload;
   const actionPayloadKey = actionPayloadCacheKey(actionPayload);
-  const configuredSkills = await loadConfiguredAgentSkills({ projectRoot });
+  const configuredSkills = await loadAvailableAgentSkills({ projectRoot });
   const skillRegistry = createSkillRegistry({ skills: configuredSkills.skills });
   const skillResolution = skillRegistry.resolveSkills({
     requestedSkills: config.requestedSkills,
@@ -1089,7 +1138,12 @@ async function runAgentSessionUnlocked(
         ? plainToAgentMessages(initialMessages)
         : [];
     let terminalToolResultTail = false;
-    const turnSkillIds = new Set(skillResolution.forcedSkillIds);
+    const turnSkills = new Map<string, ActivatedSkillGuidance>(
+      skillResolution.usedSkills.map((skill) => [skill.id, { skill, resources: [] }]),
+    );
+    const productionSkills = (capability: ProductionSkillCapability) => (
+      resolveProductionSkillActivations(skillResolution.availableSkills, capability)
+    );
     const allowIntentSkillSelection = actionSource === "free-text"
       && skillResolution.forcedSkillIds.length === 0;
     const baseSystemPrompt = buildAgentSystemPrompt(bookId, language, sessionKind, {
@@ -1103,7 +1157,7 @@ async function runAgentSessionUnlocked(
       ? createUseSkillTool({
           registry: skillRegistry,
           disabledSkillIds: skillResolution.disabledSkillIds,
-          onActivate: (skillId) => turnSkillIds.add(skillId),
+          onActivate: (activation) => turnSkills.set(activation.skill.id, activation),
         })
       : undefined;
     const agentTools = createAgentToolsForMode({
@@ -1120,7 +1174,15 @@ async function runAgentSessionUnlocked(
       playMode,
       playWorldExists,
       intentSkillTool,
-      requestedSkillIds: () => [...turnSkillIds],
+      requestedSkillIds: () => [...turnSkills.keys()],
+      attachmentPaths: () => cached?.currentAttachmentPaths ?? [],
+      activeSkills: () => [...turnSkills.values()],
+      workerSkills: (agent) => {
+        if (agent === "architect" || agent === "writer") return productionSkills("longWriting");
+        if (agent === "auditor" || agent === "reviser") return productionSkills("longReview");
+        return [];
+      },
+      productionSkills,
     });
     const agent = new Agent({
       initialState: {
@@ -1133,7 +1195,9 @@ async function runAgentSessionUnlocked(
           : agentTools,
         messages: initialAgentMessages,
       },
-      transformContext: createBookContextTransform(bookId, projectRoot, { onContextCompression }),
+      transformContext: sessionKind === "interactive-film-authoring" && bookId
+        ? createInteractiveFilmContextTransform(bookId, projectRoot)
+        : createBookContextTransform(bookId, projectRoot, { onContextCompression }),
       convertToLlm: (messages) => {
         terminalToolResultTail = hasUnansweredTerminalToolResult(messages);
         return convertAgentMessagesForModel(messages, model);
@@ -1144,7 +1208,7 @@ async function runAgentSessionUnlocked(
           return localAssistantStopStream(streamModel);
         }
         if (isLlmStubEnabled()) return stubAgentStream(streamModel, context);
-        return guardedStreamSimple(streamModel, context, options);
+        return guardedPiStream(streamModel, context, options);
       },
       getApiKey: (provider: string) => {
         if (config.apiKey) return config.apiKey;
@@ -1162,7 +1226,7 @@ async function runAgentSessionUnlocked(
       requestedIntent,
       actionPayloadKey,
       skillResolutionKey,
-      turnSkillIds,
+      turnSkills,
       playWorldExists,
       language,
       modelIdentity: requestedModelIdentity,
@@ -1170,6 +1234,9 @@ async function runAgentSessionUnlocked(
       allowSystemFileRead,
       backgroundTaskContext: config.backgroundTaskContext,
       suppressProductionTools,
+      currentAttachmentPaths: (config.attachments ?? [])
+        .map((attachment) => attachment.storedPath?.trim())
+        .filter((path): path is string => Boolean(path)),
       lastCommittedSeq: currentCommittedSeq ?? await latestCommittedSeq(projectRoot, sessionId),
       lastActive: Date.now(),
     };
@@ -1178,9 +1245,12 @@ async function runAgentSessionUnlocked(
   }
 
   cached.lastActive = Date.now();
-  cached.turnSkillIds.clear();
-  for (const skillId of skillResolution.forcedSkillIds) {
-    cached.turnSkillIds.add(skillId);
+  cached.currentAttachmentPaths = (config.attachments ?? [])
+    .map((attachment) => attachment.storedPath?.trim())
+    .filter((path): path is string => Boolean(path));
+  cached.turnSkills.clear();
+  for (const skill of skillResolution.usedSkills) {
+    cached.turnSkills.set(skill.id, { skill, resources: [] });
   }
   const { agent } = cached;
   const attachmentBlock = buildAttachmentUserBlock(config.attachments, language);
@@ -1204,8 +1274,7 @@ async function runAgentSessionUnlocked(
   let parentUuid: string | null = null;
   let piTurnIndex = 0;
   let lastAssistantUuid: string | null = null;
-  let successfulProductionToolResultSeen = false;
-  let skillTurnActive = cached.turnSkillIds.size > 0;
+  let skillTurnActive = cached.turnSkills.size > 0;
 
   const persistAgentEvent = async (event: AgentEvent): Promise<void> => {
     if (event.type === "turn_start") {
@@ -1216,21 +1285,6 @@ async function runAgentSessionUnlocked(
 
     const role = transcriptRoleForMessage(event.message);
     if (!role) return;
-
-    if (role === "toolResult") {
-      const toolName = (event.message as { toolName?: unknown }).toolName;
-      const isError = (event.message as { isError?: unknown }).isError;
-      if (isTerminalProductionToolName(toolName) && isError !== true) {
-        successfulProductionToolResultSeen = true;
-      }
-    }
-
-    if (role === "assistant" && sessionKind === "book" && !successfulProductionToolResultSeen) {
-      const assistant = event.message as AssistantMessage;
-      if (looksLikeUnsavedChapterProse(extractTextFromAssistant(assistant))) {
-        replaceAssistantText(assistant, bookRawChapterBoundaryText(language));
-      }
-    }
 
     if (assistantInvokesSkill(event.message)) skillTurnActive = true;
     const persistedMessage = sanitizeSkillTurnMessage(event.message, skillTurnActive);
@@ -1271,11 +1325,17 @@ async function runAgentSessionUnlocked(
   const turnMessageStartIndex = agent.state.messages.length;
 
   try {
-    if (promptImages.length > 0) {
-      await agent.prompt(promptMessage, promptImages);
-    } else {
-      await agent.prompt(promptMessage);
-    }
+    await runWithAgentTrajectory({
+      conversationId: opaqueConversationId(sessionId),
+      runId: requestId,
+      agentRole: "main",
+    }, async () => {
+      if (promptImages.length > 0) {
+        await agent.prompt(promptMessage, promptImages);
+      } else {
+        await agent.prompt(promptMessage);
+      }
+    });
 
     finalAssistant = lastAssistantMessage(agent.state.messages);
     agent.state.messages = agent.state.messages.map((message, index) => (

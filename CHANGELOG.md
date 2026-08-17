@@ -2,6 +2,35 @@
 
 [English](CHANGELOG.en.md) | 中文
 
+## v1.8.0
+
+### Release Focus
+
+统一 Pi Agent Harness 与专业创作内核：Studio Chat、TUI、外部 Agent 和各类作品生产 worker 现在共享同一套 pi-agent 工具循环、结构化 action/result、Skill 绑定、检索与运行观测。Pipeline 保留为确定性生产能力，不再与 Agent 形成平行的自然语言决策系统。
+
+### Agent Harness And Skills
+
+- 新增统一 production harness，长篇、短篇、剧本、分镜、互动影游、Play 和翻译共用运行快照、观测、取消、恢复与原子提交语义
+- 内置 15 个标准 `SKILL.md` 专业能力包，覆盖长篇写作 / 审稿、商业短篇、Play、剧本、分镜、互动影游、翻译、拆稿、市场研究、导入、封面和语义去 AI 味
+- Production worker 在 pi-agent harness 内按作品类型绑定专用 Skill；复用 Skill 架构和执行底座，不把长篇提示词机械复用到其他作品类型
+- Agent 调用轨迹新增标准化 run / tool / model 元数据，便于观测 kkaiapi 等模型调用、工具结果和真实完成状态
+
+### Context, Retrieval, And Persistence
+
+- 新增统一 SQLite FTS5 / BM25 本地检索内核，故事记忆、材料库和 Skill 参考资料共享可重建索引，原始文件继续作为权威来源
+- 新增书籍参考资料绑定：材料可按用途绑定到具体书籍，在 Planner / Composer / Writer 等任务中按需检索相关段落
+- 新增安全章节工作区和原子文件集提交；正文、状态、伏笔和运行快照校验通过后一起落盘，避免状态已消费但正文未保存
+- 加强过期章节状态恢复、长篇上下文编排和 inactive stream 处理，减少旧状态、旧工具结果或无界等待污染当前生产
+
+### Production And Workbench
+
+- 多章写作作为一个后台任务顺序执行，保留取消、进度和失败恢复，不通过并发写入绕过单书锁
+- Short、剧本、分镜、互动影游、Play 与翻译补齐统一 Skill、字数观测、状态快照和长输出完成策略
+- Studio 新增安全章节重写工作区，展示候选文本、审稿问题与是否落盘；宽屏章节预览、外部母本导入和动态模型目录同步完善
+- 新增 LM Studio 本地模型服务；支持持久化用户发现 / 添加的模型 ID、自定义封面 Base URL 和更可靠的流式首 Token / 空闲超时
+- TUI 新增明确的 `/new`、`/short`、`/play`、`/cover`、`/write` 入口，结构化 `/confirm` / `/cancel`，会话级 `/model` 与终端明暗背景自适应；自由文本继续交给 Agent 理解
+- 项目最低运行时提升到 Node.js 22，CI / Release 矩阵同步为 Node 22 / 24
+
 ## v1.7.2
 
 ### Release Focus

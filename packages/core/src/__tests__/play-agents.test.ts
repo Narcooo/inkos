@@ -39,30 +39,79 @@ describe("play agents", () => {
     });
   });
 
-  it("degrades invalid mutator output into a safe no-op mutation instead of throwing", async () => {
+  it("keeps host-owned turn metadata authoritative when mutator output drifts", async () => {
     const agent = new PlayWorldMutatorAgent(ctx);
-    vi.spyOn(agent as unknown as { chat: PlayWorldMutatorAgent["chat"] }, "chat").mockResolvedValue({
-      content: JSON.stringify({ eventId: "", turn: -1, actionKind: "teleport" }),
-    } as never);
+    vi.spyOn(agent as any, "submitStructured").mockResolvedValue({});
 
-    // The chat agent must not hard-crash on bad model output: the bad enum falls back to "do",
-    // eventId is backfilled, and the turn degrades to a no-op rather than a thrown error.
     const mutation = await agent.proposeMutation({
       turn: 1,
       input: "我打开导航",
       action: { actionKind: "look", intent: "查看导航" },
       context: "车内。",
     });
-    expect(mutation.actionKind).toBe("do");
+    expect(mutation.actionKind).toBe("look");
     expect(mutation.eventId).toBe("evt-1");
+    expect(mutation.turn).toBe(1);
     expect(mutation.entities.upsert).toEqual([]);
   });
 
-  it("uses placeholder examples in the Chinese mutator prompt instead of leaking concrete character names", async () => {
+  it("repairs an empty mutator response instead of treating it as a completed state transition", async () => {
     const agent = new PlayWorldMutatorAgent(ctx);
-    const chat = vi.spyOn(agent as unknown as { chat: PlayWorldMutatorAgent["chat"] }, "chat").mockResolvedValue({
-      content: JSON.stringify({ eventId: "evt-1", turn: 1, actionKind: "look" }),
-    } as never);
+    const submit = vi.spyOn(agent as any, "submitStructured")
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({
+        summary: "司机确认母亲说的是孩子的哮喘药。",
+        entities: [{
+          id: "actor_child",
+          type: "actor",
+          label: "哮喘儿童",
+          summary: "母亲怀里的孩子，缺的是他的哮喘药。",
+        }],
+      });
+
+    const mutation = await agent.proposeMutation({
+      turn: 4,
+      input: "问母亲孩子的药还能撑多久",
+      action: { actionKind: "say", intent: "询问孩子的药量" },
+      context: "actor_mother 是 actor_child 的母亲；缺的是孩子的哮喘药。",
+      language: "zh",
+    });
+
+    expect(submit).toHaveBeenCalledTimes(2);
+    expect(mutation).toMatchObject({
+      eventId: "evt-4",
+      turn: 4,
+      actionKind: "say",
+      blocked: false,
+    });
+    expect(mutation.entities.upsert[0]?.label).toBe("哮喘儿童");
+  });
+
+  it("returns a visible blocked no-op when mutator repair still has no state result", async () => {
+    const agent = new PlayWorldMutatorAgent(ctx);
+    const submit = vi.spyOn(agent as any, "submitStructured").mockResolvedValue({});
+
+    const mutation = await agent.proposeMutation({
+      turn: 3,
+      input: "继续问清楚",
+      action: { actionKind: "say", intent: "追问关键信息" },
+      context: "当前场景。",
+      language: "zh",
+    });
+
+    expect(submit).toHaveBeenCalledTimes(2);
+    expect(mutation).toMatchObject({
+      eventId: "evt-3",
+      turn: 3,
+      actionKind: "say",
+      blocked: true,
+    });
+    expect(mutation.blockedReason).toContain("状态变更");
+  });
+
+  it("uses the structured result schema without embedding example story data", async () => {
+    const agent = new PlayWorldMutatorAgent(ctx);
+    const submit = vi.spyOn(agent as any, "submitStructured").mockResolvedValue({ blocked: true, blockedReason: "测试" });
 
     await agent.proposeMutation({
       turn: 1,
@@ -72,23 +121,19 @@ describe("play agents", () => {
       language: "zh",
     });
 
-    const messages = chat.mock.calls[0]?.[0] as ReadonlyArray<{ readonly role: string; readonly content: string }>;
+    const messages = submit.mock.calls[0]?.[0] as ReadonlyArray<{ readonly role: string; readonly content: string }>;
     const system = messages.find((message) => message.role === "system")?.content ?? "";
     expect(system).not.toContain("周野");
     expect(system).not.toContain("账房先生");
-    expect(system).not.toContain('"status":"seen"');
-    expect(system).not.toContain('"status":"collected"');
-    expect(system).toContain('"status":"已发现"');
-    expect(system).toContain('"status":"已收集"');
-    expect(system).toContain("范例只示结构");
-    expect(system).toContain("不得复用");
+    expect(system).not.toContain("示例线索");
+    expect(system).not.toContain("示例钥匙");
+    expect(system).not.toContain("actor_counterpart");
+    expect(system).toContain("submit_world_mutation");
   });
 
   it("treats actor_player as the reserved player id in the Chinese mutator prompt", async () => {
     const agent = new PlayWorldMutatorAgent(ctx);
-    const chat = vi.spyOn(agent as unknown as { chat: PlayWorldMutatorAgent["chat"] }, "chat").mockResolvedValue({
-      content: JSON.stringify({ eventId: "evt-1", turn: 1, actionKind: "look" }),
-    } as never);
+    const submit = vi.spyOn(agent as any, "submitStructured").mockResolvedValue({ blocked: true, blockedReason: "测试" });
 
     await agent.proposeMutation({
       turn: 1,
@@ -98,7 +143,7 @@ describe("play agents", () => {
       language: "zh",
     });
 
-    const messages = chat.mock.calls[0]?.[0] as ReadonlyArray<{ readonly role: string; readonly content: string }>;
+    const messages = submit.mock.calls[0]?.[0] as ReadonlyArray<{ readonly role: string; readonly content: string }>;
     const system = messages.find((message) => message.role === "system")?.content ?? "";
     expect(system).toContain("actor_player");
     expect(system).toContain("固定保留字");
@@ -107,9 +152,7 @@ describe("play agents", () => {
 
   it("treats actor_player as the reserved player id in the English mutator prompt", async () => {
     const agent = new PlayWorldMutatorAgent(ctx);
-    const chat = vi.spyOn(agent as unknown as { chat: PlayWorldMutatorAgent["chat"] }, "chat").mockResolvedValue({
-      content: JSON.stringify({ eventId: "evt-1", turn: 1, actionKind: "look" }),
-    } as never);
+    const submit = vi.spyOn(agent as any, "submitStructured").mockResolvedValue({ blocked: true, blockedReason: "test" });
 
     await agent.proposeMutation({
       turn: 1,
@@ -119,7 +162,7 @@ describe("play agents", () => {
       language: "en",
     });
 
-    const messages = chat.mock.calls[0]?.[0] as ReadonlyArray<{ readonly role: string; readonly content: string }>;
+    const messages = submit.mock.calls[0]?.[0] as ReadonlyArray<{ readonly role: string; readonly content: string }>;
     const system = messages.find((message) => message.role === "system")?.content ?? "";
     expect(system).toContain("The player entity id is fixed");
     expect(system).toContain("actor_player");
@@ -128,9 +171,7 @@ describe("play agents", () => {
 
   it("does not default to numeric meters when the world contract rejects panels or stats", async () => {
     const agent = new PlayWorldMutatorAgent(ctx);
-    const chat = vi.spyOn(agent as unknown as { chat: PlayWorldMutatorAgent["chat"] }, "chat").mockResolvedValue({
-      content: JSON.stringify({ eventId: "evt-1", turn: 1, actionKind: "look" }),
-    } as never);
+    const submit = vi.spyOn(agent as any, "submitStructured").mockResolvedValue({ blocked: true, blockedReason: "测试" });
 
     await agent.proposeMutation({
       turn: 1,
@@ -143,7 +184,7 @@ describe("play agents", () => {
       language: "zh",
     });
 
-    const messages = chat.mock.calls[0]?.[0] as ReadonlyArray<{ readonly role: string; readonly content: string }>;
+    const messages = submit.mock.calls[0]?.[0] as ReadonlyArray<{ readonly role: string; readonly content: string }>;
     const system = messages.find((message) => message.role === "system")?.content ?? "";
     expect(system).toContain("世界契约禁止数值");
     expect(system).toContain("不要输出 stateSlots");
@@ -156,9 +197,7 @@ describe("play agents", () => {
       await mkdir(join(root, "prompt", "play"), { recursive: true });
       await writeFile(join(root, "prompt", "play", "mutator.md"), "PROJECT MUTATOR OVERRIDE: honor lantern rarity by atmosphere.");
       const agent = new PlayWorldMutatorAgent({ ...ctx, projectRoot: root });
-      const chat = vi.spyOn(agent as unknown as { chat: PlayWorldMutatorAgent["chat"] }, "chat").mockResolvedValue({
-        content: JSON.stringify({ eventId: "evt-1", turn: 1, actionKind: "look" }),
-      } as never);
+      const submit = vi.spyOn(agent as any, "submitStructured").mockResolvedValue({ blocked: true, blockedReason: "测试" });
 
       await agent.proposeMutation({
         turn: 1,
@@ -168,7 +207,7 @@ describe("play agents", () => {
         language: "zh",
       });
 
-      const messages = chat.mock.calls[0]?.[0] as ReadonlyArray<{ readonly role: string; readonly content: string }>;
+      const messages = submit.mock.calls[0]?.[0] as ReadonlyArray<{ readonly role: string; readonly content: string }>;
       const system = messages.find((message) => message.role === "system")?.content ?? "";
       expect(system).toContain("Prompt Pack Guidance");
       expect(system).toContain("PROJECT MUTATOR OVERRIDE");
@@ -177,11 +216,9 @@ describe("play agents", () => {
     }
   });
 
-  it("mutator prompt keeps each player action to one adjacent beat instead of jumping ahead", async () => {
+  it("keeps beat-writing methodology out of the mutator protocol prompt", async () => {
     const agent = new PlayWorldMutatorAgent(ctx);
-    const chat = vi.spyOn(agent as unknown as { chat: PlayWorldMutatorAgent["chat"] }, "chat").mockResolvedValue({
-      content: JSON.stringify({ eventId: "evt-1", turn: 1, actionKind: "do" }),
-    } as never);
+    const submit = vi.spyOn(agent as any, "submitStructured").mockResolvedValue({ blocked: true, blockedReason: "测试" });
 
     await agent.proposeMutation({
       turn: 1,
@@ -191,45 +228,49 @@ describe("play agents", () => {
       language: "zh",
     });
 
-    const messages = chat.mock.calls[0]?.[0] as ReadonlyArray<{ readonly role: string; readonly content: string }>;
+    const messages = submit.mock.calls[0]?.[0] as ReadonlyArray<{ readonly role: string; readonly content: string }>;
     const system = messages.find((message) => message.role === "system")?.content ?? "";
-    expect(system).toContain("只推进相邻一拍");
-    expect(system).toContain("不要替玩家越过过程");
+    expect(system).not.toContain("只推进相邻一拍");
+    expect(system).not.toContain("不要替玩家越过过程");
+    expect(system).toContain("submit_world_mutation");
   });
 
   it("renderer treats player negation and applied time as canonical", async () => {
     const prompt = buildSceneRendererSystemPrompt("open", "zh");
-    expect(prompt).toContain("玩家原话里的否定动作");
-    expect(prompt).toContain("没有触碰");
     expect(prompt).toContain("elapsed 和 anchor 是权威时间");
     expect(prompt).toContain("不得另写");
   });
 
-  it("renderer bridges from the player's action instead of jumping to an epilogue", () => {
+  it("leaves scene-writing methodology to the Play Skill", () => {
     const prompt = buildSceneRendererSystemPrompt("open", "zh");
-    expect(prompt).toContain("先承接玩家动作");
-    expect(prompt).toContain("不要直接跳到动作完成后");
-    expect(prompt).toContain("不要写总结性尾声");
+    expect(prompt).not.toContain("先承接玩家动作");
+    expect(prompt).not.toContain("不要写总结性尾声");
+    expect(prompt).toContain("suggestedActions");
   });
 
-  it("renders the applied state as prose plus suggested actions", async () => {
+  it("renders from the authoritative pre-action context plus applied state", async () => {
     const agent = new PlaySceneRendererAgent(ctx);
-    vi.spyOn(agent as unknown as { chat: PlaySceneRendererAgent["chat"] }, "chat").mockResolvedValue({
-      content: JSON.stringify({
-        sceneText: "车机屏幕亮了一下，常用地址统计弹出一行冷冰冰的数字。",
-        suggestedActions: ["继续翻看医院记录", "套徐晋安的话"],
-      }),
-    } as never);
+    const submit = vi.spyOn(agent as any, "submitStructured").mockResolvedValue({
+      sceneText: "车机屏幕亮了一下，常用地址统计弹出一行冷冰冰的数字。",
+      suggestedActions: ["继续翻看医院记录", "套徐晋安的话"],
+    });
 
     await expect(agent.render({
       input: "看导航",
       action: { actionKind: "look", intent: "查看导航" },
       mutationSummary: "发现新城花园 187 次。",
       stateBrief: "证据：常用地址统计=seen。",
+      context: "当前实体名册：actor_husband [actor]: 丈夫。\n当前场景：丈夫仍坐在副驾驶。",
     })).resolves.toMatchObject({
       sceneText: expect.stringContaining("车机屏幕"),
       suggestedActions: ["继续翻看医院记录", "套徐晋安的话"],
     });
+
+    const messages = submit.mock.calls[0]?.[0] as ReadonlyArray<{ readonly role: string; readonly content: string }>;
+    const user = messages.find((message) => message.role === "user")?.content ?? "";
+    expect(user).toContain("本回合前的权威上下文");
+    expect(user).toContain("actor_husband [actor]: 丈夫");
+    expect(submit.mock.calls[0]?.[1]).toMatchObject({ name: "submit_play_scene" });
   });
 
   it("loads project Play prompt-pack overrides into the renderer system prompt", async () => {
@@ -238,12 +279,10 @@ describe("play agents", () => {
       await mkdir(join(root, "prompt", "play"), { recursive: true });
       await writeFile(join(root, "prompt", "play", "renderer.md"), "PROJECT RENDERER OVERRIDE: render romance props through distance and touch.");
       const agent = new PlaySceneRendererAgent({ ...ctx, projectRoot: root });
-      const chat = vi.spyOn(agent as unknown as { chat: PlaySceneRendererAgent["chat"] }, "chat").mockResolvedValue({
-        content: JSON.stringify({
-          sceneText: "她把那枚旧钥匙放回掌心。",
-          suggestedActions: [],
-        }),
-      } as never);
+      const submit = vi.spyOn(agent as any, "submitStructured").mockResolvedValue({
+        sceneText: "她把那枚旧钥匙放回掌心。",
+        suggestedActions: [],
+      });
 
       await agent.render({
         input: "我看那把旧钥匙",
@@ -252,7 +291,7 @@ describe("play agents", () => {
         stateBrief: "物件：旧钥匙。",
       });
 
-      const messages = chat.mock.calls[0]?.[0] as ReadonlyArray<{ readonly role: string; readonly content: string }>;
+      const messages = submit.mock.calls[0]?.[0] as ReadonlyArray<{ readonly role: string; readonly content: string }>;
       const system = messages.find((message) => message.role === "system")?.content ?? "";
       expect(system).toContain("Prompt Pack Guidance");
       expect(system).toContain("PROJECT RENDERER OVERRIDE");
@@ -261,49 +300,34 @@ describe("play agents", () => {
     }
   });
 
-  it("renderer fails open: non-JSON output becomes the scene instead of throwing", async () => {
+  it("renderer rejects missing structured scene output instead of inventing a placeholder", async () => {
     const agent = new PlaySceneRendererAgent(ctx);
-    // Model returned prose, not JSON — must degrade to using it as the scene, not crash the turn.
-    vi.spyOn(agent as unknown as { chat: PlaySceneRendererAgent["chat"] }, "chat").mockResolvedValue({
-      content: "雨还在下，她没有抬头，只是把书往自己那边挪了挪。",
-    } as never);
-    const result = await agent.render({
+    vi.spyOn(agent as any, "submitStructured").mockRejectedValue(new Error("Model did not submit_play_scene"));
+    await expect(agent.render({
       input: "我看着她",
       action: { actionKind: "look", intent: "看她" },
       mutationSummary: "",
       stateBrief: "",
-    });
-    expect(result.sceneText).toContain("雨还在下");
-    expect(result.suggestedActions).toEqual([]);
+    })).rejects.toThrow("submit_play_scene");
   });
 
-  it("renderer fails open on a transient upstream error instead of crashing the turn", async () => {
+  it("renderer rejects an empty structured scene instead of committing fake prose", async () => {
     const agent = new PlaySceneRendererAgent(ctx);
-    vi.spyOn(agent as unknown as { chat: PlaySceneRendererAgent["chat"] }, "chat").mockRejectedValue(
-      new Error("502 Bad Gateway"),
-    );
-    const result = await agent.render({
+    vi.spyOn(agent as any, "submitStructured").mockResolvedValue({ sceneText: "", suggestedActions: [] });
+    await expect(agent.render({
       input: "我推门进去",
       action: { actionKind: "move", intent: "进门" },
       mutationSummary: "",
       stateBrief: "",
-    });
-    // Degraded to a placeholder scene — a thrown error here would break (and half-commit) the turn.
-    expect(result.sceneText.length).toBeGreaterThan(0);
-    expect(result.suggestedActions).toEqual([]);
+    })).rejects.toThrow();
   });
 
   it("reconciler extracts supplemental graph facts from rendered prose", async () => {
     const agent = new PlaySceneReconcilerAgent(ctx);
-    vi.spyOn(agent as unknown as { chat: PlaySceneReconcilerAgent["chat"] }, "chat").mockResolvedValue({
-      content: JSON.stringify({
-        eventId: "evt-2",
-        turn: 2,
-        actionKind: "look",
-        summary: "补记黑色U盘。",
-        entities: { upsert: [{ id: "item_black_usb", type: "item", label: "黑色U盘", status: "已发现" }] },
-      }),
-    } as never);
+    vi.spyOn(agent as any, "submitStructured").mockResolvedValue({
+      summary: "补记黑色U盘。",
+      entities: [{ id: "item_black_usb", type: "item", label: "黑色U盘", status: "已发现" }],
+    });
 
     const mutation = PlayMutationSchema.parse(await agent.reconcile({
       turn: 2,
@@ -319,11 +343,27 @@ describe("play agents", () => {
     expect(mutation.entities.upsert[0]?.label).toBe("黑色U盘");
   });
 
+  it("keeps reconciler event metadata host-owned", async () => {
+    const agent = new PlaySceneReconcilerAgent(ctx);
+    vi.spyOn(agent as any, "submitStructured").mockResolvedValue({ summary: "补记母子关系。" });
+
+    const mutation = PlayMutationSchema.parse(await agent.reconcile({
+      turn: 4,
+      input: "问母亲孩子的药还能撑多久",
+      action: { actionKind: "say", intent: "询问孩子的药量" },
+      mutation: { eventId: "evt-4", turn: 4, actionKind: "say", summary: "追问药量。" },
+      sceneText: "母亲低头看了一眼怀里的孩子。",
+      context: "actor_mother 是 actor_child 的母亲。",
+      stateBrief: "# Play State\n- summary: 追问药量。\n",
+      language: "zh",
+    }));
+
+    expect(mutation).toMatchObject({ eventId: "evt-4", turn: 4, actionKind: "say" });
+  });
+
   it("reconciler fails open to an empty supplement on malformed output", async () => {
     const agent = new PlaySceneReconcilerAgent(ctx);
-    vi.spyOn(agent as unknown as { chat: PlaySceneReconcilerAgent["chat"] }, "chat").mockResolvedValue({
-      content: "没有需要补充的内容。",
-    } as never);
+    vi.spyOn(agent as any, "submitStructured").mockRejectedValue(new Error("model did not submit tool"));
 
     const mutation = PlayMutationSchema.parse(await agent.reconcile({
       turn: 2,
@@ -350,17 +390,17 @@ describe("scene renderer prompt by mode", () => {
     expect(prompt).not.toMatch(/必须给 2-4|每回合都要给/);
   });
 
-  it("允许'在场'回合并让世界自走、不催玩家行动", () => {
+  it("keeps runtime time authority while leaving world-progression craft to the Skill", () => {
     const prompt = buildSceneRendererSystemPrompt("guided");
-    expect(prompt).toContain("呼吸"); // presence is a valid, breathing turn
-    expect(prompt).toContain("世界不是死的"); // world runs on its own clock
-    expect(prompt).toContain("时间段"); // applied timeAdvance is rendered as world synchronization
+    expect(prompt).not.toContain("世界不是死的");
+    expect(prompt).toContain("时间段");
   });
 
   it("renderer treats applied typed state as the source of concrete facts", () => {
     const prompt = buildSceneRendererSystemPrompt("guided");
     expect(prompt).toContain("具体的新物件");
     expect(prompt).toContain("必须先由 mutator 建成实体");
+    expect(prompt).toContain("已经完成的玩家动作逐项写出来");
   });
 
   it("open 模式不强制选项数量", () => {

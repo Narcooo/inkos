@@ -5,6 +5,7 @@ const LLMServiceEntrySchema = z.object({
   service: z.string().min(1),
   name: z.string().min(1).optional(),
   baseUrl: z.string().url().optional(),
+  models: z.array(z.string().min(1)).optional(),
   temperature: z.number().min(0).max(2).optional(),
   apiFormat: z.enum(["chat", "responses"]).optional(),
   stream: z.boolean().optional(),
@@ -112,9 +113,6 @@ export const AgentLLMOverrideSchema = z.object({
 
 export type AgentLLMOverride = z.infer<typeof AgentLLMOverrideSchema>;
 
-export const InputGovernanceModeSchema = z.enum(["legacy", "v2"]);
-export type InputGovernanceMode = z.infer<typeof InputGovernanceModeSchema>;
-
 const ModelOverrideValueSchema = z.union([z.string(), AgentLLMOverrideSchema]);
 
 export const ResearchSearchConfigSchema = z.object({
@@ -145,7 +143,6 @@ export const ProjectConfigSchema = z.object({
   }),
   researchSearch: ResearchSearchConfigSchema,
   modelOverrides: z.record(z.string(), ModelOverrideValueSchema).optional(),
-  inputGovernanceMode: InputGovernanceModeSchema.default("v2"),
   daemon: z.object({
     schedule: z.object({
       radarCron: z.string().default("0 */6 * * *"),

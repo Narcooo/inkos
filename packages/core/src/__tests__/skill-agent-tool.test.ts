@@ -32,7 +32,7 @@ describe("use_skill agent tool", () => {
     const activated: string[] = [];
     const tool = createUseSkillTool({
       registry,
-      onActivate: (skillId) => activated.push(skillId),
+      onActivate: (activation) => activated.push(activation.skill.id),
     });
 
     const result = await tool.execute("skill-1", { skillId: "writer-distillation" });
@@ -67,7 +67,7 @@ describe("use_skill agent tool", () => {
     const activated: string[] = [];
     const tool = createUseSkillTool({
       registry,
-      onActivate: (skillId) => activated.push(skillId),
+      onActivate: (activation) => activated.push(activation.skill.id),
     });
 
     const result = await tool.execute("skill-resource", {
@@ -89,6 +89,50 @@ describe("use_skill agent tool", () => {
       resourcePath: "references/missing.md",
     })).rejects.toThrow();
     expect(activated).toEqual(["writer-distillation"]);
+  });
+
+  it("retrieves relevant Skill references by natural-language query", async () => {
+    const baseDir = join(root, "long-writing");
+    await mkdir(join(baseDir, "references"), { recursive: true });
+    await writeFile(
+      join(baseDir, "references", "continuity.md"),
+      [
+        "# 伏笔连续性",
+        "",
+        "师债必须通过誓令碎片和导师旧信继续推进。",
+        "",
+        "# 节奏",
+        "",
+        "日常章节允许降低冲突密度。",
+      ].join("\n"),
+      "utf-8",
+    );
+    const registry = createSkillRegistry({
+      skills: [{
+        id: "long-writing",
+        name: "Long Writing",
+        description: "Long-form continuity guidance.",
+        body: "Retrieve only the reference needed by the current task.",
+        source: "external",
+        baseDir,
+      }],
+    });
+    const tool = createUseSkillTool({ registry });
+
+    const result = await tool.execute("skill-search", {
+      skillId: "long-writing",
+      query: "导师旧信和誓令碎片的伏笔如何推进",
+    });
+
+    expect(result.content).toEqual([expect.objectContaining({
+      text: expect.stringMatching(/references\/continuity\.md:[0-9]+-[0-9]+[\s\S]*师债必须通过誓令碎片/),
+    })]);
+    expect(result.details).toMatchObject({
+      kind: "skill_activated",
+      skillId: "long-writing",
+      query: "导师旧信和誓令碎片的伏笔如何推进",
+      retrievedResources: [expect.objectContaining({ path: "references/continuity.md" })],
+    });
   });
 
   it("rejects resources reached through a symlinked parent directory", async () => {

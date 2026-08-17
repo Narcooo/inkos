@@ -82,7 +82,7 @@ describe("ReviserAgent", () => {
     });
 
     try {
-      await agent.reviseChapter(bookDir, "Original chapter content.", 1, [CRITICAL_ISSUE], "rewrite", "xuanhuan");
+      const output = await agent.reviseChapter(bookDir, "Original chapter content.", 1, [CRITICAL_ISSUE], "rewrite", "xuanhuan");
 
       const messages = chatSpy.mock.calls[0]?.[0] as
         | ReadonlyArray<{ content: string }>
@@ -91,6 +91,10 @@ describe("ReviserAgent", () => {
 
       expect(systemPrompt).toContain("MUST be in English");
       expect(systemPrompt).toContain("PROJECT REVISER OVERRIDE");
+      expect(systemPrompt).not.toContain("=== UPDATED_STATE ===");
+      expect(systemPrompt).not.toContain("=== UPDATED_HOOKS ===");
+      expect("updatedState" in output).toBe(false);
+      expect("updatedHooks" in output).toBe(false);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -358,6 +362,7 @@ describe("ReviserAgent", () => {
           category: "套话密度",
           description: "仿佛用得太直接",
           suggestion: "改成更具体的感官描写",
+          repairScope: "local",
         }],
         "auto",
         "xuanhuan",

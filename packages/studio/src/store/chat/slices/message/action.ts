@@ -22,6 +22,7 @@ import {
   extractErrorMessage,
   hasAnyInFlightExecution,
   markRunningToolsFailed,
+  mergeToolExecution,
   mergeTaskExecution,
   mergeSessionIds,
   updateSession,
@@ -76,9 +77,19 @@ function formatUserMessageForDisplay(text: string, attachments: ReadonlyArray<Ch
   return lines.join("\n");
 }
 
-export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions> = (set, get) => ({
-  activateSession: (sessionId) =>
-    set({ activeSessionId: sessionId }),
+export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions> = (set, get) => {
+  const abortPreviousChatRound = (nextSessionId: string | null): void => {
+    const previousSessionId = get().activeSessionId;
+    if (!previousSessionId || previousSessionId === nextSessionId) return;
+    if (!get().sessions[previousSessionId]?.isChatStreaming) return;
+    void get().abortSession(previousSessionId, "chat");
+  };
+
+  return {
+    activateSession: (sessionId) => {
+      abortPreviousChatRound(sessionId);
+      set({ activeSessionId: sessionId });
+    },
 
   setSessionPlayMode: (sessionId, playMode) => {
     const session = get().sessions[sessionId];
@@ -223,6 +234,7 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
   },
 
   createSession: async (bookId, sessionKind, playMode) => {
+    abortPreviousChatRound(null);
     const data = await fetchJson<SessionResponse>("/sessions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -261,6 +273,7 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
   },
 
   createDraftSession: (bookId, sessionKind, playMode) => {
+    abortPreviousChatRound(null);
     // 前端生成 sessionId（与后端 createBookSession 同格式），暂不持久化到磁盘，
     // 也暂不写入 sessionIdsByBook——侧边栏看不到这条 draft。
     // 发送第一条消息时 sendMessage 会调 POST /sessions { sessionId, bookId } 落盘
@@ -342,39 +355,29 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
 
   abortSession: async (sessionId, scope = "all") => {
     const session = get().sessions[sessionId];
-    if (scope === "all") {
-      session?.stream?.close();
-      const stoppedAt = Date.now();
-      const stoppedMessage = tr("已由用户停止", "Stopped by user");
-      set((state) => ({
-        sessions: updateSession(state.sessions, sessionId, (runtime) => ({
-          isStreaming: false,
-          isChatStreaming: false,
-          stream: null,
-          lastError: null,
-          messages: markRunningToolsFailed(runtime.messages, stoppedMessage, stoppedAt),
-        })),
-      }));
-    } else {
-      // scope=chat：只停当前聊天轮，后台任务还在跑。
-      // 不关连接（任务事件还要继续到达）、不把任务卡标记为失败；
-      // 聊天轮自身的收尾由 sendMessage 的 finally 完成。
-      set((state) => ({
-        sessions: updateSession(state.sessions, sessionId, () => ({
-          isChatStreaming: false,
-          lastError: null,
-        })),
-      }));
-    }
+    const stoppedAt = Date.now();
+    const stoppedMessage = tr("已由用户停止", "Stopped by user");
+    const chatOnly = scope === "chat";
+    const messages = markRunningToolsFailed(
+      session?.messages ?? [],
+      stoppedMessage,
+      stoppedAt,
+      (execution) => !chatOnly || execution.background !== true,
+    );
+    const keepProductionStream = chatOnly && hasAnyInFlightExecution(messages);
+    if (!keepProductionStream) session?.stream?.close();
+    set((state) => ({
+      sessions: updateSession(state.sessions, sessionId, (runtime) => ({
+        isStreaming: keepProductionStream,
+        isChatStreaming: false,
+        stream: keepProductionStream ? runtime.stream : null,
+        lastError: null,
+        messages,
+      })),
+    }));
     try {
-      await fetchJson(`/sessions/${sessionId}/abort`, {
+      await fetchJson(`/sessions/${sessionId}/abort${chatOnly ? "?scope=chat" : ""}`, {
         method: "POST",
-        ...(scope === "chat"
-          ? {
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ scope: "chat" }),
-            }
-          : {}),
       });
     } catch (error) {
       get().addErrorMessage(sessionId, error instanceof Error ? error.message : String(error));
@@ -609,11 +612,10 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
         if (responseToolExecutions.length === 0) return;
         set((state) => ({
           sessions: updateSession(state.sessions, sessionId, (runtime) => ({
-            messages: runtime.messages.map((message) => (
-              message.timestamp === streamTs && message.role === "assistant"
-                ? withToolExecutions(message, responseToolExecutions)
-                : message
-            )),
+            messages: responseToolExecutions.reduce<ReadonlyArray<(typeof runtime.messages)[number]>>(
+              (messages, execution) => mergeToolExecution(messages, execution),
+              runtime.messages,
+            ),
           })),
         }));
       };
@@ -653,17 +655,12 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
           get().finalizeStream(sessionId, streamTs, "", toolCall);
           attachResponseTools();
         } else {
-          const message = withToolExecutions({
-            role: "assistant",
-            content: "",
-            timestamp: Date.now(),
-            toolCall,
-          }, responseToolExecutions);
-          set((state) => ({
-            sessions: updateSession(state.sessions, sessionId, (runtime) => ({
-              messages: [...runtime.messages, message],
-            })),
-          }));
+          // A confirmed production task can be restored from task:snapshot before
+          // tool:start arrives. That card uses the server-side startedAt timestamp,
+          // not this request's streamTs, so hasStream is false even though the same
+          // execution is already visible. Always merge by execution id here: it
+          // updates the restored card, or appends one when no SSE event was observed.
+          attachResponseTools();
         }
       } else {
         if (hasStream) {
@@ -734,5 +731,6 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
       sessions: updateSession(state.sessions, sessionId, () => ({ lastFailedSend: undefined })),
     }));
     await get().sendMessage(sessionId, failed.text, failed.options);
-  },
-});
+    },
+  };
+};

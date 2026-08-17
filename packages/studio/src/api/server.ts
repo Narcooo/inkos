@@ -38,12 +38,12 @@ import {
   probeModelsFromUpstream,
   fetchWithProxy,
   chatCompletion,
+  runWorkerAgent,
   buildExportArtifact,
   evaluateBookQuality,
   ConsolidatorAgent,
   DetectionConfigSchema,
   ResearchSearchConfigSchema,
-  InputGovernanceModeSchema,
   GLOBAL_ENV_PATH,
   COVER_PROVIDER_PRESETS,
   createPlayDB,
@@ -60,17 +60,18 @@ import {
   normalizeCoverBaseUrl,
   resolveCoverProviderPreset,
   SessionKindSchema,
-  isExplicitWriteChapterCommand,
-  isUsablePlayInitialScene,
-  isWriteNextInstruction,
   normalizeActionSource as normalizeCoreActionSource,
   normalizeActionPayload as normalizeCoreActionPayload,
   normalizePlayMode as normalizeCorePlayMode,
   normalizeRequestedIntent as normalizeCoreRequestedIntent,
   normalizeSkillIdList as normalizeCoreSkillIdList,
   inferLanguage,
+  ingestMaterial,
   createSkillRegistry,
-  loadConfiguredAgentSkills,
+  loadAvailableAgentSkills,
+  activatedSkillIds,
+  mergeActivatedSkillGuidance,
+  resolveProductionSkillActivations,
   parseAgentSkillDocument,
   getBuiltinPrompt,
   listBuiltinPromptPacks,
@@ -89,6 +90,10 @@ import {
   createShortFictionRunTool,
   createStoryboardCreationTool,
   createTranslationCreateTool,
+  createFanficBookTool,
+  createContinuationImportTool,
+  createSpinoffBookTool,
+  createImitationBookTool,
   createSubAgentTool,
   createDraftStructureTool,
   createConnectChoiceTool,
@@ -127,6 +132,8 @@ import {
   type SessionKind,
   type AgentSessionAttachment,
 } from "@actalk/inkos-core";
+import { isConfirmedProductionAction } from "../shared/confirmed-production.js";
+import { summarizeToolResult } from "../shared/tool-result.js";
 import { access, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { isSafeBookId } from "./safety.js";
@@ -211,6 +218,10 @@ const TOOL_LABELS: Record<string, BilingualLabel> = {
   storyboard_create: { zh: "分镜创作", en: "Storyboard creation" },
   interactive_film_create: { zh: "互动影游", en: "Interactive film" },
   translation_create: { zh: "翻译项目", en: "Translation" },
+  fanfic_create: { zh: "同人创作", en: "Fanfiction" },
+  continuation_import: { zh: "导入续写", en: "Continuation import" },
+  spinoff_create: { zh: "番外创作", en: "Side story" },
+  imitation_create: { zh: "仿写创作", en: "Style imitation" },
   generate_cover: { zh: "生成封面", en: "Cover generation" },
   play_edit: { zh: "编辑互动世界", en: "Edit interactive world" },
   play_start: { zh: "启动互动世界", en: "Start interactive world" },
@@ -271,16 +282,6 @@ function buildRunningTaskContextBlock(task: StudioTaskSnapshot, lang: StudioLang
       "The task runs independently in the background; this chat turn does not interrupt it. When the user asks about its progress, answer truthfully from the information above. Do not start another production task of the same kind, and do not claim that no task is running. Production tools are temporarily unavailable and will be restored when the task finishes.",
     ].join("\n"),
   );
-}
-
-function summarizeResult(result: unknown): string {
-  if (typeof result === "string") return result.slice(0, 2000);
-  if (result && typeof result === "object") {
-    const r = result as Record<string, unknown>;
-    if (typeof r.content === "string") return r.content.slice(0, 2000);
-    if (typeof r.text === "string") return r.text.slice(0, 2000);
-  }
-  return String(result).slice(0, 2000);
 }
 
 function compareServiceListItems(
@@ -424,16 +425,7 @@ function nonTextModelMessage(modelId: string, lang: StudioLanguage = "zh"): stri
 }
 
 function extractToolError(result: unknown): string {
-  if (typeof result === "string") return result.slice(0, 500);
-  if (result && typeof result === "object") {
-    const r = result as Record<string, unknown>;
-    if (typeof r.content === "string") return r.content.slice(0, 500);
-    if (r.content && Array.isArray(r.content)) {
-      const textPart = r.content.find((c: any) => c.type === "text");
-      if (textPart) return (textPart as any).text?.slice(0, 500) ?? "";
-    }
-  }
-  return String(result).slice(0, 500);
+  return summarizeToolResult(result, 500);
 }
 
 function resolveProjectImageFile(root: string, rawPath: string): { readonly resolved: string; readonly contentType: string } {
@@ -617,6 +609,7 @@ const MAX_AGENT_ATTACHMENTS = 8;
 const MAX_AGENT_ATTACHMENT_BYTES = 4 * 1024 * 1024;
 const MAX_AGENT_ATTACHMENT_TEXT_CHARS = 120_000;
 const MAX_TRANSLATION_UPLOAD_BYTES = 80 * 1024 * 1024;
+const MAX_CANON_UPLOAD_BYTES = 18 * 1024 * 1024;
 const MAX_SKILL_IMPORT_FILES = 128;
 const MAX_SKILL_IMPORT_FILE_BYTES = 2 * 1024 * 1024;
 const MAX_SKILL_IMPORT_TOTAL_BYTES = 8 * 1024 * 1024;
@@ -733,15 +726,33 @@ async function storeTranslationUpload(
   root: string,
   payload: { readonly filename?: string; readonly dataUrl?: string },
 ): Promise<{ readonly storedPath: string; readonly size: number; readonly mimeType: string }> {
-  const filename = safeUploadFileName(payload.filename || "translation-source");
+  return storeProjectUpload(root, payload, {
+    scope: "translation",
+    fallbackName: "translation-source",
+    maxBytes: MAX_TRANSLATION_UPLOAD_BYTES,
+    errorCode: "INVALID_TRANSLATION_UPLOAD",
+  });
+}
+
+async function storeProjectUpload(
+  root: string,
+  payload: { readonly filename?: string; readonly dataUrl?: string },
+  options: {
+    readonly scope: string;
+    readonly fallbackName: string;
+    readonly maxBytes: number;
+    readonly errorCode: string;
+  },
+): Promise<{ readonly storedPath: string; readonly size: number; readonly mimeType: string }> {
+  const filename = safeUploadFileName(payload.filename || options.fallbackName);
   if (!payload.dataUrl) {
-    throw new ApiError(400, "INVALID_TRANSLATION_UPLOAD", "Translation upload is missing dataUrl");
+    throw new ApiError(400, options.errorCode, "Upload is missing dataUrl");
   }
   const parsed = parseDataUrl(payload.dataUrl);
-  if (parsed.buffer.byteLength > MAX_TRANSLATION_UPLOAD_BYTES) {
-    throw new ApiError(413, "TRANSLATION_UPLOAD_TOO_LARGE", `${filename} exceeds ${MAX_TRANSLATION_UPLOAD_BYTES} bytes`);
+  if (parsed.buffer.byteLength > options.maxBytes) {
+    throw new ApiError(413, `${options.errorCode}_TOO_LARGE`, `${filename} exceeds ${options.maxBytes} bytes`);
   }
-  const uploadDir = join(root, ".inkos", "uploads", "translation");
+  const uploadDir = join(root, ".inkos", "uploads", safeUploadFileName(options.scope));
   await mkdir(uploadDir, { recursive: true });
   const storedName = `${Date.now()}-${filename}`;
   const storedPath = join(uploadDir, storedName);
@@ -914,7 +925,7 @@ async function importStudioSkillFolder(
 }
 
 async function loadStudioSkills(root: string) {
-  const configured = await loadConfiguredAgentSkills({ projectRoot: root });
+  const configured = await loadAvailableAgentSkills({ projectRoot: root });
   const projectSkillIds = await listProjectSkillIds(root);
   const registry = createSkillRegistry({ skills: configured.skills });
   return {
@@ -974,236 +985,6 @@ function normalizeStudioPlayMode(value: unknown): PlayMode | undefined {
   } catch {
     throw new ApiError(400, "INVALID_PLAY_MODE", `Invalid playMode: ${String(value)}`);
   }
-}
-
-// 判断"这次请求要不要把写下一章当成确认式生产任务执行"。
-// 命中的三种来源（显式 write_next intent / free-text 明确写章命令 / 其它来源的
-// 写作指令启发式）全部走确认式任务分支：有 taskId、AbortController、磁盘快照，
-// 可中止、可在刷新后恢复。没有书或不在书籍会话时交给聊天 agent 处理。
-function isWriteNextProductionRequest(args: {
-  readonly instruction: string;
-  readonly agentBookId: string | null | undefined;
-  readonly sessionKind: SessionKind;
-  readonly actionSource: ActionSource;
-  readonly requestedIntent?: RequestedIntent;
-}): boolean {
-  if (!args.agentBookId || args.sessionKind !== "book") return false;
-  if (args.requestedIntent === "write_next") return true;
-  if (args.actionSource === "free-text") return isExplicitWriteChapterCommand(args.instruction);
-  return isWriteNextInstruction(args.instruction);
-}
-
-type ExternalChatEditResult = {
-  readonly responseText: string;
-  readonly activeBookId?: string;
-};
-
-const CHAT_EDIT_WARNING = "[warning] Chat external edit requires review before continuation.";
-const CHAT_EDIT_TEXT_EXTENSIONS = /\.(md|txt|json|ya?ml)$/i;
-const CHAT_EDIT_ALLOWED_ROOTS = new Set(["books", "shorts", "covers", "genres"]);
-
-function parseReplacementInstruction(instruction: string): { oldText: string; newText: string } | null {
-  const inFileQuoted = instruction.match(/(?:里|里的|中|中的|里面)\s*[「“"]([\s\S]+?)[」”"]\s*(?:改成|替换成|换成)\s*[「“"]([\s\S]+?)[」”"]/);
-  if (inFileQuoted?.[1] && inFileQuoted[2] !== undefined) {
-    return { oldText: inFileQuoted[1], newText: inFileQuoted[2] };
-  }
-  const quoted = instruction.match(/(?:把|将)\s*[「“"]([\s\S]+?)[」”"]\s*(?:改成|替换成|换成)\s*[「“"]([\s\S]+?)[」”"]/);
-  if (quoted?.[1] && quoted[2] !== undefined) {
-    return { oldText: quoted[1], newText: quoted[2] };
-  }
-  const plain = instruction.match(/(?:把|将)\s+([^\s，。；;]+)\s*(?:改成|替换成|换成)\s+([^\n，。；;]+)/);
-  if (plain?.[1] && plain[2] !== undefined) {
-    return { oldText: plain[1], newText: plain[2].trim() };
-  }
-  return null;
-}
-
-function isExplicitExternalChatEditInstruction(instruction: string): boolean {
-  const trimmed = instruction.trim();
-  if (!trimmed) return false;
-  if (/[?？]\s*$/.test(trimmed)) return false;
-  if (/^(?:请问|能否|能不能|可以|可不可以|是否|是不是|怎么|怎样|为什么|如果|假如|要不要|建议|讨论)\b/u.test(trimmed)) {
-    return false;
-  }
-
-  const imperative = trimmed.replace(/^(?:请|麻烦|帮我|直接|现在)\s*/u, "");
-  return /^(?:第\s*\d{1,4}\s*章\s*)?(?:把|将)\s*/u.test(imperative);
-}
-
-function parseChapterNumberForEdit(instruction: string): number | null {
-  const match = instruction.match(/第\s*(\d{1,4})\s*章/);
-  if (!match?.[1]) return null;
-  const chapterNumber = Number.parseInt(match[1], 10);
-  return Number.isInteger(chapterNumber) && chapterNumber > 0 ? chapterNumber : null;
-}
-
-function parseExplicitEditPath(instruction: string): string | null {
-  const match = instruction.match(/(?:把|将)\s+([^「“"\s，。；;]+?\.[A-Za-z0-9]+)\s*(?:里|里的|中|中的|里面)/);
-  return match?.[1]?.trim() ?? null;
-}
-
-function countContentUnits(content: string): number {
-  const stripped = content
-    .replace(/^#{1,6}\s+.*$/gm, "")
-    .trim();
-  if (!stripped) return 0;
-  if (/[\u3400-\u9fff]/.test(stripped)) {
-    return stripped.replace(/\s/g, "").length;
-  }
-  return stripped.split(/\s+/).filter(Boolean).length;
-}
-
-function resolveExternalChatEditPath(root: string, requestedPath: string): { path: string; rel: string } {
-  if (isAbsolute(requestedPath)) {
-    throw new ApiError(400, "UNSUPPORTED_CHAT_EDIT_TARGET", "Chat external edits only support project-relative content paths.");
-  }
-  const projectRoot = resolve(root);
-  const resolved = resolve(projectRoot, requestedPath);
-  const rel = relative(projectRoot, resolved).replace(/\\/g, "/");
-  if (!rel || rel.startsWith("../") || rel === "..") {
-    throw new ApiError(400, "UNSUPPORTED_CHAT_EDIT_TARGET", "Chat external edit path escapes the project root.");
-  }
-  const first = rel.split("/")[0] ?? "";
-  if (!CHAT_EDIT_ALLOWED_ROOTS.has(first)) {
-    throw new ApiError(400, "UNSUPPORTED_CHAT_EDIT_TARGET", "Chat external edits cannot modify source code, config, or arbitrary project files.");
-  }
-  if (rel.includes("/.inkos/") || rel.endsWith("/.inkos") || rel.includes("/secrets") || rel.endsWith(".env")) {
-    throw new ApiError(400, "UNSUPPORTED_CHAT_EDIT_TARGET", "Chat external edits cannot modify secrets or runtime internals.");
-  }
-  if (!CHAT_EDIT_TEXT_EXTENSIONS.test(rel)) {
-    throw new ApiError(400, "UNSUPPORTED_CHAT_EDIT_TARGET", "Chat external edits only support text content files.");
-  }
-  return { path: resolved, rel };
-}
-
-async function findChapterFile(root: string, bookId: string, chapterNumber: number): Promise<string | null> {
-  const chaptersDir = join(root, "books", bookId, "chapters");
-  const padded = String(chapterNumber).padStart(4, "0");
-  const files = await readdir(chaptersDir).catch(() => []);
-  const match = files.find((file) => file.startsWith(`${padded}_`) && file.endsWith(".md"));
-  return match ? join(chaptersDir, match) : null;
-}
-
-function parseBookChapterFromRelativePath(rel: string): { bookId: string; chapterNumber: number } | null {
-  const match = rel.match(/^books\/([^/]+)\/chapters\/(\d{4})_[^/]+\.md$/);
-  if (!match?.[1] || !match[2]) return null;
-  const chapterNumber = Number.parseInt(match[2], 10);
-  return Number.isInteger(chapterNumber) ? { bookId: match[1], chapterNumber } : null;
-}
-
-async function syncExternalChapterEdit(params: {
-  readonly state: StateManager;
-  readonly root: string;
-  readonly bookId: string;
-  readonly chapterNumber: number;
-  readonly content: string;
-}): Promise<void> {
-  const now = new Date().toISOString();
-  const index = [...(await params.state.loadChapterIndex(params.bookId))];
-  const updated = index.map((chapter) => chapter.number === params.chapterNumber
-    ? {
-        ...chapter,
-        status: "audit-failed" as const,
-        wordCount: countContentUnits(params.content),
-        updatedAt: now,
-        auditIssues: [
-          ...chapter.auditIssues.filter((issue) => issue !== CHAT_EDIT_WARNING),
-          CHAT_EDIT_WARNING,
-        ],
-      }
-    : chapter);
-  if (updated.length > 0) {
-    await params.state.saveChapterIndex(params.bookId, updated);
-  }
-
-  const runtimeDir = join(params.root, "books", params.bookId, "story", "runtime");
-  const padded = String(params.chapterNumber).padStart(4, "0");
-  const runtimeFiles = await readdir(runtimeDir).catch(() => []);
-  await Promise.all(
-    runtimeFiles
-      .filter((file) => file.startsWith(`chapter-${padded}.`))
-      .map((file) => rm(join(runtimeDir, file), { force: true })),
-  );
-}
-
-async function tryHandleExternalChatEdit(params: {
-  readonly root: string;
-  readonly state: StateManager;
-  readonly instruction: string;
-  readonly activeBookId: string | null;
-}): Promise<ExternalChatEditResult | null> {
-  const replacement = parseReplacementInstruction(params.instruction);
-  if (!replacement) return null;
-  if (!isExplicitExternalChatEditInstruction(params.instruction)) return null;
-
-  const explicitPath = parseExplicitEditPath(params.instruction);
-  if (explicitPath) {
-    const target = resolveExternalChatEditPath(params.root, explicitPath);
-    const content = await readFile(target.path, "utf-8").catch((error) => {
-      throw new ApiError(404, "CHAT_EDIT_TARGET_NOT_FOUND", error instanceof Error ? error.message : String(error));
-    });
-    const first = content.indexOf(replacement.oldText);
-    if (first === -1) {
-      throw new ApiError(400, "EDIT_TARGET_NOT_FOUND", "要替换的原文没有在目标文件中找到。");
-    }
-    if (content.indexOf(replacement.oldText, first + replacement.oldText.length) !== -1) {
-      throw new ApiError(400, "EDIT_TARGET_AMBIGUOUS", "要替换的原文出现多次，请给出更具体的一段。");
-    }
-    const updated = content.slice(0, first) + replacement.newText + content.slice(first + replacement.oldText.length);
-    await writeFile(target.path, updated, "utf-8");
-
-    const chapterTarget = parseBookChapterFromRelativePath(target.rel);
-    if (chapterTarget) {
-      await syncExternalChapterEdit({
-        state: params.state,
-        root: params.root,
-        bookId: chapterTarget.bookId,
-        chapterNumber: chapterTarget.chapterNumber,
-        content: updated,
-      });
-    }
-
-    return {
-      activeBookId: chapterTarget?.bookId ?? params.activeBookId ?? undefined,
-      responseText: `已直接编辑 ${target.rel}${chapterTarget ? "，并标记为需要复核" : ""}。`,
-    };
-  }
-
-  if (!params.activeBookId) return null;
-  const chapterNumber = parseChapterNumberForEdit(params.instruction);
-  if (!replacement || !chapterNumber) return null;
-
-  const chapterPath = await findChapterFile(params.root, params.activeBookId, chapterNumber);
-  if (!chapterPath) {
-    throw new ApiError(404, "CHAPTER_NOT_FOUND", `Chapter ${chapterNumber} not found in ${params.activeBookId}`);
-  }
-  if (!CHAT_EDIT_TEXT_EXTENSIONS.test(chapterPath)) {
-    throw new ApiError(400, "UNSUPPORTED_EDIT_TARGET", "Chat external edits only support text files.");
-  }
-
-  const content = await readFile(chapterPath, "utf-8");
-  const first = content.indexOf(replacement.oldText);
-  if (first === -1) {
-    throw new ApiError(400, "EDIT_TARGET_NOT_FOUND", "要替换的原文没有在目标章节中找到。");
-  }
-  if (content.indexOf(replacement.oldText, first + replacement.oldText.length) !== -1) {
-    throw new ApiError(400, "EDIT_TARGET_AMBIGUOUS", "要替换的原文出现多次，请给出更具体的一段。");
-  }
-
-  const updated = content.slice(0, first) + replacement.newText + content.slice(first + replacement.oldText.length);
-  await writeFile(chapterPath, updated, "utf-8");
-  await syncExternalChapterEdit({
-    state: params.state,
-    root: params.root,
-    bookId: params.activeBookId,
-    chapterNumber,
-    content: updated,
-  });
-
-  return {
-    activeBookId: params.activeBookId,
-    responseText: `已直接编辑 ${params.activeBookId} 第 ${chapterNumber} 章，并标记为需要复核。`,
-  };
 }
 
 function validateAgentActionExecution(args: {
@@ -1365,6 +1146,14 @@ function suppressManualTextForTool(exec: CollectedToolExec): boolean {
     || exec.tool === "interactive_film_create";
 }
 
+function hasSuccessfulToolOwnedResponse(execs: ReadonlyArray<CollectedToolExec>): boolean {
+  return execs.some((exec) =>
+    exec.status === "completed"
+    && !isLikelyFailedToolResult(exec)
+    && suppressManualTextForTool(exec)
+  );
+}
+
 function manualToolAssistantMessage(
   responseText: string,
   exec: CollectedToolExec,
@@ -1400,26 +1189,6 @@ function manualToolAppendOptions(sessionKind: SessionKind, exec: CollectedToolEx
   };
 }
 
-function isConfirmedProductionAction(args: {
-  readonly actionSource: ActionSource;
-  readonly requestedIntent?: RequestedIntent;
-}): boolean {
-  return (args.actionSource === "button" || args.actionSource === "slash")
-    && (
-      args.requestedIntent === "create_book"
-    || args.requestedIntent === "short_run"
-    || args.requestedIntent === "script_create"
-    || args.requestedIntent === "storyboard_create"
-    || args.requestedIntent === "interactive_film_create"
-    || args.requestedIntent === "translation_create"
-    || args.requestedIntent === "play_start"
-    || args.requestedIntent === "generate_cover"
-    || args.requestedIntent === "draft_structure"
-    || args.requestedIntent === "connect_choice"
-    || args.requestedIntent === "remove_node"
-    );
-}
-
 function requirePayloadText(value: string | undefined, message: string): string {
   const text = value?.trim();
   if (!text) {
@@ -1433,157 +1202,6 @@ function toolResultText(result: unknown, lang: StudioLanguage = "zh"): string {
   return text || pick(lang, "已完成。", "Done.");
 }
 
-interface WriteNextChapterToolResult {
-  // 章节写完但审稿未通过时置 true：任务卡按错误态展示，但请求仍以 200 返回结果文本。
-  readonly isError?: boolean;
-  readonly content: ReadonlyArray<{ readonly type: "text"; readonly text: string }>;
-  readonly details: {
-    readonly kind: "chapter_written" | "chapters_written";
-    readonly bookId: string;
-    readonly chapterNumber?: number;
-    readonly title?: string;
-    readonly wordCount?: number;
-    readonly status?: string;
-    readonly requestedCount?: number;
-    readonly completedCount?: number;
-    readonly stoppedStatus?: string;
-    readonly chapters?: ReadonlyArray<{
-      readonly chapterNumber: number;
-      readonly title?: string;
-      readonly wordCount: number;
-      readonly status?: string;
-    }>;
-  };
-}
-
-function buildWriteNextResponseText(
-  bookId: string,
-  writeResult: { readonly chapterNumber: number; readonly title?: string; readonly wordCount: number; readonly status?: string },
-  writeNeedsReview: boolean,
-  lang: StudioLanguage,
-): string {
-  const zhResponseText = writeNeedsReview
-    ? [
-        `已为 ${bookId} 写出第 ${writeResult.chapterNumber} 章`,
-        writeResult.title ? `《${writeResult.title}》` : "",
-        `，字数 ${writeResult.wordCount}，但审稿未通过，状态 ${writeResult.status}，需要复核后再继续。`,
-      ].join("")
-    : [
-        `已为 ${bookId} 完成第 ${writeResult.chapterNumber} 章`,
-        writeResult.title ? `《${writeResult.title}》` : "",
-        `，字数 ${writeResult.wordCount}，状态 ${writeResult.status}。`,
-      ].join("");
-  const enChapterRef = writeResult.title
-    ? `chapter ${writeResult.chapterNumber} "${writeResult.title}"`
-    : `chapter ${writeResult.chapterNumber}`;
-  const enResponseText = writeNeedsReview
-    ? `Wrote ${enChapterRef} for ${bookId}: ${writeResult.wordCount} words, but the review did not pass (status: ${writeResult.status}). Manual review is required before continuing.`
-    : `Completed ${enChapterRef} for ${bookId}: ${writeResult.wordCount} words, status ${writeResult.status}.`;
-  return pick(lang, zhResponseText, enResponseText);
-}
-
-// 写下一章的确认式任务工具：走 pipeline.runWithAbortSignal，让任务控制器的
-// 中止信号传进写作流程（pipeline 在下一个检查点抛出中止错误）。
-function createWriteNextChapterTool(
-  pipeline: PipelineRunner,
-  bookId: string,
-  lang: StudioLanguage,
-  chapterCount = 1,
-): {
-  readonly name: "sub_agent";
-  readonly execute: (
-    toolCallId: string,
-    params: Record<string, unknown>,
-    signal: AbortSignal | undefined,
-    onUpdate?: (partialResult: unknown) => void,
-  ) => Promise<WriteNextChapterToolResult>;
-} {
-  return {
-    name: "sub_agent",
-    async execute(_toolCallId, _params, signal, onUpdate) {
-      if (chapterCount > 1) {
-        onUpdate?.({
-          content: [{
-            type: "text",
-            text: pick(
-              lang,
-              `正在为 ${bookId} 连续写 ${chapterCount} 章…`,
-              `Writing ${chapterCount} consecutive chapters for ${bookId}...`,
-            ),
-          }],
-        });
-        const results = await pipeline.runWithAbortSignal(
-          signal,
-          () => pipeline.writeChapters(bookId, chapterCount, {
-            onChapterComplete(result, completedCount, requestedCount) {
-              onUpdate?.({
-                content: [{
-                  type: "text",
-                  text: pick(
-                    lang,
-                    `第 ${completedCount}/${requestedCount} 章已落盘：第 ${result.chapterNumber} 章《${result.title}》。`,
-                    `${completedCount}/${requestedCount} persisted: chapter ${result.chapterNumber} "${result.title}".`,
-                  ),
-                }],
-              });
-            },
-          }),
-        );
-        const last = results.at(-1);
-        const stoppedStatus = last?.status !== "ready-for-review" ? last?.status : undefined;
-        const responseText = stoppedStatus
-          ? pick(
-              lang,
-              `已完成 ${results.length}/${chapterCount} 章；第 ${last?.chapterNumber} 章状态为 ${stoppedStatus}，批量写作已停止，请复核后再继续。`,
-              `Completed ${results.length}/${chapterCount} chapters. Chapter ${last?.chapterNumber} ended with ${stoppedStatus}, so the batch stopped for review.`,
-            )
-          : pick(
-              lang,
-              `已连续完成 ${results.length} 章（第 ${results[0]?.chapterNumber} 章至第 ${last?.chapterNumber} 章）。`,
-              `Completed ${results.length} consecutive chapters (chapters ${results[0]?.chapterNumber}-${last?.chapterNumber}).`,
-            );
-        return {
-          ...(stoppedStatus ? { isError: true } : {}),
-          content: [{ type: "text", text: responseText }],
-          details: {
-            kind: "chapters_written",
-            bookId,
-            requestedCount: chapterCount,
-            completedCount: results.length,
-            chapters: results.map((result) => ({
-              chapterNumber: result.chapterNumber,
-              title: result.title,
-              wordCount: result.wordCount,
-              status: result.status,
-            })),
-            ...(stoppedStatus ? { stoppedStatus } : {}),
-          },
-        };
-      }
-      onUpdate?.({
-        content: [{
-          type: "text",
-          text: pick(lang, `正在为 ${bookId} 写下一章…`, `Writing the next chapter for ${bookId}...`),
-        }],
-      });
-      const writeResult = await pipeline.runWithAbortSignal(signal, () => pipeline.writeNextChapter(bookId));
-      const writeNeedsReview = Boolean(writeResult.status && writeResult.status !== "ready-for-review");
-      return {
-        ...(writeNeedsReview ? { isError: true } : {}),
-        content: [{ type: "text", text: buildWriteNextResponseText(bookId, writeResult, writeNeedsReview, lang) }],
-        details: {
-          kind: "chapter_written",
-          bookId,
-          chapterNumber: writeResult.chapterNumber,
-          title: writeResult.title,
-          wordCount: writeResult.wordCount,
-          status: writeResult.status,
-        },
-      };
-    },
-  };
-}
-
 async function executeConfirmedProductionAction(args: {
   readonly pipeline: PipelineRunner;
   readonly root: string;
@@ -1593,6 +1211,8 @@ async function executeConfirmedProductionAction(args: {
   readonly instruction: string;
   readonly requestedIntent: RequestedIntent;
   readonly actionPayload?: ActionPayload;
+  readonly requestedSkills?: ReadonlyArray<string>;
+  readonly disabledSkills?: ReadonlyArray<string>;
   readonly playMode?: PlayMode;
   readonly language?: StudioLanguage;
   readonly taskId: string;
@@ -1603,6 +1223,18 @@ async function executeConfirmedProductionAction(args: {
   const lang = args.language ?? "zh";
   const id = args.taskId;
   const actionPayload = args.actionPayload;
+  const configuredSkills = await loadAvailableAgentSkills({ projectRoot: args.root });
+  const skillResolution = createSkillRegistry({ skills: configuredSkills.skills }).resolveSkills({
+    requestedSkills: args.requestedSkills,
+    disabledSkills: args.disabledSkills,
+  });
+  const requestedSkillActivations = skillResolution.usedSkills.map((skill) => ({ skill, resources: [] }));
+  const productionSkills = (
+    capability: Parameters<typeof resolveProductionSkillActivations>[1],
+  ) => mergeActivatedSkillGuidance(
+    resolveProductionSkillActivations(skillResolution.availableSkills, capability),
+    requestedSkillActivations,
+  );
   let tool: ReturnType<typeof createSubAgentTool>
     | ReturnType<typeof createShortFictionRunTool>
     | ReturnType<typeof createGenerateCoverTool>
@@ -1610,18 +1242,24 @@ async function executeConfirmedProductionAction(args: {
     | ReturnType<typeof createStoryboardCreationTool>
     | ReturnType<typeof createInteractiveFilmCreationTool>
     | ReturnType<typeof createTranslationCreateTool>
+    | ReturnType<typeof createFanficBookTool>
+    | ReturnType<typeof createContinuationImportTool>
+    | ReturnType<typeof createSpinoffBookTool>
+    | ReturnType<typeof createImitationBookTool>
     | ReturnType<typeof createPlayStartTool>
     | ReturnType<typeof createDraftStructureTool>
     | ReturnType<typeof createConnectChoiceTool>
-    | ReturnType<typeof createRemoveNodeTool>
-    | ReturnType<typeof createWriteNextChapterTool>;
+    | ReturnType<typeof createRemoveNodeTool>;
   let params: Record<string, unknown>;
   let agent: string | undefined;
 
   if (args.requestedIntent === "create_book") {
     const payload = actionPayload?.createBook;
     const title = requirePayloadText(payload?.title, pick(lang, "确认建书缺少书名，请重新生成确认卡。", "The book creation confirmation is missing a title. Regenerate the confirmation card."));
-    tool = createSubAgentTool(args.pipeline, null, args.root, { actionPayload });
+    tool = createSubAgentTool(args.pipeline, null, args.root, {
+      actionPayload,
+      workerSkills: (worker) => worker === "architect" ? productionSkills("longWriting") : [],
+    });
     agent = "architect";
     params = {
       agent,
@@ -1637,7 +1275,11 @@ async function executeConfirmedProductionAction(args: {
     const payload = actionPayload?.shortRun;
     const direction = payload?.direction?.trim() || args.instruction.trim();
     if (!direction) throw new ApiError(400, "CONFIRMED_ACTION_PAYLOAD_INCOMPLETE", pick(lang, "确认短篇缺少方向，请重新生成确认卡。", "The short fiction confirmation is missing a direction. Regenerate the confirmation card."));
-    tool = createShortFictionRunTool(args.pipeline, args.root, { actionPayload, language: lang });
+    tool = createShortFictionRunTool(args.pipeline, args.root, {
+      actionPayload,
+      language: lang,
+      defaultSkills: productionSkills("shortWriting"),
+    });
     params = {
       direction,
       ...(payload?.reference ? { reference: payload.reference } : {}),
@@ -1651,9 +1293,17 @@ async function executeConfirmedProductionAction(args: {
       throw new ApiError(400, "BOOK_ID_REQUIRED", pick(lang, "写下一章需要先打开一本书。", "Writing the next chapter requires an active book."));
     }
     const chapterCount = actionPayload?.writeNext?.chapterCount ?? 1;
-    tool = createWriteNextChapterTool(args.pipeline, args.bookId, lang, chapterCount);
+    tool = createSubAgentTool(args.pipeline, args.bookId, args.root, {
+      language: lang,
+      workerSkills: (worker) => worker === "writer" ? productionSkills("longWriting") : [],
+    });
     agent = "writer";
-    params = { agent: "writer", bookId: args.bookId };
+    params = {
+      agent: "writer",
+      bookId: args.bookId,
+      instruction: args.instruction,
+      chapterCount,
+    };
   } else if (args.requestedIntent === "generate_cover") {
     const payload = actionPayload?.generateCover;
     const title = requirePayloadText(payload?.title, pick(lang, "确认生成封面缺少标题，请重新生成确认卡。", "The cover generation confirmation is missing a title. Regenerate the confirmation card."));
@@ -1668,7 +1318,11 @@ async function executeConfirmedProductionAction(args: {
   } else if (args.requestedIntent === "script_create") {
     const payload = actionPayload?.scriptCreate;
     const title = requirePayloadText(payload?.title, pick(lang, "确认创建剧本缺少标题，请重新生成确认卡。", "The script creation confirmation is missing a title. Regenerate the confirmation card."));
-    tool = createScriptCreationTool(args.pipeline, args.root, { actionPayload, language: lang });
+    tool = createScriptCreationTool(args.pipeline, args.root, {
+      actionPayload,
+      language: lang,
+      defaultSkills: productionSkills("script"),
+    });
     params = {
       title,
       instruction: args.instruction,
@@ -1685,7 +1339,11 @@ async function executeConfirmedProductionAction(args: {
   } else if (args.requestedIntent === "storyboard_create") {
     const payload = actionPayload?.storyboardCreate;
     const title = requirePayloadText(payload?.title, pick(lang, "确认创建分镜缺少标题，请重新生成确认卡。", "The storyboard creation confirmation is missing a title. Regenerate the confirmation card."));
-    tool = createStoryboardCreationTool(args.pipeline, args.root, { actionPayload, language: lang });
+    tool = createStoryboardCreationTool(args.pipeline, args.root, {
+      actionPayload,
+      language: lang,
+      defaultSkills: productionSkills("storyboard"),
+    });
     params = {
       title,
       instruction: args.instruction,
@@ -1703,7 +1361,11 @@ async function executeConfirmedProductionAction(args: {
   } else if (args.requestedIntent === "interactive_film_create") {
     const payload = actionPayload?.interactiveFilmCreate;
     const title = requirePayloadText(payload?.title, pick(lang, "确认创建互动影游缺少标题，请重新生成确认卡。", "The interactive film confirmation is missing a title. Regenerate the confirmation card."));
-    tool = createInteractiveFilmCreationTool(args.pipeline, args.root, { actionPayload, language: lang });
+    tool = createInteractiveFilmCreationTool(args.pipeline, args.root, {
+      actionPayload,
+      language: lang,
+      defaultSkills: productionSkills("interactiveFilm"),
+    });
     params = {
       title,
       instruction: args.instruction,
@@ -1732,13 +1394,93 @@ async function executeConfirmedProductionAction(args: {
       ...(payload?.title ? { title: payload.title } : {}),
       ...(payload?.segmentMaxChars ? { segmentMaxChars: payload.segmentMaxChars } : {}),
     };
+  } else if (args.requestedIntent === "fanfic_init") {
+    const payload = actionPayload?.fanficCreate;
+    const title = requirePayloadText(payload?.title, pick(lang, "确认创建同人缺少书名，请补充后重新确认。", "The fanfiction confirmation is missing a title."));
+    if (!payload?.sourceText?.trim() && !payload?.sourcePath?.trim()) {
+      throw new ApiError(400, "CONFIRMED_ACTION_PAYLOAD_INCOMPLETE", pick(lang, "创建同人需要原作资料或上传文件。", "Fanfiction creation requires source material or an uploaded file."));
+    }
+    tool = createFanficBookTool(args.pipeline, args.root, {
+      defaultSkills: productionSkills("longWriting"),
+    });
+    params = {
+      title,
+      ...(payload.sourceText ? { sourceText: payload.sourceText } : {}),
+      ...(payload.sourcePath ? { sourcePath: payload.sourcePath } : {}),
+      ...(payload.sourceName ? { sourceName: payload.sourceName } : {}),
+      mode: payload.mode ?? "canon",
+      ...(payload.genre ? { genre: payload.genre } : {}),
+      ...(payload.platform ? { platform: payload.platform } : {}),
+      language: payload.language ?? lang,
+      ...(payload.targetChapters ? { targetChapters: payload.targetChapters } : {}),
+      ...(payload.chapterWordCount ? { chapterWordCount: payload.chapterWordCount } : {}),
+    };
+  } else if (args.requestedIntent === "continuation_import") {
+    const payload = actionPayload?.continuationImport;
+    const sourcePath = requirePayloadText(payload?.sourcePath, pick(lang, "导入续写需要上传文件或章节目录。", "Continuation import requires an uploaded file or chapter directory."));
+    const targetBookId = payload?.bookId ?? args.bookId ?? undefined;
+    if (!targetBookId && !payload?.title?.trim()) {
+      throw new ApiError(400, "CONFIRMED_ACTION_PAYLOAD_INCOMPLETE", pick(lang, "导入续写需要选择已有书籍或填写新书名。", "Continuation import requires an existing book or a new title."));
+    }
+    tool = createContinuationImportTool(args.pipeline, args.bookId, args.root, {
+      defaultSkills: productionSkills("longWriting"),
+    });
+    params = {
+      ...(targetBookId ? { bookId: targetBookId } : {}),
+      ...(payload?.title ? { title: payload.title } : {}),
+      sourcePath,
+      ...(payload?.splitPattern ? { splitPattern: payload.splitPattern } : {}),
+      ...(payload?.resumeFrom ? { resumeFrom: payload.resumeFrom } : {}),
+      ...(payload?.genre ? { genre: payload.genre } : {}),
+      ...(payload?.platform ? { platform: payload.platform } : {}),
+      language: payload?.language ?? lang,
+      ...(payload?.targetChapters ? { targetChapters: payload.targetChapters } : {}),
+      ...(payload?.chapterWordCount ? { chapterWordCount: payload.chapterWordCount } : {}),
+    };
+  } else if (args.requestedIntent === "spinoff_create") {
+    const payload = actionPayload?.spinoffCreate;
+    const title = requirePayloadText(payload?.title, pick(lang, "确认创建番外缺少书名。", "The side-story confirmation is missing a title."));
+    const parentBookId = requirePayloadText(payload?.parentBookId ?? args.bookId ?? undefined, pick(lang, "创建番外需要指定正传书籍。", "Side-story creation requires a parent book."));
+    tool = createSpinoffBookTool(args.pipeline, args.root, {
+      defaultSkills: productionSkills("longWriting"),
+    });
+    params = {
+      title,
+      parentBookId,
+      ...(payload?.direction ? { direction: payload.direction } : {}),
+      ...(payload?.genre ? { genre: payload.genre } : {}),
+      ...(payload?.platform ? { platform: payload.platform } : {}),
+      ...(payload?.language ? { language: payload.language } : {}),
+      ...(payload?.targetChapters ? { targetChapters: payload.targetChapters } : {}),
+      ...(payload?.chapterWordCount ? { chapterWordCount: payload.chapterWordCount } : {}),
+    };
+  } else if (args.requestedIntent === "style_imitation") {
+    const payload = actionPayload?.imitationCreate;
+    const title = requirePayloadText(payload?.title, pick(lang, "确认创建仿写缺少书名。", "The imitation confirmation is missing a title."));
+    const storyIdea = requirePayloadText(payload?.storyIdea, pick(lang, "仿写需要一个原创故事方向。", "Style imitation requires an original story idea."));
+    if (!payload?.referenceText?.trim() && !payload?.referencePath?.trim()) {
+      throw new ApiError(400, "CONFIRMED_ACTION_PAYLOAD_INCOMPLETE", pick(lang, "仿写需要参考文本或上传文件。", "Style imitation requires reference text or an uploaded file."));
+    }
+    tool = createImitationBookTool(args.pipeline, args.root, {
+      defaultSkills: productionSkills("longWriting"),
+    });
+    params = {
+      title,
+      storyIdea,
+      ...(payload.referenceText ? { referenceText: payload.referenceText } : {}),
+      ...(payload.referencePath ? { referencePath: payload.referencePath } : {}),
+      ...(payload.sourceName ? { sourceName: payload.sourceName } : {}),
+      ...(payload.genre ? { genre: payload.genre } : {}),
+      ...(payload.platform ? { platform: payload.platform } : {}),
+      language: payload.language ?? lang,
+      ...(payload.targetChapters ? { targetChapters: payload.targetChapters } : {}),
+      ...(payload.chapterWordCount ? { chapterWordCount: payload.chapterWordCount } : {}),
+    };
   } else if (args.requestedIntent === "play_start") {
     const payload = actionPayload?.playStart;
     const title = requirePayloadText(payload?.title, pick(lang, "确认启动互动世界缺少标题，请重新生成确认卡。", "The interactive world start confirmation is missing a title. Regenerate the confirmation card."));
     const fallbackScene = [payload?.premise, args.instruction].filter((part): part is string => typeof part === "string" && part.trim().length > 0).join("\n\n");
-    const initialScene = isUsablePlayInitialScene(payload?.initialScene)
-      ? payload?.initialScene?.trim()
-      : fallbackScene.trim();
+    const initialScene = payload?.initialScene?.trim() || fallbackScene.trim();
     const confirmedActionPayload: ActionPayload | undefined = actionPayload
       ? {
         ...actionPayload,
@@ -1749,7 +1491,10 @@ async function executeConfirmedProductionAction(args: {
         },
       }
       : undefined;
-    tool = createPlayStartTool(args.pipeline, args.root, args.sessionId, args.playMode, { actionPayload: confirmedActionPayload });
+    tool = createPlayStartTool(args.pipeline, args.root, args.sessionId, args.playMode, {
+      actionPayload: confirmedActionPayload,
+      defaultSkills: productionSkills("play"),
+    });
     params = {
       title,
       ...(payload?.premise ? { premise: payload.premise } : {}),
@@ -1764,7 +1509,9 @@ async function executeConfirmedProductionAction(args: {
     const projectId = payload?.projectId ?? args.bookId;
     if (!projectId) throw new ApiError(400, "INVALID_ID", "interactive-film action requires a project id (bookId)");
     const agentCtx = args.pipeline.createAgentContext("film-authoring", projectId);
-    const deps = filmLLMDepsFromClient(agentCtx.client, agentCtx.model);
+    const deps = filmLLMDepsFromClient(agentCtx.client, agentCtx.model, {
+      activatedSkills: () => productionSkills("interactiveFilm"),
+    });
     tool = createDraftStructureTool(args.root, projectId, deps, lang);
     params = {
       instruction: payload?.instruction?.trim() || args.instruction,
@@ -1890,6 +1637,7 @@ interface ServiceConfigEntry {
   service: string;
   name?: string;
   baseUrl?: string;
+  models?: string[];
   temperature?: number;
   apiFormat?: "chat" | "responses";
   stream?: boolean;
@@ -1966,7 +1714,7 @@ function resolveArchitectBookIdFromArgs(args?: Record<string, unknown>): string 
 function resolveCreatedBookIdFromToolExecs(execs: ReadonlyArray<CollectedToolExec>): string | null {
   for (let i = execs.length - 1; i >= 0; i -= 1) {
     const exec = execs[i];
-    if (exec.tool !== "sub_agent" || exec.agent !== "architect" || exec.status !== "completed") continue;
+    if (exec.status !== "completed") continue;
 
     const details = exec.details as { kind?: unknown; bookId?: unknown } | undefined;
     if (details?.kind === "book_created" && typeof details.bookId === "string" && details.bookId.trim()) {
@@ -2000,12 +1748,32 @@ function serviceConfigKey(entry: ServiceConfigEntry): string {
   return entry.service === "custom" ? `custom:${entry.name ?? "Custom"}` : entry.service;
 }
 
+function normalizeServiceModelIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const models: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string") continue;
+    const model = item.trim();
+    const key = model.toLowerCase();
+    if (!model || seen.has(key) || !isTextChatModelId(model)) continue;
+    seen.add(key);
+    models.push(model);
+  }
+  return models;
+}
+
+function mergeServiceModelIds(...groups: ReadonlyArray<readonly string[] | undefined>): string[] {
+  return normalizeServiceModelIds(groups.flatMap((group) => group ?? []));
+}
+
 function normalizeServiceEntry(serviceId: string, value: Record<string, unknown>): ServiceConfigEntry {
   if (serviceId.startsWith("custom:")) {
     return {
       service: "custom",
       name: decodeURIComponent(serviceId.slice("custom:".length)),
       ...(typeof value.baseUrl === "string" && value.baseUrl.length > 0 ? { baseUrl: value.baseUrl } : {}),
+      ...(Array.isArray(value.models) ? { models: normalizeServiceModelIds(value.models) } : {}),
       ...(typeof value.temperature === "number" ? { temperature: value.temperature } : {}),
       ...(value.apiFormat === "chat" || value.apiFormat === "responses" ? { apiFormat: value.apiFormat } : {}),
       ...(typeof value.stream === "boolean" ? { stream: value.stream } : {}),
@@ -2017,6 +1785,7 @@ function normalizeServiceEntry(serviceId: string, value: Record<string, unknown>
       service: "custom",
       ...(typeof value.name === "string" && value.name.length > 0 ? { name: value.name } : {}),
       ...(typeof value.baseUrl === "string" && value.baseUrl.length > 0 ? { baseUrl: value.baseUrl } : {}),
+      ...(Array.isArray(value.models) ? { models: normalizeServiceModelIds(value.models) } : {}),
       ...(typeof value.temperature === "number" ? { temperature: value.temperature } : {}),
       ...(value.apiFormat === "chat" || value.apiFormat === "responses" ? { apiFormat: value.apiFormat } : {}),
       ...(typeof value.stream === "boolean" ? { stream: value.stream } : {}),
@@ -2025,6 +1794,7 @@ function normalizeServiceEntry(serviceId: string, value: Record<string, unknown>
 
   return {
     service: serviceId,
+    ...(Array.isArray(value.models) ? { models: normalizeServiceModelIds(value.models) } : {}),
     ...(typeof value.temperature === "number" ? { temperature: value.temperature } : {}),
     ...(value.apiFormat === "chat" || value.apiFormat === "responses" ? { apiFormat: value.apiFormat } : {}),
     ...(typeof value.stream === "boolean" ? { stream: value.stream } : {}),
@@ -2043,6 +1813,7 @@ function normalizeServiceConfig(raw: unknown): ServiceConfigEntry[] {
         service: typeof entry.service === "string" && entry.service.length > 0 ? entry.service : "custom",
         ...(typeof entry.name === "string" && entry.name.length > 0 ? { name: entry.name } : {}),
         ...(typeof entry.baseUrl === "string" && entry.baseUrl.length > 0 ? { baseUrl: entry.baseUrl } : {}),
+        ...(Array.isArray(entry.models) ? { models: normalizeServiceModelIds(entry.models) } : {}),
         ...(typeof entry.temperature === "number" ? { temperature: entry.temperature } : {}),
         ...(entry.apiFormat === "chat" || entry.apiFormat === "responses" ? { apiFormat: entry.apiFormat } : {}),
         ...(typeof entry.stream === "boolean" ? { stream: entry.stream } : {}),
@@ -2061,7 +1832,13 @@ function normalizeServiceConfig(raw: unknown): ServiceConfigEntry[] {
 function mergeServiceConfig(existing: ServiceConfigEntry[], updates: ServiceConfigEntry[]): ServiceConfigEntry[] {
   const merged = new Map(existing.map((entry) => [serviceConfigKey(entry), entry]));
   for (const update of updates) {
-    merged.set(serviceConfigKey(update), update);
+    const key = serviceConfigKey(update);
+    const previous = merged.get(key);
+    merged.set(key, {
+      ...previous,
+      ...update,
+      ...(update.models === undefined && previous?.models ? { models: previous.models } : {}),
+    });
   }
   return [...merged.values()];
 }
@@ -3228,7 +3005,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       ]);
       const language = book.language === "en" ? "en" : "zh";
       const requestedBrief = typeof body.brief === "string" ? body.brief.trim() : "";
-      const response = await chatCompletion(
+      const response = await runWorkerAgent(
         pipelineConfig.client,
         pipelineConfig.model,
         [
@@ -3261,7 +3038,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
             ].filter(Boolean).join("\n\n"),
           },
         ],
-        { temperature: 0.9, maxTokens: 600 },
+        { temperature: 0.9, maxTokens: 600, signal: c.req.raw.signal },
       );
       const card = response.content.trim();
       if (!card) {
@@ -4086,22 +3863,39 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
 
   app.get("/api/v1/services/models", async (c) => {
     const secrets = await loadSecrets(root);
+    const config = await loadRawConfig(root).catch(() => ({} as Record<string, unknown>));
+    const configuredServices = normalizeServiceConfig(
+      (config.llm as Record<string, unknown> | undefined)?.services,
+    );
+    const configuredById = new Map(configuredServices.map((entry) => [serviceConfigKey(entry), entry]));
     const endpoints = getAllEndpoints()
-      .filter((ep) => ep.id !== "custom" && Boolean(secrets.services[ep.id]?.apiKey));
+      .filter((ep) => {
+        if (ep.id === "custom") return false;
+        const configured = configuredById.has(ep.id);
+        const optional = isApiKeyOptionalForEndpoint({
+          provider: resolveServiceProviderFamily(ep.id) ?? "openai",
+          baseUrl: resolveServicePreset(ep.id)?.baseUrl ?? ep.baseUrl,
+        });
+        return Boolean(secrets.services[ep.id]?.apiKey) || (optional && configured);
+      });
 
-    const groups = endpoints.map((ep) => ({
-      service: ep.id,
-      label: ep.label,
-      models: ep.models
+    const groups = endpoints.map((ep) => {
+      const staticModels = ep.models
         .filter((m) => m.enabled !== false)
-        .filter((m) => isTextChatModelId(m.id))
-        .map((m) => ({
-          id: m.id,
-          name: m.id,
-          ...(typeof m.maxOutput === "number" ? { maxOutput: m.maxOutput } : {}),
-          ...(m.contextWindowTokens > 0 ? { contextWindow: m.contextWindowTokens } : {}),
-        })),
-    }));
+        .filter((m) => isTextChatModelId(m.id));
+      const configuredModels = configuredById.get(ep.id)?.models ?? [];
+      const models = mergeServiceModelIds(staticModels.map((model) => model.id), configuredModels)
+        .map((id) => {
+          const known = staticModels.find((model) => model.id.toLowerCase() === id.toLowerCase());
+          return {
+            id,
+            name: id,
+            ...(typeof known?.maxOutput === "number" ? { maxOutput: known.maxOutput } : {}),
+            ...(known && known.contextWindowTokens > 0 ? { contextWindow: known.contextWindowTokens } : {}),
+          };
+        });
+      return { service: ep.id, label: ep.label, models };
+    });
 
     return c.json({ groups });
   });
@@ -4140,6 +3934,8 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     const refresh = c.req.query("refresh") === "1";
     const secrets = await loadSecrets(root);
     const apiKey = c.req.query("apiKey") || secrets.services[service]?.apiKey || "";
+    const configuredEntry = await resolveConfiguredServiceEntry(root, service);
+    const configuredModels = configuredEntry?.models ?? [];
 
     const resolvedBaseUrl = await resolveConfiguredServiceBaseUrl(root, service);
     const baseService = isCustomServiceId(service) ? "custom" : service;
@@ -4149,14 +3945,18 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     });
 
     // No key = no models, except local/self-hosted endpoints such as Ollama.
-    if (!apiKey && !apiKeyOptional) return c.json({ models: [] });
+    if (!apiKey && !apiKeyOptional) {
+      return c.json({ models: configuredModels.map((id) => ({ id, name: id })) });
+    }
 
     // Cache by service + resolved baseUrl + apiKey fingerprint; valid for 10 min unless ?refresh=1
     const cacheKey = `${service}::${resolvedBaseUrl ?? ""}::${apiKey.slice(-8)}`;
     if (!refresh) {
       const cached = modelListCache.get(cacheKey);
       if (cached && Date.now() - cached.at < 10 * 60 * 1000) {
-        return c.json({ models: cached.models });
+        const models = mergeServiceModelIds(cached.models.map((model) => model.id), configuredModels)
+          .map((id) => cached.models.find((model) => model.id.toLowerCase() === id.toLowerCase()) ?? { id, name: id });
+        return c.json({ models });
       }
     }
 
@@ -4166,12 +3966,14 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       apiKey,
       isCustomServiceId(service) ? resolvedBaseUrl ?? undefined : undefined,
     );
-    const models = filterTextChatModels(enriched).map((m) => ({
+    const liveModels = filterTextChatModels(enriched).map((m) => ({
       id: m.id,
       name: m.name,
       ...(m.maxOutput !== undefined ? { maxOutput: m.maxOutput } : {}),
       ...(m.contextWindow > 0 ? { contextWindow: m.contextWindow } : {}),
     }));
+    const models = mergeServiceModelIds(liveModels.map((model) => model.id), configuredModels)
+      .map((id) => liveModels.find((model) => model.id.toLowerCase() === id.toLowerCase()) ?? { id, name: id });
     modelListCache.set(cacheKey, { models, at: Date.now() });
     return c.json({ models });
   });
@@ -4343,25 +4145,6 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     } catch (e) {
       return c.json({ error: String(e) }, 500);
     }
-  });
-
-  app.get("/api/v1/project/input-governance-mode", async (c) => {
-    const raw = JSON.parse(await readFile(join(root, "inkos.json"), "utf-8"));
-    return c.json({ mode: raw.inputGovernanceMode === "legacy" ? "legacy" : "v2" });
-  });
-
-  app.put("/api/v1/project/input-governance-mode", async (c) => {
-    const { mode } = await c.req.json<{ mode?: unknown }>();
-    const parsed = InputGovernanceModeSchema.safeParse(mode);
-    if (!parsed.success) {
-      return c.json({ error: "mode must be legacy or v2" }, 400);
-    }
-    const configPath = join(root, "inkos.json");
-    const raw = JSON.parse(await readFile(configPath, "utf-8"));
-    raw.inputGovernanceMode = parsed.data;
-    const { writeFile: writeFileFs } = await import("node:fs/promises");
-    await writeFileFs(configPath, JSON.stringify(raw, null, 2), "utf-8");
-    return c.json({ ok: true, mode: parsed.data });
   });
 
   app.get("/api/v1/project/detection", async (c) => {
@@ -4787,18 +4570,12 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
 
   app.post("/api/v1/sessions/:sessionId/abort", async (c) => {
     const sessionId = c.req.param("sessionId");
-    // scope=chat 只中止当前聊天轮（agent loop），不动后台生产任务的控制器；
-    // 默认 all 维持旧行为：聊天轮和生产任务一起停。
-    const body = await c.req.json<{ scope?: unknown }>().catch(() => ({} as { scope?: unknown }));
-    const scope = body.scope === "chat" ? "chat" : "all";
-    let taskAborted = false;
-    if (scope === "all") {
-      const controller = await findRunningTaskController(sessionId);
-      controller?.abort();
-      taskAborted = Boolean(controller);
-    }
+    const chatOnly = c.req.query("scope") === "chat";
+    const controller = chatOnly ? undefined : await findRunningTaskController(sessionId);
+    controller?.abort();
+    const taskAborted = Boolean(controller);
     const aborted = abortAgentSession(root, sessionId) || taskAborted;
-    broadcast("agent:aborted", { sessionId, aborted });
+    broadcast("agent:aborted", { sessionId, aborted, scope: chatOnly ? "chat" : "all" });
     return c.json({ ok: true, aborted });
   });
 
@@ -4928,44 +4705,6 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
         }
       };
 
-      const externalEdit = requestedIntent === "edit_artifact" || sessionKind === "edit"
-        ? await tryHandleExternalChatEdit({
-            root,
-            state,
-            instruction,
-            activeBookId: agentBookId,
-          })
-        : null;
-      if (externalEdit) {
-        await appendSessionMessagesUnlessDeleted(root, bookSession.sessionId, [{
-          role: "assistant",
-          content: [{ type: "text", text: externalEdit.responseText }],
-          api: "anthropic-messages",
-          provider: config.llm.provider,
-          model: config.llm.model,
-          usage: {
-            input: 0,
-            output: 0,
-            cacheRead: 0,
-            cacheWrite: 0,
-            totalTokens: 0,
-            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-          },
-          stopReason: "stop",
-          timestamp: Date.now(),
-        }], instruction, { sessionKind });
-        await refreshBookSessionFromTranscript();
-        broadcast("agent:complete", { instruction, activeBookId: externalEdit.activeBookId, sessionId: bookSession.sessionId, sessionKind });
-        return c.json({
-          response: externalEdit.responseText,
-          session: {
-            sessionId: bookSession.sessionId,
-            sessionKind,
-            ...(externalEdit.activeBookId ? { activeBookId: externalEdit.activeBookId } : {}),
-          },
-        });
-      }
-
       // Resolve model — multi-service resolution
       let resolvedModel: ResolvedModel["model"] | undefined;
       let resolvedApiKey: string | undefined;
@@ -5072,15 +4811,11 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
             baseUrl: configuredEntry?.baseUrl ?? "",
           } as any)
         : client;
-      // 确认式生产任务的 intent：写下一章的各种触发方式（quick-action 按钮、
-      // free-text 明确写章命令、写作指令启发式）统一归一成 write_next，与其它
-      // button/slash 确认的生产 intent 走同一条任务分支，获得 taskId、
-      // AbortController、磁盘快照与单任务闸门。
-      const confirmedIntent: RequestedIntent | undefined = isWriteNextProductionRequest({ instruction, agentBookId, sessionKind, actionSource, requestedIntent })
-        ? "write_next"
-        : requestedIntent && isConfirmedProductionAction({ actionSource, requestedIntent })
-          ? requestedIntent
-          : undefined;
+      // Only a structured action request can start a production task. Free text
+      // always stays in the Pi agent loop; the host never infers intent from prose.
+      const confirmedIntent = requestedIntent && isConfirmedProductionAction(actionSource, requestedIntent)
+        ? requestedIntent
+        : undefined;
       // 任务的 execution id 在构建 pipeline 之前生成并传入 executionIdForSSE：
       // 该 pipeline 广播的进度事件（log / llm:progress / context:compression）
       // 由此带上任务 id。同会话并行聊天轮的 pipeline 是另一次请求单独构建的、
@@ -5164,6 +4899,8 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
             instruction,
             requestedIntent: confirmedIntent,
             actionPayload,
+            requestedSkills,
+            disabledSkills,
             language: surfaceLanguage,
             taskId,
             sourceRequestId,
@@ -5178,9 +4915,15 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
           });
 
           let createdBookId: string | null = null;
-          if (exec.tool === "sub_agent" && exec.agent === "architect" && exec.status === "completed") {
+          if (exec.status === "completed") {
             createdBookId = resolveCreatedBookIdFromToolExecs([exec]);
             if (createdBookId) {
+              if (!await completeBookExists(join(root, "books", createdBookId))) {
+                const message = pick(surfaceLanguage, "创作工具返回了建书结果，但磁盘上的书籍工件不完整。", "The creation tool returned a book result, but the on-disk book artifact is incomplete.");
+                bookCreateStatus.set(createdBookId, { status: "error", error: message });
+                broadcast("book:error", { bookId: createdBookId, sessionId: bookSession.sessionId, error: message });
+                throw new ApiError(500, "BOOK_CREATION_INCOMPLETE", message);
+              }
               try {
                 const migratedSession = await migrateBookSession(root, bookSession.sessionId, createdBookId);
                 if (migratedSession) {
@@ -5229,6 +4972,13 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
           if (pendingBookId) {
             bookCreateStatus.set(pendingBookId, { status: "error", error: message });
             broadcast("book:error", { bookId: pendingBookId, sessionId: streamSessionId, error: message });
+          }
+          if (error instanceof ApiError) {
+            broadcast("agent:error", { instruction, activeBookId: agentBookId, sessionId: bookSession.sessionId, sessionKind, error: message });
+            return c.json({
+              error: { code: error.code, message: error.message },
+              response: error.message,
+            }, error.status as 400 | 401 | 403 | 404 | 409 | 413 | 415 | 422 | 429 | 500 | 502 | 503);
           }
           if (error instanceof ConfirmedActionExecutionError) {
             // 指令已在任务开始时写入 transcript，失败时同样只补助手工具消息。
@@ -5351,7 +5101,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
                 exec.completedAt = Date.now();
                 exec.stages = exec.stages?.map(s => ({ ...s, status: "completed" as const }));
                 if (event.isError) exec.error = extractToolError(event.result);
-                else exec.result = summarizeResult(event.result);
+                else exec.result = summarizeToolResult(event.result);
                 exec.details = (event.result as { details?: unknown } | undefined)?.details;
                 if (
                   event.isError &&
@@ -5484,6 +5234,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
               sessionKind: responseSessionKind,
               ...(createdBookId ?? bookSession.bookId ? { activeBookId: createdBookId ?? bookSession.bookId } : {}),
             },
+            details: { toolExecutions: collectedToolExecs },
           });
         }
 
@@ -5507,7 +5258,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       broadcast("agent:complete", { instruction, activeBookId, sessionId: bookSession.sessionId, sessionKind: responseSessionKind });
 
       return c.json({
-        response: result.responseText,
+        response: hasSuccessfulToolOwnedResponse(collectedToolExecs) ? "" : result.responseText,
         session: {
           sessionId: bookSession.sessionId,
           sessionKind: responseSessionKind,
@@ -6254,6 +6005,43 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     }
   });
 
+  app.post("/api/v1/import/canon/upload", async (c) => {
+    const body: { filename?: string; dataUrl?: string } = await c.req.json().catch(() => ({}));
+    const result = await storeProjectUpload(root, body, {
+      scope: "canon",
+      fallbackName: "canon-source",
+      maxBytes: MAX_CANON_UPLOAD_BYTES,
+      errorCode: "INVALID_CANON_UPLOAD",
+    });
+    return c.json(result);
+  });
+
+  app.post("/api/v1/books/:id/import/canon-file", async (c) => {
+    const id = c.req.param("id");
+    const body: { filePath?: string; filename?: string } = await c.req.json().catch(() => ({}));
+    if (!body.filePath?.trim()) return c.json({ error: "filePath is required" }, 400);
+
+    broadcast("import:start", { bookId: id, type: "canon-file" });
+    try {
+      await state.loadBookConfig(id);
+      const material = await ingestMaterial(root, {
+        sourceKind: "file",
+        filePath: body.filePath,
+        filename: body.filename,
+        title: body.filename?.replace(/\.[^.]+$/u, ""),
+        purpose: "reference",
+      });
+      const sourceText = await readFile(join(root, material.markdownPath), "utf-8");
+      const pipeline = new PipelineRunner(await buildPipelineConfig());
+      await pipeline.importFanficCanon(id, sourceText, material.title, "canon");
+      broadcast("import:complete", { bookId: id, type: "canon-file", materialId: material.id });
+      return c.json({ ok: true, material });
+    } catch (error) {
+      broadcast("import:error", { bookId: id, type: "canon-file", error: String(error) });
+      return c.json({ error: String(error) }, 500);
+    }
+  });
+
   // --- Fanfic Init ---
 
   app.post("/api/v1/fanfic/init", async (c) => {
@@ -6630,16 +6418,20 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     const body: { batchSize?: number; maxTokens?: number } = await c.req.json().catch(() => ({}));
     try {
       const currentConfig = await loadCurrentProjectConfig();
+      const configuredSkills = await loadAvailableAgentSkills({ projectRoot: root });
+      const activatedSkills = resolveProductionSkillActivations(configuredSkills.skills, "translation");
       const model = createLLMTranslationModel({
         client: createLLMClient(currentConfig.llm),
         model: currentConfig.llm.model,
         maxTokens: body.maxTokens,
+        activatedSkills,
+        signal: c.req.raw.signal,
       });
       const result = await runTranslationProject(root, id, {
         model,
         batchSize: body.batchSize,
       });
-      return c.json(result);
+      return c.json({ ...result, skillIds: activatedSkillIds(activatedSkills) });
     } catch (error) {
       if (error instanceof ApiError) throw error;
       const message = error instanceof Error ? error.message : String(error);

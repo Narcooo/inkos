@@ -6,9 +6,11 @@ import {
   createPlayStartTool,
   createPlayReviseTool,
   createPlayStepTool,
+  type PlayStartToolOptions,
 } from "../agent/agent-tools.js";
 import { PlayStore } from "../play/play-store.js";
 import type { PlayReplayResult, PlayStepResult } from "../play/play-runner.js";
+import type { PlayGraphDB } from "../play/play-db-factory.js";
 
 const STEP_RESULT: PlayStepResult = {
   sceneText: "你翻开账本，发现最后一页夹着一张旧船票。",
@@ -46,7 +48,50 @@ const REPLAY_RESULT: PlayReplayResult = {
 };
 
 function pipelineStub() {
-  return { createAgentContext: vi.fn(() => ({})) } as any;
+  return {
+    createAgentContext: vi.fn(() => ({})),
+    runWithAgentContext: vi.fn(async (_context: unknown, task: () => Promise<unknown>) => task()),
+  } as any;
+}
+
+function seedReadyGraph(db: PlayGraphDB): void {
+  db.upsertEntity({ id: "actor_player", type: "actor", label: "玩家", summary: "当前玩家。" });
+  db.upsertEntity({ id: "location_opening", type: "location", label: "开场地点", summary: "第一幕所在地点。" });
+}
+
+function readyRunnerFactory() {
+  return ({ db }: { readonly db: PlayGraphDB }) => ({
+    seedOpening: vi.fn(async () => {
+      seedReadyGraph(db);
+      return {
+        mutation: {
+          eventId: "evt-0",
+          turn: 0,
+          actionKind: "look" as const,
+          summary: "播种开场状态。",
+          entities: { upsert: [] },
+          edges: { upsert: [], expire: [] },
+          stateSlots: { upsert: [] },
+          evidence: { transitions: [] },
+          blocked: false,
+          blockedReason: "",
+          notes: [],
+        },
+      };
+    }),
+  });
+}
+
+function createReadyPlayStartTool(
+  root: string,
+  sessionId: string,
+  playMode?: "open" | "guided",
+  options: PlayStartToolOptions = {},
+) {
+  return createPlayStartTool(pipelineStub(), root, sessionId, playMode, {
+    ...options,
+    runnerFactory: options.runnerFactory ?? readyRunnerFactory(),
+  });
 }
 
 describe("agent play tools", () => {
@@ -62,7 +107,7 @@ describe("agent play tools", () => {
 
   it("binds the new play world to the chat session and persists the opening scene", async () => {
     const sessionId = "1700000000000-aaaa01";
-    const tool = createPlayStartTool(null, root, sessionId);
+    const tool = createReadyPlayStartTool(root, sessionId);
     const result = await tool.execute("tc-start", {
       title: "雨夜茶馆",
       premise: "玩家扮演欠债茶馆老板，雨夜有人带着账本上门。",
@@ -100,7 +145,7 @@ describe("agent play tools", () => {
 
   it("persists confirmed natural-language contracts from play_start", async () => {
     const sessionId = "1700000000000-contract";
-    const tool = createPlayStartTool(null, root, sessionId);
+    const tool = createReadyPlayStartTool(root, sessionId);
     const result = await tool.execute("tc-start-contract", {
       title: "雾港修行录",
       premise: "玩家是港口小宗门外门弟子，今晚要护送一只来历不明的铜匣。",
@@ -126,7 +171,7 @@ describe("agent play tools", () => {
 
   it("uses confirmed action-payload contracts over model tool params", async () => {
     const sessionId = "1700000000000-contract-payload";
-    const tool = createPlayStartTool(null, root, sessionId, undefined, {
+    const tool = createReadyPlayStartTool(root, sessionId, undefined, {
       actionPayload: {
         playStart: {
           title: "确认卡世界",
@@ -157,7 +202,7 @@ describe("agent play tools", () => {
 
   it("normalizes object-shaped suggested actions at the tool boundary", async () => {
     const sessionId = "1700000000000-sug001";
-    const tool = createPlayStartTool(null, root, sessionId);
+    const tool = createReadyPlayStartTool(root, sessionId);
     const result = await tool.execute("tc-start-suggestions", {
       title: "老邮局",
       premise: "玩家在地下分拣室值夜班。",
@@ -191,7 +236,12 @@ describe("agent play tools", () => {
         notes: [],
       },
     }));
-    const runnerFactory = vi.fn(() => ({ seedOpening }));
+    const runnerFactory = vi.fn(({ db }: { readonly db: PlayGraphDB }) => ({
+      seedOpening: async (...args: Parameters<typeof seedOpening>) => {
+        seedReadyGraph(db);
+        return seedOpening(...args);
+      },
+    }));
     const tool = createPlayStartTool(pipelineStub(), root, sessionId, undefined, { runnerFactory });
 
     const result = await tool.execute("tc-start-seed", {
@@ -215,20 +265,70 @@ describe("agent play tools", () => {
     });
   });
 
+  it("refuses to create a play world without the Pi worker pipeline", async () => {
+    const sessionId = "1700000000000-no-pipeline";
+    const tool = createPlayStartTool(null, root, sessionId);
+
+    await expect(tool.execute("tc-start-no-pipeline", {
+      title: "不能伪成功的世界",
+      premise: "没有模型管线时不应创建。",
+      initialScene: "这段文字不能被当成成功产物。",
+    })).rejects.toThrow("pipeline");
+    await expect(new PlayStore(root).loadWorld(sessionId)).resolves.toBeNull();
+  });
+
+  it("removes a new world when opening seeding does not produce a usable graph", async () => {
+    const sessionId = "1700000000000-empty-graph";
+    const tool = createPlayStartTool(pipelineStub(), root, sessionId, undefined, {
+      runnerFactory: () => ({
+        seedOpening: vi.fn(async () => ({
+          mutation: {
+            eventId: "evt-0",
+            turn: 0,
+            actionKind: "look" as const,
+            summary: "模型没有提交任何实体。",
+            entities: { upsert: [] },
+            edges: { upsert: [], expire: [] },
+            stateSlots: { upsert: [] },
+            evidence: { transitions: [] },
+            blocked: false,
+            blockedReason: "",
+            notes: [],
+          },
+        })),
+      }),
+    });
+
+    await expect(tool.execute("tc-start-empty-graph", {
+      title: "空图谱世界",
+      premise: "播种失败不能广播成功。",
+      initialScene: "门外有人敲了三下。",
+    })).rejects.toThrow("没有生成可用的玩家与世界图谱");
+    await expect(new PlayStore(root).loadWorld(sessionId)).resolves.toBeNull();
+  });
+
   it("runs opening seeding inside the abort scope and does not swallow user cancellation", async () => {
     const sessionId = "1700000000000-abort1";
     const controller = new AbortController();
-    const runWithAbortSignal = vi.fn(async (signal: AbortSignal | undefined, task: () => Promise<unknown>) => {
-      signal?.throwIfAborted();
+    const runWithAgentContext = vi.fn(async (
+      context: { readonly signal?: AbortSignal },
+      task: () => Promise<unknown>,
+    ) => {
+      context.signal?.throwIfAborted();
       return task();
     });
     const pipeline = {
       createAgentContext: vi.fn(() => ({})),
-      runWithAbortSignal,
+      runWithAgentContext,
     };
-    const seedOpening = vi.fn(async () => null);
+    const seedOpening = vi.fn(async (_input: { sceneText: string; suggestedActions?: readonly string[] }) => null);
     const tool = createPlayStartTool(pipeline as never, root, sessionId, undefined, {
-      runnerFactory: () => ({ seedOpening }),
+      runnerFactory: ({ db }) => ({
+        seedOpening: async (...args) => {
+          seedReadyGraph(db);
+          return seedOpening(...args);
+        },
+      }),
     });
 
     await tool.execute("tc-start-abort-scope", {
@@ -237,7 +337,10 @@ describe("agent play tools", () => {
       initialScene: "档案柜里只有一张无名婴儿照片。",
     }, controller.signal);
 
-    expect(runWithAbortSignal).toHaveBeenCalledWith(controller.signal, expect.any(Function));
+    expect(runWithAgentContext).toHaveBeenCalledWith(
+      { signal: controller.signal, activatedSkills: [] },
+      expect.any(Function),
+    );
 
     const cancelledSessionId = "1700000000000-abort2";
     const cancelled = new AbortController();
@@ -278,6 +381,44 @@ describe("agent play tools", () => {
       worldId: sessionId,
       runId: "main",
       sceneText: "你翻开账本，发现最后一页夹着一张旧船票。",
+    });
+  });
+
+  it("runs Play inside its own professional Skill context", async () => {
+    const sessionId = "1700000000000-skilled";
+    const store = new PlayStore(root);
+    await store.createWorld({
+      id: sessionId,
+      title: "雾港",
+      premise: "玩家追查失踪的引航员。",
+      mode: "open",
+    });
+    await store.ensureRun(sessionId, "main");
+    const pipeline = pipelineStub();
+    const playSkill = {
+      skill: {
+        id: "inkos-play-world",
+        name: "Interactive world play",
+        description: "Play method.",
+        body: "Advance one adjacent dramatic beat.",
+        source: "builtin" as const,
+      },
+      resources: [],
+    };
+    const tool = createPlayStepTool(pipeline, root, sessionId, {
+      defaultSkills: [playSkill],
+      runnerFactory: () => ({ step: vi.fn(async () => STEP_RESULT) }),
+    });
+
+    const result = await tool.execute("tc-step-skilled", { input: "检查码头绳结" });
+
+    expect(pipeline.runWithAgentContext).toHaveBeenCalledWith(
+      { signal: undefined, activatedSkills: [playSkill] },
+      expect.any(Function),
+    );
+    expect(result.details).toMatchObject({
+      kind: "play_turn_advanced",
+      skillIds: ["inkos-play-world"],
     });
   });
 
@@ -356,7 +497,7 @@ describe("agent play tools", () => {
 
   it("uses the player-chosen playMode for the world, overriding the tool param", async () => {
     const sessionId = "1700000000000-cccc03";
-    const tool = createPlayStartTool(null, root, sessionId, "guided");
+    const tool = createReadyPlayStartTool(root, sessionId, "guided");
     await tool.execute("tc-mode", { title: "选项局", initialScene: "开场。" });
     const store = new PlayStore(root);
     await expect(store.loadWorld(sessionId)).resolves.toMatchObject({ mode: "guided" });
@@ -370,12 +511,12 @@ describe("agent play tools", () => {
     const sessionA = "1700000000000-aaaaaa";
     const sessionB = "1700000000001-bbbbbb";
 
-    await createPlayStartTool(null, root, sessionA).execute("tc-a", {
+    await createReadyPlayStartTool(root, sessionA).execute("tc-a", {
       title: "世界A",
       initialScene: "A 的开场。",
     });
     // World B is created AFTER A, so it is the most-recently-updated world.
-    await createPlayStartTool(null, root, sessionB).execute("tc-b", {
+    await createReadyPlayStartTool(root, sessionB).execute("tc-b", {
       title: "世界B",
       initialScene: "B 的开场。",
     });

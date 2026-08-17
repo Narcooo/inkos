@@ -1,4 +1,4 @@
-import type { HookPayoffTiming } from "../models/runtime-state.js";
+import type { HookPayoffTiming, HookStatus } from "../models/runtime-state.js";
 import type { StoredHook } from "../state/memory-db.js";
 import {
   HOOK_ACTIVITY_THRESHOLDS,
@@ -11,11 +11,35 @@ import {
 
 export const DEFAULT_HOOK_LOOKAHEAD_CHAPTERS = 3;
 
-export function normalizeStoredHookStatus(status: string): "resolved" | "deferred" | "progressing" | "open" {
-  if (/^(resolved|closed|done|已回收|已解决)$/i.test(status.trim())) return "resolved";
-  if (/^(deferred|paused|hold|dormant|sleeping|延后|延期|搁置|暂缓|未开启|待开启|未启动|待启动|待推进)$/i.test(status.trim())) return "deferred";
-  if (/^(progressing|advanced|重大推进|持续推进)$/i.test(status.trim())) return "progressing";
-  return "open";
+const HOOK_STATUS_ALIASES: ReadonlyMap<string, HookStatus> = new Map([
+  ...[
+    "resolved", "closed", "done", "paid_off", "paid-off", "paid off",
+    "已回收", "回收", "完成", "已解决", "已兑现", "兑现",
+  ].map((value) => [value, "resolved"] as const),
+  ...[
+    "deferred", "paused", "hold", "dormant", "sleeping", "inactive",
+    "unplanted", "unseeded", "not_started", "not-started", "not started",
+    "not_active", "not-active", "not active", "搁置", "延后", "延期", "暂缓",
+    "休眠", "未激活", "未开启", "待开启", "未启动", "待启动", "未推进",
+    "尚未推进", "待推进",
+  ].map((value) => [value, "deferred"] as const),
+  ...[
+    "progressing", "advanced", "progress", "active", "pressured", "confirmed",
+    "confirmed_hit", "confirmed-hit", "confirmed hit", "命中", "已确认命中", "已推进",
+    "推进", "进行中", "持续推进", "重大推进",
+  ].map((value) => [value, "progressing"] as const),
+  ...[
+    "open", "pending", "seeded", "planted", "待定", "未回收", "已埋", "已种下", "已铺垫",
+  ].map((value) => [value, "open"] as const),
+]);
+
+export function resolveHookStatusAlias(status: string | undefined | null): HookStatus | undefined {
+  const normalized = status?.trim().toLowerCase();
+  return normalized ? HOOK_STATUS_ALIASES.get(normalized) : undefined;
+}
+
+export function normalizeStoredHookStatus(status: string): HookStatus {
+  return resolveHookStatusAlias(status) ?? "open";
 }
 
 export function filterActiveHooks(hooks: ReadonlyArray<StoredHook>): StoredHook[] {

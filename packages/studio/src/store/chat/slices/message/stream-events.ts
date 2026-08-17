@@ -467,6 +467,16 @@ export function attachSessionStreamListeners({
       flushTextDeltas();
       set((state) => ({
         sessions: updateSession(state.sessions, sessionId, (runtime) => {
+          const executionId = data.id as string;
+          const alreadyTracked = runtime.messages.some((message) => (
+            message.toolExecutions?.some((execution) => execution.id === executionId)
+            || message.parts?.some((part) => part.type === "tool" && part.execution.id === executionId)
+          ));
+          if (alreadyTracked) {
+            return background && belongsToCurrentRequest && runtime.isChatStreaming
+              ? { isChatStreaming: false }
+              : {};
+          }
           const [messages, stream] = getOrCreateStream(runtime.messages, streamTs);
           const parts = [...(stream.parts ?? [])];
 
@@ -494,7 +504,7 @@ export function attachSessionStreamListeners({
           parts.push({
             type: "tool",
             execution: {
-              id: data.id as string,
+              id: executionId,
               tool: data.tool as string,
               agent,
               label: resolveToolLabel(data.tool as string, agent),

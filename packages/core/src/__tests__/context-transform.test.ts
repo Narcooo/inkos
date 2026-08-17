@@ -2,7 +2,12 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createBookContextTransform } from "../agent/context-transform.js";
+import {
+  createBookContextTransform,
+  createInteractiveFilmContextTransform,
+} from "../agent/context-transform.js";
+import { saveStoryGraph } from "../interactive-film/graph-store.js";
+import { StoryGraphSchema } from "../interactive-film/graph-schema.js";
 
 describe("createBookContextTransform", () => {
   let projectRoot: string;
@@ -177,5 +182,64 @@ describe("createBookContextTransform", () => {
     expect(injected.content).toContain("主角以第一人称调查物业黑账。");
     expect(injected.content).toContain("outline/volume_map.md");
     expect(injected.content).toContain("暴雨夜发现电表账单异常。");
+  });
+});
+
+describe("createInteractiveFilmContextTransform", () => {
+  let projectRoot: string;
+
+  beforeEach(async () => {
+    projectRoot = await mkdtemp(join(tmpdir(), "film-ctx-test-"));
+  });
+
+  afterEach(async () => {
+    await rm(projectRoot, { recursive: true, force: true });
+  });
+
+  it("injects the complete authoritative graph and refreshes it from disk every turn", async () => {
+    const base = StoryGraphSchema.parse({
+      schemaVersion: 1,
+      projectId: "storm-radio",
+      title: "风眼旧频率",
+      variables: [{ name: "团伙已警觉", type: "flag", default: false }],
+      nodes: [
+        {
+          id: "node_1",
+          type: "branch",
+          title: "公开呼叫",
+          choices: [{ id: "choice_signal", text: "用暗号试探", targetNodeId: "node_6" }],
+        },
+        { id: "node_6", type: "ending", title: "风眼之外", choices: [] },
+      ],
+      endings: [{ id: "ending_c", nodeId: "node_6", title: "风眼之外", type: "secret" }],
+    });
+    await saveStoryGraph(projectRoot, "storm-radio", base);
+
+    const transform = createInteractiveFilmContextTransform("storm-radio", projectRoot);
+    const original = [{ role: "user" as const, content: "讨论节点1", timestamp: Date.now() }];
+    const first = await transform(original);
+    const firstContext = (first[0] as { content: string }).content;
+
+    expect(firstContext).toContain("完整权威剧情图谱");
+    expect(firstContext).toContain('"id":"node_1"');
+    expect(firstContext).toContain('"targetNodeId":"node_6"');
+    expect(firstContext).toContain('"name":"团伙已警觉"');
+    expect(firstContext).not.toContain("旧的条目式格式");
+    expect(first[1]).toBe(original[0]);
+
+    await saveStoryGraph(projectRoot, "storm-radio", StoryGraphSchema.parse({
+      ...base,
+      nodes: base.nodes.map((node) => node.id === "node_1"
+        ? { ...node, title: "暗号试探" }
+        : node),
+    }));
+    const second = await transform(original);
+    expect((second[0] as { content: string }).content).toContain('"title":"暗号试探"');
+  });
+
+  it("leaves messages unchanged before a graph has been created", async () => {
+    const transform = createInteractiveFilmContextTransform("missing-film", projectRoot);
+    const original = [{ role: "user" as const, content: "hello", timestamp: Date.now() }];
+    expect(await transform(original)).toBe(original);
   });
 });

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WriterAgent } from "../agents/writer.js";
@@ -10,6 +10,29 @@ const ZERO_USAGE = {
   completionTokens: 0,
   totalTokens: 0,
 } as const;
+
+function createGovernedWriterInput(chapter: number) {
+  return {
+    chapterIntent: `# Chapter Intent\n\n## Goal\nAdvance chapter ${chapter}.`,
+    chapterMemo: {
+      chapter,
+      goal: `Advance chapter ${chapter}`,
+      isGoldenOpening: false,
+      body: "## Current task\nAdvance the current conflict with concrete scenes.",
+      threadRefs: [] as string[],
+    },
+    contextPackage: {
+      chapter,
+      selectedContext: [],
+    },
+    ruleStack: {
+      layers: [{ id: "test", name: "Test", precedence: 1, scope: "local" as const }],
+      sections: { hard: [], soft: [], diagnostic: [] },
+      overrideEdges: [],
+      activeOverrides: [],
+    },
+  };
+}
 
 function createCaptureLogger() {
   const infos: string[] = [];
@@ -35,6 +58,57 @@ function createCaptureLogger() {
 describe("WriterAgent", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("persists the chapter and legacy truth summary through one writer commit", async () => {
+    const root = await mkdtemp(join(tmpdir(), "inkos-writer-atomic-"));
+    const bookDir = join(root, "book");
+    const storyDir = join(bookDir, "story");
+    await mkdir(storyDir, { recursive: true });
+    await writeFile(
+      join(storyDir, "chapter_summaries.md"),
+      "# 章节摘要\n\n| 章节 | 标题 | 出场人物 | 关键事件 | 状态变化 | 伏笔动态 | 情绪基调 | 章节类型 |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n| 1 | 开端 | 林秋 | 找到账本 | 起疑 | H01 开启 | 紧张 | 调查 |\n",
+      "utf-8",
+    );
+    const agent = new WriterAgent({
+      client: {
+        provider: "openai",
+        apiFormat: "chat",
+        stream: false,
+        defaults: { temperature: 0.7, maxTokens: 4096, thinkingBudget: 0, extra: {} },
+      },
+      model: "test-model",
+      projectRoot: root,
+    });
+
+    try {
+      await agent.saveChapter(bookDir, {
+        chapterNumber: 2,
+        title: "雨夜对账",
+        content: "林秋在雨夜重新核对账本。",
+        wordCount: 14,
+        preWriteCheck: "",
+        postSettlement: "",
+        updatedState: "# 当前状态\n\n- 林秋确认账目被篡改。\n",
+        updatedLedger: "# 粒子账本\n",
+        updatedHooks: "# 伏笔池\n",
+        chapterSummary: "| 2 | 雨夜对账 | 林秋 | 确认账目被篡改 | 获得实证 | H01 推进 | 压迫 | 调查 |",
+        updatedSubplots: "# 支线进度\n",
+        updatedEmotionalArcs: "# 情感弧线\n",
+        updatedCharacterMatrix: "# 角色矩阵\n",
+        postWriteErrors: [],
+        postWriteWarnings: [],
+      }, false, "zh");
+
+      expect(await readFile(join(bookDir, "chapters", "0002_雨夜对账.md"), "utf-8"))
+        .toContain("林秋在雨夜重新核对账本");
+      expect(await readFile(join(storyDir, "chapter_summaries.md"), "utf-8"))
+        .toContain("| 2 | 雨夜对账 |");
+      expect(await readFile(join(storyDir, "current_state.md"), "utf-8"))
+        .toContain("账目被篡改");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("renders per-chapter user context in governed creative prompts", () => {
@@ -99,67 +173,6 @@ describe("WriterAgent", () => {
     expect(prompt).toContain("本章用户指令");
     expect(prompt).toContain("本章标题：雨夜账本");
     expect(prompt).toContain("当面对质");
-  });
-
-  it("caps oversized legacy truth files in creative prompts", () => {
-    const agent = new WriterAgent({
-      client: {
-        provider: "openai",
-        apiFormat: "chat",
-        stream: false,
-        defaults: {
-          temperature: 0.7,
-          maxTokens: 4096,
-          thinkingBudget: 0,
-          extra: {},
-        },
-      },
-      model: "test-model",
-      projectRoot: "/tmp/inkos-writer-context-budget-test",
-    });
-    const oversizedStoryBible = [
-      "BEGIN-STORY",
-      "旧设定。".repeat(4000),
-      "MIDDLE-MARKER",
-      "近期设定。".repeat(4000),
-      "LATEST-STORY",
-    ].join("\n");
-
-    const prompt = (agent as unknown as {
-      buildUserPrompt(params: {
-        readonly chapterNumber: number;
-        readonly storyBible: string;
-        readonly currentState: string;
-        readonly ledger: string;
-        readonly hooks: string;
-        readonly recentChapters: string;
-        readonly lengthSpec: ReturnType<typeof buildLengthSpec>;
-        readonly chapterSummaries: string;
-        readonly subplotBoard: string;
-        readonly emotionalArcs: string;
-        readonly characterMatrix: string;
-        readonly language?: "zh" | "en";
-      }): string;
-    }).buildUserPrompt({
-      chapterNumber: 88,
-      storyBible: oversizedStoryBible,
-      currentState: "(文件尚未创建)",
-      ledger: "",
-      hooks: "(文件尚未创建)",
-      recentChapters: "",
-      lengthSpec: buildLengthSpec(1200, "zh"),
-      chapterSummaries: "(文件尚未创建)",
-      subplotBoard: "(文件尚未创建)",
-      emotionalArcs: "(文件尚未创建)",
-      characterMatrix: "(文件尚未创建)",
-      language: "zh",
-    });
-
-    expect(prompt).toContain("BEGIN-STORY");
-    expect(prompt).toContain("LATEST-STORY");
-    expect(prompt).toContain("InkOS context budget");
-    expect(prompt).toContain("story_bible");
-    expect(prompt).not.toContain("MIDDLE-MARKER");
   });
 
   it("uses compact summary context plus selected long-range evidence during governed settlement", async () => {
@@ -293,6 +306,7 @@ describe("WriterAgent", () => {
         },
         bookDir,
         chapterNumber: 100,
+        ...createGovernedWriterInput(100),
         chapterIntent: [
           "# Chapter Intent",
           "",
@@ -501,6 +515,7 @@ describe("WriterAgent", () => {
         },
         bookDir,
         chapterNumber: 3,
+        ...createGovernedWriterInput(3),
         lengthSpec: buildLengthSpec(2200, "en"),
       });
 
@@ -742,6 +757,7 @@ describe("WriterAgent", () => {
         },
         bookDir,
         chapterNumber: 3,
+        ...createGovernedWriterInput(3),
         lengthSpec: buildLengthSpec(2200, "en"),
       });
 
@@ -757,7 +773,7 @@ describe("WriterAgent", () => {
     }
   });
 
-  it("returns the arbiter-resolved delta instead of raw new-hook candidates", async () => {
+  it("preserves the settler's explicit existing hook identity", async () => {
     const root = await mkdtemp(join(tmpdir(), "inkos-writer-arbiter-test-"));
     const bookDir = join(root, "book");
     const storyDir = join(bookDir, "story");
@@ -840,18 +856,22 @@ describe("WriterAgent", () => {
           JSON.stringify({
             chapter: 3,
             hookOps: {
-              upsert: [],
+              upsert: [
+                {
+                  hookId: "anonymous-source-scope",
+                  startChapter: 1,
+                  type: "source-risk",
+                  status: "progressing",
+                  lastAdvancedChapter: 3,
+                  expectedPayoff: "Reveal how much the anonymous source already knew about the route and address.",
+                  notes: "This chapter adds the address angle to the anonymous source question.",
+                },
+              ],
               mention: [],
               resolve: [],
               defer: [],
             },
-            newHookCandidates: [
-              {
-                type: "source-risk",
-                expectedPayoff: "Reveal how much the anonymous source already knew about the route and address.",
-                notes: "This chapter adds the address angle to the anonymous source question.",
-              },
-            ],
+            newHookCandidates: [],
             chapterSummary: {
               chapter: 3,
               title: "Address Leak",
@@ -885,6 +905,7 @@ describe("WriterAgent", () => {
         },
         bookDir,
         chapterNumber: 3,
+        ...createGovernedWriterInput(3),
         lengthSpec: buildLengthSpec(2200, "en"),
       });
 
@@ -1000,6 +1021,7 @@ describe("WriterAgent", () => {
         },
         bookDir,
         chapterNumber: 1,
+        ...createGovernedWriterInput(1),
         lengthSpec: buildLengthSpec(220, "zh"),
       });
 
@@ -1122,6 +1144,7 @@ describe("WriterAgent", () => {
         },
         bookDir,
         chapterNumber: 4,
+        ...createGovernedWriterInput(4),
         chapterMemo: {
           chapter: 4,
           goal: "Force Mara back toward the ledger trail.",
@@ -1252,6 +1275,7 @@ describe("WriterAgent", () => {
         },
         bookDir,
         chapterNumber: 4,
+        ...createGovernedWriterInput(4),
         chapterMemo: {
           chapter: 4,
           goal: "Push Mara back toward the archive ledger.",
@@ -1401,6 +1425,7 @@ describe("WriterAgent", () => {
         },
         bookDir,
         chapterNumber: 4,
+        ...createGovernedWriterInput(4),
         chapterMemo: {
           chapter: 4,
           goal: "Push Mara back toward the archive ledger.",

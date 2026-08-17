@@ -314,11 +314,11 @@ export function Sidebar({ nav, activePage, sse, t }: {
             <CreateItem icon={<Clapperboard size={16} />} label={t("nav.createScript")} onClick={() => launchProjectMode("script")} />
             <CreateItem icon={<Rows3 size={16} />} label={t("nav.createStoryboard")} onClick={() => launchProjectMode("storyboard")} />
             <CreateItem icon={<Film size={16} />} label={t("nav.createInteractiveFilm")} onClick={() => launchProjectMode("interactive-film")} />
-            <CreateItem icon={<Feather size={16} />} label={t("nav.createFanfic")} onClick={() => nav.toImport("fanfic")} />
-            <CreateItem icon={<BookCopy size={16} />} label={t("nav.createSpinoff")} onClick={() => nav.toImport("spinoff")} />
-            <CreateItem icon={<Wand2 size={16} />} label={t("nav.createImitation")} onClick={() => nav.toImport("imitation")} />
-            <CreateItem icon={<FileInput size={16} />} label={t("nav.createContinuation")} onClick={() => nav.toImport("chapters")} />
-            <CreateItem icon={<Languages size={16} />} label={t("nav.createTranslation")} active={activePage === "translation"} onClick={nav.toTranslation} />
+            <CreateItem icon={<Feather size={16} />} label={t("nav.createFanfic")} onClick={handleCreateProjectChatSession} />
+            <CreateItem icon={<BookCopy size={16} />} label={t("nav.createSpinoff")} onClick={handleCreateProjectChatSession} />
+            <CreateItem icon={<Wand2 size={16} />} label={t("nav.createImitation")} onClick={handleCreateProjectChatSession} />
+            <CreateItem icon={<FileInput size={16} />} label={t("nav.createContinuation")} onClick={handleCreateProjectChatSession} />
+            <CreateItem icon={<Languages size={16} />} label={t("nav.createTranslation")} onClick={handleCreateProjectChatSession} />
             <CreateItem icon={<GitBranch size={16} />} label={t("nav.createBranching")} onClick={() => launchProjectMode("play", "guided")} />
             <CreateItem icon={<Gamepad2 size={16} />} label={t("nav.createFree")} onClick={() => launchProjectMode("play", "open")} />
           </div>
@@ -606,6 +606,12 @@ export function Sidebar({ nav, activePage, sse, t }: {
           </div>
           <div className="space-y-1">
             <SidebarItem
+              label={t("nav.translation")}
+              icon={<Languages size={16} />}
+              active={activePage === "translation"}
+              onClick={nav.toTranslation}
+            />
+            <SidebarItem
               label={t("nav.style")}
               icon={<Wand2 size={16} />}
               active={activePage === "style"}
@@ -615,7 +621,7 @@ export function Sidebar({ nav, activePage, sse, t }: {
               label={t("nav.import")}
               icon={<FileInput size={16} />}
               active={activePage === "import"}
-              onClick={nav.toImport}
+              onClick={() => nav.toImport()}
             />
             <SidebarItem
               label={t("nav.radar")}

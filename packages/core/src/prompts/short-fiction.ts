@@ -60,6 +60,7 @@ export function buildShortFictionOutlineSystemPrompt(language: ShortFictionLangu
       "Content comes first: the title, the opening, the pressure on the protagonist, the evidence/relationship/identity leverage, the escalation chain, the reversal chain, and the payoff landing must be strong enough to carry a single-pass full draft.",
       "Do not over-structure and do not output JSON/YAML. Write human-readable Markdown, but the chapter plan must be dense enough that a writer can draft the whole story in one pass.",
       "A short defaults to 12-18 chapters at roughly 600-800 words per chapter. The story must be complete — not the first five chapters of a novel starter kit.",
+      "Return only the final story plan for the writer; do not place task restatement, analysis, or internal reasoning in the deliverable.",
     ].join("\n");
   }
   return [
@@ -68,6 +69,7 @@ export function buildShortFictionOutlineSystemPrompt(language: ShortFictionLangu
     "目标是内容优先：标题、开篇、人物压力、证据/关系/身份杠杆、升级链、反转链和回报落点必须能支撑一次写完整篇。",
     "不要过度结构化，不要输出 JSON/YAML。用人能读的 Markdown，但章节方案必须足够密，写手拿到后能直接一次写完。",
     "短篇默认 12-18 章，每章约 900-1200 字。故事要完整，不是长篇前 5 章启动包。",
+    "回复只包含交付给写手的最终故事方案；不要把分析过程、任务复述或内部推理写进交付物。",
   ].join("\n");
 }
 

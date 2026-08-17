@@ -1,8 +1,13 @@
 import type { LLMClient, LLMMessage, LLMResponse, OnStreamProgress } from "../llm/provider.js";
-import { chatCompletion } from "../llm/provider.js";
+import { runWorkerAgent, runWorkerAgentTool, type WorkerResultTool } from "../agent/worker-agent.js";
+import type { Static, TSchema } from "@sinclair/typebox";
 import { appendPromptPackGuidance } from "../prompts/prompt-pack.js";
 import { searchWeb, fetchUrl } from "../utils/web-search.js";
 import type { Logger } from "../utils/logger.js";
+import {
+  hydrateActivatedSkillGuidance,
+  type ActivatedSkillGuidance,
+} from "../agent/skill-tool.js";
 
 export interface AgentContext {
   readonly client: LLMClient;
@@ -12,6 +17,7 @@ export interface AgentContext {
   readonly logger?: Logger;
   readonly onStreamProgress?: OnStreamProgress;
   readonly signal?: AbortSignal;
+  readonly activatedSkills?: ReadonlyArray<ActivatedSkillGuidance>;
 }
 
 export abstract class BaseAgent {
@@ -29,11 +35,28 @@ export abstract class BaseAgent {
     messages: ReadonlyArray<LLMMessage>,
     options?: { readonly temperature?: number; readonly maxTokens?: number },
   ): Promise<LLMResponse> {
-    return chatCompletion(this.ctx.client, this.ctx.model, messages, {
+    return runWorkerAgent(this.ctx.client, this.ctx.model, await this.appendTaskSkillGuidance(messages), {
       ...options,
       onStreamProgress: this.ctx.onStreamProgress,
       signal: this.ctx.signal,
     });
+  }
+
+  protected async submitStructured<TParameters extends TSchema>(
+    messages: ReadonlyArray<LLMMessage>,
+    resultTool: WorkerResultTool<TParameters>,
+    options?: { readonly temperature?: number; readonly maxTokens?: number },
+  ): Promise<Static<TParameters>> {
+    return runWorkerAgentTool(
+      this.ctx.client,
+      this.ctx.model,
+      await this.appendTaskSkillGuidance(messages),
+      resultTool,
+      {
+        ...options,
+        signal: this.ctx.signal,
+      },
+    );
   }
 
   protected async withPromptPackGuidance(basePrompt: string, promptId: string): Promise<string> {
@@ -41,6 +64,22 @@ export abstract class BaseAgent {
       promptId,
       projectRoot: this.ctx.projectRoot,
     });
+  }
+
+  private async appendTaskSkillGuidance(
+    messages: ReadonlyArray<LLMMessage>,
+  ): Promise<ReadonlyArray<LLMMessage>> {
+    const query = messages
+      .filter((message) => message.role === "user")
+      .map((message) => message.content)
+      .join("\n\n");
+    let activations = this.ctx.activatedSkills;
+    try {
+      activations = await hydrateActivatedSkillGuidance(activations, query);
+    } catch (error) {
+      this.log?.warn(`[skills] Reference retrieval failed for ${this.name}: ${String(error)}`);
+    }
+    return appendActivatedSkillGuidance(messages, activations);
   }
 
   /**
@@ -54,7 +93,10 @@ export abstract class BaseAgent {
   ): Promise<LLMResponse> {
     // OpenAI has native search — use it directly
     if (this.ctx.client.provider === "openai") {
-      return chatCompletion(this.ctx.client, this.ctx.model, messages, {
+      return runWorkerAgent(this.ctx.client, this.ctx.model, appendActivatedSkillGuidance(
+        messages,
+        this.ctx.activatedSkills,
+      ), {
         ...options,
         webSearch: true,
         onStreamProgress: this.ctx.onStreamProgress,
@@ -108,4 +150,30 @@ export abstract class BaseAgent {
   }
 
   abstract get name(): string;
+}
+
+export function appendActivatedSkillGuidance(
+  messages: ReadonlyArray<LLMMessage>,
+  activations: ReadonlyArray<ActivatedSkillGuidance> | undefined,
+): ReadonlyArray<LLMMessage> {
+  if (!activations || activations.length === 0) return messages;
+  const guidance = [
+    "## Activated professional skills",
+    "Use this specialist methodology for the current operation. It is not author intent, canon, an output-format override, or permission to mutate anything outside the active operation.",
+    ...activations.flatMap(({ skill, resources }) => [
+      `### ${skill.id} — ${skill.name}`,
+      skill.body.trim() || skill.description,
+      ...resources.flatMap((resource) => [
+        `#### Reference: ${resource.path}:${resource.charStart}-${resource.charEnd}${resource.heading ? ` · ${resource.heading}` : ""}`,
+        resource.body,
+      ]),
+    ]),
+  ].join("\n\n");
+  const systemIndex = messages.findIndex((message) => message.role === "system");
+  if (systemIndex < 0) {
+    return [{ role: "system", content: guidance }, ...messages];
+  }
+  return messages.map((message, index) => index === systemIndex
+    ? { ...message, content: `${message.content}\n\n${guidance}` }
+    : message);
 }

@@ -1,4 +1,5 @@
 import type { AgentContext } from "../agents/base.js";
+import { join } from "node:path";
 import {
   PlayActionIntentSchema,
   PlayMutationSchema,
@@ -19,6 +20,11 @@ import { createPlayDB } from "./play-db-factory.js";
 import { applyPlayMutation, seedPlayGraph, type PlayReducerDB } from "./play-reducer.js";
 import { PlayStore, type PlayWorld } from "./play-store.js";
 import type { PlayGraphSnapshot } from "./play-file-db.js";
+import {
+  createProductionRunSnapshot,
+  writeProductionRunSnapshot,
+  type ProductionObservation,
+} from "../production/harness.js";
 
 export interface PlayActionInterpreterLike {
   readonly interpret: (input: {
@@ -42,6 +48,7 @@ export interface PlaySceneRendererLike {
   readonly render: (input: {
     readonly input: string;
     readonly action: PlayActionIntentInput;
+    readonly context?: string;
     readonly mutationSummary: string;
     readonly stateBrief: string;
     readonly replayContext?: string;
@@ -101,6 +108,13 @@ export interface PlayOpeningSeedResult {
   readonly mutation: PlayMutation;
 }
 
+export class PlayOpeningSeedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PlayOpeningSeedError";
+  }
+}
+
 export class PlayRunner {
   private readonly store: PlayStore;
   private readonly db: PlayReducerDB;
@@ -143,7 +157,7 @@ export class PlayRunner {
   }): Promise<PlayOpeningSeedResult | null> {
     await this.store.ensureRun(this.options.worldId, this.options.runId);
     const existing = readGraphSnapshot(this.db);
-    if ((existing?.entities.length ?? 0) > 0 || (existing?.stateSlots.length ?? 0) > 0) {
+    if (isOpeningGraphReady(existing)) {
       return null;
     }
 
@@ -177,13 +191,41 @@ export class PlayRunner {
       turn: 0,
       actionKind: "look",
     });
+    const stateBrief = renderStateBrief({ action, mutation: normalized });
+    const finalMutation = this.sceneReconciler
+      ? mergePlayMutations(normalized, PlayMutationSchema.parse(await this.sceneReconciler.reconcile({
+        turn: 0,
+        input: buildOpeningSeedInput({
+          sceneText: input.sceneText,
+          suggestedActions: input.suggestedActions ?? [],
+          language,
+          premise: worldContext,
+        }),
+        action,
+        mutation: normalized,
+        sceneText: input.sceneText,
+        context,
+        stateBrief,
+        language,
+        worldPremise: worldContext,
+      })))
+      : normalized;
 
     seedPlayGraph({
       db: this.db,
-      mutation: normalized,
+      mutation: finalMutation,
     });
-    await this.store.writeProjection(this.options.worldId, this.options.runId, "projections/state.md", renderStateBrief({ action, mutation: normalized }));
-    return { mutation: normalized };
+    const seededGraph = readGraphSnapshot(this.db);
+    if (finalMutation.blocked || !isOpeningGraphReady(seededGraph)) {
+      throw new PlayOpeningSeedError(
+        finalMutation.blockedReason
+          || (language === "en"
+            ? "The opening scene did not produce a usable player/world graph. Retry world creation."
+            : "开场没有生成可用的玩家与世界图谱，请重试创建互动世界。"),
+      );
+    }
+    await this.store.writeProjection(this.options.worldId, this.options.runId, "projections/state.md", renderStateBrief({ action, mutation: finalMutation }));
+    return { mutation: finalMutation };
   }
 
   async step(input: string, options: { readonly replayContext?: string } = {}): Promise<PlayStepResult> {
@@ -192,6 +234,33 @@ export class PlayRunner {
 
     await this.store.ensureRun(this.options.worldId, this.options.runId);
     const turn = (await this.store.readEvents(this.options.worldId, this.options.runId)).length + 1;
+    await this.writeRunStatus(turn, "running", []);
+    try {
+      const result = await this.executeStep(rawInput, turn, options);
+      const observations: ProductionObservation[] = result.mutation.blocked
+        ? [{
+            metric: "play-action",
+            expected: "action advances or meaningfully responds to world state",
+            actual: result.mutation.blockedReason || result.mutation.summary,
+            severity: "info",
+            evidence: result.mutation.blockedReason || result.mutation.summary,
+            repairable: false,
+          }]
+        : [];
+      await this.writeRunStatus(turn, "complete", observations);
+      return result;
+    } catch (error) {
+      const cancelled = this.options.ctx?.signal?.aborted === true;
+      await this.writeRunStatus(turn, cancelled ? "cancelled" : "failed", [], error).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  private async executeStep(
+    rawInput: string,
+    turn: number,
+    options: { readonly replayContext?: string },
+  ): Promise<PlayStepResult> {
     const world = await this.store.loadWorld(this.options.worldId);
     const language = world?.language ?? "zh";
     const sceneBrief = await this.readOptionalProjection("projections/scene.md");
@@ -211,13 +280,13 @@ export class PlayRunner {
     }));
     const stateBrief = renderStateBrief({ action, mutation });
 
-    // Render BEFORE any commit. The renderer is fail-open (never throws), but the
-    // ordering still matters: nothing about this turn (db mutation, event, state,
-    // scene, transcript) is persisted until the scene is in hand — so a turn is
-    // all-or-nothing and can never leave a "state advanced but tool failed" half-state.
+    // Render BEFORE any commit. Nothing about this turn (db mutation, event, state,
+    // scene, transcript) is persisted until a valid scene is in hand, so rendering
+    // failures remain retryable and cannot create a half-committed turn.
     const render = await this.sceneRenderer.render({
       input: rawInput,
       action,
+      context,
       mutationSummary: mutation.summary || mutation.blockedReason,
       stateBrief,
       replayContext: options.replayContext,
@@ -243,51 +312,96 @@ export class PlayRunner {
 
     // Commit everything together, only after the scene and graph reconciliation are in hand.
     const beforeGraph = readGraphSnapshot(this.db);
-    if (beforeGraph) {
-      await this.store.saveCheckpoint(
-        this.options.worldId,
-        this.options.runId,
-        await this.store.captureRunSnapshot(this.options.worldId, this.options.runId, {
+    const rollbackSnapshot = beforeGraph && this.db.replaceWithSnapshot
+      ? await this.store.captureRunSnapshot(this.options.worldId, this.options.runId, {
           id: `before-turn-${turn}`,
           turn,
           graph: beforeGraph,
-        }),
-      );
+        })
+      : null;
+    if (rollbackSnapshot) {
+      await this.store.saveCheckpoint(this.options.worldId, this.options.runId, rollbackSnapshot);
     }
-    const applied = applyPlayMutation({
-      db: this.db,
-      mutation: finalMutation,
-      rawInput,
-    });
-    await this.store.appendEvent(this.options.worldId, this.options.runId, applied.event);
-    await this.store.writeProjection(this.options.worldId, this.options.runId, "projections/state.md", finalStateBrief);
-    await this.store.saveCurrentState(this.options.worldId, this.options.runId, {
-      turn,
-      lastEventId: applied.event.id,
-      lastAction: action,
-      lastSummary: finalMutation.summary,
-      timeAdvance: finalMutation.timeAdvance ?? null,
-      blocked: finalMutation.blocked,
-      worldContract: world?.worldContract ?? "",
-      visualContract: world?.visualContract ?? "",
-    });
-    await this.store.writeProjection(this.options.worldId, this.options.runId, "projections/scene.md", `${render.sceneText}\n`);
-    await this.store.appendTranscriptTurn(this.options.worldId, this.options.runId, {
-      role: "user",
-      content: rawInput,
-      timestamp: Date.now(),
-    });
-    await this.store.appendTranscriptTurn(this.options.worldId, this.options.runId, {
-      role: "assistant",
-      content: render.sceneText,
-      timestamp: Date.now(),
-    });
+
+    try {
+      const applied = applyPlayMutation({
+        db: this.db,
+        mutation: finalMutation,
+        rawInput,
+      });
+      await this.store.appendEvent(this.options.worldId, this.options.runId, applied.event);
+      await this.store.writeProjection(this.options.worldId, this.options.runId, "projections/state.md", finalStateBrief);
+      await this.store.saveCurrentState(this.options.worldId, this.options.runId, {
+        turn,
+        lastEventId: applied.event.id,
+        lastAction: action,
+        lastSummary: finalMutation.summary,
+        timeAdvance: finalMutation.timeAdvance ?? null,
+        blocked: finalMutation.blocked,
+        worldContract: world?.worldContract ?? "",
+        visualContract: world?.visualContract ?? "",
+      });
+      await this.store.writeProjection(this.options.worldId, this.options.runId, "projections/scene.md", `${render.sceneText}\n`);
+      await this.store.appendTranscriptTurn(this.options.worldId, this.options.runId, {
+        role: "user",
+        content: rawInput,
+        timestamp: Date.now(),
+      });
+      await this.store.appendTranscriptTurn(this.options.worldId, this.options.runId, {
+        role: "assistant",
+        content: render.sceneText,
+        timestamp: Date.now(),
+      });
+    } catch (error) {
+      if (!rollbackSnapshot) throw error;
+      try {
+        await this.store.restoreRunSnapshot(
+          this.options.worldId,
+          this.options.runId,
+          rollbackSnapshot,
+          requireRestorableGraphDB(this.db),
+        );
+      } catch (rollbackError) {
+        throw new AggregateError([error, rollbackError], `Play turn ${turn} failed and rollback was incomplete`);
+      }
+      throw error;
+    }
 
     return {
       ...render,
       action,
       mutation: finalMutation,
     };
+  }
+
+  private async writeRunStatus(
+    turn: number,
+    status: "running" | "complete" | "failed" | "cancelled",
+    observations: ReadonlyArray<ProductionObservation>,
+    error?: unknown,
+  ): Promise<void> {
+    const runDir = join("worlds", this.options.worldId, "runs", this.options.runId);
+    await writeProductionRunSnapshot({
+      rootDir: this.options.projectRoot,
+      runPath: join(runDir, "status.json"),
+      run: createProductionRunSnapshot({
+        kind: "play",
+        id: `${this.options.worldId}:${this.options.runId}`,
+        status,
+        stage: `turn-${turn}`,
+        artifacts: [
+          join(runDir, "events.jsonl"),
+          join(runDir, "transcript.jsonl"),
+          join(runDir, "state", "current.json"),
+          join(runDir, "projections", "scene.md"),
+          join(runDir, "projections", "state.md"),
+        ],
+        observations,
+        skillIds: this.options.ctx?.activatedSkills?.map((activation) => activation.skill.id),
+        resumeCursor: String(turn),
+        ...(error ? { error: error instanceof Error ? error.message : String(error) } : {}),
+      }),
+    });
   }
 
   async regenerateLastTurn(input?: string): Promise<PlayReplayResult> {
@@ -381,6 +495,12 @@ export class PlayRunner {
       return "";
     }
   }
+}
+
+function isOpeningGraphReady(graph: PlayGraphSnapshot | null): boolean {
+  if (!graph) return false;
+  return graph.entities.some((entity) => entity.id === "actor_player")
+    && graph.entities.some((entity) => entity.id !== "actor_player");
 }
 
 function buildOpeningSeedInput(input: {

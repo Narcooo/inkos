@@ -337,7 +337,8 @@ describe("Phase 5 consolidation — parser accepts 5-section output (current_sta
 
     const out = await agent.generateFoundation(baseBook());
 
-    expect(out.storyBible).toContain("主题与基调");
+    expect(out.storyFrame).toContain("主题与基调");
+    expect(out.storyBible).toContain("兼容指针");
     expect(out.volumeOutline).toContain("节奏原则");
     expect(out.bookRules).toContain("## 主角");
     expect(out.pendingHooks).toContain("H01");

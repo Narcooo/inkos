@@ -1,13 +1,24 @@
 // Models
 export { type BookConfig, type Platform, type Genre, type BookStatus, type FanficMode, type ChapterReviewMode, type RevisionGate, BookConfigSchema, PlatformSchema, GenreSchema, BookStatusSchema, FanficModeSchema, normalizePlatformId, normalizePlatformOrOther, resolveChapterReviewMode, resolveRevisionGate } from "./models/book.js";
 export { type ChapterMeta, type ChapterStatus, ChapterMetaSchema, ChapterStatusSchema } from "./models/chapter.js";
-export { type ProjectConfig, type LLMConfig, type NotifyChannel, type DetectionConfig, type QualityGates, type FoundationConfig, type WritingConfig, type AgentLLMOverride, type InputGovernanceMode, type ResearchSearchConfig, ProjectConfigSchema, LLMConfigSchema, AgentLLMOverrideSchema, DetectionConfigSchema, QualityGatesSchema, FoundationConfigSchema, WritingConfigSchema, InputGovernanceModeSchema, ResearchSearchConfigSchema } from "./models/project.js";
+export { type ProjectConfig, type LLMConfig, type NotifyChannel, type DetectionConfig, type QualityGates, type FoundationConfig, type WritingConfig, type AgentLLMOverride, type ResearchSearchConfig, ProjectConfigSchema, LLMConfigSchema, AgentLLMOverrideSchema, DetectionConfigSchema, QualityGatesSchema, FoundationConfigSchema, WritingConfigSchema, ResearchSearchConfigSchema } from "./models/project.js";
 export { type CurrentState, type ParticleLedger, type PendingHooks, type PendingHook, type LedgerEntry } from "./models/state.js";
 export { type GenreProfile, type ParsedGenreProfile, GenreProfileSchema, parseGenreProfile } from "./models/genre-profile.js";
 export { type BookRules, type ParsedBookRules, BookRulesSchema, parseBookRules, tryParseBookRulesFrontmatter } from "./models/book-rules.js";
 export { type DetectionHistoryEntry, type DetectionStats } from "./models/detection.js";
 export { type StyleProfile } from "./models/style-profile.js";
-export { type LengthCountingMode, type LengthNormalizeMode, type LengthSpec, type LengthTelemetry, type LengthWarning, LengthCountingModeSchema, LengthNormalizeModeSchema, LengthSpecSchema, LengthTelemetrySchema, LengthWarningSchema } from "./models/length-governance.js";
+export { type LengthCountingMode, type LengthSpec, type LengthTelemetry, type LengthWarning, LengthCountingModeSchema, LengthSpecSchema, LengthTelemetrySchema, LengthWarningSchema } from "./models/length-governance.js";
+export {
+  commitProductionArtifacts,
+  createProductionRunSnapshot,
+  createRangeObservation,
+  writeProductionRunSnapshot,
+  type ProductionKind,
+  type ProductionObservation,
+  type ProductionObservationSeverity,
+  type ProductionRunSnapshot,
+  type ProductionRunStatus,
+} from "./production/harness.js";
 export {
   type RuntimeStateLanguage,
   type StateManifest,
@@ -139,16 +150,25 @@ export {
 export {
   AgentSkillSchema,
   createSkillRegistry,
+  loadAvailableAgentSkills,
+  loadBuiltinAgentSkills,
   loadConfiguredAgentSkills,
   loadExternalAgentSkills,
   parseAgentSkillDocument,
+  PRODUCTION_SKILL_IDS,
+  NON_LONG_PRODUCTION_CAPABILITIES,
+  activatedSkillIds,
+  mergeActivatedSkillGuidance,
+  resolveProductionSkillActivations,
   type AgentSkill,
   type CreateSkillRegistryOptions,
   type ExternalSkillDiagnostic,
   type LoadConfiguredAgentSkillsInput,
+  type LoadAvailableAgentSkillsResult,
   type LoadExternalAgentSkillsInput,
   type LoadExternalAgentSkillsResult,
   type ParseAgentSkillDocumentOptions,
+  type ProductionSkillCapability,
   type SkillRegistry,
   type SkillResolutionInput,
   type SkillResolutionResult,
@@ -175,7 +195,28 @@ export {
   composeGovernedChapter,
   type ComposeChapterInput,
   type ComposeChapterOutput,
+  type BookReferenceContextProvider,
 } from "./agents/composer.js";
+export {
+  bindBookReference,
+  listBookReferences,
+  loadBookReferenceManifest,
+  loadMaterialAsset,
+  unbindBookReference,
+  type BindBookReferenceInput,
+  type BookReferenceBinding,
+  type BookReferenceList,
+  type BookReferenceManifest,
+  type ResolvedBookReference,
+} from "./references/book-references.js";
+export {
+  selectBookReferenceContext,
+  type BookReferenceContextSelection,
+  type BookReferenceSelectionTask,
+  type ReferenceSectionCandidate,
+  type ReferenceSectionSelectionRequest,
+  type ReferenceSectionSelector,
+} from "./references/reference-context.js";
 export {
   PLANNER_MEMO_SYSTEM_PROMPT,
   PLANNER_MEMO_USER_TEMPLATE,
@@ -210,7 +251,10 @@ export {
   ActionSourceSchema,
   ActionPayloadSchema,
   CreateBookActionPayloadSchema,
+  ContinuationImportActionPayloadSchema,
+  FanficCreateActionPayloadSchema,
   GenerateCoverActionPayloadSchema,
+  ImitationCreateActionPayloadSchema,
   InteractiveFilmCreateActionPayloadSchema,
   PlayStartActionPayloadSchema,
   RequestedIntentSchema,
@@ -218,6 +262,7 @@ export {
   ScriptCreateActionPayloadSchema,
   ScriptTargetFormatSchema,
   ShortRunActionPayloadSchema,
+  SpinoffCreateActionPayloadSchema,
   StoryboardCreateActionPayloadSchema,
   WriteNextActionPayloadSchema,
   type ActionSource,
@@ -228,9 +273,6 @@ export {
   normalizeSkillIdList,
   normalizeRequestedIntent,
   normalizePlayMode,
-  isExplicitWriteChapterCommand,
-  isUsablePlayInitialScene,
-  isWriteNextInstruction,
 } from "./interaction/action-envelope.js";
 export {
   ExecutionStatusSchema,
@@ -245,11 +287,13 @@ export {
   BookCreationDraftSchema,
   DraftRoundSchema,
   PendingDecisionSchema,
+  PendingProposedActionSchema,
   InteractionMessageSchema,
   InteractionSessionSchema,
   type BookCreationDraft,
   type DraftRound,
   type PendingDecision,
+  type PendingProposedAction,
   type InteractionMessage,
   type InteractionSession,
   bindActiveBook,
@@ -467,7 +511,6 @@ export { probeModelsFromUpstream, type ProbedModel } from "./llm/providers/probe
 export { BaseAgent, type AgentContext } from "./agents/base.js";
 export { ArchitectAgent, type ArchitectOutput } from "./agents/architect.js";
 export { WriterAgent, type WriteChapterInput, type WriteChapterOutput, type TokenUsage } from "./agents/writer.js";
-export { LengthNormalizerAgent, type NormalizeLengthInput, type NormalizeLengthOutput } from "./agents/length-normalizer.js";
 export { ContinuityAuditor, type AuditResult, type AuditIssue } from "./agents/continuity.js";
 export { ReviserAgent, DEFAULT_REVISE_MODE, type ReviseOutput, type ReviseMode } from "./agents/reviser.js";
 export { PolisherAgent, type PolishChapterInput, type PolishChapterOutput } from "./agents/polisher.js";
@@ -509,7 +552,7 @@ export { StateValidatorAgent } from "./agents/state-validator.js";
 export { loadRuntimeStateSnapshot, buildRuntimeStateArtifacts, saveRuntimeStateSnapshot, loadNarrativeMemorySeed, loadSnapshotCurrentStateFacts, type RuntimeStateArtifacts, type NarrativeMemorySeed } from "./state/runtime-state-store.js";
 export { splitChapters, type SplitChapter } from "./utils/chapter-splitter.js";
 export * from "./translation/index.js";
-export { countChapterLength, resolveLengthCountingMode, formatLengthCount, buildLengthSpec, defaultChapterLength, DEFAULT_CHAPTER_LENGTH_ZH, DEFAULT_CHAPTER_LENGTH_EN, isOutsideSoftRange, isOutsideHardRange, chooseNormalizeMode, type LengthLanguage } from "./utils/length-metrics.js";
+export { countChapterLength, resolveLengthCountingMode, formatLengthCount, buildLengthSpec, defaultChapterLength, DEFAULT_CHAPTER_LENGTH_ZH, DEFAULT_CHAPTER_LENGTH_EN, isOutsideSoftRange, isOutsideHardRange, type LengthLanguage } from "./utils/length-metrics.js";
 export { createLogger, createStderrSink, createJsonLineSink, nullSink, type Logger, type LogSink, type LogLevel, type LogEntry } from "./utils/logger.js";
 export { inferLanguage, type WritingLanguage } from "./utils/language.js";
 export { loadProjectConfig, GLOBAL_CONFIG_DIR, GLOBAL_ENV_PATH, isApiKeyOptionalForEndpoint } from "./utils/config-loader.js";
@@ -556,6 +599,7 @@ export {
   type ChapterVersion,
   type ChapterVersionSource,
 } from "./state/chapter-workspace.js";
+export { loadChaptersFromPath, compareChapterSourceNames } from "./agent/chapter-import-source.js";
 export { bootstrapStructuredStateFromMarkdown } from "./state/state-bootstrap.js";
 export { renderCurrentStateProjection, renderHooksProjection, renderChapterSummariesProjection } from "./state/state-projections.js";
 export { applyRuntimeStateDelta, type RuntimeStateSnapshot } from "./state/state-reducer.js";
@@ -644,8 +688,6 @@ export {
 } from "./interactive-film/graph-store.js";
 export {
   generateStoryGraph,
-  buildStoryGraphFromLLMText,
-  extractJson,
   type GenerateStoryGraphInput,
 } from "./interactive-film/generate.js";
 export {
@@ -677,10 +719,6 @@ export {
   buildUpsertCharactersDelta,
 } from "./interactive-film/authoring-tools.js";
 export { writeCharacterFacts, readCharacterVoices } from "./interactive-film/memory-link.js";
-export {
-  buildFillNodeDeltaFromLLMText,
-  buildStructureDeltaFromLLMText,
-} from "./interactive-film/authoring-generate.js";
 export { summarizeStoryGraph, buildFilmAuthoringContext } from "./interactive-film/film-context.js";
 export {
   generateNodeImage,
@@ -699,3 +737,5 @@ export {
 } from "./interactive-film/emotion.js";
 export { exportInk } from "./interactive-film/export-ink.js";
 export { buildPlayableHtml } from "./interactive-film/export-html.js";
+export { ingestMaterial, type IngestMaterialInput, type MaterialAsset } from "./materials/ingest.js";
+export { runWorkerAgent, type WorkerAgentOptions } from "./agent/worker-agent.js";

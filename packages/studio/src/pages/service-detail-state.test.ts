@@ -2,9 +2,22 @@ import { describe, expect, it, vi } from "vitest";
 import {
   deleteServiceConfig,
   matchServiceConfigEntryForDetail,
+  mergeServiceDetailModels,
   rehydrateServiceConnectionStatus,
   saveServiceConfig,
 } from "./service-detail-state";
+
+describe("mergeServiceDetailModels", () => {
+  it("keeps discovered and user-added models in one stable catalog", () => {
+    expect(mergeServiceDetailModels(
+      [{ id: "MiniMax-M2.7" }],
+      ["minimax-m2.7", "MiniMax-M2.8"],
+    )).toEqual([
+      { id: "MiniMax-M2.7" },
+      { id: "MiniMax-M2.8" },
+    ]);
+  });
+});
 
 describe("rehydrateServiceConnectionStatus", () => {
   it("loads saved key without probing models on page load", async () => {
@@ -162,7 +175,7 @@ describe("saveServiceConfig", () => {
         service: "openai",
         defaultModel: "gpt-5.5",
         services: [
-          { service: "openai", temperature: 0.7, apiFormat: "chat", stream: true },
+          { service: "openai", temperature: 0.7, apiFormat: "chat", stream: true, models: ["gpt-5.5"] },
         ],
       },
     ]);
@@ -217,7 +230,7 @@ describe("saveServiceConfig", () => {
         service: "openai",
         defaultModel: "gpt-5.5",
         services: [
-          { service: "openai", temperature: 0.7, apiFormat: "chat", stream: true },
+          { service: "openai", temperature: 0.7, apiFormat: "chat", stream: true, models: ["gpt-5.5"] },
         ],
       },
     ]);
@@ -314,6 +327,7 @@ describe("saveServiceConfig", () => {
             temperature: 0.7,
             apiFormat: "chat",
             stream: false,
+            models: ["qwen3.6:35b-a3b"],
             name: "Local",
             baseUrl: "http://127.0.0.1:8001/v1",
           },

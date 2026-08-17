@@ -58,6 +58,88 @@ describe("chat message actions", () => {
     (globalThis as any).EventSource = originalEventSource;
   });
 
+  it("aborts only the previous chat round when activating another session", async () => {
+    const store = createTestStore();
+    const previousId = store.getState().createDraftSession(null, "chat");
+    const nextId = store.getState().createDraftSession(null, "chat");
+    const stream = new FakeEventSource(`/api/v1/events?sessionId=${previousId}`);
+    store.setState((state) => ({
+      activeSessionId: previousId,
+      sessions: {
+        ...state.sessions,
+        [previousId]: {
+          ...state.sessions[previousId]!,
+          isStreaming: true,
+          isChatStreaming: true,
+          stream: stream as unknown as EventSource,
+        },
+      },
+    }));
+    fetchJson.mockClear();
+
+    store.getState().activateSession(nextId);
+
+    expect(store.getState().activeSessionId).toBe(nextId);
+    expect(store.getState().sessions[previousId]).toMatchObject({
+      isStreaming: false,
+      isChatStreaming: false,
+      stream: null,
+    });
+    expect(stream.closed).toBe(true);
+    await vi.waitFor(() => {
+      expect(fetchJson).toHaveBeenCalledWith(`/sessions/${previousId}/abort?scope=chat`, { method: "POST" });
+    });
+  });
+
+  it("keeps a background production task alive when navigation aborts its parallel chat round", async () => {
+    const store = createTestStore();
+    const previousId = store.getState().createDraftSession(null, "short");
+    const nextId = store.getState().createDraftSession(null, "chat");
+    const stream = new FakeEventSource(`/api/v1/events?sessionId=${previousId}`);
+    store.setState((state) => ({
+      activeSessionId: previousId,
+      sessions: {
+        ...state.sessions,
+        [previousId]: {
+          ...state.sessions[previousId]!,
+          isStreaming: true,
+          isChatStreaming: true,
+          stream: stream as unknown as EventSource,
+          messages: [{
+            role: "assistant",
+            content: "",
+            timestamp: 10,
+            toolExecutions: [{
+              id: "short-task-1",
+              tool: "short_fiction_run",
+              label: "短篇生产",
+              status: "running",
+              startedAt: 10,
+              background: true,
+            }],
+          }],
+        },
+      },
+    }));
+    fetchJson.mockClear();
+
+    store.getState().activateSession(nextId);
+
+    expect(store.getState().sessions[previousId]).toMatchObject({
+      isStreaming: true,
+      isChatStreaming: false,
+      stream,
+    });
+    expect(store.getState().sessions[previousId]?.messages[0]?.toolExecutions?.[0]).toMatchObject({
+      status: "running",
+      background: true,
+    });
+    expect(stream.closed).toBe(false);
+    await vi.waitFor(() => {
+      expect(fetchJson).toHaveBeenCalledWith(`/sessions/${previousId}/abort?scope=chat`, { method: "POST" });
+    });
+  });
+
   it("keeps play mode local for draft sessions until the first message persists them", () => {
     const store = createTestStore();
     const sessionId = store.getState().createDraftSession(null, "play", "open");
@@ -657,7 +739,7 @@ describe("chat message actions", () => {
     expect(fakeEventSources[0]?.closed).toBe(true);
   });
 
-  it("aborts only the chat round with scope=chat and keeps the running task card intact", async () => {
+  it("aborts the chat round and its running production workflow together", async () => {
     const store = createTestStore();
     const sessionId = await setupRunningTaskSession(store);
 
@@ -672,25 +754,23 @@ describe("chat message actions", () => {
     const sent = store.getState().sendMessage(sessionId, "顺便问一下");
     await vi.waitFor(() => expect(fakeEventSources).toHaveLength(2));
 
-    await store.getState().abortSession(sessionId, "chat");
+    await store.getState().abortSession(sessionId);
 
     const abortCall = fetchJson.mock.calls.find(([path]) => path === `/sessions/${sessionId}/abort`);
-    expect(abortCall?.[1]).toMatchObject({
-      method: "POST",
-      body: JSON.stringify({ scope: "chat" }),
+    expect(abortCall?.[1]).toEqual({ method: "POST" });
+    expect(findTaskExecution(store, sessionId)).toMatchObject({ status: "error" });
+    expect(fakeEventSources[1]?.closed).toBe(true);
+    expect(store.getState().sessions[sessionId]).toMatchObject({
+      isStreaming: false,
+      isChatStreaming: false,
+      stream: null,
     });
-    // scope=chat 不把任务卡标记为失败，也不关任务连接
-    expect(findTaskExecution(store, sessionId)).toMatchObject({ status: "running" });
-    expect(fakeEventSources[1]?.closed).toBe(false);
-    expect(store.getState().sessions[sessionId]).toMatchObject({ isStreaming: true, isChatStreaming: false });
 
     rejectAgent(new Error("This operation was aborted"));
     await sent;
 
-    // 聊天轮收尾后任务照旧运行
-    expect(findTaskExecution(store, sessionId)).toMatchObject({ status: "running" });
-    expect(fakeEventSources[1]?.closed).toBe(false);
-    expect(store.getState().sessions[sessionId]).toMatchObject({ isStreaming: true });
+    expect(findTaskExecution(store, sessionId)).toMatchObject({ status: "error" });
+    expect(store.getState().sessions[sessionId]).toMatchObject({ isStreaming: false });
   });
 
   function findChatToolExecution(store: ReturnType<typeof createTestStore>, sessionId: string) {
@@ -800,6 +880,196 @@ describe("chat message actions", () => {
       stream: null,
     });
     expect(fakeEventSources[0]?.closed).toBe(true);
+  });
+
+  it("keeps one task card when a replayed snapshot arrives before tool:start", async () => {
+    const store = createTestStore();
+    const sessionId = store.getState().createDraftSession(null, "play", "guided");
+    store.getState().setSelectedModel("deepseek-v4-flash", "kkaiapi");
+
+    let resolveAgent!: (value: unknown) => void;
+    fetchJson
+      .mockResolvedValueOnce({ session: { sessionId, bookId: null, sessionKind: "play", playMode: "guided" } })
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveAgent = resolve;
+      }));
+
+    const sent = store.getState().sendMessage(sessionId, "启动世界", {
+      sessionKind: "play",
+      playMode: "guided",
+      actionSource: "button",
+      requestedIntent: "play_start",
+    });
+    await vi.waitFor(() => expect(fakeEventSources).toHaveLength(1));
+    const agentRequest = fetchJson.mock.calls.find(([path]) => path === "/agent");
+    const sourceRequestId = JSON.parse(String(agentRequest?.[1]?.body)).clientRequestId as string;
+    const execution = {
+      id: "direct-play_start-1",
+      tool: "play_start",
+      label: "启动互动世界",
+      status: "running" as const,
+      startedAt: 10,
+      background: true,
+    };
+
+    fakeEventSources[0]?.emit("task:snapshot", {
+      sessionId,
+      sourceRequestId,
+      execution,
+    });
+    fakeEventSources[0]?.emit("tool:start", {
+      sessionId,
+      sourceRequestId,
+      id: execution.id,
+      tool: execution.tool,
+      background: true,
+    });
+
+    const matching = (store.getState().sessions[sessionId]?.messages ?? [])
+      .flatMap((message) => message.toolExecutions ?? [])
+      .filter((item) => item.id === execution.id);
+    expect(matching).toHaveLength(1);
+
+    fakeEventSources[0]?.emit("tool:end", {
+      sessionId,
+      id: execution.id,
+      tool: execution.tool,
+      result: "世界已启动",
+    });
+    resolveAgent({ response: "", session: { sessionId, sessionKind: "play", playMode: "guided" } });
+    await sent;
+  });
+
+  it("merges the final HTTP tool result into the existing SSE card by execution id", async () => {
+    const store = createTestStore();
+    const sessionId = store.getState().createDraftSession(null, "play", "open");
+    store.getState().setSelectedModel("deepseek-v4-flash", "kkaiapi");
+
+    let resolveAgent!: (value: unknown) => void;
+    fetchJson
+      .mockResolvedValueOnce({ session: { sessionId, bookId: null, sessionKind: "play", playMode: "open" } })
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveAgent = resolve;
+      }));
+
+    const sent = store.getState().sendMessage(sessionId, "启动开放世界", {
+      sessionKind: "play",
+      playMode: "open",
+      requestedIntent: "play_start",
+    });
+    await vi.waitFor(() => expect(fakeEventSources).toHaveLength(1));
+
+    const executionId = "direct-play_start-1";
+    fakeEventSources[0]?.emit("tool:start", {
+      sessionId,
+      id: executionId,
+      tool: "play_start",
+      background: true,
+    });
+    fakeEventSources[0]?.emit("tool:end", {
+      sessionId,
+      id: executionId,
+      tool: "play_start",
+      details: { kind: "play_world_started", sceneText: "镇口日落。" },
+    });
+
+    resolveAgent({
+      response: "",
+      details: {
+        toolExecutions: [{
+          id: executionId,
+          tool: "play_start",
+          label: "启动互动世界",
+          status: "completed",
+          startedAt: 10,
+          completedAt: 20,
+          details: { kind: "play_world_started", sceneText: "镇口日落。" },
+        }],
+      },
+      session: { sessionId, sessionKind: "play", playMode: "open" },
+    });
+    await sent;
+
+    const matching = (store.getState().sessions[sessionId]?.messages ?? [])
+      .flatMap((message) => message.toolExecutions ?? [])
+      .filter((execution) => execution.id === executionId);
+    expect(matching).toHaveLength(1);
+    expect(matching[0]).toMatchObject({
+      status: "completed",
+      completedAt: 20,
+      details: { kind: "play_world_started", sceneText: "镇口日落。" },
+    });
+  });
+
+  it("does not duplicate a production card when task snapshot wins the startup race", async () => {
+    const store = createTestStore();
+    const sessionId = store.getState().createDraftSession(null, "script");
+    store.getState().setSelectedModel("deepseek-v4-flash", "kkaiapi");
+
+    let resolveAgent!: (value: unknown) => void;
+    fetchJson
+      .mockResolvedValueOnce({ session: { sessionId, bookId: null, sessionKind: "script" } })
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveAgent = resolve;
+      }));
+
+    const sent = store.getState().sendMessage(sessionId, "确认创建剧本", {
+      sessionKind: "script",
+      actionSource: "button",
+      requestedIntent: "script_create",
+    });
+    await vi.waitFor(() => expect(fakeEventSources).toHaveLength(1));
+    const agentRequest = fetchJson.mock.calls.find(([path]) => path === "/agent");
+    const sourceRequestId = JSON.parse(String(agentRequest?.[1]?.body)).clientRequestId as string;
+    const executionId = "direct-script_create-1";
+
+    // The task snapshot can be replayed while GET /events races the POST /agent
+    // startup. Its timestamp differs from the client stream timestamp.
+    fakeEventSources[0]?.emit("task:snapshot", {
+      sessionId,
+      sourceRequestId,
+      execution: {
+        id: executionId,
+        tool: "script_create",
+        label: "剧本创作",
+        status: "running",
+        startedAt: 10,
+      },
+    });
+    fakeEventSources[0]?.emit("tool:start", {
+      sessionId,
+      sourceRequestId,
+      id: executionId,
+      tool: "script_create",
+      background: true,
+    });
+
+    resolveAgent({
+      response: "",
+      details: {
+        toolExecutions: [{
+          id: executionId,
+          tool: "script_create",
+          label: "剧本创作",
+          status: "completed",
+          startedAt: 10,
+          completedAt: 20,
+          details: { kind: "script_created", scriptPath: "dramas/demo/script.md" },
+        }],
+      },
+      session: { sessionId, sessionKind: "script" },
+    });
+    await sent;
+
+    const matching = (store.getState().sessions[sessionId]?.messages ?? [])
+      .flatMap((message) => message.toolExecutions ?? [])
+      .filter((execution) => execution.id === executionId);
+    expect(matching).toHaveLength(1);
+    expect(matching[0]).toMatchObject({
+      status: "completed",
+      completedAt: 20,
+      details: { kind: "script_created", scriptPath: "dramas/demo/script.md" },
+    });
   });
 
   it("reclassifies a free-text turn from a replayed task snapshot and stops the production task", async () => {

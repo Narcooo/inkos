@@ -6,6 +6,7 @@ import {
   buildRuntimeStateArtifacts,
   loadNarrativeMemorySeed,
   loadRuntimeStateSnapshot,
+  loadRuntimeStateSnapshotAtChapter,
   loadSnapshotCurrentStateFacts,
 } from "../state/runtime-state-store.js";
 
@@ -223,6 +224,54 @@ describe("runtime-state-store memory helpers", () => {
     ]);
   });
 
+  it("reconstructs a pre-chapter runtime snapshot from markdown without losing stable hook ids", async () => {
+    root = await mkdtemp(join(tmpdir(), "inkos-runtime-revision-baseline-"));
+    const bookDir = join(root, "book");
+    const snapshotDir = join(bookDir, "story", "snapshots", "0");
+    await mkdir(snapshotDir, { recursive: true });
+    await Promise.all([
+      writeFile(
+        join(snapshotDir, "current_state.md"),
+        [
+          "# Current State",
+          "",
+          "| Field | Value |",
+          "| --- | --- |",
+          "| Current Chapter | 0 |",
+          "| Current Location | Clock repair shop |",
+          "| Current Conflict | Sun Yuzhen disputes the twenty-minute clock drift. |",
+          "",
+        ].join("\n"),
+        "utf-8",
+      ),
+      writeFile(
+        join(snapshotDir, "pending_hooks.md"),
+        [
+          "| hook_id | start_chapter | type | status | last_advanced | expected_payoff | notes |",
+          "| --- | --- | --- | --- | --- | --- | --- |",
+          "| H012 | 0 | mystery | 暂缓 | 0 | Explain the clock drift. | Sun Yuzhen owns the clock. |",
+          "",
+        ].join("\n"),
+        "utf-8",
+      ),
+    ]);
+
+    const snapshot = await loadRuntimeStateSnapshotAtChapter({
+      bookDir,
+      chapterNumber: 0,
+      language: "en",
+    });
+
+    expect(snapshot.manifest.lastAppliedChapter).toBe(0);
+    expect(snapshot.hooks.hooks).toEqual([
+      expect.objectContaining({
+        hookId: "H012",
+        status: "deferred",
+        notes: "Sun Yuzhen owns the clock.",
+      }),
+    ]);
+  });
+
   it("rejects persisted duplicate summary chapters in structured runtime state", async () => {
     root = await mkdtemp(join(tmpdir(), "inkos-runtime-state-invalid-"));
     const bookDir = join(root, "book");
@@ -349,7 +398,7 @@ describe("runtime-state-store memory helpers", () => {
     expect(snapshot.manifest.migrationWarnings.join("\n")).toContain("empty hook type");
   });
 
-  it("arbitrates new hook candidates before applying structured state updates", async () => {
+  it("canonicalizes structurally valid new hook candidates without semantic guessing", async () => {
     root = await mkdtemp(join(tmpdir(), "inkos-runtime-state-arbiter-"));
     const bookDir = join(root, "book");
     const storyDir = join(bookDir, "story");
@@ -424,14 +473,12 @@ describe("runtime-state-store memory helpers", () => {
 
     expect(artifacts.resolvedDelta.hookOps.upsert).toEqual([
       expect.objectContaining({
-        hookId: "anonymous-source-scope",
+        hookId: expect.not.stringMatching(/^anonymous-source-scope$/),
+        startChapter: 12,
         lastAdvancedChapter: 12,
       }),
     ]);
-    expect(artifacts.snapshot.hooks.hooks).toHaveLength(1);
-    expect(artifacts.snapshot.hooks.hooks[0]).toEqual(expect.objectContaining({
-      hookId: "anonymous-source-scope",
-      lastAdvancedChapter: 12,
-    }));
+    expect(artifacts.snapshot.hooks.hooks).toHaveLength(2);
+    expect(artifacts.snapshot.hooks.hooks.map((hook) => hook.hookId)).toContain("anonymous-source-scope");
   });
 });

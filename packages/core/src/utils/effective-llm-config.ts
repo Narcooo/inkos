@@ -46,6 +46,7 @@ interface ServiceConfigEntry {
   readonly service: string;
   readonly name?: string;
   readonly baseUrl?: string;
+  readonly models?: readonly string[];
   readonly temperature?: number;
   readonly maxTokens?: number;
   readonly apiFormat?: "chat" | "responses";
@@ -356,6 +357,7 @@ function normalizeServiceEntries(raw: unknown): ServiceConfigEntry[] {
         service: typeof entry.service === "string" && entry.service.length > 0 ? entry.service : "custom",
         ...(typeof entry.name === "string" && entry.name.length > 0 ? { name: entry.name } : {}),
         ...(typeof entry.baseUrl === "string" && entry.baseUrl.length > 0 ? { baseUrl: entry.baseUrl } : {}),
+        ...(Array.isArray(entry.models) ? { models: normalizeModelIds(entry.models) } : {}),
         ...(typeof entry.temperature === "number" ? { temperature: entry.temperature } : {}),
         ...(typeof entry.maxTokens === "number" ? { maxTokens: entry.maxTokens } : {}),
         ...(entry.apiFormat === "chat" || entry.apiFormat === "responses" ? { apiFormat: entry.apiFormat } : {}),
@@ -378,6 +380,7 @@ function normalizeServiceEntryFromPatch(serviceId: string, value: Record<string,
       service: "custom",
       name: decodeURIComponent(serviceId.slice("custom:".length)),
       ...(typeof value.baseUrl === "string" && value.baseUrl.length > 0 ? { baseUrl: value.baseUrl } : {}),
+      ...(Array.isArray(value.models) ? { models: normalizeModelIds(value.models) } : {}),
       ...(typeof value.temperature === "number" ? { temperature: value.temperature } : {}),
       ...(typeof value.maxTokens === "number" ? { maxTokens: value.maxTokens } : {}),
       ...(value.apiFormat === "chat" || value.apiFormat === "responses" ? { apiFormat: value.apiFormat } : {}),
@@ -390,6 +393,7 @@ function normalizeServiceEntryFromPatch(serviceId: string, value: Record<string,
       service: "custom",
       ...(typeof value.name === "string" && value.name.length > 0 ? { name: value.name } : {}),
       ...(typeof value.baseUrl === "string" && value.baseUrl.length > 0 ? { baseUrl: value.baseUrl } : {}),
+      ...(Array.isArray(value.models) ? { models: normalizeModelIds(value.models) } : {}),
       ...(typeof value.temperature === "number" ? { temperature: value.temperature } : {}),
       ...(typeof value.maxTokens === "number" ? { maxTokens: value.maxTokens } : {}),
       ...(value.apiFormat === "chat" || value.apiFormat === "responses" ? { apiFormat: value.apiFormat } : {}),
@@ -399,6 +403,7 @@ function normalizeServiceEntryFromPatch(serviceId: string, value: Record<string,
 
   return {
     service: serviceId,
+    ...(Array.isArray(value.models) ? { models: normalizeModelIds(value.models) } : {}),
     ...(typeof value.temperature === "number" ? { temperature: value.temperature } : {}),
     ...(typeof value.maxTokens === "number" ? { maxTokens: value.maxTokens } : {}),
     ...(value.apiFormat === "chat" || value.apiFormat === "responses" ? { apiFormat: value.apiFormat } : {}),
@@ -438,7 +443,7 @@ function resolveServiceModel(
 
   const endpoint = getEndpoint(entry.service);
   const candidate = [defaultModel, currentModel]
-    .find((model): model is string => Boolean(model && modelBelongsToService(entry.service, model)));
+    .find((model): model is string => Boolean(model && modelBelongsToService(entry, model)));
   if (candidate) return candidate;
 
   return endpoint?.checkModel
@@ -452,16 +457,31 @@ function assertModelBelongsToService(entry: ServiceConfigEntry | undefined, mode
   if (!entry || entry.service === "custom") return;
   const endpoint = getEndpoint(entry.service);
   if (!endpoint) return;
-  if (!modelBelongsToService(entry.service, model)) {
+  if (!modelBelongsToService(entry, model)) {
     throw new Error(`模型 ${model} 不属于 ${entry.service} 服务，请切换服务或选择该服务下的模型。`);
   }
 }
 
-function modelBelongsToService(service: string, model: string): boolean {
-  if (serviceAllowsUnlistedModels(service)) return true;
-  const endpoint = getEndpoint(service);
+function modelBelongsToService(entry: ServiceConfigEntry, model: string): boolean {
+  if (entry.models?.some((knownModel) => knownModel.toLowerCase() === model.toLowerCase())) return true;
+  if (serviceAllowsUnlistedModels(entry.service)) return true;
+  const endpoint = getEndpoint(entry.service);
   if (!endpoint) return true;
   return endpoint.models.some((knownModel) => knownModel.id.toLowerCase() === model.toLowerCase());
+}
+
+function normalizeModelIds(value: readonly unknown[]): string[] {
+  const seen = new Set<string>();
+  const models: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string") continue;
+    const model = item.trim();
+    const key = model.toLowerCase();
+    if (!model || seen.has(key)) continue;
+    seen.add(key);
+    models.push(model);
+  }
+  return models;
 }
 
 /**

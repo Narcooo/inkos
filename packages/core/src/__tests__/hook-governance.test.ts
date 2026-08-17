@@ -53,15 +53,6 @@ describe("collectStaleHookDebt", () => {
 });
 
 describe("evaluateHookAdmission", () => {
-  const activeHooks = [
-    createHook({
-      hookId: "H019",
-      type: "mystery",
-      expectedPayoff: "Reveal the hidden room behind the correction mark",
-      notes: "The hidden room converts public disputes into standing questions",
-    }),
-  ];
-
   it("rejects hook candidates without payoff-bearing signal", () => {
     const decision = evaluateHookAdmission({
       candidate: {
@@ -69,7 +60,6 @@ describe("evaluateHookAdmission", () => {
         expectedPayoff: "",
         notes: "   ",
       },
-      activeHooks,
     });
 
     expect(decision).toEqual({
@@ -85,7 +75,6 @@ describe("evaluateHookAdmission", () => {
         expectedPayoff: "Reveal why the witness changed her statement",
         notes: "A courtroom contradiction keeps widening",
       },
-      activeHooks,
     });
 
     expect(decision).toEqual({
@@ -94,20 +83,18 @@ describe("evaluateHookAdmission", () => {
     });
   });
 
-  it("rejects duplicate or restated hook candidates", () => {
+  it("only validates structure and leaves semantic identity to the settler", () => {
     const decision = evaluateHookAdmission({
       candidate: {
         type: "mystery",
         expectedPayoff: "Reveal the hidden room behind the correction mark",
         notes: "The hidden room still reframes public disputes as standing questions",
       },
-      activeHooks,
     });
 
     expect(decision).toEqual({
-      admit: false,
-      reason: "duplicate_family",
-      matchedHookId: "H019",
+      admit: true,
+      reason: "admit",
     });
   });
 
@@ -118,7 +105,6 @@ describe("evaluateHookAdmission", () => {
         expectedPayoff: "Expose why the mentor buried the oath",
         notes: "A separate emotional debt keeps surfacing in private scenes",
       },
-      activeHooks,
     });
 
     expect(decision).toEqual({
@@ -127,27 +113,18 @@ describe("evaluateHookAdmission", () => {
     });
   });
 
-  it("rejects Chinese paraphrase candidates from the same hook family", () => {
+  it("does not guess Chinese semantic equivalence with token overlap", () => {
     const decision = evaluateHookAdmission({
       candidate: {
         type: "神秘",
         expectedPayoff: "弄明白雨夜匿名来电背后是谁",
         notes: "一下雨就有陌生号码劝她远离旧码头",
       },
-      activeHooks: [
-        createHook({
-          hookId: "H020",
-          type: "神秘",
-          expectedPayoff: "查出匿名号码为何总在雨夜响起",
-          notes: "每次雨夜都有人用匿名电话提醒她别去旧码头",
-        }),
-      ],
     });
 
     expect(decision).toEqual({
-      admit: false,
-      reason: "duplicate_family",
-      matchedHookId: "H020",
+      admit: true,
+      reason: "admit",
     });
   });
 });

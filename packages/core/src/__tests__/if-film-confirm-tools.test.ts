@@ -2,14 +2,27 @@ import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createDraftStructureTool, createRemoveNodeTool, createConnectChoiceTool } from "../agent/film-authoring-tools.js";
+import {
+  createDraftStructureTool,
+  createRemoveNodeTool,
+  createConnectChoiceTool,
+  type FilmLLMDeps,
+} from "../agent/film-authoring-tools.js";
 import { loadStoryGraph, saveStoryGraph } from "../interactive-film/graph-store.js";
 import { StoryGraphSchema } from "../interactive-film/graph-schema.js";
 
-const structure = JSON.stringify({ nodes: [
+const structure = StoryGraphSchema.shape.nodes.parse([
   { id: "s", type: "start", choices: [{ id: "c", text: "go", targetNodeId: "e" }] },
   { id: "e", type: "ending", choices: [] },
-] });
+]);
+
+function filmDeps(overrides: Partial<FilmLLMDeps> = {}): FilmLLMDeps {
+  return {
+    submitNode: async () => structure[0]!,
+    submitStructure: async () => structure,
+    ...overrides,
+  };
+}
 
 describe("confirm-class authoring tools", () => {
   let root: string;
@@ -17,7 +30,7 @@ describe("confirm-class authoring tools", () => {
   afterEach(async () => { await rm(root, { recursive: true, force: true }); });
 
   it("draft_structure (stubbed LLM) creates the node skeleton", async () => {
-    const tool = createDraftStructureTool(root, "p", { chat: async () => structure });
+    const tool = createDraftStructureTool(root, "p", filmDeps());
     await tool.execute("call-1", { instruction: "三幕" } as never);
     expect((await loadStoryGraph(root, "p"))?.nodes.map(n => n.id).sort()).toEqual(["e", "s"]);
   });
@@ -26,12 +39,12 @@ describe("confirm-class authoring tools", () => {
     await mkdir(join(root, "prompt", "interactive-film"), { recursive: true });
     await writeFile(join(root, "prompt", "interactive-film", "story-graph.md"), "PROJECT STORY GRAPH OVERRIDE: every branch needs a visible flag.");
     let systemPrompt = "";
-    const tool = createDraftStructureTool(root, "p", {
-      chat: async (system) => {
+    const tool = createDraftStructureTool(root, "p", filmDeps({
+      submitStructure: async (system) => {
         systemPrompt = system;
         return structure;
       },
-    });
+    }));
 
     const result = await tool.execute("call-1", { instruction: "三幕" } as never);
 

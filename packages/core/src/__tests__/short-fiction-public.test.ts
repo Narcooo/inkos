@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LLMClient } from "../llm/provider.js";
 import {
+  ShortFictionOutlineAgent,
+  ShortFictionOutlineReviserAgent,
   ShortFictionDraftReviserAgent,
   parseShortFictionBatchDraft,
   validateShortFictionDraftForFinal,
@@ -33,6 +35,27 @@ function fakeClient(): LLMClient {
 }
 
 describe("public short-fiction chain", () => {
+  it("gives outline generation enough output budget for models with a separate reasoning channel", async () => {
+    const validOutline = `=== SHORT_FICTION_PLAN_TITLE ===\n电梯多一层\n=== SHORT_FICTION_PLAN ===\n## 12章完整方案`;
+    const createChat = vi
+      .spyOn(ShortFictionOutlineAgent.prototype as never, "chat" as never)
+      .mockResolvedValue({ content: validOutline, usage: ZERO_USAGE });
+    const reviseChat = vi
+      .spyOn(ShortFictionOutlineReviserAgent.prototype as never, "chat" as never)
+      .mockResolvedValue({ content: validOutline, usage: ZERO_USAGE });
+    const context = { client: fakeClient(), model: "fake", projectRoot: "/tmp" };
+
+    const first = await new ShortFictionOutlineAgent(context).createOutline({
+      direction: "现实悬疑", chapterCount: 12, charsPerChapter: 1000,
+    });
+    await new ShortFictionOutlineReviserAgent(context).reviseOutline({
+      direction: "现实悬疑", outline: first, review: "加强反扑", chapterCount: 12, charsPerChapter: 1000,
+    });
+
+    expect(createChat.mock.calls[0]?.[1]).toMatchObject({ maxTokens: 16_384 });
+    expect(reviseChat.mock.calls[0]?.[1]).toMatchObject({ maxTokens: 16_384 });
+  });
+
   it("parses a complete tagged short-fiction draft", () => {
     const draft = parseShortFictionBatchDraft(`
 === SHORT_FICTION_TITLE ===

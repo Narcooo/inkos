@@ -128,6 +128,21 @@ function toolText(result: { content: Array<{ type: string; text?: string }> }): 
   return block?.type === "text" ? block.text ?? "" : "";
 }
 
+function contextPipeline<T extends object>(pipeline: T): T & {
+  readonly runWithAgentContext: ReturnType<typeof vi.fn>;
+} {
+  return {
+    runWithAgentContext: vi.fn(async (
+      context: { readonly signal?: AbortSignal },
+      task: () => Promise<unknown>,
+    ) => {
+      context.signal?.throwIfAborted();
+      return task();
+    }),
+    ...pipeline,
+  };
+}
+
 describe("agent tools language wiring (en parity)", () => {
   let root: string;
 
@@ -145,7 +160,7 @@ describe("agent tools language wiring (en parity)", () => {
   });
 
   it("passes language 'en' from short_fiction_run to the short fiction runner", async () => {
-    const pipeline = { createAgentContext: vi.fn(() => ({})) };
+    const pipeline = contextPipeline({ createAgentContext: vi.fn(() => ({})) });
     const tool = createShortFictionRunTool(pipeline as never, root, { language: "en" });
 
     await tool.execute("short-en-1", { direction: "office revenge thriller" } as any);
@@ -159,6 +174,7 @@ describe("agent tools language wiring (en parity)", () => {
       action: "short_run",
       instruction: "Write a complete English suspense short story.",
       shortRun: {
+        title: "The Missing Ledger",
         direction: "an office suspense story about forged expense records",
         language: "en",
         chapters: 12,
@@ -183,6 +199,7 @@ describe("agent tools language wiring (en parity)", () => {
       action: "short_run",
       instruction: "Write a complete English suspense short story.",
       shortRun: {
+        title: "The Missing Ledger",
         direction: "an office suspense story about forged expense records",
         chapters: 12,
         charsPerChapter: 650,
@@ -200,6 +217,7 @@ describe("agent tools language wiring (en parity)", () => {
       action: "short_run",
       instruction: "用户在中文对话里要求写一篇英文办公室悬疑短篇",
       shortRun: {
+        title: "The Missing Ledger",
         direction: "an English office suspense story about forged expense records",
         language: "en",
         chapters: 12,
@@ -224,6 +242,7 @@ describe("agent tools language wiring (en parity)", () => {
       action: "short_run",
       instruction: "用户在中文对话里要求写一篇英文短篇，未指定每章字数",
       shortRun: {
+        title: "The Missing Ledger",
         direction: "an English office suspense story",
         language: "en",
         cover: false,
@@ -234,7 +253,7 @@ describe("agent tools language wiring (en parity)", () => {
     expect(shortRun.language).toBe("en");
     expect(shortRun.charsPerChapter).toBeUndefined();
 
-    const pipeline = { createAgentContext: vi.fn(() => ({})) };
+    const pipeline = contextPipeline({ createAgentContext: vi.fn(() => ({})) });
     const tool = createShortFictionRunTool(pipeline as never, root, {
       language: "zh",
       actionPayload: { shortRun } as any,
@@ -254,7 +273,7 @@ describe("agent tools language wiring (en parity)", () => {
   });
 
   it("lets the confirmed short payload override the project language", async () => {
-    const pipeline = { createAgentContext: vi.fn(() => ({})) };
+    const pipeline = contextPipeline({ createAgentContext: vi.fn(() => ({})) });
     const tool = createShortFictionRunTool(pipeline as never, root, {
       language: "zh",
       actionPayload: {
@@ -277,7 +296,7 @@ describe("agent tools language wiring (en parity)", () => {
   });
 
   it("keeps short_fiction_run language undefined by default so the runner falls back to zh", async () => {
-    const pipeline = { createAgentContext: vi.fn(() => ({})) };
+    const pipeline = contextPipeline({ createAgentContext: vi.fn(() => ({})) });
     const tool = createShortFictionRunTool(pipeline as never, root);
 
     await tool.execute("short-zh-1", { direction: "女频短篇 婚姻背叛 证据反杀" } as any);
@@ -287,7 +306,7 @@ describe("agent tools language wiring (en parity)", () => {
   });
 
   it("passes language 'en' from script/storyboard/interactive-film tools to their runners", async () => {
-    const pipeline = { createAgentContext: vi.fn(() => ({})) };
+    const pipeline = contextPipeline({ createAgentContext: vi.fn(() => ({})) });
 
     await createScriptCreationTool(pipeline as never, root, { language: "en" })
       .execute("script-en-1", { title: "Night Shift", instruction: "adapt into a short drama" } as any);
@@ -302,11 +321,9 @@ describe("agent tools language wiring (en parity)", () => {
   });
 
   it("runs standalone production tools inside the pipeline abort scope", async () => {
-    const runWithAbortSignal = vi.fn(async (_signal: AbortSignal | undefined, task: () => Promise<unknown>) => task());
-    const pipeline = {
+    const pipeline = contextPipeline({
       createAgentContext: vi.fn(() => ({})),
-      runWithAbortSignal,
-    };
+    });
     const controller = new AbortController();
 
     await createShortFictionRunTool(pipeline as never, root)
@@ -318,14 +335,14 @@ describe("agent tools language wiring (en parity)", () => {
     await createInteractiveFilmCreationTool(pipeline as never, root)
       .execute("film-abort-1", { title: "Night Shift", instruction: "make it interactive" } as any, controller.signal);
 
-    expect(runWithAbortSignal).toHaveBeenCalledTimes(4);
-    expect(runWithAbortSignal.mock.calls.every(([signal]) => signal === controller.signal)).toBe(true);
+    expect(pipeline.runWithAgentContext).toHaveBeenCalledTimes(4);
+    expect(pipeline.runWithAgentContext.mock.calls.every(([context]) => context.signal === controller.signal)).toBe(true);
     expect(runShortFictionProductionMock.mock.calls[0]![0]).toMatchObject({ signal: controller.signal });
   });
 
   it("exposes short_fiction_run with en language in a confirmed en short session", async () => {
     const model = { provider: "x", id: "y", api: "anthropic-messages" } as any;
-    const pipeline = { createAgentContext: vi.fn(() => ({})) } as any;
+    const pipeline = contextPipeline({ createAgentContext: vi.fn(() => ({})) }) as any;
 
     try {
       await runAgentSession(
@@ -353,7 +370,7 @@ describe("agent tools language wiring (en parity)", () => {
   });
 
   it("returns English sub_agent guidance in en sessions and keeps zh by default", async () => {
-    const pipeline = { reviseFoundation: vi.fn(async () => undefined) };
+    const pipeline = contextPipeline({ reviseFoundation: vi.fn(async () => undefined) });
 
     const enTool = createSubAgentTool(pipeline as never, "harbor", undefined, { language: "en" });
     const enBlocked = await enTool.execute("sub-en-1", { agent: "architect", instruction: "create book" } as any);

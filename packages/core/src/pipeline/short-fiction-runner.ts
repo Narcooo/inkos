@@ -35,8 +35,16 @@ import {
   type CoverProviderPreset,
 } from "../llm/cover-providers.js";
 import { loadSecrets } from "../llm/secrets.js";
+import {
+  createProductionRunSnapshot,
+  createRangeObservation,
+  writeProductionRunSnapshot,
+  type ProductionObservation,
+} from "../production/harness.js";
+import { buildLengthSpec, countChapterLength } from "../utils/length-metrics.js";
 import { safeChildPath } from "../utils/path-safety.js";
 import { toPosixPath as projectPath } from "../utils/posix-path.js";
+import { commitAtomicFileSet, type AtomicFileWrite } from "../utils/atomic-file-set.js";
 
 const SHORT_FICTION_DRAFT_COMPLETION_ATTEMPTS = 3;
 
@@ -51,6 +59,7 @@ export interface ShortFictionRunRuntimes {
 
 export interface ShortFictionRunOptions {
   readonly projectRoot: string;
+  readonly title?: string;
   readonly direction: string;
   readonly runtimes: ShortFictionRunRuntimes;
   readonly reference?: ShortFictionReference;
@@ -114,7 +123,11 @@ export async function runShortFictionProduction(
 ): Promise<ShortFictionRunResult> {
   const root = options.projectRoot;
   const outDir = normalizeOutputDir(options.outDir ?? "shorts");
-  const providedStoryId = options.storyId ? safeSegment(options.storyId) : undefined;
+  const providedStoryId = options.storyId
+    ? safeSegment(options.storyId)
+    : options.title?.trim()
+      ? safeSegment(slugify(options.title))
+      : undefined;
 
   // A stable storyId lets a re-run resume from disk instead of redoing finished
   // work — a transient failure in a late stage used to throw the whole short
@@ -132,8 +145,12 @@ export async function runShortFictionProduction(
   } catch (error) {
     // Mark the partial output as failed so drafts can't masquerade as a short.
     if (providedStoryId) {
-      await writeJson(root, join(outDir, providedStoryId, "status.json"), {
+      await writeShortRunSnapshot(root, join(outDir, providedStoryId), {
+        storyId: providedStoryId,
         status: "failed",
+        stage: "production",
+        artifacts: [],
+        observations: [],
         error: error instanceof Error ? error.message : String(error),
       }).catch(() => undefined);
     }
@@ -179,6 +196,7 @@ async function produceShort(
     : undefined;
 
   let outlineMarkdown: string;
+  let outlineRevisionWarning: string | undefined;
   let storyId: string;
   let baseDir: string;
   if (providedStoryId && resumedOutline?.trim()) {
@@ -213,17 +231,42 @@ async function produceShort(
 
     options.onProgress?.("Revising outline once...");
     const outlineReviser = new ShortFictionOutlineReviserAgent(options.runtimes.planner);
-    const outlineV2 = await outlineReviser.reviseOutline({
-      direction: options.direction,
-      outline: outlineV1,
-      review: outlineReview,
-      reference: options.reference,
-      chapterCount,
-      charsPerChapter,
-      language,
-    });
-    await writeText(root, join(baseDir, "outline", "v002.md"), outlineV2.rawContent);
-    outlineMarkdown = outlineV2.rawContent;
+    try {
+      const outlineV2 = await outlineReviser.reviseOutline({
+        direction: options.direction,
+        outline: outlineV1,
+        review: outlineReview,
+        reference: options.reference,
+        chapterCount,
+        charsPerChapter,
+        language,
+      });
+      await writeText(root, join(baseDir, "outline", "v002.md"), outlineV2.rawContent);
+      outlineMarkdown = outlineV2.rawContent;
+    } catch (error) {
+      outlineRevisionWarning = error instanceof Error ? error.message : String(error);
+      outlineMarkdown = outlineV1.rawContent;
+      await writeText(root, join(baseDir, "outline", "v002.md"), outlineMarkdown);
+      await writeText(root, join(baseDir, "reviews", "outline-v002-warning.md"), language === "en"
+        ? [
+            "# Outline revision not adopted",
+            "",
+            "The complete first outline remains authoritative because the optional revision did not finish cleanly.",
+            "",
+            "## Reason",
+            "",
+            outlineRevisionWarning,
+          ].join("\n")
+        : [
+            "# 第二版大纲未采用",
+            "",
+            "可用的第一版大纲继续生效；可选修订没有完整结束，系统没有用残缺输出覆盖它。",
+            "",
+            "## 原因",
+            "",
+            outlineRevisionWarning,
+          ].join("\n"));
+    }
   }
 
   let finalDraft: ShortFictionBatchDraft;
@@ -324,8 +367,12 @@ async function produceShort(
     });
     await writePackageArtifacts(root, baseDir, salesPackage, language);
   } catch (error) {
-    await writeShortRunStatus(root, baseDir, {
+    await writeShortRunSnapshot(root, baseDir, {
+      storyId,
       status: "failed",
+      stage: "draft",
+      artifacts: [],
+      observations: [],
       error: error instanceof Error ? error.message : String(error),
     }).catch(() => undefined);
     throw error;
@@ -349,12 +396,49 @@ async function produceShort(
         return { coverError: String(error) };
       });
 
-  if (revisionWarning) {
-    await writeShortRunStatus(root, baseDir, {
-      status: "complete",
-      warning: `revision skipped: ${revisionWarning}`,
-    }).catch(() => undefined);
-  }
+  const completionWarnings = [
+    outlineRevisionWarning ? `outline revision skipped: ${outlineRevisionWarning}` : "",
+    revisionWarning ? `draft revision skipped: ${revisionWarning}` : "",
+  ].filter(Boolean);
+  const observations = [
+    ...buildShortLengthObservations(finalDraft, charsPerChapter, language),
+    ...completionWarnings.map((warning): ProductionObservation => ({
+      metric: "optional-revision",
+      expected: "completed cleanly",
+      actual: warning,
+      severity: "warning",
+      evidence: warning,
+      repairable: true,
+    })),
+    ...(coverArtifacts.coverError && coverArtifacts.coverError !== "disabled"
+      ? [{
+          metric: "cover-generation",
+          expected: "cover image generated",
+          actual: coverArtifacts.coverError,
+          severity: "warning" as const,
+          evidence: coverArtifacts.coverError,
+          repairable: true,
+        }]
+      : []),
+  ];
+  const artifacts = [
+    join(baseDir, "outline", "v002.md"),
+    join(baseDir, "reviews", "draft-v001.md"),
+    join(baseDir, "final", "full.md"),
+    join(baseDir, "final", "short-story.json"),
+    join(baseDir, "final", "sales-package.md"),
+    join(baseDir, "final", "cover-prompt.md"),
+    ...(coverArtifacts.coverImagePath ? [coverArtifacts.coverImagePath] : []),
+  ].map(projectPath);
+  await writeShortRunSnapshot(root, baseDir, {
+    storyId,
+    status: observations.some((observation) => observation.severity === "blocking")
+      ? "needs-review"
+      : "complete",
+    stage: "complete",
+    artifacts,
+    observations,
+  });
 
   return buildShortRunResult(storyId, baseDir, coverArtifacts);
 }
@@ -457,15 +541,21 @@ async function writeDraftArtifacts(
   language: ShortFictionLanguage = "zh",
 ): Promise<void> {
   const draftDir = join(baseDir, "drafts", version);
-  await writeText(root, join(draftDir, "full.md"), renderShortFictionDraftMarkdown(draft, language));
-  await writeJson(root, join(draftDir, "draft.json"), draft);
-  await Promise.all(draft.chapters.map((chapter) =>
-    writeText(root, join(draftDir, "chapters", `${String(chapter.number).padStart(4, "0")}.md`), [
+  await commitAtomicFileSet({
+    rootDir: root,
+    writes: [
+      textWrite(join(draftDir, "full.md"), renderShortFictionDraftMarkdown(draft, language)),
+      textWrite(join(draftDir, "draft.json"), JSON.stringify(draft, null, 2)),
+      ...draft.chapters.map((chapter) => textWrite(
+        join(draftDir, "chapters", `${String(chapter.number).padStart(4, "0")}.md`),
+        [
       `# ${formatShortFictionChapterHeading(chapter.number, chapter.title, language)}`,
       "",
       chapter.content,
-    ].join("\n")),
-  ));
+        ].join("\n"),
+      )),
+    ],
+  });
 }
 
 async function writeFinalArtifacts(
@@ -476,16 +566,22 @@ async function writeFinalArtifacts(
 ): Promise<void> {
   const finalDir = join(baseDir, "final");
   const markdown = renderShortFictionDraftMarkdown(draft, language);
-  await writeText(root, join(finalDir, "full.md"), markdown);
-  await writeText(root, join(finalDir, `${safeFileName(draft.storyTitle)}.md`), markdown);
-  await writeJson(root, join(finalDir, "short-story.json"), draft);
-  await Promise.all(draft.chapters.map((chapter) =>
-    writeText(root, join(finalDir, "chapters", `${String(chapter.number).padStart(4, "0")}.md`), [
-      `# ${formatShortFictionChapterHeading(chapter.number, chapter.title, language)}`,
-      "",
-      chapter.content,
-    ].join("\n")),
-  ));
+  await commitAtomicFileSet({
+    rootDir: root,
+    writes: [
+      textWrite(join(finalDir, "full.md"), markdown),
+      textWrite(join(finalDir, `${safeFileName(draft.storyTitle)}.md`), markdown),
+      textWrite(join(finalDir, "short-story.json"), JSON.stringify(draft, null, 2)),
+      ...draft.chapters.map((chapter) => textWrite(
+        join(finalDir, "chapters", `${String(chapter.number).padStart(4, "0")}.md`),
+        [
+          `# ${formatShortFictionChapterHeading(chapter.number, chapter.title, language)}`,
+          "",
+          chapter.content,
+        ].join("\n"),
+      )),
+    ],
+  });
 }
 
 async function writePackageArtifacts(
@@ -498,8 +594,7 @@ async function writePackageArtifacts(
   const headings = language === "en"
     ? { intro: "## Synopsis", sellingPoints: "## Selling Points", coverPrompt: "## Cover Prompt" }
     : { intro: "## 简介", sellingPoints: "## 卖点", coverPrompt: "## 封面提示词" };
-  await writeJson(root, join(finalDir, "sales-package.json"), salesPackage);
-  await writeText(root, join(finalDir, "sales-package.md"), [
+  const packageMarkdown = [
     `# ${salesPackage.title}`,
     "",
     headings.intro,
@@ -513,18 +608,58 @@ async function writePackageArtifacts(
     headings.coverPrompt,
     "",
     salesPackage.coverPrompt,
-  ].join("\n"));
-  await writeText(root, join(finalDir, "cover-prompt.md"), salesPackage.coverPrompt || "(empty)");
+  ].join("\n");
+  await commitAtomicFileSet({
+    rootDir: root,
+    writes: [
+      textWrite(join(finalDir, "sales-package.json"), JSON.stringify(salesPackage, null, 2)),
+      textWrite(join(finalDir, "sales-package.md"), packageMarkdown),
+      textWrite(join(finalDir, "cover-prompt.md"), salesPackage.coverPrompt || "(empty)"),
+    ],
+  });
 }
 
-async function writeShortRunStatus(
+function buildShortLengthObservations(
+  draft: ShortFictionBatchDraft,
+  target: number,
+  language: ShortFictionLanguage,
+): ProductionObservation[] {
+  const spec = buildLengthSpec(target, language);
+  return draft.chapters.map((chapter) => createRangeObservation({
+    metric: `chapter-${chapter.number}-length`,
+    actual: countChapterLength(chapter.content, spec.countingMode),
+    target: spec.target,
+    min: spec.hardMin,
+    max: spec.hardMax,
+    unit: spec.countingMode,
+    evidence: `chapter ${chapter.number}: ${chapter.title}`,
+  }));
+}
+
+async function writeShortRunSnapshot(
   root: string,
   baseDir: string,
-  value: Record<string, unknown>,
+  input: {
+    readonly storyId: string;
+    readonly status: "complete" | "needs-review" | "failed";
+    readonly stage: string;
+    readonly artifacts: ReadonlyArray<string>;
+    readonly observations: ReadonlyArray<ProductionObservation>;
+    readonly error?: string;
+  },
 ): Promise<void> {
-  await writeJson(root, join(baseDir, "status.json"), {
-    ...value,
-    updatedAt: new Date().toISOString(),
+  await writeProductionRunSnapshot({
+    rootDir: root,
+    runPath: join(baseDir, "status.json"),
+    run: createProductionRunSnapshot({
+      kind: "short-fiction",
+      id: input.storyId,
+      status: input.status,
+      stage: input.stage,
+      artifacts: input.artifacts,
+      observations: input.observations,
+      ...(input.error ? { error: input.error } : {}),
+    }),
   });
 }
 
@@ -973,8 +1108,11 @@ async function writeBinary(root: string, path: string, value: Buffer): Promise<v
   await writeFile(resolved, value);
 }
 
-async function writeJson(root: string, path: string, value: unknown): Promise<void> {
-  await writeText(root, path, JSON.stringify(value, null, 2));
+function textWrite(relativePath: string, value: string): AtomicFileWrite {
+  return {
+    relativePath,
+    content: `${value.trimEnd()}\n`,
+  };
 }
 
 async function writeText(root: string, path: string, value: string): Promise<void> {

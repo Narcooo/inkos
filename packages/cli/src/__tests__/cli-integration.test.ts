@@ -188,15 +188,6 @@ describe("CLI integration", () => {
       }).toThrow();
     });
 
-    it("sets input governance mode", async () => {
-      const output = run(["config", "set", "inputGovernanceMode", "v2"]);
-      expect(output).toContain("Set inputGovernanceMode = v2");
-
-      const raw = await readFile(join(projectDir, "inkos.json"), "utf-8");
-      const config = JSON.parse(raw);
-      expect(config.inputGovernanceMode).toBe("v2");
-    });
-
     it("sets long-form writing review retries", async () => {
       const output = run(["config", "set", "writing.reviewRetries", "3"]);
       expect(output).toContain("Set writing.reviewRetries = 3");
@@ -552,8 +543,7 @@ describe("CLI integration", () => {
     it("checks environment health", () => {
       const { stdout } = runStderr(["doctor"]);
       expect(stdout).toContain("InkOS Doctor");
-      expect(stdout).toContain("Node.js >= 20");
-      expect(stdout).toContain("SQLite memory index");
+      expect(stdout).toContain("Node.js >= 22");
       expect(stdout).toContain("inkos.json");
     });
 
@@ -577,7 +567,7 @@ describe("CLI integration", () => {
 
       await expect(readFile(join(projectDir, ".nvmrc"), "utf-8")).resolves.toBe("22\n");
       await expect(readFile(join(projectDir, ".node-version"), "utf-8")).resolves.toBe("22\n");
-    }, CLI_PROCESS_TIMEOUT_MS);
+    }, DOUBLE_CLI_INVOCATION_TEST_TIMEOUT_MS);
 
     it("treats localhost OpenAI-compatible endpoints as API-key optional", async () => {
       await stat(join(projectDir, "inkos.json")).catch(() => {

@@ -1,7 +1,7 @@
 {
   "name": "@actalk/inkos-core",
-  "version": "1.7.2",
-  "description": "InkOS core engine for story creation agents: governed context, writing, audit, revision, covers, and interactive worlds",
+  "version": "1.8.0",
+  "description": "InkOS pi-agent production harness for story creation, governed context, retrieval, review, and interactive worlds",
   "keywords": [
     "story-creation-ai-agent",
     "story-agent",
@@ -41,7 +41,8 @@
   "files": [
     "dist",
     "!dist/__tests__",
-    "genres"
+    "genres",
+    "skills"
   ],
   "license": "AGPL-3.0-only",
   "repository": {

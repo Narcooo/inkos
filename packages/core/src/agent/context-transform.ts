@@ -4,6 +4,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { isNewLayoutBook } from "../utils/outline-paths.js";
 import type { ContextCompressionCallback } from "../models/context-compression.js";
+import { loadStoryGraph } from "../interactive-film/graph-store.js";
 
 /** Files read in this order; anything else in story/ comes after, sorted alphabetically. */
 const PRIORITY_FILES = [
@@ -76,6 +77,31 @@ export function createBookContextTransform(
       timestamp: Date.now(),
     };
 
+    return [injected, ...messages];
+  };
+}
+
+/**
+ * Inject the complete authoritative interactive-film graph for authoring turns.
+ * Node ids, choices, conditions and effects are execution state, so silently
+ * excerpting them would make edits unsafe. Context-window guards remain the
+ * explicit failure boundary until semantic graph compaction is introduced.
+ */
+export function createInteractiveFilmContextTransform(
+  projectId: string,
+  projectRoot: string,
+): (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]> {
+  return async (messages) => {
+    const graph = await loadStoryGraph(projectRoot, projectId);
+    if (!graph) return messages;
+    const injected: UserMessage = {
+      role: "user",
+      content: [
+        "[以下是当前互动影游的完整权威剧情图谱，每轮从磁盘重新读取。编辑时必须使用其中真实的 node id、choice id、变量和结局 id；不要凭空臆造。]",
+        JSON.stringify(graph),
+      ].join("\n"),
+      timestamp: Date.now(),
+    };
     return [injected, ...messages];
   };
 }

@@ -1,9 +1,9 @@
-import { memo, useRef, useEffect, useMemo, useState } from "react";
+import { useRef, useEffect, useMemo, useState } from "react";
 import type { Theme } from "../hooks/use-theme";
 import type { TFunction } from "../hooks/use-i18n";
 import type { SSEMessage } from "../hooks/use-sse";
 import { fetchJson, postApi, useApi } from "../hooks/use-api";
-import type { ChatAttachmentPayload, MessagePart } from "../store/chat/types";
+import type { ChatAttachmentPayload } from "../store/chat/types";
 import { chatSelectors, useChatStore } from "../store/chat";
 import type { ChatSessionKind } from "../store/chat";
 import { useServiceStore } from "../store/service";
@@ -74,8 +74,6 @@ interface Nav {
   toDashboard: () => void;
   toBook: (id: string) => void;
   toServices: () => void;
-  toImport: (tab?: "chapters" | "canon" | "fanfic" | "spinoff" | "imitation") => void;
-  toStyle: () => void;
   toFilm: (projectId: string) => void;
   toFilmStudio: (projectId: string) => void;
 }
@@ -176,86 +174,6 @@ function cancelScrollFrame(id: ScrollFrameId): void {
   }
   globalThis.clearTimeout(id);
 }
-
-type AssistantRenderItem =
-  | { kind: "thinking"; pi: number; part: Extract<MessagePart, { type: "thinking" }> }
-  | { kind: "text"; pi: number; part: Extract<MessagePart, { type: "text" }> }
-  | { kind: "tools"; parts: Array<Extract<MessagePart, { type: "tool" }>>; startIdx: number };
-
-function groupAssistantParts(parts: ReadonlyArray<MessagePart>): AssistantRenderItem[] {
-  const items: AssistantRenderItem[] = [];
-  for (let pi = 0; pi < parts.length; pi += 1) {
-    const part = parts[pi];
-    if (part.type === "thinking") {
-      items.push({ kind: "thinking", pi, part });
-    } else if (part.type === "text") {
-      items.push({ kind: "text", pi, part });
-    } else if (part.type === "tool") {
-      const last = items[items.length - 1];
-      if (last?.kind === "tools") {
-        last.parts.push(part);
-      } else {
-        items.push({ kind: "tools", parts: [part], startIdx: pi });
-      }
-    }
-  }
-  return items;
-}
-
-const AssistantMessageParts = memo(function AssistantMessageParts({
-  parts,
-  timestamp,
-  theme,
-  onProposedAction,
-  onRejectProposedAction,
-}: {
-  readonly parts: ReadonlyArray<MessagePart>;
-  readonly timestamp: number;
-  readonly theme: Theme;
-  readonly onProposedAction?: (details: ProposedActionDetails) => void;
-  readonly onRejectProposedAction?: (details: ProposedActionDetails) => void;
-}) {
-  const items = useMemo(() => groupAssistantParts(parts), [parts]);
-
-  return (
-    <>
-      {items.map((item) => {
-        if (item.kind === "thinking") {
-          return (
-            <div key={`t-${item.pi}`} className="mb-2">
-              <Reasoning isStreaming={item.part.streaming}>
-                <ReasoningTrigger />
-                <ReasoningContent>{item.part.content}</ReasoningContent>
-              </Reasoning>
-            </div>
-          );
-        }
-        if (item.kind === "tools") {
-          return (
-            <ToolExecutionSteps
-              key={`x-${item.startIdx}`}
-              executions={item.parts.map((part) => part.execution)}
-              onProposedAction={onProposedAction}
-              onRejectProposedAction={onRejectProposedAction}
-            />
-          );
-        }
-        if (item.kind === "text" && item.part.content) {
-          return (
-            <ChatMessage
-              key={`c-${item.pi}`}
-              role="assistant"
-              content={item.part.content}
-              timestamp={timestamp}
-              theme={theme}
-            />
-          );
-        }
-        return null;
-      })}
-    </>
-  );
-});
 
 function SkillPickerPanel({
   isZh,
@@ -679,19 +597,15 @@ export function ChatPage({ activeBookId, mode = activeBookId ? "book" : "book-cr
     if (!activeSessionId) return;
     const hasPendingMessage = Boolean(text.trim()) || attachedFiles.length > 0;
     if (!hasPendingMessage) {
-      // 停止按钮按对象分语义：聊天轮流式中只停聊天轮（后台任务继续跑）；
-      // 只有后台任务在跑时才停任务（旧行为）。
-      if (chatStreaming) await abortSession(activeSessionId, "chat");
-      else if (loading) await abortSession(activeSessionId);
+      if (chatStreaming || loading) await abortSession(activeSessionId);
       return;
     }
     const requestedSkills = selectedSkillIdsForSend(selectedSkillIds);
     autoScrollPinnedRef.current = true;
     const attachments = await serializeChatAttachments(attachedFiles);
     if (chatStreaming) {
-      // 聊天轮流式中再发消息：先停当前聊天轮（不动后台任务）再发送。
-      // 只有后台任务在跑时直接发送，不中止任务。
-      await abortSession(activeSessionId, "chat");
+      // Steering by a new user message cancels the current serial workflow.
+      await abortSession(activeSessionId);
     }
     await sendMessage(activeSessionId, text, {
       activeBookId,
@@ -740,15 +654,6 @@ export function ChatPage({ activeBookId, mode = activeBookId ? "book" : "book-cr
     const targetPlayMode = details.targetSessionKind === "play"
       ? details.actionPayload?.playStart?.mode ?? activeSession?.playMode ?? (details.action === "play_start" ? "open" : undefined)
       : undefined;
-    if (details.targetRoute) {
-      if (details.targetRoute === "import:fanfic") nav.toImport("fanfic");
-      else if (details.targetRoute === "import:chapters") nav.toImport("chapters");
-      else if (details.targetRoute === "import:canon") nav.toImport("canon");
-      else if (details.targetRoute === "import:spinoff") nav.toImport("spinoff");
-      else if (details.targetRoute === "import:imitation") nav.toImport("imitation");
-      else if (details.targetRoute === "style") nav.toStyle();
-      return;
-    }
     if (details.sameSession && activeSessionId) {
       autoScrollPinnedRef.current = true;
       await sendMessage(activeSessionId, details.instruction ?? "", {
@@ -965,7 +870,7 @@ export function ChatPage({ activeBookId, mode = activeBookId ? "book" : "book-cr
                         if (item.kind === "thinking") {
                           return (
                             <div key={`t-${item.pi}`} className="mb-2">
-                              <Reasoning isStreaming={item.part.streaming}>
+                              <Reasoning defaultOpen={false} isStreaming={item.part.streaming}>
                                 <ReasoningTrigger />
                                 <ReasoningContent>{item.part.content}</ReasoningContent>
                               </Reasoning>

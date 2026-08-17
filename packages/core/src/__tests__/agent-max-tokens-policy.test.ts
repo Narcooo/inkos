@@ -5,7 +5,6 @@ import { describe, expect, it } from "vitest";
 
 const AGENT_FILES = [
   "../agents/architect.ts",
-  "../agents/length-normalizer.ts",
   "../agents/planner.ts",
   "../agents/polisher.ts",
   "../agents/reviser.ts",

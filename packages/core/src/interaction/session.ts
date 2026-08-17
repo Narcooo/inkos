@@ -17,6 +17,23 @@ export const PendingDecisionSchema = z.object({
 
 export type PendingDecision = z.infer<typeof PendingDecisionSchema>;
 
+// TUI confirmations persist the already-validated action envelope returned by
+// propose_action. The action and payload are revalidated against the current
+// action schemas when the user confirms, so older sessions remain loadable as
+// the production action catalog evolves.
+export const PendingProposedActionSchema = z.object({
+  action: z.string().min(1),
+  targetSessionKind: SessionKindSchema,
+  instruction: z.string().min(1),
+  title: z.string().min(1).optional(),
+  summary: z.string().min(1).optional(),
+  playMode: PlayModeSchema.optional(),
+  requestedSkills: z.array(z.string().min(1)).optional(),
+  actionPayload: z.record(z.unknown()).optional(),
+});
+
+export type PendingProposedAction = z.infer<typeof PendingProposedActionSchema>;
+
 export const PipelineStageSchema = z.object({
   label: z.string(),
   status: z.enum(["pending", "active", "completed"]),
@@ -92,6 +109,9 @@ export type DraftRound = z.infer<typeof DraftRoundSchema>;
 export const InteractionSessionSchema = z.object({
   sessionId: z.string().min(1),
   projectRoot: z.string().min(1),
+  sessionKind: SessionKindSchema.optional(),
+  playMode: PlayModeSchema.optional(),
+  modelOverride: z.string().min(1).optional(),
   activeBookId: z.string().min(1).optional(),
   activeChapterNumber: z.number().int().min(1).optional(),
   creationDraft: BookCreationDraftSchema.optional(),
@@ -100,6 +120,7 @@ export const InteractionSessionSchema = z.object({
   messages: z.array(InteractionMessageSchema).default([]),
   events: z.array(InteractionEventSchema).default([]),
   pendingDecision: PendingDecisionSchema.optional(),
+  pendingProposedAction: PendingProposedActionSchema.optional(),
   currentExecution: ExecutionStateSchema.optional(),
 });
 

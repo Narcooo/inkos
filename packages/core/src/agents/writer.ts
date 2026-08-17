@@ -21,12 +21,9 @@ import type { LengthSpec } from "../models/length-governance.js";
 import type { RuntimeStateDelta } from "../models/runtime-state.js";
 import { buildLengthSpec, countChapterLength } from "../utils/length-metrics.js";
 import {
-  capContextBlock,
-  filterHooks,
   filterSummaries,
   filterSubplots,
   filterEmotionalArcs,
-  filterCharacterMatrix,
 } from "../utils/context-filter.js";
 import { buildGovernedMemoryEvidenceBlocks } from "../utils/governed-context.js";
 import {
@@ -35,9 +32,13 @@ import {
   mergeCharacterMatrixMarkdown,
   mergeTableMarkdownByKey,
 } from "../utils/governed-working-set.js";
-import { extractPOVFromOutline, filterMatrixByPOV, filterHooksByPOV } from "../utils/pov-filter.js";
 import { parseCreativeOutput } from "./writer-parser.js";
-import { buildRuntimeStateArtifacts, type RuntimeStateArtifacts } from "../state/runtime-state-store.js";
+import {
+  buildRuntimeStateArtifacts,
+  buildRuntimeStateArtifactsFromSnapshot,
+  loadRuntimeStateSnapshotAtChapter,
+  type RuntimeStateArtifacts,
+} from "../state/runtime-state-store.js";
 import type { RuntimeStateSnapshot } from "../state/state-reducer.js";
 import { parsePendingHooksMarkdown } from "../utils/memory-retrieval.js";
 import { analyzeHookHealth } from "../utils/hook-health.js";
@@ -52,20 +53,7 @@ import { readFile, writeFile, mkdir, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { commitAtomicFileSet, type AtomicFileWrite } from "../utils/atomic-file-set.js";
 
-const LEGACY_WRITER_CONTEXT_BUDGET = {
-  storyBible: 14_000,
-  currentState: 7_000,
-  ledger: 6_000,
-  hooks: 9_000,
-  chapterSummaries: 9_000,
-  subplotBoard: 7_000,
-  emotionalArcs: 7_000,
-  characterMatrix: 12_000,
-  parentCanon: 12_000,
-  volumeOutline: 12_000,
-} as const;
 import {
-  readStoryFrame,
   readVolumeMap,
   readCharacterContext,
   readCurrentStateWithFallback,
@@ -76,11 +64,11 @@ export interface WriteChapterInput {
   readonly bookDir: string;
   readonly chapterNumber: number;
   readonly externalContext?: string;
-  readonly chapterIntent?: string;
-  readonly chapterMemo?: ChapterMemo;
+  readonly chapterIntent: string;
+  readonly chapterMemo: ChapterMemo;
   readonly chapterIntentData?: ChapterIntent;
-  readonly contextPackage?: ContextPackage;
-  readonly ruleStack?: RuleStack;
+  readonly contextPackage: ContextPackage;
+  readonly ruleStack: RuleStack;
   readonly lengthSpec?: LengthSpec;
   readonly wordCountOverride?: number;
   readonly temperatureOverride?: number;
@@ -93,6 +81,8 @@ export interface SettleChapterStateInput {
   readonly title: string;
   readonly content: string;
   readonly allowReapply?: boolean;
+  readonly allowNewHooks?: boolean;
+  readonly baselineChapter?: number;
   readonly chapterIntent?: string;
   readonly contextPackage?: ContextPackage;
   readonly ruleStack?: RuleStack;
@@ -155,11 +145,10 @@ export class WriterAgent extends BaseAgent {
 
     const placeholder = "(文件尚未创建)";
     const [
-      storyBible, volumeOutline, styleGuide, currentState, ledger, hooks,
+      volumeOutline, styleGuide, currentState, ledger, hooks,
       chapterSummaries, subplotBoard, emotionalArcs, characterMatrix, styleProfileRaw,
-      parentCanon, fanficCanonRaw,
+      fanficCanonRaw,
     ] = await Promise.all([
-        readStoryFrame(bookDir, placeholder),
         readVolumeMap(bookDir, placeholder),
         this.readFileOrDefault(join(bookDir, "story/style_guide.md")),
         // Phase 5 consolidation: architect no longer emits an initial current_state
@@ -174,12 +163,9 @@ export class WriterAgent extends BaseAgent {
         this.readFileOrDefault(join(bookDir, "story/emotional_arcs.md")),
         readCharacterContext(bookDir, placeholder),
         this.readFileOrDefault(join(bookDir, "story/style_profile.json")),
-        this.readFileOrDefault(join(bookDir, "story/parent_canon.md")),
         this.readFileOrDefault(join(bookDir, "story/fanfic_canon.md")),
       ]);
 
-    const recentChapters = await this.loadRecentChapters(bookDir, chapterNumber);
-    // Load more chapters for dialogue fingerprint extraction (voice consistency over longer span)
     const fingerprintChapters = await this.loadRecentChapters(bookDir, chapterNumber, 5);
 
     // Load genre profile + book rules
@@ -191,17 +177,14 @@ export class WriterAgent extends BaseAgent {
 
     const styleFingerprint = this.buildStyleFingerprint(styleProfileRaw);
 
-    const dialogueFingerprints = this.extractDialogueFingerprints(fingerprintChapters, storyBible);
-    const relevantSummaries = this.findRelevantSummaries(chapterSummaries, volumeOutline, chapterNumber);
-
-    const hasParentCanon = parentCanon !== "(文件尚未创建)";
     const hasFanficCanon = fanficCanonRaw !== "(文件尚未创建)";
     const resolvedLanguage = book.language ?? genreProfile.language;
     const targetWords = input.lengthSpec?.target ?? input.wordCountOverride ?? book.chapterWordCount;
     const resolvedLengthSpec = input.lengthSpec ?? buildLengthSpec(targetWords, resolvedLanguage);
-    const governedMemoryBlocks = input.contextPackage
-      ? buildGovernedMemoryEvidenceBlocks(input.contextPackage, resolvedLanguage)
-      : undefined;
+    if (!input.chapterIntent || !input.chapterMemo || !input.contextPackage || !input.ruleStack) {
+      throw new Error("Writer requires governed chapter intent, memo, context package, and rule stack.");
+    }
+    const governedMemoryBlocks = buildGovernedMemoryEvidenceBlocks(input.contextPackage, resolvedLanguage);
     const englishVarianceBrief = resolvedLanguage === "en"
       ? await buildEnglishVarianceBrief({
           bookDir,
@@ -222,59 +205,22 @@ export class WriterAgent extends BaseAgent {
     const creativeSystemPrompt = await this.withPromptPackGuidance(buildWriterSystemPrompt(
       book, genreProfile, bookRules, bookRulesBody, genreBody, styleGuide, styleFingerprint,
       chapterNumber, "creative", fanficContext, resolvedLanguage,
-      input.chapterMemo ? "governed" : "legacy",
+      "governed",
       resolvedLengthSpec,
     ), "longform.writer");
 
-    const creativeUserPrompt = input.chapterMemo && input.contextPackage && input.ruleStack
-      ? this.buildGovernedUserPrompt({
-          chapterNumber,
-          chapterMemo: input.chapterMemo,
-          chapterIntentData: input.chapterIntentData,
-          contextPackage: input.contextPackage,
-          ruleStack: input.ruleStack,
-          externalContext: input.externalContext,
-          lengthSpec: resolvedLengthSpec,
-          language: book.language ?? genreProfile.language,
-          varianceBrief: englishVarianceBrief?.text,
-          selectedEvidenceBlock: this.joinGovernedEvidenceBlocks(governedMemoryBlocks),
-        })
-      : (() => {
-          // Smart context filtering: inject only relevant parts of truth files
-          const filteredHooks = filterHooks(hooks);
-          const filteredSummaries = filterSummaries(chapterSummaries, chapterNumber);
-          const filteredSubplots = filterSubplots(subplotBoard);
-          const filteredArcs = filterEmotionalArcs(emotionalArcs, chapterNumber);
-          const filteredMatrix = filterCharacterMatrix(characterMatrix, volumeOutline, bookRules?.protagonist?.name);
-
-          // POV-aware filtering: limit context to what the POV character knows
-          const povCharacter = extractPOVFromOutline(volumeOutline, chapterNumber);
-          const povFilteredMatrix = povCharacter
-            ? filterMatrixByPOV(filteredMatrix, povCharacter)
-            : filteredMatrix;
-          const povFilteredHooks = povCharacter
-            ? filterHooksByPOV(filteredHooks, povCharacter, chapterSummaries)
-            : filteredHooks;
-
-          return this.buildUserPrompt({
-            chapterNumber,
-            storyBible,
-            currentState,
-            ledger: genreProfile.numericalSystem ? ledger : "",
-            hooks: povFilteredHooks,
-            recentChapters,
-            lengthSpec: resolvedLengthSpec,
-            externalContext: input.externalContext,
-            chapterSummaries: filteredSummaries,
-            subplotBoard: filteredSubplots,
-            emotionalArcs: filteredArcs,
-            characterMatrix: povFilteredMatrix,
-            dialogueFingerprints,
-            relevantSummaries,
-            parentCanon: hasParentCanon ? parentCanon : undefined,
-            language: book.language ?? genreProfile.language,
-          });
-        })();
+    const creativeUserPrompt = this.buildGovernedUserPrompt({
+      chapterNumber,
+      chapterMemo: input.chapterMemo,
+      chapterIntentData: input.chapterIntentData,
+      contextPackage: input.contextPackage,
+      ruleStack: input.ruleStack,
+      externalContext: input.externalContext,
+      lengthSpec: resolvedLengthSpec,
+      language: book.language ?? genreProfile.language,
+      varianceBrief: englishVarianceBrief?.text,
+      selectedEvidenceBlock: this.joinGovernedEvidenceBlocks(governedMemoryBlocks),
+    });
 
     const creativeTemperature = input.temperatureOverride ?? 0.7;
 
@@ -306,30 +252,21 @@ export class WriterAgent extends BaseAgent {
       zh: `阶段 2：状态结算（第${chapterNumber}章，${creative.wordCount}字）`,
       en: `Phase 2: state settlement for chapter ${chapterNumber} (${creative.wordCount} words)`,
     });
-    const isGovernedSettlement = Boolean(input.chapterIntent && input.contextPackage && input.ruleStack);
-    const filteredHooksForSettlement = isGovernedSettlement && input.contextPackage
-      ? buildGovernedHookWorkingSet({
-          hooksMarkdown: hooks,
-          contextPackage: input.contextPackage,
-          chapterIntent: input.chapterIntent,
-          chapterNumber,
-          language: resolvedLanguage,
-        })
-      : hooks;
-    const filteredSubplotsForSettlement = isGovernedSettlement
-      ? filterSubplots(subplotBoard)
-      : subplotBoard;
-    const filteredArcsForSettlement = isGovernedSettlement
-      ? filterEmotionalArcs(emotionalArcs, chapterNumber)
-      : emotionalArcs;
-    const filteredMatrixForSettlement = isGovernedSettlement
-      ? buildGovernedCharacterMatrixWorkingSet({
-          matrixMarkdown: characterMatrix,
-          chapterIntent: input.chapterIntent ?? volumeOutline,
-          contextPackage: input.contextPackage!,
-          protagonistName: bookRules?.protagonist?.name,
-        })
-      : characterMatrix;
+    const filteredHooksForSettlement = buildGovernedHookWorkingSet({
+      hooksMarkdown: hooks,
+      contextPackage: input.contextPackage,
+      chapterIntent: input.chapterIntent,
+      chapterNumber,
+      language: resolvedLanguage,
+    });
+    const filteredSubplotsForSettlement = filterSubplots(subplotBoard);
+    const filteredArcsForSettlement = filterEmotionalArcs(emotionalArcs, chapterNumber);
+    const filteredMatrixForSettlement = buildGovernedCharacterMatrixWorkingSet({
+      matrixMarkdown: characterMatrix,
+      chapterIntent: input.chapterIntent,
+      contextPackage: input.contextPackage,
+      protagonistName: bookRules?.protagonist?.name,
+    });
 
     const settleResult = await this.settle({
       book,
@@ -341,14 +278,12 @@ export class WriterAgent extends BaseAgent {
       currentState,
       ledger: genreProfile.numericalSystem ? ledger : "",
       hooks: filteredHooksForSettlement,
-      chapterSummaries: input.contextPackage ? filterSummaries(chapterSummaries, chapterNumber) : chapterSummaries,
+      chapterSummaries: filterSummaries(chapterSummaries, chapterNumber),
       subplotBoard: filteredSubplotsForSettlement,
       emotionalArcs: filteredArcsForSettlement,
       characterMatrix: filteredMatrixForSettlement,
       volumeOutline,
-      selectedEvidenceBlock: governedMemoryBlocks
-        ? this.joinGovernedEvidenceBlocks(governedMemoryBlocks)
-        : undefined,
+      selectedEvidenceBlock: this.joinGovernedEvidenceBlocks(governedMemoryBlocks),
       chapterIntent: input.chapterIntent,
       contextPackage: input.contextPackage,
       ruleStack: input.ruleStack,
@@ -455,6 +390,9 @@ export class WriterAgent extends BaseAgent {
   }
 
   async settleChapterState(input: SettleChapterStateInput): Promise<WriteChapterOutput> {
+    const baselineStoryDir = input.baselineChapter === undefined
+      ? join(input.bookDir, "story")
+      : join(input.bookDir, "story", "snapshots", String(input.baselineChapter));
     const [
       currentState,
       ledger,
@@ -465,14 +403,17 @@ export class WriterAgent extends BaseAgent {
       characterMatrix,
       volumeOutline,
     ] = await Promise.all([
-      // Phase 5 consolidation fallback: derive initial state when only seed on disk.
-      readCurrentStateWithFallback(input.bookDir, "(文件尚未创建)"),
-      this.readFileOrDefault(join(input.bookDir, "story/particle_ledger.md")),
-      this.readFileOrDefault(join(input.bookDir, "story/pending_hooks.md")),
-      this.readFileOrDefault(join(input.bookDir, "story/chapter_summaries.md")),
-      this.readFileOrDefault(join(input.bookDir, "story/subplot_board.md")),
-      this.readFileOrDefault(join(input.bookDir, "story/emotional_arcs.md")),
-      readCharacterContext(input.bookDir, "(文件尚未创建)"),
+      input.baselineChapter === undefined
+        ? readCurrentStateWithFallback(input.bookDir, "(文件尚未创建)")
+        : this.readFileOrDefault(join(baselineStoryDir, "current_state.md")),
+      this.readFileOrDefault(join(baselineStoryDir, "particle_ledger.md")),
+      this.readFileOrDefault(join(baselineStoryDir, "pending_hooks.md")),
+      this.readFileOrDefault(join(baselineStoryDir, "chapter_summaries.md")),
+      this.readFileOrDefault(join(baselineStoryDir, "subplot_board.md")),
+      this.readFileOrDefault(join(baselineStoryDir, "emotional_arcs.md")),
+      input.baselineChapter === undefined
+        ? readCharacterContext(input.bookDir, "(文件尚未创建)")
+        : this.readSnapshotCharacterContext(input.bookDir, baselineStoryDir),
       readVolumeMap(input.bookDir, "(文件尚未创建)"),
     ]);
 
@@ -518,6 +459,8 @@ export class WriterAgent extends BaseAgent {
       resolvedLanguage,
       input.chapterNumber,
       input.allowReapply,
+      input.baselineChapter,
+      input.allowNewHooks,
     );
 
     return {
@@ -618,22 +561,14 @@ export class WriterAgent extends BaseAgent {
       chapterNumber: params.chapterNumber,
       title: params.title,
       content: params.content,
-      currentState: this.capLegacyContext("current_state", params.currentState, LEGACY_WRITER_CONTEXT_BUDGET.currentState),
-      ledger: this.capLegacyContext("particle_ledger", params.ledger, LEGACY_WRITER_CONTEXT_BUDGET.ledger),
-      hooks: this.capLegacyContext("pending_hooks", params.hooks, LEGACY_WRITER_CONTEXT_BUDGET.hooks),
-      chapterSummaries: this.capLegacyContext(
-        "chapter_summaries",
-        params.chapterSummaries,
-        LEGACY_WRITER_CONTEXT_BUDGET.chapterSummaries,
-      ),
-      subplotBoard: this.capLegacyContext("subplot_board", params.subplotBoard, LEGACY_WRITER_CONTEXT_BUDGET.subplotBoard),
-      emotionalArcs: this.capLegacyContext("emotional_arcs", params.emotionalArcs, LEGACY_WRITER_CONTEXT_BUDGET.emotionalArcs),
-      characterMatrix: this.capLegacyContext(
-        "character_matrix",
-        params.characterMatrix,
-        LEGACY_WRITER_CONTEXT_BUDGET.characterMatrix,
-      ),
-      volumeOutline: this.capLegacyContext("volume_outline", params.volumeOutline, LEGACY_WRITER_CONTEXT_BUDGET.volumeOutline),
+      currentState: params.currentState,
+      ledger: params.ledger,
+      hooks: params.hooks,
+      chapterSummaries: params.chapterSummaries,
+      subplotBoard: params.subplotBoard,
+      emotionalArcs: params.emotionalArcs,
+      characterMatrix: params.characterMatrix,
+      volumeOutline: params.volumeOutline,
       observations,
       selectedEvidenceBlock: params.selectedEvidenceBlock,
       governedControlBlock,
@@ -718,6 +653,12 @@ export class WriterAgent extends BaseAgent {
       output,
       language,
     );
+    const chapterSummariesMarkdown = runtimeStateArtifacts?.chapterSummariesMarkdown
+      ?? (!output.runtimeStateDelta && output.updatedChapterSummaries
+        ? output.updatedChapterSummaries
+        : !output.runtimeStateDelta && output.chapterSummary
+          ? await this.renderAppendedChapterSummary(bookDir, output.chapterSummary, language)
+          : undefined);
 
     const writes: AtomicFileWrite[] = [
       { relativePath: join("chapters", filename), content: chapterContent },
@@ -731,11 +672,21 @@ export class WriterAgent extends BaseAgent {
       },
     ];
 
-    if (runtimeStateArtifacts?.chapterSummariesMarkdown) {
+    if (chapterSummariesMarkdown) {
       writes.push({
         relativePath: join("story", "chapter_summaries.md"),
-        content: runtimeStateArtifacts.chapterSummariesMarkdown,
+        content: chapterSummariesMarkdown,
       });
+    }
+
+    if (output.updatedSubplots) {
+      writes.push({ relativePath: join("story", "subplot_board.md"), content: output.updatedSubplots });
+    }
+    if (output.updatedEmotionalArcs) {
+      writes.push({ relativePath: join("story", "emotional_arcs.md"), content: output.updatedEmotionalArcs });
+    }
+    if (output.updatedCharacterMatrix) {
+      writes.push({ relativePath: join("story", "character_matrix.md"), content: output.updatedCharacterMatrix });
     }
 
     const runtimeStateSnapshot = runtimeStateArtifacts?.snapshot ?? output.runtimeStateSnapshot;
@@ -769,125 +720,6 @@ export class WriterAgent extends BaseAgent {
       writes,
       deletes: supersededChapterFiles.map((file) => join("chapters", file)),
     });
-  }
-
-  private buildUserPrompt(params: {
-    readonly chapterNumber: number;
-    readonly storyBible: string;
-    readonly currentState: string;
-    readonly ledger: string;
-    readonly hooks: string;
-    readonly recentChapters: string;
-    readonly lengthSpec: LengthSpec;
-    readonly externalContext?: string;
-    readonly chapterSummaries: string;
-    readonly subplotBoard: string;
-    readonly emotionalArcs: string;
-    readonly characterMatrix: string;
-    readonly dialogueFingerprints?: string;
-    readonly relevantSummaries?: string;
-    readonly parentCanon?: string;
-    readonly language?: "zh" | "en";
-  }): string {
-    const currentState = this.capLegacyContext("current_state", params.currentState, LEGACY_WRITER_CONTEXT_BUDGET.currentState);
-    const ledger = this.capLegacyContext("particle_ledger", params.ledger, LEGACY_WRITER_CONTEXT_BUDGET.ledger);
-    const hooks = this.capLegacyContext("pending_hooks", params.hooks, LEGACY_WRITER_CONTEXT_BUDGET.hooks);
-    const chapterSummaries = this.capLegacyContext(
-      "chapter_summaries",
-      params.chapterSummaries,
-      LEGACY_WRITER_CONTEXT_BUDGET.chapterSummaries,
-    );
-    const subplotBoard = this.capLegacyContext("subplot_board", params.subplotBoard, LEGACY_WRITER_CONTEXT_BUDGET.subplotBoard);
-    const emotionalArcs = this.capLegacyContext("emotional_arcs", params.emotionalArcs, LEGACY_WRITER_CONTEXT_BUDGET.emotionalArcs);
-    const characterMatrix = this.capLegacyContext(
-      "character_matrix",
-      params.characterMatrix,
-      LEGACY_WRITER_CONTEXT_BUDGET.characterMatrix,
-    );
-    const storyBible = this.capLegacyContext("story_bible", params.storyBible, LEGACY_WRITER_CONTEXT_BUDGET.storyBible);
-    const parentCanon = params.parentCanon
-      ? this.capLegacyContext("parent_canon", params.parentCanon, LEGACY_WRITER_CONTEXT_BUDGET.parentCanon)
-      : undefined;
-    const contextBlock = params.externalContext
-      ? `\n## 外部指令\n以下是来自外部系统的创作指令，请在本章中融入：\n\n${params.externalContext}\n`
-      : "";
-
-    const ledgerBlock = ledger
-      ? `\n## 资源账本\n${ledger}\n`
-      : "";
-
-    const summariesBlock = chapterSummaries !== "(文件尚未创建)"
-      ? `\n## 章节摘要（全部历史章节压缩上下文）\n${chapterSummaries}\n`
-      : "";
-
-    const subplotBlock = subplotBoard !== "(文件尚未创建)"
-      ? `\n## 支线进度板\n${subplotBoard}\n`
-      : "";
-
-    const emotionalBlock = emotionalArcs !== "(文件尚未创建)"
-      ? `\n## 情感弧线\n${emotionalArcs}\n`
-      : "";
-
-    const matrixBlock = characterMatrix !== "(文件尚未创建)"
-      ? `\n## 角色交互矩阵\n${characterMatrix}\n`
-      : "";
-
-    const fingerprintBlock = params.dialogueFingerprints
-      ? `\n## 角色对话指纹\n${params.dialogueFingerprints}\n`
-      : "";
-
-    const relevantBlock = params.relevantSummaries
-      ? `\n## 相关历史章节摘要\n${params.relevantSummaries}\n`
-      : "";
-
-    const canonBlock = parentCanon
-      ? `\n## 正传正典参照（番外写作专用）
-本书是番外作品。以下正典约束不可违反，角色不得引用超出其信息边界的信息。
-${parentCanon}\n`
-      : "";
-    const lengthRequirementBlock = this.buildLengthRequirementBlock(params.lengthSpec, params.language ?? "zh");
-
-    if (params.language === "en") {
-      return `Write chapter ${params.chapterNumber}.
-${contextBlock}
-## Current State
-${currentState}
-${ledgerBlock}
-## Plot Threads
-${hooks}
-${summariesBlock}${subplotBlock}${emotionalBlock}${matrixBlock}${fingerprintBlock}${relevantBlock}${canonBlock}
-## Recent Chapters
-${params.recentChapters || "(This is the first chapter, no previous text)"}
-
-## Worldbuilding
-${storyBible}
-
-${lengthRequirementBlock}
-- Output PRE_WRITE_CHECK first, then the chapter
-- Output only PRE_WRITE_CHECK, CHAPTER_TITLE, and CHAPTER_CONTENT blocks`;
-    }
-
-    return `请续写第${params.chapterNumber}章。
-${contextBlock}
-## 当前状态卡
-${currentState}
-${ledgerBlock}
-## 伏笔池
-${hooks}
-${summariesBlock}${subplotBlock}${emotionalBlock}${matrixBlock}${fingerprintBlock}${relevantBlock}${canonBlock}
-## 最近章节
-${params.recentChapters || "(这是第一章，无前文)"}
-
-## 世界观设定
-${storyBible}
-
-${lengthRequirementBlock}
-- 先输出写作自检表，再写正文
-      - 只需输出 PRE_WRITE_CHECK、CHAPTER_TITLE、CHAPTER_CONTENT 三个区块`;
-  }
-
-  private capLegacyContext(label: string, content: string, maxChars: number): string {
-    return capContextBlock(content, { label, maxChars });
   }
 
   private buildGovernedUserPrompt(params: {
@@ -1150,42 +982,13 @@ ${overrides}\n`;
     }
   }
 
-  /** Save new truth files (summaries, subplots, emotional arcs, character matrix). */
-  async saveNewTruthFiles(
+  private async readSnapshotCharacterContext(
     bookDir: string,
-    output: WriteChapterOutput,
-    language: "zh" | "en" = "zh",
-  ): Promise<void> {
-    const storyDir = join(bookDir, "story");
-    const writes: Array<Promise<void>> = [];
-
-    // Append chapter summary to chapter_summaries.md
-    if (!output.runtimeStateDelta && output.updatedChapterSummaries) {
-      writes.push(writeFile(
-        join(storyDir, "chapter_summaries.md"),
-        output.updatedChapterSummaries,
-        "utf-8",
-      ));
-    } else if (!output.runtimeStateDelta && output.chapterSummary) {
-      writes.push(this.appendChapterSummary(storyDir, output.chapterSummary, language));
-    }
-
-    // Overwrite subplot board
-    if (output.updatedSubplots) {
-      writes.push(writeFile(join(storyDir, "subplot_board.md"), output.updatedSubplots, "utf-8"));
-    }
-
-    // Overwrite emotional arcs
-    if (output.updatedEmotionalArcs) {
-      writes.push(writeFile(join(storyDir, "emotional_arcs.md"), output.updatedEmotionalArcs, "utf-8"));
-    }
-
-    // Overwrite character matrix
-    if (output.updatedCharacterMatrix) {
-      writes.push(writeFile(join(storyDir, "character_matrix.md"), output.updatedCharacterMatrix, "utf-8"));
-    }
-
-    await Promise.all(writes);
+    snapshotStoryDir: string,
+  ): Promise<string> {
+    const snapshotMatrix = await this.readFileOrDefault(join(snapshotStoryDir, "character_matrix.md"));
+    if (snapshotMatrix !== "(文件尚未创建)") return snapshotMatrix;
+    return readCharacterContext(bookDir, "(文件尚未创建)");
   }
 
   private renderDeltaSummaryRow(delta: RuntimeStateDelta): string {
@@ -1261,16 +1064,33 @@ ${overrides}\n`;
     language: "zh" | "en",
     authoritativeChapterNumber?: number,
     allowReapply?: boolean,
+    baselineChapter?: number,
+    allowNewHooks?: boolean,
   ): Promise<RuntimeStateArtifacts | null> {
     if (!delta) return null;
     const safeDelta = authoritativeChapterNumber === undefined
       ? delta
       : this.normalizeRuntimeStateDeltaChapter(delta, authoritativeChapterNumber);
-    return buildRuntimeStateArtifacts({
+    if (baselineChapter === undefined) {
+      return buildRuntimeStateArtifacts({
+        bookDir,
+        delta: safeDelta,
+        language,
+        allowReapply,
+        allowNewHooks,
+      });
+    }
+    const snapshot = await loadRuntimeStateSnapshotAtChapter({
       bookDir,
+      chapterNumber: baselineChapter,
+      language,
+    });
+    return buildRuntimeStateArtifactsFromSnapshot({
+      snapshot,
       delta: safeDelta,
       language,
       allowReapply,
+      allowNewHooks,
     });
   }
 
@@ -1307,12 +1127,12 @@ ${overrides}\n`;
     });
   }
 
-  private async appendChapterSummary(
-    storyDir: string,
+  private async renderAppendedChapterSummary(
+    bookDir: string,
     summary: string,
     language: "zh" | "en",
-  ): Promise<void> {
-    const summaryPath = join(storyDir, "chapter_summaries.md");
+  ): Promise<string | undefined> {
+    const summaryPath = join(bookDir, "story", "chapter_summaries.md");
     let existing = "";
     try {
       existing = await readFile(summaryPath, "utf-8");
@@ -1350,8 +1170,9 @@ ${overrides}\n`;
           return !chNum || !newChapterNums.has(chNum);
         })
         .join("\n");
-      await writeFile(summaryPath, `${deduped.trimEnd()}\n${dataRows}\n`, "utf-8");
+      return `${deduped.trimEnd()}\n${dataRows}\n`;
     }
+    return undefined;
   }
 
   private buildStyleFingerprint(styleProfileRaw: string): string | undefined {
@@ -1371,128 +1192,6 @@ ${overrides}\n`;
       return undefined;
     }
   }
-
-
-  /**
-   * Extract dialogue fingerprints from recent chapters.
-   * For each character with multiple dialogue lines, compute speaking style markers.
-   */
-  private extractDialogueFingerprints(recentChapters: string, _storyBible: string): string {
-    if (!recentChapters) return "";
-
-    // Match dialogue patterns:
-    // Chinese: "speaker说道：" or dialogue in ""「」
-    // English: "dialogue," speaker said. or "dialogue."
-    const dialogueRegex = /(?:(.{1,6})(?:说道|道|喝道|冷声道|笑道|怒道|低声道|大声道|喝骂道|冷笑道|沉声道|喊道|叫道|问道|答道)\s*[：:]\s*["""「]([^"""」]+)["""」])|["""「]([^"""」]{2,})["""」]|"([^"]{2,})"/g;
-
-    const characterDialogues = new Map<string, string[]>();
-    let match: RegExpExecArray | null;
-
-    while ((match = dialogueRegex.exec(recentChapters)) !== null) {
-      const speaker = match[1]?.trim();
-      const line = match[2] ?? match[3] ?? "";
-      if (speaker && line.length > 1) {
-        const existing = characterDialogues.get(speaker) ?? [];
-        characterDialogues.set(speaker, [...existing, line]);
-      }
-    }
-
-    // Only include characters with >=2 dialogue lines
-    const fingerprints: string[] = [];
-    for (const [character, lines] of characterDialogues) {
-      if (lines.length < 2) continue;
-
-      const avgLen = Math.round(lines.reduce((sum, l) => sum + l.length, 0) / lines.length);
-      const isShort = avgLen < 15;
-
-      // Find frequent words/phrases (2+ occurrences)
-      const wordCounts = new Map<string, number>();
-      for (const line of lines) {
-        // Extract 2-3 char segments as "words"
-        for (let i = 0; i < line.length - 1; i++) {
-          const bigram = line.slice(i, i + 2);
-          wordCounts.set(bigram, (wordCounts.get(bigram) ?? 0) + 1);
-        }
-      }
-      const frequentWords = [...wordCounts.entries()]
-        .filter(([, count]) => count >= 2)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 3)
-        .map(([w]) => `「${w}」`);
-
-      // Detect style markers
-      const markers: string[] = [];
-      if (isShort) markers.push("短句为主");
-      else markers.push("长句为主");
-
-      const questionCount = lines.filter((l) => l.includes("？") || l.includes("?")).length;
-      if (questionCount > lines.length * 0.3) markers.push("反问多");
-
-      if (frequentWords.length > 0) markers.push(`常用${frequentWords.join("")}`);
-
-      fingerprints.push(`${character}：${markers.join("，")}`);
-    }
-
-    return fingerprints.length > 0 ? fingerprints.join("；") : "";
-  }
-
-  /**
-   * Find relevant chapter summaries based on volume outline context.
-   * Extracts character names and hook IDs from the current volume's outline,
-   * then searches chapter summaries for matching entries.
-   */
-  private findRelevantSummaries(
-    chapterSummaries: string,
-    volumeOutline: string,
-    chapterNumber: number,
-  ): string {
-    if (!chapterSummaries || chapterSummaries === "(文件尚未创建)") return "";
-    if (!volumeOutline || volumeOutline === "(文件尚未创建)") return "";
-
-    // Extract character names from volume outline (Chinese name patterns)
-    const nameRegex = /[\u4e00-\u9fff]{2,4}(?=[，、。：]|$)/g;
-    const outlineNames = new Set<string>();
-    let nameMatch: RegExpExecArray | null;
-    while ((nameMatch = nameRegex.exec(volumeOutline)) !== null) {
-      outlineNames.add(nameMatch[0]);
-    }
-
-    // Extract hook IDs from volume outline
-    const hookRegex = /H\d{2,}/g;
-    const hookIds = new Set<string>();
-    let hookMatch: RegExpExecArray | null;
-    while ((hookMatch = hookRegex.exec(volumeOutline)) !== null) {
-      hookIds.add(hookMatch[0]);
-    }
-
-    if (outlineNames.size === 0 && hookIds.size === 0) return "";
-
-    // Search chapter summaries for matching rows
-    const rows = chapterSummaries.split("\n").filter((line) =>
-      line.startsWith("|") && !line.startsWith("| 章节") && !line.startsWith("|--") && !line.startsWith("| -"),
-    );
-
-    const matchedRows = rows.filter((row) => {
-      for (const name of outlineNames) {
-        if (row.includes(name)) return true;
-      }
-      for (const hookId of hookIds) {
-        if (row.includes(hookId)) return true;
-      }
-      return false;
-    });
-
-    // Skip only the last chapter (its full text is already in context via loadRecentChapters)
-    const filteredRows = matchedRows.filter((row) => {
-      const chNumMatch = row.match(/\|\s*(\d+)\s*\|/);
-      if (!chNumMatch) return true;
-      const num = parseInt(chNumMatch[1]!, 10);
-      return num < chapterNumber - 1;
-    });
-
-    return filteredRows.length > 0 ? filteredRows.join("\n") : "";
-  }
-
   private sanitizeFilename(title: string): string {
     return title
       .replace(/[/\\?%*:|"<>]/g, "")

@@ -2,6 +2,35 @@
 
 [中文](CHANGELOG.md) | English
 
+## v1.8.0
+
+### Release Focus
+
+Unified Pi Agent Harness and professional creation kernel. Studio Chat, TUI, external agents, and every production worker now share the same pi-agent tool loop, typed action/result boundary, Skill binding, retrieval, and run observation. Pipelines remain deterministic production capabilities instead of forming a parallel natural-language decision system.
+
+### Agent Harness And Skills
+
+- Added one production harness for long fiction, short fiction, scripts, storyboards, interactive film, Play, and translation, with shared run snapshots, observations, cancellation, recovery, and atomic commit semantics
+- Shipped 15 standard `SKILL.md` expertise packages for long-form writing/review, commercial shorts, Play, scripts, storyboards, interactive film, translation, analysis, market research, import, covers, and semantic de-slopping
+- Production workers bind medium-specific Skills inside the pi-agent harness. Formats share the Skill architecture and execution foundation without mechanically reusing long-form prompts
+- Added standard run, tool, and model trajectory metadata for observing kkaiapi and other model calls, tool results, and evidence-backed completion
+
+### Context, Retrieval, And Persistence
+
+- Added one SQLite FTS5 / BM25 local retrieval kernel for story memory, archived materials, and Skill references. Indexes are rebuildable and source files remain authoritative
+- Added book-bound references so imported material can declare intended uses and be retrieved by Planner, Composer, Writer, and other task contexts
+- Added safe chapter workspaces and atomic file-set commits. Prose, state, hooks, and run snapshots are persisted together only after validation
+- Improved stale chapter-state recovery, governed long-form context, and inactive-stream handling to keep old state and old tool results out of current production
+
+### Production And Workbench
+
+- Multi-chapter writing now runs sequentially as one background task with cancellation, progress, and recovery rather than bypassing the per-book lock with concurrent writes
+- Short, script, storyboard, interactive-film, Play, and translation runs now share Skill binding, length observations, run snapshots, and long-output completion strategies
+- Studio adds a safe chapter rewrite workspace with candidate text, review issues, and persistence status, plus wider chapter previews, external canon import, and persistent dynamic model catalogs
+- Added LM Studio, user-added model IDs, custom cover Base URLs, and more reliable first-token / stream-idle deadlines
+- TUI adds explicit `/new`, `/short`, `/play`, `/cover`, and `/write` surfaces, structured `/confirm` / `/cancel`, session-level `/model`, and adaptive terminal colors while leaving ordinary free text to the Agent
+- The minimum runtime is now Node.js 22; CI and Release matrices now cover Node 22 / 24
+
 ## v1.7.2
 
 ### Release Focus

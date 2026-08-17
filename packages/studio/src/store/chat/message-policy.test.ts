@@ -19,6 +19,10 @@ describe("isConfirmedProductionSend", () => {
   it("treats confirmed production intents from button/slash as production sends", () => {
     expect(isConfirmedProductionSend("button", "create_book")).toBe(true);
     expect(isConfirmedProductionSend("slash", "short_run")).toBe(true);
+    expect(isConfirmedProductionSend("button", "fanfic_init")).toBe(true);
+    expect(isConfirmedProductionSend("button", "continuation_import")).toBe(true);
+    expect(isConfirmedProductionSend("button", "spinoff_create")).toBe(true);
+    expect(isConfirmedProductionSend("button", "style_imitation")).toBe(true);
   });
 
   it("treats quick-action write-next as a production send", () => {

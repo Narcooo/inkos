@@ -75,6 +75,7 @@ export function shortRunCharsPerChapterError(value: number, language: "zh" | "en
 // 在确认卡阶段就被拒绝，而不是任务开跑后才在 runner 里抛错；language 缺省时维持
 // 600-1200 并集（此时最终语言由会话默认决定，envelope 层无法预知）。
 export const ShortRunActionPayloadSchema = z.object({
+  title: z.string().min(1).optional(),
   direction: z.string().min(1).optional(),
   reference: z.string().min(1).optional(),
   storyId: z.string().min(1).optional(),
@@ -169,6 +170,62 @@ export const TranslationCreateActionPayloadSchema = z.object({
   segmentMaxChars: z.number().int().min(1).optional(),
 }).strict();
 
+export const FanficCreateActionPayloadSchema = z.object({
+  title: z.string().min(1).optional(),
+  sourceText: z.string().min(1).optional(),
+  sourcePath: z.string().min(1).optional(),
+  sourceName: z.string().min(1).optional(),
+  mode: z.enum(["canon", "au", "ooc", "cp"]).optional(),
+  genre: z.string().min(1).optional(),
+  platform: z.enum(["tomato", "qidian", "feilu", "other"]).optional(),
+  language: z.enum(["zh", "en"]).optional(),
+  targetChapters: z.number().int().min(1).optional(),
+  chapterWordCount: z.number().int().min(1).optional(),
+}).strict().refine(
+  (payload) => Boolean(payload.sourceText?.trim() || payload.sourcePath?.trim()),
+  { message: "fanficCreate requires sourceText or sourcePath" },
+);
+
+export const ContinuationImportActionPayloadSchema = z.object({
+  bookId: z.string().min(1).optional(),
+  title: z.string().min(1).optional(),
+  sourcePath: z.string().min(1).optional(),
+  splitPattern: z.string().min(1).optional(),
+  resumeFrom: z.number().int().min(1).optional(),
+  genre: z.string().min(1).optional(),
+  platform: z.enum(["tomato", "qidian", "feilu", "other"]).optional(),
+  language: z.enum(["zh", "en"]).optional(),
+  targetChapters: z.number().int().min(1).optional(),
+  chapterWordCount: z.number().int().min(1).optional(),
+}).strict();
+
+export const SpinoffCreateActionPayloadSchema = z.object({
+  title: z.string().min(1).optional(),
+  parentBookId: z.string().min(1).optional(),
+  direction: z.string().min(1).optional(),
+  genre: z.string().min(1).optional(),
+  platform: z.enum(["tomato", "qidian", "feilu", "other"]).optional(),
+  language: z.enum(["zh", "en"]).optional(),
+  targetChapters: z.number().int().min(1).optional(),
+  chapterWordCount: z.number().int().min(1).optional(),
+}).strict();
+
+export const ImitationCreateActionPayloadSchema = z.object({
+  title: z.string().min(1).optional(),
+  referenceText: z.string().min(1).optional(),
+  referencePath: z.string().min(1).optional(),
+  storyIdea: z.string().min(1).optional(),
+  sourceName: z.string().min(1).optional(),
+  genre: z.string().min(1).optional(),
+  platform: z.enum(["tomato", "qidian", "feilu", "other"]).optional(),
+  language: z.enum(["zh", "en"]).optional(),
+  targetChapters: z.number().int().min(1).optional(),
+  chapterWordCount: z.number().int().min(1).optional(),
+}).strict().refine(
+  (payload) => Boolean(payload.referenceText?.trim() || payload.referencePath?.trim()),
+  { message: "imitationCreate requires referenceText or referencePath" },
+);
+
 export const ActionPayloadSchema = z.object({
   createBook: CreateBookActionPayloadSchema.optional(),
   writeNext: WriteNextActionPayloadSchema.optional(),
@@ -179,6 +236,10 @@ export const ActionPayloadSchema = z.object({
   storyboardCreate: StoryboardCreateActionPayloadSchema.optional(),
   interactiveFilmCreate: InteractiveFilmCreateActionPayloadSchema.optional(),
   translationCreate: TranslationCreateActionPayloadSchema.optional(),
+  fanficCreate: FanficCreateActionPayloadSchema.optional(),
+  continuationImport: ContinuationImportActionPayloadSchema.optional(),
+  spinoffCreate: SpinoffCreateActionPayloadSchema.optional(),
+  imitationCreate: ImitationCreateActionPayloadSchema.optional(),
   draftStructure: z.object({
     projectId: z.string().min(1).optional(),
     instruction: z.string().default(""),
@@ -227,37 +288,4 @@ export function normalizeActionPayload(value: unknown): ActionPayload | undefine
 export function normalizePlayMode(value: unknown): PlayMode | undefined {
   if (value === undefined || value === null || value === "") return undefined;
   return PlayModeSchema.parse(value);
-}
-
-const INCOMPLETE_PLAY_SCENE_SUFFIX =
-  /(?:叫|是|为|在|向|把|将|和|与|或|但|却|因为|如果|当|等|、|，|：|；|——|“|‘|《|（|\()$/u;
-
-export function isUsablePlayInitialScene(value: string | undefined): boolean {
-  const text = value?.trim();
-  if (!text) return false;
-  if (text.length < 12) return false;
-  if (INCOMPLETE_PLAY_SCENE_SUFFIX.test(text)) return false;
-  return true;
-}
-
-export function isWriteNextInstruction(
-  instruction: string,
-  options: { readonly allowSlashWrite?: boolean } = {},
-): boolean {
-  const trimmed = instruction.trim();
-  const pattern = options.allowSlashWrite
-    ? /^(\/write|continue|继续|继续写|写下一章|write next|下一章|再来一章)$/i
-    : /^(continue|继续|继续写|写下一章|write next|下一章|再来一章)$/i;
-  return pattern.test(trimmed);
-}
-
-export function isExplicitWriteChapterCommand(instruction: string): boolean {
-  const trimmed = instruction.trim();
-  if (!trimmed) return false;
-
-  const zhWriteChapter =
-    /^(?:请|帮我|麻烦|现在|直接|开始|继续|接着|再)?\s*(?:写|续写|创作|生成)(?:出|一下)?\s*(?:第?\s*一\s*章|第?\s*1\s*章|下一章|一章|正文|章节)(?:\s|[，。,.！!？?；;：:]|$)/.test(trimmed);
-  if (zhWriteChapter) return true;
-
-  return /^(?:please\s+)?(?:write|continue|draft|generate)\s+(?:(?:the\s+)?next\s+chapter|chapter(?:\s+(?:1|one))?)\b/i.test(trimmed);
 }

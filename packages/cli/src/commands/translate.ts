@@ -1,7 +1,10 @@
 import { Command } from "commander";
 import {
+  activatedSkillIds,
   createLLMTranslationModel,
   createTranslationProjectFromFile,
+  loadAvailableAgentSkills,
+  resolveProductionSkillActivations,
   runTranslationProject,
   writeTranslationExport,
 } from "@actalk/inkos-core";
@@ -53,10 +56,13 @@ translateCommand
     try {
       const root = findProjectRoot();
       const config = await loadConfig({ requireApiKey: true, projectRoot: root });
+      const configuredSkills = await loadAvailableAgentSkills({ projectRoot: root });
+      const activatedSkills = resolveProductionSkillActivations(configuredSkills.skills, "translation");
       const model = createLLMTranslationModel({
         client: createClient(config),
         model: config.llm.model,
         maxTokens: opts.maxTokens,
+        activatedSkills,
       });
       const result = await runTranslationProject(root, projectId, {
         model,
@@ -65,6 +71,7 @@ translateCommand
       if (opts.json) {
         log(JSON.stringify(result, null, 2));
       } else {
+        log(`Skills: ${activatedSkillIds(activatedSkills).join(", ")}`);
         log(`Translated segments: ${result.translatedSegments}`);
         log(`Reviewed chapters: ${result.reviewedChapters}`);
         log(`Report: ${result.reportPath}`);

@@ -1,7 +1,7 @@
 ---
 name: inkos
 description: Story Creation and Translation AI Agent with Studio Chat, CLI, and TUI - use for long-form novels, short fiction, scripts, storyboards, interactive-film projects, open-world / branching play, fan fiction, spinoffs, style imitation, continuations, covers, and multilingual EPUB/PDF/TXT/Markdown translation. Includes Agent Skills, traceable research, governed context, persistent story state, multi-model routing, image services, and InkOS Studio.
-version: 2.8.3
+version: 2.9.0
 metadata: { "openclaw": { "emoji": "📖", "requires": { "bins": ["inkos", "node"], "env": ["OPENAI_API_KEY"] }, "primaryEnv": "OPENAI_API_KEY", "homepage": "https://github.com/Narcooo/inkos", "install": [{ "id": "npm", "kind": "node", "package": "@actalk/inkos", "label": "Install InkOS (npm)" }] } }
 ---
 
@@ -17,11 +17,13 @@ Long-form writing still uses the chapter pipeline internally:
 Truth files are persisted as schema-validated JSON (`story/state/*.json`) with markdown projections for human readability. SQLite temporal memory database (`story/memory.db`) enables relevance-based retrieval on Node 22+.
 Persisted story memory is isolated to its project and book, excludes credentials and unrelated files, and is never reused across projects unless the user explicitly imports material. Users can inspect or delete the owning book/project through Studio or CLI.
 
-## v1.7.2 Mental Model
+## v1.8.0 Mental Model
 
-Treat InkOS as a confirmable action system, not a bag of prompt shortcuts. v1.7.2 replaces the former InkOS-private Skill protocol with standard AgentSkills / OpenClaw `SKILL.md` packages. Skills provide professional guidance and static references only: they can be selected explicitly or activated by the Chat Agent through `use_skill`, but they never grant execution permissions.
+Treat InkOS as a pi-agent-centered production harness, not a bag of prompt shortcuts or parallel pipelines. The model interprets requests and emits typed actions; the host owns confirmation, deterministic tools, state, atomic persistence, and artifact truth. Standard AgentSkills / OpenClaw `SKILL.md` packages provide medium-specific craft and static references, but they never grant execution permissions.
 
 - Natural-language requests should go through Studio Chat / TUI / `inkos interact` whenever possible.
+- Production workers for long fiction, short fiction, scripts, storyboards, interactive film, Play, and translation use the same harness contract while binding different built-in Skills. Share the architecture, not long-form-specific prompts.
+- Pipelines and atomic CLI commands are deterministic host capabilities. Do not create a second natural-language router around them.
 - Do not infer success from assistant prose. A book, short, cover, or play step is complete only when the corresponding tool result and files exist.
 - Use `short_fiction_run` only for a standalone short-fiction package.
 - Use `generate_cover` only for cover generation/regeneration.
@@ -33,13 +35,16 @@ Treat InkOS as a confirmable action system, not a bag of prompt shortcuts. v1.7.
 - Use narrative forecasts when the author wants to compare possible long-form directions before writing. A forecast is non-canonical planning material: selecting a branch may write `selected-branch-plan.md`, but it must not be described as changing prose, outlines, or canonical state.
 - A running production task does not prevent ordinary discussion, but do not start another conflicting book mutation until that task reaches a terminal state.
 - Agent Skills provide professional guidance and static references. They do not grant new file, network, image, or writing permissions by themselves.
+- Story memory, archived material, and Skill references share the local FTS5 / BM25 retrieval kernel. Source files remain authoritative; retrieved excerpts should retain source pointers.
+- Bind reusable imported material to a book with explicit intended uses instead of repeatedly injecting every source file in full.
+- Chapter prose, state, hooks, and run snapshots should commit through the safe chapter workspace / atomic file-set boundary. Never report completion from a partially persisted run.
 - Context is governed: protected facts and current intent should not be silently compressed away; compressible history may be summarized when the context budget is tight.
 - Studio Chat can receive user-uploaded text / Markdown / image attachments. Text attachments are injected into the LLM context; image attachments require a vision-capable model.
 - External materials can be archived and retrieved later with evidence traces instead of relying on ad hoc pasted context.
 - Prompt packs are user-tunable in Studio Project Settings. Project overrides are saved under `prompt/<pack>/<prompt>.md`; do not edit generated artifacts just to change system behavior.
 - Long-form chapter revision from Chat passes the current user instruction into the reviser as a one-off brief. If the revision is not applied, inspect the returned gate metrics and remaining audit issues before claiming it was fixed.
 
-v1.7.0 added complete multilingual translation/localization, English-native short/script/storyboard/interactive-film paths, existing-novel import from Chat, configurable review and revision gates, abortable long tasks, recoverable write locks, material archive/retrieval, and Studio-editable prompt packs. v1.7.1 added non-canonical narrative forecasting, background production tasks, retryable task state, whole-book backup / restore, and rollback-safe latest-chapter deletion. Still surface unresolved review or execution issues plainly instead of claiming they were fixed.
+v1.7 added multilingual translation/localization, narrative forecasting, background production, import, configurable review gates, recoverable locks, material archives, and standard Agent Skills. v1.8 unifies production around the pi-agent harness, adds medium-specific built-in Skills, shared FTS5 / BM25 retrieval, book-bound references, safe chapter workspaces, cross-format run snapshots, and TUI confirmation/model controls. Still surface unresolved review or execution issues plainly instead of claiming they were fixed.
 
 ## When to Use InkOS
 
@@ -63,6 +68,8 @@ v1.7.0 added complete multilingual translation/localization, English-native shor
 - **Analytics**: Track word count, audit pass rate, and issue distribution per book
 
 ## Initial Setup
+
+InkOS requires Node.js 22 or later.
 
 ### First Time Setup
 ```bash
@@ -395,6 +402,9 @@ inkos tui
 ```
 - Launches a full-screen Ink + React dashboard with conversational creation
 - Slash command autocomplete (Tab), input history (arrow keys)
+- Uses explicit `/new`, `/short`, `/play`, `/cover`, and `/write` surfaces; `/confirm` and `/cancel` resolve structured proposals without rerunning intent detection
+- `/model <name>` changes the model for the current TUI session; ordinary text that merely discusses models remains a normal Agent turn
+- Adapts text colors to light or dark terminal backgrounds (`INKOS_TUI_THEME` can override detection)
 - Themed activity animations per operation (writing, auditing, revising, planning)
 - Bilingual i18n (Chinese / English)
 - Shares the same interaction kernel as `inkos interact` and Studio
@@ -481,6 +491,17 @@ Guidelines for agent orchestration:
 - Treat skills as standard expertise packets containing instructions and static references. Prompt packs and governed context recipes are separate InkOS systems.
 - Skill folders may contain static references. Read them only when needed, and never auto-execute bundled scripts.
 - Do not treat skills as permissions. File edits, book creation, chapter writing, image generation, and exports still require the normal InkOS tools and confirmation gates.
+
+### Workflow 18.5: Book-Bound Reference Material
+
+Use this when imported material should influence one book over multiple future turns without becoming canon or being injected in full every time.
+
+1. Archive the source with `ingest_material`; keep the returned material id.
+2. On the active book, call `manage_book_reference` with `action=bind`, that material id, concrete `uses`, and an optional limiting note.
+3. Let Planner / Composer / Writer retrieve relevant passages through the shared local search index. Source files remain authoritative and retrieval keeps source pointers.
+4. Use `manage_book_reference` with `action=list` to inspect bindings or `action=unbind` to detach one without deleting the project asset.
+
+Binding a reference does not make it canon and does not authorize copying its expression. Canon changes still require the normal explicit edit path.
 
 ### Workflow 19: Traceable Web Research
 
@@ -735,7 +756,7 @@ inkos genre copy xuanhuan
 | `inkos fanfic show [book-id]` | Display parsed fanfic canon | Shows imported source material analysis |
 | `inkos fanfic refresh [book-id]` | Re-import and regenerate fanfic canon | `--from <file>` for updated source material |
 | `inkos interact` | Shared interaction endpoint | `--json`, `--message`, `--book`. Primary entry for OpenClaw |
-| `inkos tui` | Launch TUI dashboard | Full-screen Ink + React interactive dashboard |
+| `inkos tui` | Launch TUI dashboard | Full-screen Agent UI with explicit surfaces, `/confirm` / `/cancel`, and session-level `/model` |
 
 ## Error Handling
 

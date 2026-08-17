@@ -31,10 +31,6 @@ export async function readEmotionalArcs(storyDir: string): Promise<string> {
   return readOrEmpty(join(storyDir, "emotional_arcs.md"));
 }
 
-export async function readPendingHooks(storyDir: string): Promise<string> {
-  return readOrEmpty(join(storyDir, "pending_hooks.md"));
-}
-
 export async function readBrief(storyDir: string): Promise<string> {
   return readOrEmpty(join(storyDir, "brief.md"));
 }
@@ -237,25 +233,22 @@ function extractRowsByRelation(
   return rows.map((row) => `| ${row.join(" | ")} |`).join("\n");
 }
 
-const RELEVANT_THREAD_STATUS_PATTERN = /activat|partial_payoff|推进|高压|open|progress/i;
-const STALE_STATUS_PATTERN = /resolved|deferred|dormant|暂稳待续|暂挂|已回收/i;
-
-export function extractRelevantThreads(pendingHooksRaw: string, subplotBoardRaw: string): string {
-  const hookRows = parseMarkdownTableRows(pendingHooksRaw)
-    .filter((row) => !/^(hook_id)$/i.test(row[0] ?? ""))
-    .filter((row) => row.some((cell) => RELEVANT_THREAD_STATUS_PATTERN.test(cell)))
-    .filter((row) => !row.some((cell) => STALE_STATUS_PATTERN.test(cell)))
-    .map((row) => `- ${row[0]}: ${row.slice(1).filter(Boolean).join(" | ")}`);
-
-  const subplotRows = parseMarkdownTableRows(subplotBoardRaw)
-    .filter((row) => !/^(id|subplot_id|subplot)$/i.test(row[0] ?? ""))
-    .filter((row) => row.some((cell) => RELEVANT_THREAD_STATUS_PATTERN.test(cell)))
-    .filter((row) => !row.some((cell) => STALE_STATUS_PATTERN.test(cell)))
-    .map((row) => `- ${row[0]}: ${row.slice(1).filter(Boolean).join(" | ")}`);
-
+export function formatRelevantThreads(
+  hooks: ReadonlyArray<StoredHook>,
+  subplotBoardRaw: string,
+  language: "zh" | "en" = "zh",
+): string {
+  const hookRows = hooks.map((hook) => `- ${hook.hookId}: ${[
+    hook.type,
+    hook.status,
+    hook.expectedPayoff,
+    hook.payoffTiming,
+    hook.notes,
+  ].filter(Boolean).join(" | ")}`);
+  const subplotRows = extractActiveSubplotLines(subplotBoardRaw).map((line) => `- ${line}`);
   const lines = [...hookRows, ...subplotRows];
   if (lines.length === 0) {
-    return "（暂无活跃线索）";
+    return language === "en" ? "(no relevant threads)" : "（暂无相关线索）";
   }
   return lines.join("\n");
 }

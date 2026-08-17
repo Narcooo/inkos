@@ -120,7 +120,7 @@ export class ShortFictionOutlineAgent extends BaseAgent {
       this.chat([
         { role: "system", content: buildShortFictionOutlineSystemPrompt(input.language) },
         { role: "user", content: buildShortFictionOutlineUserPrompt(input, input.language) },
-      ], { temperature: 0.55, maxTokens: 8192 }), this.name, this.log);
+      ], { temperature: 0.55, maxTokens: 16_384 }), this.name, this.log);
 
     return parseShortFictionOutline(response.content, input.language);
   }
@@ -154,7 +154,7 @@ export class ShortFictionOutlineReviserAgent extends BaseAgent {
         { role: "user", content: buildShortFictionOutlineUserPrompt(input, input.language) },
         { role: "assistant", content: input.outline.rawContent.trim() },
         { role: "user", content: buildShortFictionOutlineRevisionFollowup(input, input.language) },
-      ], { temperature: 0.45, maxTokens: 8192 }), this.name, this.log);
+      ], { temperature: 0.45, maxTokens: 16_384 }), this.name, this.log);
 
     return parseShortFictionOutline(response.content, input.language);
   }

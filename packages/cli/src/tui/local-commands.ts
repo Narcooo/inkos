@@ -1,6 +1,9 @@
 import type { ChatDepth } from "./chat-depth.js";
 
 export type LocalTuiCommand = "help" | "status" | "quit" | "clear" | "config";
+export type ModelCommand =
+  | { readonly kind: "show" }
+  | { readonly kind: "set"; readonly model: string };
 
 export function classifyLocalTuiCommand(input: string): LocalTuiCommand | undefined {
   const value = input.trim();
@@ -52,4 +55,11 @@ export function parseDepthCommand(input: string): ChatDepth | undefined {
     default:
       return "normal";
   }
+}
+
+export function parseModelCommand(input: string): ModelCommand | undefined {
+  const match = input.trim().match(/^\/model(?:\s+([\s\S]+?))?$/i);
+  if (!match) return undefined;
+  const model = match[1]?.trim();
+  return model ? { kind: "set", model } : { kind: "show" };
 }

@@ -434,7 +434,7 @@ describe("applyRuntimeStateDelta", () => {
     ]);
   });
 
-  it("merges duplicate restated hook families into the matched active hook", () => {
+  it("does not infer semantic identity between different hook ids", () => {
     const result = applyRuntimeStateDelta({
       snapshot: {
         manifest: {
@@ -487,10 +487,10 @@ describe("applyRuntimeStateDelta", () => {
       }),
     });
 
-    expect(result.hooks.hooks).toHaveLength(1);
-    expect(result.hooks.hooks[0]).toEqual(expect.objectContaining({
-      hookId: "anonymous-source-scope",
-      lastAdvancedChapter: 12,
-    }));
+    expect(result.hooks.hooks).toHaveLength(2);
+    expect(result.hooks.hooks.map((hook) => hook.hookId)).toEqual([
+      "anonymous-source-scope",
+      "anonymous-source-restated",
+    ]);
   });
 });

@@ -5,6 +5,24 @@ export interface ServiceDetailModelInfo {
   readonly name?: string;
 }
 
+export function mergeServiceDetailModels(
+  ...groups: ReadonlyArray<ReadonlyArray<ServiceDetailModelInfo | string> | undefined>
+): ServiceDetailModelInfo[] {
+  const seen = new Set<string>();
+  const merged: ServiceDetailModelInfo[] = [];
+  for (const group of groups) {
+    for (const item of group ?? []) {
+      const model = typeof item === "string" ? { id: item } : item;
+      const id = model.id.trim();
+      const key = id.toLowerCase();
+      if (!id || seen.has(key)) continue;
+      seen.add(key);
+      merged.push({ ...model, id });
+    }
+  }
+  return merged;
+}
+
 export interface ServiceDetailDetectedConfig {
   readonly apiFormat?: "chat" | "responses";
   readonly stream?: boolean;
@@ -115,6 +133,7 @@ export async function saveServiceConfig(args: {
   readonly stream: boolean;
   readonly temperature: string;
   readonly detectedModel: string;
+  readonly configuredModels?: ReadonlyArray<ServiceDetailModelInfo | string>;
   readonly verifiedProbe?: ServiceDetailVerifiedProbe | null;
   readonly fetchJsonImpl?: JsonFetcher;
 }): Promise<{
@@ -185,6 +204,7 @@ export async function saveServiceConfig(args: {
   }
 
   const detectedModel = probe.selectedModel ?? args.detectedModel;
+  const savedModels = mergeServiceDetailModels(probe.models, args.configuredModels);
   const detectedConfig = probe.detected ?? null;
   const savedApiFormat = detectedConfig?.apiFormat ?? args.apiFormat;
   const savedStream = typeof detectedConfig?.stream === "boolean" ? detectedConfig.stream : args.stream;
@@ -208,6 +228,7 @@ export async function saveServiceConfig(args: {
           temperature: parseFloat(args.temperature),
           apiFormat: savedApiFormat,
           stream: savedStream,
+          models: savedModels.map((model) => model.id),
           ...(args.isCustom ? {
             name: args.resolvedCustomName,
             baseUrl: savedBaseUrl,
@@ -218,7 +239,7 @@ export async function saveServiceConfig(args: {
   });
 
   return {
-    status: { state: "connected", models: probe.models ?? [] },
+    status: { state: "connected", models: savedModels },
     detectedModel,
     detectedConfig,
   };

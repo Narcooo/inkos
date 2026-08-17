@@ -118,6 +118,17 @@ export const ChapterTraceSchema = z.object({
     compressibleTokens: z.number().int().nonnegative().default(0),
     budgetTokens: z.number().int().nonnegative().default(0),
   }).optional(),
+  retrieval: z.object({
+    engine: z.literal("sqlite-fts5-bm25"),
+    query: z.string(),
+    candidates: z.array(z.object({
+      id: z.string(),
+      kind: z.string(),
+      source: z.string(),
+      score: z.number(),
+    })),
+    semanticSelectedIds: z.array(z.string()).optional(),
+  }).optional(),
   notes: z.array(z.string()).default([]),
 });
 

@@ -12,7 +12,7 @@ export class PlannerParseError extends Error {
 // EITHER language at parse time so the same parser works for both.
 //
 // Phase hotfix 7: minContentChars enforces non-emptiness per section so
-// "all 7 headings + blank payload" no longer slips through. The "do not"
+// "all required headings + blank payload" no longer slips through. The "do not"
 // section uses a relaxed threshold because "无 / N/A / none." is legitimate
 // for chapters with no extra prohibitions.
 //
@@ -30,6 +30,7 @@ interface RequiredSection {
 }
 
 const REQUIRED_SECTIONS: ReadonlyArray<RequiredSection> = [
+  { zh: "## 场景与篇幅预算", en: "## Scene and length budget", minContentChars: 20 },
   { zh: "## 当前任务", en: "## Current task", minContentChars: 20 },
   { zh: "## 读者此刻在等什么", en: "## What the reader is waiting for right now", minContentChars: 20 },
   { zh: "## 该兑现的 / 暂不掀的", en: "## To pay off / to keep buried", minContentChars: 20 },
@@ -174,7 +175,7 @@ export function parseMemo(
   // Phase hotfix 7: each section's payload must be non-empty (≥ minContentChars).
   // Headings present + blank payload was previously accepted, allowing useless
   // "shell" memos to flow downstream. Threshold differs per section: most need
-  // 20 chars (one short sentence) while "## 不要做" / "## Do not" allows 5
+  // 20 chars (one short sentence) while "## 不要做" / "## Do not" allows 1
   // (e.g. "无", "N/A") since "no extra prohibitions" is a legitimate state.
   const empty = REQUIRED_SECTIONS.filter((section) => {
     const heading = body.includes(section.zh) ? section.zh : section.en;

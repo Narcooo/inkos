@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  countMarkdownSections,
   extractMarkdownSection,
+  extractProductionDocument,
   extractStoryboardImagePrompts,
   normalizeScriptEpisodeEndLabels,
   renderInteractiveFilmSpec,
@@ -107,6 +109,26 @@ describe("script and storyboard creation helpers", () => {
     expect(section).not.toContain("变量与旗标表");
   });
 
+  it("extracts the production document after model scratch text", () => {
+    const document = extractProductionDocument([
+      "先分析几个方案。",
+      "这些内容不能进入交付稿。",
+      "",
+      "# 凌晨四点的空电梯",
+      "",
+      "## 人物",
+      "苏晚",
+      "",
+      "## 剧本正文",
+      "完整正文。",
+    ].join("\n"), "凌晨四点的空电梯");
+
+    expect(document).toMatch(/^# 凌晨四点的空电梯/u);
+    expect(document).not.toContain("先分析几个方案");
+    expect(countMarkdownSections(document, ["人物"])).toBe(1);
+    expect(countMarkdownSections(document, ["剧本正文"])).toBe(1);
+  });
+
   it("extracts markdown-bold prompt labels with shot ids", () => {
     const prompts = extractStoryboardImagePrompts([
       "# 鸦冠之宴",
@@ -119,6 +141,21 @@ describe("script and storyboard creation helpers", () => {
     expect(prompts).toBe([
       "1. dark-gold medieval court, candlelight, raven feathers, cinematic",
       "2. 石厅长桌，贵族交锋，蜡烛与暗金帷幕",
+    ].join("\n"));
+  });
+
+  it("extracts inline-code Prompt lines emitted by storyboard models", () => {
+    const prompts = extractStoryboardImagePrompts([
+      "# 风眼旧频率",
+      "",
+      "## 分镜与图像提示词",
+      "`Prompt: 写实台风海岛，渡船广播室，冷青雨夜，16:9`",
+      "`Prompt: 走私船舱，妹妹敲击暗号，低照度写实电影感`",
+    ].join("\n"));
+
+    expect(prompts).toBe([
+      "1. 写实台风海岛，渡船广播室，冷青雨夜，16:9",
+      "2. 走私船舱，妹妹敲击暗号，低照度写实电影感",
     ].join("\n"));
   });
 

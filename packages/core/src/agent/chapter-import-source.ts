@@ -2,11 +2,20 @@ import { readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { splitChapters, type SplitChapter } from "../utils/chapter-splitter.js";
 
+const CHAPTER_FILENAME_COLLATOR = new Intl.Collator("en", {
+  numeric: true,
+  sensitivity: "base",
+});
+
+export function compareChapterSourceNames(left: string, right: string): number {
+  return CHAPTER_FILENAME_COLLATOR.compare(left, right);
+}
+
 /**
  * Load chapters from a local source path for `import_chapters`.
  *
  * - Directory mode: each `.md`/`.txt` file becomes one chapter, in filename
- *   sort order. The chapter title is the filename without its extension and
+ *   natural numeric order. The chapter title is the filename without its extension and
  *   without a leading numeric prefix (e.g. `03_风暴.md` → `风暴`).
  * - Single-file mode: the file is split into chapters with `splitChapters`,
  *   using `splitPattern` as a custom heading regex when provided.
@@ -24,7 +33,7 @@ export async function loadChaptersFromPath(
     const entries = await readdir(sourcePath);
     const textFiles = entries
       .filter((f) => f.endsWith(".md") || f.endsWith(".txt"))
-      .sort();
+      .sort(compareChapterSourceNames);
 
     if (textFiles.length === 0) {
       throw new Error(`No .md or .txt files found in ${sourcePath}.`);
