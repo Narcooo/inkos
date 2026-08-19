@@ -26,6 +26,7 @@ export const OPENROUTER: InkosEndpoint = {
   writingTemperature: 1,
   models: [
     { id: "openrouter/auto", maxOutput: 4096, contextWindowTokens: 2000000, enabled: true },
+    { id: "z-ai/glm-5.2", maxOutput: 32768, contextWindowTokens: 1048576, enabled: true, releasedAt: "2026-06-16" },
     { id: "deepseek/deepseek-chat-v3.1", maxOutput: 4096, contextWindowTokens: 163840, releasedAt: "2025-08-21" },
     { id: "google/gemini-3.1-flash-image-preview", maxOutput: 65536, contextWindowTokens: 131072, releasedAt: "2026-02-26" },
     { id: "google/gemini-3-pro-image-preview", maxOutput: 32768, contextWindowTokens: 163840, releasedAt: "2025-11-20" },
