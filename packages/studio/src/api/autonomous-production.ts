@@ -1,9 +1,12 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import {
+  autonomousProductionStatePath,
   loadBookProductionMap,
+  loadAutonomousProductionState,
   projectAutonomousEconomics,
   resolveProductionScope,
+  saveAutonomousProductionState,
   type AutonomousRunProgress,
   type AutonomousUsageRecord,
   type BookProductionMap,
@@ -15,19 +18,20 @@ import {
   type ProductionRoleSelection,
 } from "../pages/production-role-models.js";
 
-export const DEFAULT_AUTONOMOUS_BUDGET = { preferredUsd: 15, hardCapUsd: 30 } as const;
+export const AUTONOMOUS_BUDGET_NOT_CONFIGURED = { status: "BUDGET_NOT_CONFIGURED" } as const;
 
 export interface AutonomousRuntimeProjection {
+  readonly jobId?: string;
   readonly status: string;
   readonly mode: ProductionMode;
   readonly nextChapter: number;
   readonly updatedAt: string;
-  readonly lastError?: string;
+  readonly lastError?: string | null;
   readonly phase?: string;
   readonly activeRole?: string;
   readonly activeProvider?: string | null;
   readonly activeModel?: string | null;
-  readonly budget?: { readonly preferredUsd: number; readonly hardCapUsd: number };
+  readonly budget?: { readonly status: "BUDGET_NOT_CONFIGURED" };
   readonly lastChapter?: {
     readonly number: number;
     readonly grade?: string;
@@ -38,6 +42,19 @@ export interface AutonomousRuntimeProjection {
     readonly status: "STATE_REPAIRED" | "STATE_REPAIRED_REVIEW_STILL_REQUIRED" | "REPAIR_FAILED";
     readonly errorCode: string | null;
     readonly reservedCostUpperUsd?: number;
+  };
+  readonly volumeCostSettlement?: {
+    readonly volumeId: string;
+    readonly startChapter: number;
+    readonly endChapter: number;
+    readonly completedAt: string;
+    readonly budgetStatus: "BUDGET_NOT_CONFIGURED";
+    readonly historicalRecordedActualUsd: number | null;
+    readonly historicalCalculatedEstimateUsd: number | null;
+    readonly currentVolumeCalculatedCostUsd: number | null;
+    readonly minimumUsd: number | null;
+    readonly expectedUsd: number | null;
+    readonly conditionalMaximumUsd: number | null;
   };
 }
 
@@ -70,30 +87,6 @@ export class AutonomousJobRegistry {
   }
 }
 
-export class AutonomousCostGuard {
-  private reservedUsd = 0;
-  constructor(private currentUsd: number | null, private nextCallConservativeUsd: number | null, private readonly hardCapUsd: number) {}
-  check(reserve: boolean): { readonly allowed: boolean; readonly reason?: string } {
-    if (this.currentUsd === null || this.nextCallConservativeUsd === null) return { allowed: false, reason: "COST_GUARD_UNAVAILABLE" };
-    if (this.currentUsd + this.reservedUsd + this.nextCallConservativeUsd >= this.hardCapUsd) return { allowed: false, reason: "NEXT_PROVIDER_CALL_COULD_REACH_HARD_CAP" };
-    if (reserve) this.reservedUsd += this.nextCallConservativeUsd;
-    return { allowed: true };
-  }
-  settle(actualCostUsd?: number): void {
-    if (this.currentUsd === null) return;
-    if (typeof actualCostUsd === "number" && Number.isFinite(actualCostUsd) && actualCostUsd >= 0) {
-      this.currentUsd += actualCostUsd;
-      this.nextCallConservativeUsd = Math.max(this.nextCallConservativeUsd ?? 0, actualCostUsd);
-    } else if (this.reservedUsd > 0) {
-      this.currentUsd += this.reservedUsd;
-    } else {
-      this.currentUsd = null;
-    }
-    this.reservedUsd = 0;
-  }
-  resetVolume(): void { this.currentUsd = 0; this.reservedUsd = 0; }
-}
-
 export function classifyStateRepairError(message: string): "STATE_REPAIR_BASELINE_UNAVAILABLE" | "STATE_REPAIR_VALIDATION_FAILED" | "STATE_REPAIR_FAILED" {
   if (message.includes("baseline snapshot")) return "STATE_REPAIR_BASELINE_UNAVAILABLE";
   if (message.includes("still failed")) return "STATE_REPAIR_VALIDATION_FAILED";
@@ -114,16 +107,11 @@ interface SafeConfigProjection {
 }
 
 export function autonomousRuntimePath(projectRoot: string, bookId: string): string {
-  return join(projectRoot, "books", bookId, "story", "runtime", "bounded-autonomous", "production-state.json");
+  return autonomousProductionStatePath(projectRoot, bookId);
 }
 
 export async function loadAutonomousRuntime(projectRoot: string, bookId: string): Promise<AutonomousRuntimeProjection | null> {
-  try {
-    return JSON.parse(await readFile(autonomousRuntimePath(projectRoot, bookId), "utf-8")) as AutonomousRuntimeProjection;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw error;
-  }
+  return loadAutonomousProductionState<AutonomousRuntimeProjection>(projectRoot, bookId);
 }
 
 export async function saveAutonomousRuntime(
@@ -131,11 +119,8 @@ export async function saveAutonomousRuntime(
   bookId: string,
   progress: AutonomousRunProgress | AutonomousRuntimeProjection,
 ): Promise<void> {
-  const path = autonomousRuntimePath(projectRoot, bookId);
-  const temp = `${path}.${process.pid}.tmp`;
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(temp, `${JSON.stringify({ ...progress, updatedAt: new Date().toISOString() }, null, 2)}\n`, "utf-8");
-  await rename(temp, path);
+  const current = await loadAutonomousRuntime(projectRoot, bookId);
+  await saveAutonomousProductionState(projectRoot, bookId, { ...(current ?? {}), ...progress });
 }
 
 function configuredModel(value: unknown): string | null {
@@ -156,7 +141,7 @@ export function projectAutonomousProductionView(params: {
   readonly catalog?: ReadonlyArray<ProductionModelCatalogEntry>;
   readonly runtime: AutonomousRuntimeProjection | null;
   readonly active: boolean;
-  readonly budget: { readonly preferredUsd: number; readonly hardCapUsd: number };
+  readonly budget?: { readonly status: "BUDGET_NOT_CONFIGURED" };
 }) {
   const scope = resolveProductionScope(params.map, params.nextChapter, "current-volume");
   const overrides = params.config.modelOverrides;
@@ -181,13 +166,15 @@ export function projectAutonomousProductionView(params: {
   const repairNeedsReconciliation = !params.active && params.runtime?.status === "REPAIRING";
   if (repairNeedsReconciliation) blockers.push("STATE_REPAIR_RECONCILIATION_REQUIRED");
   const auditFailed = params.chapters.find((chapter) => chapter.status === "audit-failed");
-  if (auditFailed) blockers.push(`PENDING_CHAPTER_REVIEW_${auditFailed.number}`);
   if (!roles.writer) blockers.push("WRITER_MODEL_NOT_CONFIGURED");
   if (!roles.logicAuditor) blockers.push("LOGIC_AUDITOR_MODEL_NOT_CONFIGURED");
   if (!roles.commercialReader) blockers.push("COMMERCIAL_READER_MODEL_NOT_CONFIGURED");
   if (!roles.reviser) blockers.push("REVISER_MODEL_NOT_CONFIGURED");
   if (!roles.observerReflector) blockers.push("OBSERVER_REFLECTOR_MODEL_NOT_CONFIGURED");
   if (params.active) blockers.push("AUTONOMOUS_JOB_ALREADY_RUNNING");
+  if (params.runtime?.status === "REVIEW_EXHAUSTED" || params.runtime?.status === "HELD_AFTER_TWO_REVISIONS") {
+    blockers.push("REVIEW_EXHAUSTED");
+  }
   const orderedChapterNumbers = params.chapters.map((chapter) => chapter.number).sort((left, right) => left - right);
   if (orderedChapterNumbers.some((number, index) => number !== index + 1) || params.nextChapter !== orderedChapterNumbers.length + 1) {
     blockers.push("CHAPTER_CURSOR_INTEGRITY_MISMATCH");
@@ -280,8 +267,8 @@ export function projectAutonomousProductionView(params: {
     completedChapters: params.chapters.length,
     currentVolumeRemaining: Math.max(0, scope.currentVolume.endChapter - params.nextChapter + 1),
     fullBookRemaining: Math.max(0, params.map.totalChapters - params.nextChapter + 1),
-    preferredBudgetUsd: params.budget.preferredUsd,
-    hardCapUsd: params.budget.hardCapUsd,
+    preferredBudgetUsd: null,
+    hardCapUsd: null,
     records: usageRecords,
     remainingChapterConservativeUsd,
     nextCallConservativeUsd,
@@ -293,19 +280,13 @@ export function projectAutonomousProductionView(params: {
     ).length,
     currentVolumeRemaining: Math.max(0, scope.currentVolume.endChapter - params.nextChapter + 1),
     fullBookRemaining: Math.max(0, scope.currentVolume.endChapter - params.nextChapter + 1),
-    preferredBudgetUsd: params.budget.preferredUsd,
-    hardCapUsd: params.budget.hardCapUsd,
+    preferredBudgetUsd: null,
+    hardCapUsd: null,
     records: currentVolumeUsageRecords,
     remainingChapterConservativeUsd,
     nextCallConservativeUsd,
     additionalHistoricalConservativeUsd: reservedRepairUpperUsd,
   });
-  if (!currentVolumeEconomics.budget.allowNextProviderCall) {
-    blockers.push(currentVolumeEconomics.budget.guardStatus === "COST_UNAVAILABLE"
-      ? "COST_GUARD_UNAVAILABLE"
-      : "HARD_COST_CAP_REACHED");
-  }
-
   const addHistorical = (range: typeof economics.currentVolumeForecast, historical: number | null, historicalUpper: number | null) => historical === null
     ? range
     : {
@@ -363,7 +344,7 @@ export function projectAutonomousProductionView(params: {
     roles,
     rolePricing,
     revisionPolicy: { normal: 1, rescue: 1, maximum: 2 },
-    budget: params.budget,
+    budget: AUTONOMOUS_BUDGET_NOT_CONFIGURED,
     economics: {
       ...economics,
       historicalRecordedActualUsd: economics.actual.costUsd,
@@ -383,6 +364,9 @@ export function projectAutonomousProductionView(params: {
     chapterAttention: auditFailed
       ? { chapter: auditFailed.number, status: "AUDIT_FAILED_STATE_SETTLED" as const }
       : undefined,
+    legacyDrafts: params.chapters
+      .filter((chapter) => chapter.status === "drafted")
+      .map((chapter) => ({ chapter: chapter.number, status: "LEGACY_DRAFT_PRESERVED" as const })),
     runtimeBlockers: blockers,
     startEnabled: blockers.length === 0 && !scope.complete,
   };

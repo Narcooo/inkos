@@ -1,5 +1,19 @@
 import { Command } from "commander";
-import { PipelineRunner, StateManager } from "@actalk/inkos-core";
+import {
+  PipelineRunner,
+  StateManager,
+  claimAutonomousJob,
+  createAutonomousPipelineActions,
+  deriveAutonomousJobIdentity,
+  loadBookProductionMap,
+  loadAutonomousProductionState,
+  refreshAutonomousJobClaim,
+  releaseAutonomousJob,
+  resolveProductionScope,
+  runBoundedAutonomousScope,
+  saveAutonomousProductionState,
+  startAutonomousJobHeartbeat,
+} from "@actalk/inkos-core";
 import { loadConfig, buildPipelineConfig, findProjectRoot, getLegacyMigrationHint, resolveBookId, log, logError } from "../utils.js";
 import {
   formatAutoWriteAlreadyComplete,
@@ -68,50 +82,83 @@ export const autoCommand = new Command("auto")
       const config = await loadConfig();
       // `inkos auto` is unattended batch writing, so the audit→revise loop must
       // run inline: force "auto" regardless of book/project reviewMode settings.
-      const pipeline = new PipelineRunner(buildPipelineConfig(config, root, {
-        quiet: opts.quiet,
-        chapterReviewMode: "auto",
-      }));
+      const pipeline = new PipelineRunner({
+        ...buildPipelineConfig(config, root, {
+          quiet: opts.quiet,
+          chapterReviewMode: "auto",
+        }),
+        boundedAutonomousReview: true,
+      });
 
       if (!opts.json) log(formatAutoWriteStart(language, bookId, startChapter, targetChapter));
 
       const wordCount = opts.words ? parseInt(opts.words, 10) : undefined;
-
-      const results = [];
-      for (let chapter = startChapter; chapter <= targetChapter; chapter++) {
-        if (!opts.json) log(formatWriteNextProgress(language, chapter, targetChapter, bookId));
-
-        let result;
-        try {
-          result = await pipeline.writeNextChapter(bookId, wordCount);
-        } catch (e) {
-          throw new Error(
-            `Chapter ${chapter} failed, stopping auto-write (${results.length} chapter(s) completed this run): ${e instanceof Error ? e.message : String(e)}`,
-            { cause: e },
-          );
-        }
-        results.push(result);
-
-        if (!opts.json) {
-          for (const line of formatWriteNextResultLines(language, {
-            chapterNumber: result.chapterNumber,
-            title: result.title,
-            wordCount: result.wordCount,
-            auditPassed: result.auditResult.passed,
-            revised: result.revised,
-            status: result.status,
-            issues: result.auditResult.issues,
-          })) {
-            log(line);
-          }
-          log("");
-        }
-
-        if (result.status === "state-degraded") {
-          throw new Error(
-            `Chapter ${result.chapterNumber} finished in state-degraded status, stopping auto-write. Run "inkos write repair-state ${bookId} ${result.chapterNumber}" first, then re-run inkos auto.`,
-          );
-        }
+      const productionMap = await loadBookProductionMap(root, bookId);
+      if (!productionMap) throw new Error("BLOCKED_BOOK_PRODUCTION_MAP_MISSING");
+      const dynamicScope = resolveProductionScope(productionMap, startChapter, "current-volume");
+      if (targetChapter !== dynamicScope.targetChapter) {
+        throw new Error(`AUTONOMOUS_TARGET_MUST_MATCH_CURRENT_VOLUME: expected ${dynamicScope.targetChapter}`);
+      }
+      const jobId = deriveAutonomousJobIdentity({ map: productionMap, mode: "current-volume", nextChapter: startChapter });
+      const persisted = await loadAutonomousProductionState<{ readonly jobId?: string; readonly status?: string }>(root, bookId);
+      if (persisted?.jobId === jobId && (persisted.status === "REVIEW_EXHAUSTED" || persisted.status === "HELD_AFTER_TWO_REVISIONS")) {
+        throw new Error("REVISION_LIMIT_REACHED");
+      }
+      const actions = await createAutonomousPipelineActions({ bookId, state, pipeline });
+      const results: Awaited<ReturnType<typeof pipeline.writeNextChapter>>[] = [];
+      const claim = await claimAutonomousJob({ projectRoot: root, bookId, jobId });
+      let claimFailure: unknown;
+      const stopHeartbeat = startAutonomousJobHeartbeat(root, bookId, claim, (error) => { claimFailure = error; });
+      let progress;
+      try {
+        progress = await runBoundedAutonomousScope({
+          map: productionMap,
+          mode: "current-volume",
+          getNextChapter: () => state.getNextChapterNumber(bookId),
+          shouldStop: () => false,
+          ...(actions.resumePendingChapter ? { resumePendingChapter: actions.resumePendingChapter } : {}),
+          runChapter: async () => {
+            if (claimFailure) throw claimFailure;
+            const chapter = startChapter + results.length;
+            if (!opts.json) log(formatWriteNextProgress(language, chapter, dynamicScope.targetChapter, bookId));
+            let result;
+            try {
+              result = await actions.runChapter(wordCount);
+            } catch (error) {
+              throw new Error(
+                `Chapter ${chapter} failed, stopping auto-write (${results.length} chapter(s) completed this run): ${error instanceof Error ? error.message : String(error)}`,
+                { cause: error },
+              );
+            }
+            if (claimFailure) throw claimFailure;
+            results.push(result as Awaited<ReturnType<typeof pipeline.writeNextChapter>>);
+            if (!opts.json) {
+              for (const line of formatWriteNextResultLines(language, {
+                chapterNumber: result.chapterNumber,
+                title: result.title,
+                wordCount: result.wordCount,
+                auditPassed: result.auditResult.passed,
+                revised: result.revised,
+                status: result.status,
+                issues: result.auditResult.issues,
+              })) log(line);
+              log("");
+            }
+            return result;
+          },
+          persistProgress: async (value) => {
+            if (claimFailure) throw claimFailure;
+            await refreshAutonomousJobClaim(root, bookId, claim);
+            const current = await loadAutonomousProductionState<Record<string, unknown>>(root, bookId);
+            await saveAutonomousProductionState(root, bookId, { ...(current ?? {}), ...value });
+          },
+        });
+      } finally {
+        stopHeartbeat();
+        await releaseAutonomousJob(root, bookId, claim);
+      }
+      if (progress.status === "REVIEW_EXHAUSTED" || progress.status === "HELD_AFTER_TWO_REVISIONS") {
+        throw new Error("REVISION_LIMIT_REACHED");
       }
 
       if (opts.json) {

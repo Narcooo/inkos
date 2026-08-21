@@ -479,7 +479,7 @@ export {
 export * from "./agent/index.js";
 
 // LLM
-export { createLLMClient, chatCompletion, createStreamMonitor, PartialResponseError, type LLMClient, type LLMResponse, type LLMMessage, type StreamProgress, type OnStreamProgress } from "./llm/provider.js";
+export { createLLMClient, chatCompletion, createStreamMonitor, runWithLLMOutcomeObserver, PartialResponseError, type LLMClient, type LLMOutcomeRecord, type LLMResponse, type LLMMessage, type StreamProgress, type OnStreamProgress } from "./llm/provider.js";
 export {
   SERVICE_PRESETS,
   SERVICE_TO_PI_PROVIDER,
@@ -579,9 +579,9 @@ export { arbitrateRuntimeStateDeltaHooks, type HookArbiterDecision } from "./uti
 export { analyzeHookHealth } from "./utils/hook-health.js";
 
 // Pipeline
-export { PipelineRunner, type PipelineConfig, type ChapterPipelineResult, type WriteChaptersOptions, type DraftResult, type PlanChapterResult, type ComposeChapterResult, type ReviseResult, type TruthFiles, type BookStatusInfo, type ImportChaptersInput, type ImportChaptersResult, type TokenUsageSummary } from "./pipeline/runner.js";
+export { PipelineRunner, type PipelineConfig, type ChapterPipelineResult, type WriteChaptersOptions, type DraftResult, type PlanChapterResult, type ComposeChapterResult, type ReviseResult, type ResumeAuditFailedChapterResult, type ReviseDraftOptions, type TruthFiles, type BookStatusInfo, type ImportChaptersInput, type ImportChaptersResult, type TokenUsageSummary } from "./pipeline/runner.js";
 export { parseBookProductionMap, loadBookProductionMap, resolveProductionScope, type BookProductionMap, type ProductionVolume, type ProductionMode, type ProductionScope } from "./production/book-production-map.js";
-export { runBoundedAutonomousScope, type AutonomousRunProgress, type AutonomousRunStatus } from "./production/bounded-autonomous-controller.js";
+export { autonomousProductionStatePath, claimAutonomousJob, createAutonomousPipelineActions, deriveAutonomousJobIdentity, loadAutonomousProductionState, refreshAutonomousJobClaim, releaseAutonomousJob, runBoundedAutonomousScope, saveAutonomousProductionState, startAutonomousJobHeartbeat, type AutonomousJobClaim, type AutonomousRunProgress, type AutonomousRunStatus } from "./production/bounded-autonomous-controller.js";
 export { projectAutonomousEconomics, type AutonomousUsageRecord, type ForecastRange } from "./production/autonomous-economics.js";
 export { runBoundedReviewCycle, scoredLogicReviewFromAudit, type BoundedReviewResult, type BoundedCandidate, type ScoredReview, type ReviewFinding, type RoleTokenUsage } from "./pipeline/bounded-review.js";
 export { CommercialReaderAgent, parseCommercialReaderResponse } from "./agents/commercial-reader.js";

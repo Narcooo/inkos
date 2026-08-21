@@ -3,6 +3,7 @@ import type { AssistantMessage, Model, Api } from "@mariozechner/pi-ai";
 import {
   __resetFixedTemperatureWarnings,
   chatCompletion,
+  runWithLLMOutcomeObserver,
   type LLMClient,
 } from "../llm/provider.js";
 import { runWithAgentTrajectory } from "../llm/agent-trajectory.js";
@@ -171,6 +172,23 @@ describe("chatCompletion via pi-ai", () => {
     expect(result.usage.completionTokens).toBe(7);
     expect(result.usage.totalTokens).toBe(18);
     expect(mockStreamSimple).toHaveBeenCalledOnce();
+  });
+
+  it("awaits the durable outcome observer before returning the model result", async () => {
+    mockStreamSimple.mockReturnValue(makeTextStream("persist me"));
+    const persisted: Array<Record<string, unknown>> = [];
+    const result = await runWithLLMOutcomeObserver(async (record) => {
+      await Promise.resolve();
+      persisted.push(record as unknown as Record<string, unknown>);
+    }, () => chatCompletion(makeClient(), "test-model", [{ role: "user", content: "ping" }]));
+
+    expect(result.content).toBe("persist me");
+    expect(persisted).toHaveLength(1);
+    expect(persisted[0]).toMatchObject({
+      provider: "openai",
+      model: "test-model",
+      usage: { promptTokens: 11, completionTokens: 7, totalTokens: 18 },
+    });
   });
 
   it("throws when stream produces no text content", async () => {

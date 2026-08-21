@@ -132,7 +132,14 @@ import {
   type RequestedIntent,
   type SessionKind,
   type AgentSessionAttachment,
+  createAutonomousPipelineActions,
+  claimAutonomousJob,
+  deriveAutonomousJobIdentity,
+  refreshAutonomousJobClaim,
+  releaseAutonomousJob,
   runBoundedAutonomousScope,
+  startAutonomousJobHeartbeat,
+  type AutonomousJobClaim,
 } from "@actalk/inkos-core";
 import { isConfirmedProductionAction } from "../shared/confirmed-production.js";
 import { summarizeToolResult } from "../shared/tool-result.js";
@@ -149,9 +156,8 @@ import {
 } from "./task-store.js";
 import {
   AutonomousJobRegistry,
-  AutonomousCostGuard,
+  AUTONOMOUS_BUDGET_NOT_CONFIGURED,
   classifyStateRepairError,
-  DEFAULT_AUTONOMOUS_BUDGET,
   loadAutonomousRuntime,
   loadSafeAutonomousConfig,
   projectAutonomousProductionView,
@@ -2740,7 +2746,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
 
   async function loadAutonomousView(
     bookId: string,
-    budgetOverride?: { readonly preferredUsd: number; readonly hardCapUsd: number },
+    nextChapterOverride?: number,
   ) {
     const [map, book, chapters, nextChapter, runtime, safeConfig, productionModels] = await Promise.all([
       requireBookProductionMap(root, bookId),
@@ -2754,13 +2760,13 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     return projectAutonomousProductionView({
       map,
       targetChapters: book.targetChapters,
-      nextChapter,
+      nextChapter: nextChapterOverride ?? nextChapter,
       chapters,
       config: safeConfig,
       catalog: productionModels.catalog,
       runtime,
       active: autonomousJobs.isActive(bookId),
-      budget: budgetOverride ?? runtime?.budget ?? DEFAULT_AUTONOMOUS_BUDGET,
+      budget: AUTONOMOUS_BUDGET_NOT_CONFIGURED,
     });
   }
 
@@ -2872,23 +2878,10 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
 
   app.post("/api/v1/books/:id/autonomous-production/start", async (c) => {
     const bookId = c.req.param("id");
-    const body: {
-      mode?: string;
-      preferredBudgetUsd?: number;
-      hardCapUsd?: number;
-    } = await c.req.json().catch(() => ({}));
+    const body: { mode?: string } = await c.req.json().catch(() => ({}));
     const mode = body.mode === "full-book" ? "full-book" : body.mode === "current-volume" ? "current-volume" : null;
     if (!mode) throw new ApiError(400, "AUTONOMOUS_MODE_INVALID", "mode must be current-volume or full-book");
-    const budget = {
-      preferredUsd: body.preferredBudgetUsd ?? DEFAULT_AUTONOMOUS_BUDGET.preferredUsd,
-      hardCapUsd: body.hardCapUsd ?? DEFAULT_AUTONOMOUS_BUDGET.hardCapUsd,
-    };
-    if (!Number.isFinite(budget.preferredUsd) || budget.preferredUsd <= 0
-      || !Number.isFinite(budget.hardCapUsd) || budget.hardCapUsd <= budget.preferredUsd) {
-      throw new ApiError(400, "AUTONOMOUS_BUDGET_INVALID", "Hard cap must be greater than the positive preferred budget.");
-    }
-
-    const admission = await loadAutonomousView(bookId, budget);
+    const admission = await loadAutonomousView(bookId);
     if (!admission.startEnabled) {
       throw new ApiError(409, "AUTONOMOUS_ADMISSION_BLOCKED", admission.runtimeBlockers.join(", "));
     }
@@ -2897,47 +2890,58 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       throw new ApiError(409, "AUTONOMOUS_JOB_ALREADY_RUNNING", "A bounded production job is already active for this book.");
     }
 
-    const pipelineConfig = await buildPipelineConfig({ bookIdForSettings: bookId }).catch((error) => {
+    let pipeline: PipelineRunner;
+    let productionMap: Awaited<ReturnType<typeof requireBookProductionMap>>;
+    let actions: Awaited<ReturnType<typeof createAutonomousPipelineActions>>;
+    const startedNextChapter = admission.nextChapter;
+    let jobId: string;
+    let durableClaim: AutonomousJobClaim | undefined;
+    let stopDurableHeartbeat: (() => void) | undefined;
+    let durableClaimFailure: unknown;
+    try {
+      const pipelineConfig = await buildPipelineConfig({ bookIdForSettings: bookId });
+      pipeline = new PipelineRunner({
+        ...pipelineConfig,
+        chapterReviewMode: "auto",
+        boundedAutonomousReview: true,
+        onAutonomousStage: async (event) => {
+          if (durableClaimFailure) throw durableClaimFailure;
+          if (durableClaim) await refreshAutonomousJobClaim(root, bookId, durableClaim);
+          const nextChapter = await state.getNextChapterNumber(bookId);
+          await saveAutonomousRuntime(root, bookId, {
+            jobId,
+            status: "RUNNING",
+            mode,
+            nextChapter,
+            updatedAt: new Date().toISOString(),
+            budget: AUTONOMOUS_BUDGET_NOT_CONFIGURED,
+            phase: event.stage,
+            activeRole: event.role,
+            activeProvider: event.provider,
+            activeModel: event.model,
+          });
+        },
+      });
+      productionMap = await requireBookProductionMap(root, bookId);
+      jobId = deriveAutonomousJobIdentity({ map: productionMap, mode, nextChapter: startedNextChapter });
+      durableClaim = await claimAutonomousJob({ projectRoot: root, bookId, jobId });
+      stopDurableHeartbeat = startAutonomousJobHeartbeat(root, bookId, durableClaim, (error) => { durableClaimFailure = error; });
+      actions = await createAutonomousPipelineActions({ bookId, state, pipeline });
+      await saveAutonomousRuntime(root, bookId, {
+        jobId,
+        status: "RUNNING",
+        mode,
+        nextChapter: startedNextChapter,
+        updatedAt: new Date().toISOString(),
+        budget: AUTONOMOUS_BUDGET_NOT_CONFIGURED,
+        lastError: null,
+      });
+    } catch (error) {
+      stopDurableHeartbeat?.();
+      if (durableClaim) await releaseAutonomousJob(root, bookId, durableClaim).catch(() => undefined);
       autonomousJobs.release(bookId);
       throw error;
-    });
-    const costGuard = new AutonomousCostGuard(
-      admission.economics.currentVolumeActual.costUsd ?? admission.economics.currentVolumeActual.estimatedCostUsd,
-      admission.economics.budget.nextCallConservativeUsd,
-      budget.hardCapUsd,
-    );
-    const pipeline = new PipelineRunner({
-      ...pipelineConfig,
-      chapterReviewMode: "auto",
-      boundedAutonomousReview: true,
-      onAutonomousStage: async (event) => {
-        if (event.provider !== null) {
-          const providerAdmission = costGuard.check(true);
-          if (!providerAdmission.allowed) throw new Error(providerAdmission.reason);
-        }
-        const nextChapter = await state.getNextChapterNumber(bookId);
-        await saveAutonomousRuntime(root, bookId, {
-          status: "RUNNING",
-          mode,
-          nextChapter,
-          updatedAt: new Date().toISOString(),
-          budget,
-          phase: event.stage,
-          activeRole: event.role,
-          activeProvider: event.provider,
-          activeModel: event.model,
-        });
-      },
-    });
-    const productionMap = await requireBookProductionMap(root, bookId);
-    const startedNextChapter = admission.nextChapter;
-    await saveAutonomousRuntime(root, bookId, {
-      status: "RUNNING",
-      mode,
-      nextChapter: startedNextChapter,
-      updatedAt: new Date().toISOString(),
-      budget,
-    });
+    }
     broadcast("autonomous:start", { bookId, mode, nextChapter: startedNextChapter });
 
     void runBoundedAutonomousScope({
@@ -2945,48 +2949,93 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       mode,
       getNextChapter: () => state.getNextChapterNumber(bookId),
       shouldStop: () => autonomousJobs.shouldStop(bookId),
-      beforeNextProviderCall: () => {
-        return costGuard.check(false);
-      },
+      ...(actions.resumePendingChapter ? { resumePendingChapter: async () => {
+        if (durableClaimFailure) throw durableClaimFailure;
+        const result = await actions.resumePendingChapter!();
+        if (durableClaimFailure) throw durableClaimFailure;
+        return result;
+      } } : {}),
       runChapter: async () => {
-        const result = await pipeline.writeNextChapter(bookId);
-        costGuard.settle(result.tokenUsage?.actualCostUsd);
+        if (durableClaimFailure) throw durableClaimFailure;
+        const result = await actions.runChapter();
+        if (durableClaimFailure) throw durableClaimFailure;
         broadcast("autonomous:chapter-complete", {
           bookId,
           chapterNumber: result.chapterNumber,
           status: result.status,
-          grade: result.autonomousReview?.grade,
-          revisionCount: result.autonomousReview?.revisionCount,
+          grade: "autonomousReview" in result ? (result.autonomousReview as { grade?: string })?.grade : undefined,
+          revisionCount: "autonomousReview" in result ? (result.autonomousReview as { revisionCount?: number })?.revisionCount : undefined,
         });
-        if (mode === "full-book" && productionMap.volumes.some((volume) => volume.endChapter === result.chapterNumber)) {
-          costGuard.resetVolume();
-        }
         return result;
       },
       persistProgress: async (progress) => {
+        if (durableClaimFailure) throw durableClaimFailure;
+        if (durableClaim) await refreshAutonomousJobClaim(root, bookId, durableClaim);
         await saveAutonomousRuntime(root, bookId, {
+          jobId: progress.jobId,
           status: progress.status,
           mode: progress.mode,
           nextChapter: progress.nextChapter,
           updatedAt: new Date().toISOString(),
-          budget,
+          budget: AUTONOMOUS_BUDGET_NOT_CONFIGURED,
+          lastError: null,
         });
       },
     }).then(
-      (result) => broadcast("autonomous:complete", { bookId, status: result.status, nextChapter: result.nextChapter }),
+      async (result) => {
+        if (result.status === "VOLUME_COMPLETE" || result.status === "BOOK_COMPLETE") {
+          try {
+            const settledVolume = productionMap.volumes.find((volume) => volume.volumeId === result.volumeId)
+              ?? productionMap.volumes.at(-1)!;
+            const view = await loadAutonomousView(bookId, settledVolume.endChapter);
+            await saveAutonomousRuntime(root, bookId, {
+              jobId: result.jobId,
+              status: result.status,
+              mode: result.mode,
+              nextChapter: result.nextChapter,
+              updatedAt: new Date().toISOString(),
+              budget: AUTONOMOUS_BUDGET_NOT_CONFIGURED,
+              volumeCostSettlement: {
+                volumeId: result.volumeId,
+                startChapter: settledVolume.startChapter,
+                endChapter: settledVolume.endChapter,
+                completedAt: new Date().toISOString(),
+                budgetStatus: "BUDGET_NOT_CONFIGURED",
+                historicalRecordedActualUsd: view.economics.currentVolumeActual.costUsd ?? null,
+                historicalCalculatedEstimateUsd: view.economics.currentVolumeActual.estimatedCostUsd ?? null,
+                currentVolumeCalculatedCostUsd: view.economics.currentVolumeActual.estimatedCostUsd ?? null,
+                minimumUsd: view.economics.currentVolumeActual.estimatedCostUsd ?? null,
+                expectedUsd: view.economics.currentVolumeActual.estimatedCostUsd ?? null,
+                conditionalMaximumUsd: view.economics.currentVolumeActual.historicalConservativeUpperUsd ?? null,
+              },
+            });
+          } catch (error) {
+            broadcast("autonomous:cost-settlement-unavailable", {
+              bookId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+        broadcast("autonomous:complete", { bookId, status: result.status, nextChapter: result.nextChapter });
+      },
       async (error) => {
         const nextChapter = await state.getNextChapterNumber(bookId).catch(() => startedNextChapter);
         await saveAutonomousRuntime(root, bookId, {
+          jobId,
           status: "PAUSED",
           mode,
           nextChapter,
           updatedAt: new Date().toISOString(),
           lastError: error instanceof Error ? error.message : String(error),
-          budget,
+          budget: AUTONOMOUS_BUDGET_NOT_CONFIGURED,
         }).catch(() => undefined);
         broadcast("autonomous:error", { bookId, error: error instanceof Error ? error.message : String(error) });
       },
-    ).finally(() => autonomousJobs.release(bookId));
+    ).finally(async () => {
+      stopDurableHeartbeat?.();
+      if (durableClaim) await releaseAutonomousJob(root, bookId, durableClaim).catch(() => undefined);
+      autonomousJobs.release(bookId);
+    });
 
     return c.json({ status: "RUNNING", mode, bookId }, 202);
   });
@@ -3576,18 +3625,11 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     if (current?.runtime?.status === "REPAIRING") throw new ApiError(409, "STATE_REPAIR_ALREADY_PERSISTED", "A persisted state repair is already in progress and must be reconciled before another transport.");
     const repairHighUsd = current?.economics.repairForecast.highUsd ?? null;
     const priorRepairUpperUsd = current?.runtime?.repairOutcome?.reservedCostUpperUsd ?? 0;
-    const historicalUpperUsd = current?.economics.currentVolumeActual.historicalConservativeUpperUsd ?? null;
-    if (repairHighUsd === null || historicalUpperUsd === null) {
-      throw new ApiError(409, "COST_GUARD_UNAVAILABLE", "Verified catalog pricing is required before state repair can call a model.");
-    }
-    if (historicalUpperUsd + repairHighUsd >= (current?.budget.hardCapUsd ?? DEFAULT_AUTONOMOUS_BUDGET.hardCapUsd)) {
-      throw new ApiError(409, "NEXT_PROVIDER_CALL_COULD_REACH_HARD_CAP", "The bounded state-repair estimate could reach the current volume hard cap.");
-    }
     if (!autonomousJobs.reserve(id)) throw new ApiError(409, "AUTONOMOUS_JOB_ALREADY_RUNNING", "Production or state repair is already active for this book.");
     let pipeline: PipelineRunner;
     try {
       pipeline = new PipelineRunner(await buildPipelineConfig({ bookIdForSettings: id }));
-      await saveAutonomousRuntime(root, id, { status: "REPAIRING", mode: current?.runtime?.mode ?? "current-volume", nextChapter: current?.nextChapter ?? chapterNum + 1, updatedAt: new Date().toISOString(), budget: current?.budget ?? DEFAULT_AUTONOMOUS_BUDGET, phase: "SETTLING_STATE" });
+      await saveAutonomousRuntime(root, id, { status: "REPAIRING", mode: current?.runtime?.mode ?? "current-volume", nextChapter: current?.nextChapter ?? chapterNum + 1, updatedAt: new Date().toISOString(), budget: AUTONOMOUS_BUDGET_NOT_CONFIGURED, phase: "SETTLING_STATE" });
     } catch (error) {
       autonomousJobs.release(id);
       throw error;
@@ -3602,19 +3644,19 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
           mode: current?.runtime?.mode ?? "current-volume",
           nextChapter,
           updatedAt: new Date().toISOString(),
-          budget: current?.budget ?? DEFAULT_AUTONOMOUS_BUDGET,
+          budget: AUTONOMOUS_BUDGET_NOT_CONFIGURED,
           repairOutcome: {
             chapter: chapterNum,
             status: result.status === "audit-failed" ? "STATE_REPAIRED_REVIEW_STILL_REQUIRED" : "STATE_REPAIRED",
             errorCode: null,
-            reservedCostUpperUsd: priorRepairUpperUsd + repairHighUsd,
+            ...(repairHighUsd === null ? {} : { reservedCostUpperUsd: priorRepairUpperUsd + repairHighUsd }),
           },
         });
         broadcast("repair-state:complete", { bookId: id, chapter: chapterNum });
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         const errorCode = classifyStateRepairError(errorMessage);
-        await saveAutonomousRuntime(root, id, { status: "BLOCKED", mode: current?.runtime?.mode ?? "current-volume", nextChapter: current?.nextChapter ?? chapterNum + 1, updatedAt: new Date().toISOString(), budget: current?.budget ?? DEFAULT_AUTONOMOUS_BUDGET, lastError: errorMessage, repairOutcome: { chapter: chapterNum, status: "REPAIR_FAILED", errorCode, reservedCostUpperUsd: priorRepairUpperUsd + repairHighUsd } }).catch(() => undefined);
+        await saveAutonomousRuntime(root, id, { status: "BLOCKED", mode: current?.runtime?.mode ?? "current-volume", nextChapter: current?.nextChapter ?? chapterNum + 1, updatedAt: new Date().toISOString(), budget: AUTONOMOUS_BUDGET_NOT_CONFIGURED, lastError: errorMessage, repairOutcome: { chapter: chapterNum, status: "REPAIR_FAILED", errorCode, ...(repairHighUsd === null ? {} : { reservedCostUpperUsd: priorRepairUpperUsd + repairHighUsd }) } }).catch(() => undefined);
         broadcast("repair-state:error", { bookId: id, chapter: chapterNum, error: errorMessage });
       } finally {
         autonomousJobs.release(id);

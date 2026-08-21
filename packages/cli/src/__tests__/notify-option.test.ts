@@ -25,6 +25,35 @@ vi.mock("@actalk/inkos-core", () => ({
       return getNextChapterNumberMock();
     }
   },
+  loadBookProductionMap: vi.fn(async () => ({
+    schemaVersion: "1.0", bookId: "demo-book", authorityBookId: "authority", title: "Demo",
+    totalChapters: 3,
+    volumes: [{ volumeId: "volume-001", volumeNumber: 1, title: "One", startChapter: 1, endChapter: 3, chapterCount: 3 }],
+  })),
+  resolveProductionScope: vi.fn((_map, nextChapter: number) => ({
+    complete: nextChapter > 3,
+    startChapter: nextChapter,
+    targetChapter: 3,
+    currentVolume: { volumeId: "volume-001", volumeNumber: 1, title: "One", startChapter: 1, endChapter: 3, chapterCount: 3 },
+  })),
+  createAutonomousPipelineActions: vi.fn(async ({ pipeline }) => ({ runChapter: pipeline.writeNextChapter })),
+  claimAutonomousJob: vi.fn(async () => ({ jobId: "autonomous-test", claimId: "claim", ownerPid: 1 })),
+  releaseAutonomousJob: vi.fn(async () => undefined),
+  deriveAutonomousJobIdentity: vi.fn(() => "autonomous-test"),
+  loadAutonomousProductionState: vi.fn(async () => null),
+  refreshAutonomousJobClaim: vi.fn(async () => undefined),
+  startAutonomousJobHeartbeat: vi.fn(() => () => undefined),
+  runBoundedAutonomousScope: vi.fn(async (params) => {
+    let nextChapter = await params.getNextChapter();
+    let completedThisRun = 0;
+    while (nextChapter <= 3) {
+      await params.runChapter();
+      nextChapter += 1;
+      completedThisRun += 1;
+    }
+    return { status: "VOLUME_COMPLETE", nextChapter, completedThisRun };
+  }),
+  saveAutonomousProductionState: vi.fn(async () => undefined),
   dispatchNotification: dispatchNotificationMock,
   resolveChapterReviewMode: vi.fn(() => "auto"),
   resolveRevisionGate: vi.fn(() => undefined),

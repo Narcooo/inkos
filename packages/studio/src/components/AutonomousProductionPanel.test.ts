@@ -18,16 +18,16 @@ const blockedView: AutonomousView = {
   runtime: null,
   roles: { writer: "gpt", logicAuditor: null, commercialReader: null, reviser: "gpt", observerReflector: null },
   revisionPolicy: { normal: 1, rescue: 1, maximum: 2 },
-  budget: { preferredUsd: 15, hardCapUsd: 30 },
+  budget: { status: "BUDGET_NOT_CONFIGURED" },
   economics: {
     actual: { providerCalls: 4, totalTokens: 100, costUsd: null, estimatedCostUsd: null, costStatus: "COST_UNAVAILABLE" },
     currentVolumeForecast: { lowUsd: null, baseUsd: null, highUsd: null, sampleSize: 4, confidence: "LOW" },
     fullBookForecast: { lowUsd: null, baseUsd: null, highUsd: null, sampleSize: 4, confidence: "LOW" },
     currentVolumeActual: { providerCalls: 4, totalTokens: 100, costUsd: null, estimatedCostUsd: null, costStatus: "COST_UNAVAILABLE" },
     byRole: { writer: { providerCalls: 1, promptTokens: 10, completionTokens: 20, totalTokens: 30, actualCostUsd: null } },
-    budget: { guardStatus: "COST_UNAVAILABLE", nextCallConservativeUsd: null, allowNextProviderCall: false },
+    budget: { guardStatus: "COST_UNAVAILABLE", nextCallConservativeUsd: null, allowNextProviderCall: true },
   },
-  runtimeBlockers: ["PENDING_STATE_REPAIR_CHAPTER_4", "LOGIC_AUDITOR_MODEL_NOT_CONFIGURED", "COST_GUARD_UNAVAILABLE"],
+  runtimeBlockers: ["PENDING_STATE_REPAIR_CHAPTER_4", "LOGIC_AUDITOR_MODEL_NOT_CONFIGURED"],
   startEnabled: false,
 };
 
@@ -80,25 +80,47 @@ describe("compact autonomous production card", () => {
       view, pending: false, error: null, onStart: () => undefined, onStop: () => undefined,
       onRepair: () => undefined, onConfigureModels: () => undefined,
     }));
-    expect(html).toContain("Remaining Volume Forecast");
-    expect(html).toContain("Current Volume Estimated Total");
+    expect(html).toContain("Current Volume Calculated Cost");
+    expect(html).toContain("Current Volume Forecast");
+    expect(html.indexOf("Full Book Forecast")).toBeLessThan(html.indexOf("<details"));
     expect(html).toContain("Bounded repair forecast: $0.05–$0.16");
     expect(html).toContain("Historical Recorded Actual: Unavailable");
     expect(html).toContain("Historical Calculated Estimate: $0.42");
     expect(html).not.toContain("<table");
   });
 
+  it("keeps state repair available when its dollar forecast is unavailable", () => {
+    const view: AutonomousView = {
+      ...blockedView,
+      runtimeBlockers: ["PENDING_STATE_REPAIR_CHAPTER_4"],
+      economics: {
+        ...blockedView.economics,
+        repairForecast: { lowUsd: null, baseUsd: null, highUsd: null, sampleSize: 0, confidence: "LOW" },
+      },
+    };
+    const html = renderToStaticMarkup(createElement(AutonomousProductionCard, {
+      view, pending: false, error: null, onStart: () => undefined, onStop: () => undefined,
+      onRepair: () => undefined, onConfigureModels: () => undefined,
+    }));
+    expect(html).toContain("Repair Chapter 004 State");
+    expect(html).not.toMatch(/<button disabled/);
+  });
+
   it("does not offer state repair again after settlement restored an audit-failed chapter", () => {
     const view: AutonomousView = {
       ...blockedView,
-      runtimeBlockers: ["PENDING_CHAPTER_REVIEW_4"],
+      runtimeStatus: "READY",
+      runtimeBlockers: [],
+      startEnabled: true,
       chapterAttention: { chapter: 4, status: "AUDIT_FAILED_STATE_SETTLED" },
     };
     const html = renderToStaticMarkup(createElement(AutonomousProductionCard, {
       view, pending: false, error: null, onStart: () => undefined, onStop: () => undefined,
       onRepair: () => undefined, onConfigureModels: () => undefined,
     }));
-    expect(html).toContain("Chapter 004 state is settled; independent review still failed.");
+    expect(html).toContain("Chapter 004 existing draft will be reused");
+    expect(html).toContain("Resume Autonomous Production");
+    expect(html).toContain("Not Configured");
     expect(html).not.toContain("Repair Chapter 004 State");
   });
 });

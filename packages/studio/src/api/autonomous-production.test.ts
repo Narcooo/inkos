@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AutonomousCostGuard, AutonomousJobRegistry, classifyStateRepairError, projectAutonomousProductionView } from "./autonomous-production.js";
+import { AUTONOMOUS_BUDGET_NOT_CONFIGURED, AutonomousJobRegistry, classifyStateRepairError, projectAutonomousProductionView } from "./autonomous-production.js";
 
 const map = {
   schemaVersion: "1.0" as const,
@@ -35,30 +35,31 @@ describe("autonomous production Studio projection", () => {
       },
       runtime: null,
       active: false,
-      budget: { preferredUsd: 15, hardCapUsd: 30 },
+      budget: AUTONOMOUS_BUDGET_NOT_CONFIGURED,
     });
     expect(view.currentVolume).toMatchObject({ volumeId: "volume-001", startChapter: 1, endChapter: 38 });
     expect(view.completedChapters).toBe(4);
-    expect(view.budget).toMatchObject({ preferredUsd: 15, hardCapUsd: 30 });
+    expect(view.budget).toEqual({ status: "BUDGET_NOT_CONFIGURED" });
     expect(view.economics.actual.costStatus).toBe("COST_UNAVAILABLE");
-    expect(view.runtimeBlockers).toContain("COST_GUARD_UNAVAILABLE");
-    expect(view.startEnabled).toBe(false);
+    expect(view.runtimeBlockers).not.toContain("COST_GUARD_UNAVAILABLE");
+    expect(view.startEnabled).toBe(true);
   });
 
-  it("keeps the cost guard fail-closed when no actual or defensible estimate exists", () => {
+  it("keeps unavailable forecast truthful without turning it into an admission blocker", () => {
     const view = projectAutonomousProductionView({
       map,
       targetChapters: 156,
       nextChapter: 5,
       chapters: [1, 2, 3, 4].map((number) => ({ number, status: "ready-for-review", tokenUsage: { promptTokens: 10, completionTokens: 20, totalTokens: 30 } })),
-      config: { defaultModel: "gpt", modelOverrides: { auditor: "deepseek", "commercial-reader": "gemini", "observer-reflector": "flash" } },
+      config: { defaultModel: "gpt", modelOverrides: { auditor: "deepseek", "commercial-reader": "gemini", reviser: "gpt", "observer-reflector": "flash" } },
       runtime: null,
       active: false,
-      budget: { preferredUsd: 15, hardCapUsd: 30 },
+      budget: AUTONOMOUS_BUDGET_NOT_CONFIGURED,
     });
-    expect(view.runtimeBlockers).toContain("COST_GUARD_UNAVAILABLE");
+    expect(view.runtimeBlockers).not.toContain("COST_GUARD_UNAVAILABLE");
     expect(view.economics.budget.guardStatus).toBe("COST_UNAVAILABLE");
-    expect(view.startEnabled).toBe(false);
+    expect(view.economics.budget.status).toBe("BUDGET_NOT_CONFIGURED");
+    expect(view.startEnabled).toBe(true);
   });
 
   it("binds catalog pricing to legacy tokens and projects all required conservative estimates", () => {
@@ -71,7 +72,7 @@ describe("autonomous production Studio projection", () => {
       catalog,
       runtime: null,
       active: false,
-      budget: { preferredUsd: 15, hardCapUsd: 30 },
+      budget: AUTONOMOUS_BUDGET_NOT_CONFIGURED,
     });
 
     expect(Object.values(view.rolePricing).every((entry) => entry.status === "VERIFIED_IN_CURRENT_CATALOG")).toBe(true);
@@ -95,13 +96,13 @@ describe("autonomous production Studio projection", () => {
       catalog,
       runtime: { status: "READY", mode: "current-volume", nextChapter: 5, updatedAt: "2026-08-21T08:35:53.107Z", repairOutcome: { chapter: 4, status: "STATE_REPAIRED_REVIEW_STILL_REQUIRED", errorCode: null } },
       active: false,
-      budget: { preferredUsd: 15, hardCapUsd: 30 },
+      budget: AUTONOMOUS_BUDGET_NOT_CONFIGURED,
     });
     expect(view.repairOutcome).toEqual({ chapter: 4, status: "STATE_REPAIRED_REVIEW_STILL_REQUIRED", errorCode: null });
     expect(view.runtimeBlockers).not.toContain("PENDING_STATE_REPAIR_CHAPTER_4");
-    expect(view.runtimeBlockers).toContain("PENDING_CHAPTER_REVIEW_4");
+    expect(view.runtimeBlockers).not.toContain("PENDING_CHAPTER_REVIEW_4");
     expect(view.chapterAttention).toEqual({ chapter: 4, status: "AUDIT_FAILED_STATE_SETTLED" });
-    expect(view.startEnabled).toBe(false);
+    expect(view.startEnabled).toBe(true);
   });
 
   it("fails closed for repair when catalog context capacity is unavailable", () => {
@@ -114,7 +115,7 @@ describe("autonomous production Studio projection", () => {
       catalog: catalog.map((entry) => ({ ...entry, contextWindow: 0 })),
       runtime: null,
       active: false,
-      budget: { preferredUsd: 15, hardCapUsd: 30 },
+      budget: AUTONOMOUS_BUDGET_NOT_CONFIGURED,
     });
 
     expect(view.economics.repairForecast.highUsd).toBeNull();
@@ -130,7 +131,7 @@ describe("autonomous production Studio projection", () => {
       config: { defaultModel: "gpt", modelOverrides: {} },
       runtime: null,
       active: false,
-      budget: { preferredUsd: 15, hardCapUsd: 30 },
+      budget: AUTONOMOUS_BUDGET_NOT_CONFIGURED,
     });
     expect(view.startEnabled).toBe(false);
     expect(view.runtimeStatus).toBe("BLOCKED");
@@ -147,10 +148,10 @@ describe("autonomous production Studio projection", () => {
       targetChapters: 156,
       nextChapter: 39,
       chapters: Array.from({ length: 38 }, (_, index) => ({ number: index + 1, status: "ready-for-review" })),
-      config: { defaultModel: "gpt", modelOverrides: { auditor: "deepseek", "commercial-reader": "gemini", "observer-reflector": "flash" } },
+      config: { defaultModel: "gpt", modelOverrides: { auditor: "deepseek", "commercial-reader": "gemini", reviser: "gpt", "observer-reflector": "flash" } },
       runtime: { status: "RUNNING", mode: "full-book", nextChapter: 39, updatedAt: "2026-08-21T00:00:00.000Z" },
       active: true,
-      budget: { preferredUsd: 15, hardCapUsd: 30 },
+      budget: AUTONOMOUS_BUDGET_NOT_CONFIGURED,
     });
     expect(view.currentVolume.volumeId).toBe("volume-002");
     expect(view.startEnabled).toBe(false);
@@ -167,20 +168,6 @@ describe("autonomous production Studio projection", () => {
     expect(jobs.isActive("book")).toBe(false);
   });
 
-  it("reserves a conservative estimate before every provider stage and fails closed before the cap", () => {
-    const guard = new AutonomousCostGuard(10, 6, 30);
-    expect(guard.check(true)).toEqual({ allowed: true });
-    expect(guard.check(true)).toEqual({ allowed: true });
-    expect(guard.check(true)).toEqual({ allowed: true });
-    expect(guard.check(true)).toEqual({ allowed: false, reason: "NEXT_PROVIDER_CALL_COULD_REACH_HARD_CAP" });
-    guard.settle(5);
-    expect(guard.check(true)).toEqual({ allowed: true });
-  });
-
-  it("fails closed when neither actual cost nor a conservative estimate is available", () => {
-    expect(new AutonomousCostGuard(null, null, 30).check(true)).toEqual({ allowed: false, reason: "COST_GUARD_UNAVAILABLE" });
-  });
-
   it("classifies persisted repair failures without replacing the real message", () => {
     expect(classifyStateRepairError("Cannot repair chapter 4 safely: baseline snapshot 3 is unavailable")).toBe("STATE_REPAIR_BASELINE_UNAVAILABLE");
     expect(classifyStateRepairError("State repair still failed for chapter 4.")).toBe("STATE_REPAIR_VALIDATION_FAILED");
@@ -193,13 +180,30 @@ describe("autonomous production Studio projection", () => {
       targetChapters: 156,
       nextChapter: 39,
       chapters: Array.from({ length: 38 }, (_, index) => ({ number: index + 1, status: "ready-for-review" })),
-      config: { defaultModel: "gpt", modelOverrides: { auditor: "deepseek", "commercial-reader": "gemini", "observer-reflector": "flash" } },
+      config: { defaultModel: "gpt", modelOverrides: { auditor: "deepseek", "commercial-reader": "gemini", reviser: "gpt", "observer-reflector": "flash" } },
       runtime: { status: "RUNNING", mode: "full-book", nextChapter: 39, updatedAt: "2026-08-21T00:00:00.000Z" },
       active: false,
-      budget: { preferredUsd: 15, hardCapUsd: 30 },
+      budget: AUTONOMOUS_BUDGET_NOT_CONFIGURED,
     });
     expect(view.runtimeStatus).toBe("PAUSED");
+    expect(view.startEnabled).toBe(true);
+    expect(view.runtimeBlockers).not.toContain("COST_GUARD_UNAVAILABLE");
+  });
+
+  it("keeps a two-revision exhaustion fail-closed across Studio restart", () => {
+    const view = projectAutonomousProductionView({
+      map,
+      targetChapters: 156,
+      nextChapter: 5,
+      chapters: [1, 2, 3, 4].map((number) => ({ number, status: number === 4 ? "audit-failed" : "approved" })),
+      config: { defaultModel: "gpt", modelOverrides: { auditor: "deepseek", "commercial-reader": "gemini", reviser: "gpt", "observer-reflector": "flash" } },
+      catalog,
+      runtime: { jobId: "autonomous-deadbeef", status: "REVIEW_EXHAUSTED", mode: "current-volume", nextChapter: 5, updatedAt: "2026-08-21T00:00:00.000Z" },
+      active: false,
+      budget: AUTONOMOUS_BUDGET_NOT_CONFIGURED,
+    });
+    expect(view.runtimeBlockers).toContain("REVIEW_EXHAUSTED");
     expect(view.startEnabled).toBe(false);
-    expect(view.runtimeBlockers).toContain("COST_GUARD_UNAVAILABLE");
+    expect(view.runtimeStatus).toBe("BLOCKED");
   });
 });

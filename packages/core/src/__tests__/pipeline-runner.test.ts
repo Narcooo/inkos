@@ -11,6 +11,7 @@ import { PlannerAgent } from "../agents/planner.js";
 import * as ComposerModule from "../agents/composer.js";
 import { WriterAgent, type SettleChapterStateInput, type WriteChapterOutput } from "../agents/writer.js";
 import { ContinuityAuditor, type AuditIssue, type AuditResult } from "../agents/continuity.js";
+import { CommercialReaderAgent } from "../agents/commercial-reader.js";
 import { ReviserAgent, type ReviseOutput } from "../agents/reviser.js";
 import { ChapterAnalyzerAgent } from "../agents/chapter-analyzer.js";
 import { StateValidatorAgent } from "../agents/state-validator.js";
@@ -4841,6 +4842,143 @@ describe("PipelineRunner", () => {
       expect(savedChapter).toContain(revisedBody);
       expect(savedIndex[0]?.status).toBe("ready-for-review");
       expect(savedIndex[0]?.auditIssues).toEqual([]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, SLOW_PIPELINE_TEST_TIMEOUT_MS);
+
+  it("resumes an audit-failed settled draft without Writer generation and reuses persisted findings", async () => {
+    const { root, runner, state, bookId } = await createRevisionGateFixture("always");
+    const index = await state.loadChapterIndex(bookId);
+    await state.saveChapterIndex(bookId, index.map((chapter) => ({
+      ...chapter,
+      auditIssues: ["[warning] The persisted causal finding requires a targeted repair."],
+    })));
+    const logic = vi.spyOn(ContinuityAuditor.prototype, "auditChapter").mockResolvedValue(
+      createAuditResult({ passed: true, issues: [], summary: "logic pass" }),
+    );
+    const commercial = vi.spyOn(CommercialReaderAgent.prototype, "reviewChapter").mockResolvedValue({
+      reviewerRole: "commercial-reader",
+      provider: "test",
+      model: "test",
+      totalScore: 90,
+      dimensionScores: { opening_hook: 90, pacing_tension: 90, emotional_investment: 90, plot_clarity: 90, dialogue_appeal: 90, western_cultural_naturalness: 90, commercial_appeal: 90, ending_hook: 90 },
+      decision: "APPROVED",
+      findings: [],
+      reviewedCandidateSha: "bound-by-runner",
+      reviewedAt: "2026-08-21T00:00:00.000Z",
+      tokenUsage: ZERO_USAGE,
+    });
+    const writerGeneration = vi.spyOn(WriterAgent.prototype, "writeChapter");
+
+    try {
+      const result = await runner.resumeAuditFailedChapterBounded(bookId, 1);
+      const saved = await state.loadChapterIndex(bookId);
+      expect(result).toMatchObject({ status: "approved", revisionCount: 1, logicReviewCount: 1, commercialReviewCount: 1 });
+      expect(writerGeneration).not.toHaveBeenCalled();
+      expect(logic).toHaveBeenCalledTimes(1);
+      expect(commercial).toHaveBeenCalledTimes(1);
+      expect(saved[0]?.status).toBe("approved");
+      expect(saved[0]?.roleUsage).toEqual(expect.objectContaining({
+        reviser: expect.any(Object),
+        "logic-canon-auditor": expect.any(Object),
+        "commercial-reader": expect.any(Object),
+      }));
+      await expect(readFile(join(state.bookDir(bookId), "story", "runtime", "bounded-autonomous", "chapter-0001", "resume-review.json"), "utf-8"))
+        .resolves.toContain('"status": "APPROVED"');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, SLOW_PIPELINE_TEST_TIMEOUT_MS);
+
+  it("stops after exactly two resume revisions and persists both review rounds", async () => {
+    const { root, runner, state, bookId } = await createRevisionGateFixture("always");
+    const index = await state.loadChapterIndex(bookId);
+    await state.saveChapterIndex(bookId, index.map((chapter) => ({
+      ...chapter,
+      auditIssues: ["[warning] The persisted reader finding requires repair."],
+    })));
+    const logic = vi.spyOn(ContinuityAuditor.prototype, "auditChapter").mockResolvedValue(
+      createAuditResult({ passed: true, issues: [], summary: "logic pass" }),
+    );
+    const commercial = vi.spyOn(CommercialReaderAgent.prototype, "reviewChapter").mockResolvedValue({
+      reviewerRole: "commercial-reader",
+      provider: "test",
+      model: "test",
+      totalScore: 55,
+      dimensionScores: { opening_hook: 55, pacing_tension: 55, emotional_investment: 55, plot_clarity: 55, dialogue_appeal: 55, western_cultural_naturalness: 55, commercial_appeal: 55, ending_hook: 55 },
+      decision: "REVISION_REQUIRED",
+      findings: [{ findingId: "reader-1", severity: "MAJOR", evidence: "Synthetic evidence", impact: "Synthetic impact", requiredOutcome: "Tighten the beat." }],
+      reviewedCandidateSha: "bound-by-runner",
+      reviewedAt: "2026-08-21T00:00:00.000Z",
+      tokenUsage: ZERO_USAGE,
+    });
+    const revisions = vi.spyOn(ReviserAgent.prototype, "reviseChapter");
+
+    try {
+      const result = await runner.resumeAuditFailedChapterBounded(bookId, 1);
+      const saved = await state.loadChapterIndex(bookId);
+      const evidence = JSON.parse(await readFile(join(state.bookDir(bookId), "story", "runtime", "bounded-autonomous", "chapter-0001", "resume-review.json"), "utf-8"));
+      expect(result).toMatchObject({ status: "held-after-two-revisions", revisionCount: 2, logicReviewCount: 2, commercialReviewCount: 2 });
+      expect(revisions).toHaveBeenCalledTimes(2);
+      expect(logic).toHaveBeenCalledTimes(2);
+      expect(commercial).toHaveBeenCalledTimes(2);
+      expect(saved[0]?.status).toBe("audit-failed");
+      expect(evidence).toMatchObject({ status: "REVIEW_EXHAUSTED", revisionCount: 2 });
+      expect(evidence.reviewRounds).toHaveLength(2);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, SLOW_PIPELINE_TEST_TIMEOUT_MS);
+
+  it("resumes from the persisted round counter and cannot exceed two paid revision rounds after restart", async () => {
+    const { root, runner, state, bookId } = await createRevisionGateFixture("always");
+    const evidenceDir = join(state.bookDir(bookId), "story", "runtime", "bounded-autonomous", "chapter-0001");
+    await mkdir(evidenceDir, { recursive: true });
+    await writeFile(join(evidenceDir, "resume-review.json"), `${JSON.stringify({
+      schema_version: "1.0", chapter_number: 1, status: "RUNNING", revisionCount: 1,
+      logicReviewCount: 1, commercialReviewCount: 1, phase: "ROUND_COMPLETE",
+      baselineRoleUsage: {}, roleUsage: {}, reviewRounds: [{ round: 1 }],
+      currentFindings: [{ severity: "warning", category: "commercial-reader", description: "Synthetic persisted finding", suggestion: "Repair it." }],
+    }, null, 2)}\n`, "utf-8");
+    const revisions = vi.spyOn(ReviserAgent.prototype, "reviseChapter");
+    const logic = vi.spyOn(ContinuityAuditor.prototype, "auditChapter").mockResolvedValue(
+      createAuditResult({ passed: true, issues: [], summary: "logic pass" }),
+    );
+    const commercial = vi.spyOn(CommercialReaderAgent.prototype, "reviewChapter").mockResolvedValue({
+      reviewerRole: "commercial-reader", provider: "test", model: "test", totalScore: 55,
+      dimensionScores: { opening_hook: 55, pacing_tension: 55, emotional_investment: 55, plot_clarity: 55, dialogue_appeal: 55, western_cultural_naturalness: 55, commercial_appeal: 55, ending_hook: 55 },
+      decision: "REVISION_REQUIRED",
+      findings: [{ findingId: "reader-2", severity: "MAJOR", evidence: "Synthetic evidence", impact: "Synthetic impact", requiredOutcome: "Tighten the beat." }],
+      reviewedCandidateSha: "bound-by-runner", reviewedAt: "2026-08-21T00:00:00.000Z", tokenUsage: ZERO_USAGE,
+    });
+    try {
+      const result = await runner.resumeAuditFailedChapterBounded(bookId, 1);
+      expect(result).toMatchObject({ status: "held-after-two-revisions", revisionCount: 2, logicReviewCount: 2, commercialReviewCount: 2 });
+      expect(revisions).toHaveBeenCalledTimes(1);
+      expect(logic).toHaveBeenCalledTimes(1);
+      expect(commercial).toHaveBeenCalledTimes(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, SLOW_PIPELINE_TEST_TIMEOUT_MS);
+
+  it("fails closed without another transport when a persisted model stage has unknown outcome", async () => {
+    const { root, runner, state, bookId } = await createRevisionGateFixture("always");
+    const evidenceDir = join(state.bookDir(bookId), "story", "runtime", "bounded-autonomous", "chapter-0001");
+    await mkdir(evidenceDir, { recursive: true });
+    await writeFile(join(evidenceDir, "resume-review.json"), `${JSON.stringify({
+      schema_version: "1.0", chapter_number: 1, status: "RUNNING", revisionCount: 0,
+      logicReviewCount: 0, commercialReviewCount: 0, inFlightStage: "REVISION_AND_LOGIC",
+    }, null, 2)}\n`, "utf-8");
+    const revisions = vi.spyOn(ReviserAgent.prototype, "reviseChapter");
+    const logic = vi.spyOn(ContinuityAuditor.prototype, "auditChapter");
+    const commercial = vi.spyOn(CommercialReaderAgent.prototype, "reviewChapter");
+    try {
+      await expect(runner.resumeAuditFailedChapterBounded(bookId, 1)).rejects.toThrow("AUTONOMOUS_STAGE_OUTCOME_UNKNOWN:REVISION_AND_LOGIC");
+      expect(revisions).not.toHaveBeenCalled();
+      expect(logic).not.toHaveBeenCalled();
+      expect(commercial).not.toHaveBeenCalled();
     } finally {
       await rm(root, { recursive: true, force: true });
     }

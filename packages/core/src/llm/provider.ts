@@ -1,4 +1,6 @@
 import type { LLMConfig } from "../models/project.js";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { randomUUID } from "node:crypto";
 import {
   streamSimple as piStreamSimple,
   completeSimple as piCompleteSimple,
@@ -265,6 +267,22 @@ export interface LLMResponse {
     readonly totalTokens: number;
     readonly actualCostUsd?: number;
   };
+}
+
+export interface LLMOutcomeRecord {
+  readonly modelCallId: string;
+  readonly provider: string;
+  readonly model: string;
+  readonly usage: LLMResponse["usage"];
+  readonly returnedAt: string;
+}
+
+type LLMOutcomeObserver = (record: LLMOutcomeRecord) => Promise<void>;
+const llmOutcomeObserverStorage = new AsyncLocalStorage<LLMOutcomeObserver>();
+
+/** Persists safe model-result metadata before the response returns to an agent parser. */
+export function runWithLLMOutcomeObserver<T>(observer: LLMOutcomeObserver, task: () => Promise<T>): Promise<T> {
+  return llmOutcomeObserverStorage.run(observer, task);
 }
 
 export interface LLMMessage {
@@ -1468,7 +1486,7 @@ export async function chatCompletion(
   const modelCall = beginAgentModelCall();
 
   try {
-    return await withTransientLLMRetry(
+    const response = await withTransientLLMRetry(
       async (attempt) => {
         signal?.throwIfAborted();
         const traceHeaders = agentTrajectoryHeaders(client._piModel?.baseUrl, modelCall, attempt, {
@@ -1534,6 +1552,17 @@ export async function chatCompletion(
       // text; callers can also opt out (e.g. fast-fail diagnostics).
       { enabled: (options?.retry ?? true) && !onTextDelta, signal },
     );
+    const observer = llmOutcomeObserverStorage.getStore();
+    if (observer) {
+      await observer({
+        modelCallId: modelCall?.modelCallId ?? randomUUID(),
+        provider: client.service ?? client.provider,
+        model,
+        usage: response.usage,
+        returnedAt: new Date().toISOString(),
+      });
+    }
+    return response;
   } catch (error) {
     // 注意：中断的流（PartialResponseError）不再"打捞"半截内容当成功返回——
     // 那会产出写到一半就结束的章节/设定文件。重试由 withTransientLLMRetry

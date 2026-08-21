@@ -22,8 +22,8 @@ export function projectAutonomousEconomics(params: {
   readonly completedChapters: number;
   readonly currentVolumeRemaining: number;
   readonly fullBookRemaining: number;
-  readonly preferredBudgetUsd: number;
-  readonly hardCapUsd: number;
+  readonly preferredBudgetUsd?: number | null;
+  readonly hardCapUsd?: number | null;
   readonly records: ReadonlyArray<AutonomousUsageRecord>;
   readonly remainingChapterConservativeUsd?: number;
   readonly nextCallConservativeUsd?: number;
@@ -105,17 +105,21 @@ export function projectAutonomousEconomics(params: {
       confidence: params.completedChapters >= 10 ? "HIGH" : params.completedChapters >= 4 ? "MEDIUM" : "LOW",
     };
   };
-  const hardCapReached = effectiveCostUsd !== null && effectiveCostUsd >= params.hardCapUsd;
-  const preferredExceeded = effectiveCostUsd !== null && effectiveCostUsd >= params.preferredBudgetUsd;
+  const budgetConfigured = typeof params.preferredBudgetUsd === "number"
+    && Number.isFinite(params.preferredBudgetUsd)
+    && typeof params.hardCapUsd === "number"
+    && Number.isFinite(params.hardCapUsd);
+  const hardCapReached = budgetConfigured && effectiveCostUsd !== null && effectiveCostUsd >= params.hardCapUsd!;
+  const preferredExceeded = budgetConfigured && effectiveCostUsd !== null && effectiveCostUsd >= params.preferredBudgetUsd!;
   const conservativeVolumeTotalUsd = historicalConservativeUpperUsd !== null && nextCallConservativeUsd !== null
     ? historicalConservativeUpperUsd + (params.currentVolumeRemaining > 0
       ? (forecast(params.currentVolumeRemaining).highUsd ?? nextCallConservativeUsd)
       : nextCallConservativeUsd)
     : null;
-  const allowNextProviderCall = effectiveCostUsd !== null
+  const allowNextProviderCall = !budgetConfigured || (effectiveCostUsd !== null
     && nextCallConservativeUsd !== null
     && conservativeVolumeTotalUsd !== null
-    && conservativeVolumeTotalUsd < params.hardCapUsd;
+    && conservativeVolumeTotalUsd < params.hardCapUsd!);
 
   return {
     actual: {
@@ -133,15 +137,16 @@ export function projectAutonomousEconomics(params: {
     currentVolumeForecast: forecast(params.currentVolumeRemaining),
     fullBookForecast: forecast(params.fullBookRemaining),
     budget: {
-      preferredBudgetUsd: params.preferredBudgetUsd,
-      hardCapUsd: params.hardCapUsd,
+      status: budgetConfigured ? "BUDGET_CONFIGURED" as const : "BUDGET_NOT_CONFIGURED" as const,
+      preferredBudgetUsd: params.preferredBudgetUsd ?? null,
+      hardCapUsd: params.hardCapUsd ?? null,
       preferredExceeded,
       hardCapReached,
       guardStatus: costStatus,
       nextCallConservativeUsd,
       conservativeVolumeTotalUsd,
       allowNextProviderCall,
-      ...(!allowNextProviderCall
+      ...(budgetConfigured && !allowNextProviderCall
         ? { reason: costStatus === "COST_UNAVAILABLE"
             ? "COST_GUARD_UNAVAILABLE"
             : "NEXT_PROVIDER_CALL_COULD_REACH_HARD_CAP" }
