@@ -14,18 +14,45 @@ export const PRODUCTION_ROLE_KEYS = [
   "observerReflector",
 ] as const;
 
+export interface ProductionModelCatalogEntry {
+  readonly id: string;
+  readonly name: string;
+  readonly contextWindow: number;
+  readonly inputPrice?: string;
+  readonly outputPrice?: string;
+  readonly inputModalities?: ReadonlyArray<string>;
+  readonly outputModalities?: ReadonlyArray<string>;
+  readonly supportedParameters?: ReadonlyArray<string>;
+}
+
+const EXPLICIT_MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]*\/[A-Za-z0-9][A-Za-z0-9._:+-]*$/;
+
+export function searchProductionModelCatalog(
+  models: ReadonlyArray<ProductionModelCatalogEntry>,
+  query: string,
+): ReadonlyArray<ProductionModelCatalogEntry> {
+  const normalized = query.trim().toLocaleLowerCase();
+  if (!normalized) return models;
+  return models.filter((model) => `${model.id}\n${model.name}`.toLocaleLowerCase().includes(normalized));
+}
+
+export function isTextGenerationCatalogModel(model: ProductionModelCatalogEntry): boolean {
+  return model.inputModalities?.includes("text") === true && model.outputModalities?.includes("text") === true;
+}
+
 export function validateProductionRoleSelection(
   selection: ProductionRoleSelection,
   registeredModels: ReadonlyArray<string>,
 ): ProductionRoleSelection {
-  const allowed = new Set(registeredModels);
+  const registered = new Set(registeredModels);
+  const normalized = {} as Record<keyof ProductionRoleSelection, string>;
   for (const role of PRODUCTION_ROLE_KEYS) {
     const model = selection[role]?.trim();
-    if (!model || !allowed.has(model)) {
-      throw new Error(`Production role ${role} model is not registered for the connected Studio service.`);
-    }
+    if (!model) throw new Error(`Production role ${role} model is required.`);
+    if (!registered.has(model) && !EXPLICIT_MODEL_ID.test(model)) throw new Error(`Production role ${role} model ID must be registered or an explicit provider/model slug.`);
+    normalized[role] = model;
   }
-  return selection;
+  return normalized;
 }
 
 export function buildProductionRoleOverrides(

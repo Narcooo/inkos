@@ -74,4 +74,36 @@ describe("probeModelsFromUpstream", () => {
     const result = await probeModelsFromUpstream("https://api.example.com/v1", "sk-test");
     expect(result).toEqual([{ id: "valid", name: "valid", contextWindow: 0 }]);
   });
+
+  it("preserves OpenRouter text capability, context, and pricing metadata", async () => {
+    (globalThis.fetch as any).mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: [{
+          id: "openai/future-model",
+          name: "Future Model",
+          context_length: 400_000,
+          architecture: {
+            input_modalities: ["text"],
+            output_modalities: ["text"],
+          },
+          pricing: { prompt: "0.00000125", completion: "0.000005" },
+          supported_parameters: ["tools", "response_format"],
+        }],
+      }),
+    });
+
+    const result = await probeModelsFromUpstream("https://openrouter.ai/api/v1", "test-only-secret");
+
+    expect(result).toEqual([{
+      id: "openai/future-model",
+      name: "Future Model",
+      contextWindow: 400_000,
+      inputPrice: "0.00000125",
+      outputPrice: "0.000005",
+      inputModalities: ["text"],
+      outputModalities: ["text"],
+      supportedParameters: ["tools", "response_format"],
+    }]);
+  });
 });

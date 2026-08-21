@@ -123,6 +123,7 @@ const SERVICE_PRESETS_MOCK: Record<string, ServicePresetMock> = {
   bailian: { providerFamily: "anthropic", baseUrl: "https://dashscope.aliyuncs.com/apps/anthropic", modelsBaseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", knownModels: [] as string[] },
   google: { providerFamily: "openai", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", modelsBaseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", knownModels: [] as string[] },
   kkaiapi: { providerFamily: "openai", baseUrl: "https://api.kkaiapi.com/v1", modelsBaseUrl: "https://api.kkaiapi.com/v1", knownModels: [] as string[] },
+  openrouter: { providerFamily: "openai", baseUrl: "https://openrouter.ai/api/v1", modelsBaseUrl: "https://openrouter.ai/api/v1", knownModels: [] as string[] },
   ollama: { providerFamily: "openai", baseUrl: "http://localhost:11434/v1", modelsBaseUrl: "http://localhost:11434/v1", knownModels: [] as string[] },
   lmstudio: { providerFamily: "openai", baseUrl: "http://localhost:1234/v1", modelsBaseUrl: "http://localhost:1234/v1", knownModels: [] as string[] },
   custom: { providerFamily: "openai", baseUrl: "", knownModels: [] as string[] },
@@ -186,7 +187,16 @@ const endpointMocks = [
   { id: "custom", label: "自定义端点", models: [] },
 ];
 const getAllEndpointsMock = vi.fn(() => endpointMocks);
-const probeModelsFromUpstreamMock = vi.fn(async () => [
+const probeModelsFromUpstreamMock = vi.fn(async (): Promise<ReadonlyArray<{
+  id: string;
+  name: string;
+  contextWindow: number;
+  inputPrice?: string;
+  outputPrice?: string;
+  inputModalities?: ReadonlyArray<string>;
+  outputModalities?: ReadonlyArray<string>;
+  supportedParameters?: ReadonlyArray<string>;
+}>> => [
   { id: "custom-model", name: "custom-model", contextWindow: 0 },
 ]);
 
@@ -6521,7 +6531,7 @@ describe("createStudioServer daemon lifecycle", () => {
     await vi.waitFor(() => expect(repairChapterStateMock).toHaveBeenCalledTimes(1));
   });
 
-  it("persists fixed production roles only from the current registered model catalog", async () => {
+  it("persists fixed production roles to existing fields and permits an explicit manual OpenRouter slug", async () => {
     loadSecretsMock.mockResolvedValue({ services: { openai: { apiKey: "test-only-secret" } } });
     const raw = JSON.parse(await readFile(join(root, "inkos.json"), "utf-8"));
     raw.llm = { ...raw.llm, service: "openai", defaultModel: "gpt-5.4", services: [{ service: "openai", models: ["gpt-5.4", "review-model"] }] };
@@ -6535,8 +6545,59 @@ describe("createStudioServer daemon lifecycle", () => {
     await expect(saved.json()).resolves.toMatchObject({ ok: true, service: "openai", selection });
     const persisted = JSON.parse(await readFile(join(root, "inkos.json"), "utf-8"));
     expect(persisted.modelOverrides).toMatchObject({ unrelated: "preserved", auditor: "review-model", "commercial-reader": "review-model", reviser: "gpt-5.4", "observer-reflector": "review-model" });
-    const rejected = await app.request("http://localhost/api/v1/project/production-role-models", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ selection: { ...selection, writer: "invented/model" } }) });
-    expect(rejected.status).toBe(400);
+    const manual = await app.request("http://localhost/api/v1/project/production-role-models", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ selection: { ...selection, writer: "invented/model" } }) });
+    expect(manual.status).toBe(200);
+    const manualPersisted = JSON.parse(await readFile(join(root, "inkos.json"), "utf-8"));
+    expect(manualPersisted.llm.defaultModel).toBe("invented/model");
+  });
+
+  it("returns one cached live OpenRouter text catalog with safe metadata and no credential", async () => {
+    loadSecretsMock.mockResolvedValue({ services: { openrouter: { apiKey: "test-only-secret" } } });
+    const raw = JSON.parse(await readFile(join(root, "inkos.json"), "utf-8"));
+    raw.llm = { ...raw.llm, service: "openrouter", defaultModel: "openai/future-model", services: [{ service: "openrouter" }] };
+    await writeFile(join(root, "inkos.json"), JSON.stringify(raw, null, 2), "utf-8");
+    probeModelsFromUpstreamMock.mockResolvedValueOnce([
+      { id: "openai/future-model", name: "Future Model", contextWindow: 400_000, inputPrice: "0.000001", outputPrice: "0.000004", inputModalities: ["text"], outputModalities: ["text"], supportedParameters: ["tools"] },
+      { id: "provider/image-only", name: "Image Only", contextWindow: 8_000, inputModalities: ["text"], outputModalities: ["image"] },
+    ]);
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const first = await app.request("http://localhost/api/v1/project/production-role-models");
+    const firstBody = await first.json() as Record<string, unknown>;
+    const second = await app.request("http://localhost/api/v1/project/production-role-models");
+
+    expect(first.status).toBe(200);
+    expect(firstBody).toMatchObject({
+      service: "openrouter",
+      connected: true,
+      catalogStatus: "AVAILABLE",
+      catalog: [{ id: "openai/future-model", name: "Future Model", contextWindow: 400_000, inputPrice: "0.000001", outputPrice: "0.000004" }],
+    });
+    expect(JSON.stringify(firstBody)).not.toContain("test-only-secret");
+    expect(await second.json()).toMatchObject({ catalogStatus: "AVAILABLE" });
+    expect(probeModelsFromUpstreamMock).toHaveBeenCalledTimes(1);
+    expect(probeModelsFromUpstreamMock).toHaveBeenCalledWith("https://openrouter.ai/api/v1", "test-only-secret", 10_000);
+    expect(chatCompletionMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps saved role ids when the live catalog is unavailable without inserting openrouter auto", async () => {
+    loadSecretsMock.mockResolvedValue({ services: { openrouter: { apiKey: "test-only-secret" } } });
+    const raw = JSON.parse(await readFile(join(root, "inkos.json"), "utf-8"));
+    raw.llm = { ...raw.llm, service: "openrouter", defaultModel: "openai/saved-model", services: [{ service: "openrouter" }] };
+    raw.modelOverrides = { auditor: "deepseek/saved-review", "commercial-reader": "google/saved-reader", reviser: "openai/saved-model", "observer-reflector": "deepseek/saved-review" };
+    await writeFile(join(root, "inkos.json"), JSON.stringify(raw, null, 2), "utf-8");
+    probeModelsFromUpstreamMock.mockResolvedValueOnce([]);
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const response = await app.request("http://localhost/api/v1/project/production-role-models");
+    const body = await response.json() as { catalogStatus: string; catalog: unknown[]; selection: Record<string, string> };
+
+    expect(body.catalogStatus).toBe("CATALOG_UNAVAILABLE");
+    expect(body.catalog).toEqual([]);
+    expect(body.selection.writer).toBe("openai/saved-model");
+    expect(JSON.stringify(body)).not.toContain("openrouter/auto");
   });
 
   it("project advanced settings expose detection config", async () => {

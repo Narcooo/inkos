@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
 import { serve } from "@hono/node-server";
-import { buildProductionRoleOverrides, validateProductionRoleSelection, type ProductionRoleSelection } from "../pages/production-role-models.js";
+import { buildProductionRoleOverrides, isTextGenerationCatalogModel, validateProductionRoleSelection, type ProductionModelCatalogEntry, type ProductionRoleSelection } from "../pages/production-role-models.js";
 import { gzipSync } from "node:zlib";
 import { randomUUID } from "node:crypto";
 import {
@@ -1644,6 +1644,8 @@ const bookCreateStatus = new Map<string, { status: "creating" | "error"; error?:
 
 // 内存缓存：service -> 模型列表 + 更新时间戳；避免每次 sidebar 挂载时都打真实 LLM /models
 const modelListCache = new Map<string, { models: Array<{ id: string; name: string }>; at: number }>();
+const productionRoleCatalogCache = new Map<string, { models: ReadonlyArray<ProductionModelCatalogEntry>; at: number }>();
+const PRODUCTION_ROLE_CATALOG_TTL_MS = 5 * 60_000;
 
 interface ServiceConfigEntry {
   service: string;
@@ -5687,12 +5689,30 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     const overrides = raw.modelOverrides && typeof raw.modelOverrides === "object" && !Array.isArray(raw.modelOverrides) ? raw.modelOverrides as Record<string, unknown> : {};
     const model = (key: string) => typeof overrides[key] === "string" ? overrides[key] as string : null;
     const defaultModel = typeof llm.defaultModel === "string" ? llm.defaultModel : typeof llm.model === "string" ? llm.model : null;
-    return { raw, llm, service, connected, registeredModels, overrides, selection: { writer: defaultModel, logicAuditor: model("auditor"), commercialReader: model("commercial-reader"), reviser: model("reviser"), observerReflector: model("observer-reflector") } };
+    let catalog: ReadonlyArray<ProductionModelCatalogEntry> = [];
+    let catalogStatus: "AVAILABLE" | "CATALOG_UNAVAILABLE" = "CATALOG_UNAVAILABLE";
+    if (connected && service === "openrouter") {
+      const baseUrl = configured?.baseUrl?.trim() || resolveServicePreset(service)?.baseUrl;
+      const apiKey = secrets.services[service]?.apiKey ?? "";
+      if (baseUrl) {
+        const cacheKey = `${root}\n${service}\n${baseUrl}`;
+        const cached = productionRoleCatalogCache.get(cacheKey);
+        if (cached && Date.now() - cached.at < PRODUCTION_ROLE_CATALOG_TTL_MS) {
+          catalog = cached.models;
+        } else {
+          const probed = await probeModelsFromUpstream(baseUrl, apiKey, 10_000);
+          catalog = probed.filter(isTextGenerationCatalogModel);
+          productionRoleCatalogCache.set(cacheKey, { models: catalog, at: Date.now() });
+        }
+        if (catalog.length > 0) catalogStatus = "AVAILABLE";
+      }
+    }
+    return { raw, llm, service, connected, registeredModels, catalog, catalogStatus, overrides, selection: { writer: defaultModel, logicAuditor: model("auditor"), commercialReader: model("commercial-reader"), reviser: model("reviser"), observerReflector: model("observer-reflector") } };
   }
 
   app.get("/api/v1/project/production-role-models", async (c) => {
     const current = await loadProductionRoleModels();
-    return c.json({ service: current.service || null, connected: current.connected, registeredModels: current.registeredModels, selection: current.selection });
+    return c.json({ service: current.service || null, connected: current.connected, registeredModels: current.registeredModels, catalogStatus: current.catalogStatus, catalog: current.catalog, selection: current.selection });
   });
 
   app.put("/api/v1/project/production-role-models", async (c) => {
@@ -5707,7 +5727,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     syncTopLevelLlmMirror(current.llm);
     await saveRawConfig(root, current.raw);
     const persisted = await loadProductionRoleModels();
-    return c.json({ ok: true, service: persisted.service || null, connected: persisted.connected, registeredModels: persisted.registeredModels, selection: persisted.selection });
+    return c.json({ ok: true, service: persisted.service || null, connected: persisted.connected, registeredModels: persisted.registeredModels, catalogStatus: persisted.catalogStatus, catalog: persisted.catalog, selection: persisted.selection });
   });
 
   app.get("/api/v1/project/model-overrides", async (c) => {

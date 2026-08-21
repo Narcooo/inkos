@@ -25,7 +25,7 @@ import {
   groupPromptPacksForDisplay,
   type PromptPacksResponse,
 } from "./prompt-pack-ui-state";
-import type { ProductionRoleSelection } from "./production-role-models";
+import { searchProductionModelCatalog, type ProductionModelCatalogEntry, type ProductionRoleSelection } from "./production-role-models";
 
 interface Nav {
   toDashboard: () => void;
@@ -91,12 +91,94 @@ function SettingsCard({
 
 const fieldClass = "w-full rounded-lg border border-border bg-secondary/30 px-3 py-2 text-sm outline-none focus:border-primary/50";
 
+interface ProductionRolesResponse {
+  readonly service: string | null;
+  readonly connected: boolean;
+  readonly registeredModels: ReadonlyArray<string>;
+  readonly catalogStatus: "AVAILABLE" | "CATALOG_UNAVAILABLE";
+  readonly catalog: ReadonlyArray<ProductionModelCatalogEntry>;
+  readonly selection: Record<keyof ProductionRoleSelection, string | null>;
+}
+
+function modelVerificationStatus(modelId: string, savedModelId: string, data?: ProductionRolesResponse) {
+  if (data?.catalogStatus !== "AVAILABLE") return "CATALOG_UNAVAILABLE";
+  if (data.catalog.some((model) => model.id === modelId)) return "VERIFIED_IN_CURRENT_CATALOG";
+  if (modelId && modelId === savedModelId) return "SAVED_MODEL_NOT_IN_CURRENT_CATALOG";
+  return "UNVERIFIED_MANUAL_MODEL_ID";
+}
+
+function ProductionModelField({
+  role,
+  label,
+  description,
+  value,
+  savedValue,
+  data,
+  onChange,
+}: {
+  role: keyof ProductionRoleSelection;
+  label: string;
+  description: string;
+  value: string;
+  savedValue: string;
+  data?: ProductionRolesResponse;
+  onChange: (value: string) => void;
+}) {
+  const inputId = `production-model-${role}`;
+  const [open, setOpen] = useState(false);
+  const selected = data?.catalog.find((model) => model.id === value);
+  const matches = searchProductionModelCatalog(data?.catalog ?? [], value).slice(0, 8);
+  const status = modelVerificationStatus(value, savedValue, data);
+  return (
+    <div className="relative rounded-xl border border-border/60 bg-secondary/20 p-3 text-sm">
+      <label htmlFor={inputId} className="font-semibold">{label}</label>
+      <span className="ml-2 text-xs text-muted-foreground">{description}</span>
+      <input
+        id={inputId}
+        aria-label={`Search or enter ${label} model`}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        placeholder="provider/model-id"
+        className={`${fieldClass} mt-2 font-mono`}
+        autoComplete="off"
+      />
+      {open && matches.length > 0 ? (
+        <div role="listbox" aria-label={`${label} catalog results`} className="absolute z-20 mt-1 max-h-64 w-[calc(100%-1.5rem)] overflow-auto rounded-lg border border-border bg-card p-1 shadow-xl">
+          {matches.map((model) => (
+            <button
+              key={model.id}
+              type="button"
+              role="option"
+              aria-selected={model.id === value}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => { onChange(model.id); setOpen(false); }}
+              className="block w-full rounded-md px-2 py-2 text-left hover:bg-secondary"
+            >
+              <span className="block truncate font-mono text-xs">{model.id}</span>
+              <span className="block truncate text-[11px] text-muted-foreground">{model.name}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+        <span className="font-semibold">{status}</span>
+        {selected ? <span>Context {selected.contextWindow > 0 ? selected.contextWindow.toLocaleString() : "Unavailable"}</span> : null}
+        {selected ? <span>Input {selected.inputPrice ? `$${selected.inputPrice}/token` : "Unavailable"}</span> : null}
+        {selected ? <span>Output {selected.outputPrice ? `$${selected.outputPrice}/token` : "Unavailable"}</span> : null}
+      </div>
+      {value.toLocaleLowerCase() === "openrouter/auto" ? <div className="mt-2 text-[11px] font-semibold text-amber-700 dark:text-amber-300">AUTO ROUTING — model identity and cost may vary</div> : null}
+    </div>
+  );
+}
+
 export function ProjectSettings({ nav, theme, t }: { nav: Nav; theme: Theme; t: TFunction }) {
   const c = useColors(theme);
   const isZh = t("nav.connected") === "\u5DF2\u8FDE\u63A5";
   const { data: overridesData, refetch: refetchOverrides } = useApi<{ overrides: Record<string, unknown> }>("/project/model-overrides");
   const { data: defaultModelData, refetch: refetchDefaultModel } = useApi<{ service: string | null; defaultModel: string | null }>("/project/default-model");
-  const { data: productionRolesData, refetch: refetchProductionRoles } = useApi<{ service: string | null; registeredModels: string[]; selection: Record<keyof ProductionRoleSelection, string | null> }>("/project/production-role-models");
+  const { data: productionRolesData, refetch: refetchProductionRoles } = useApi<ProductionRolesResponse>("/project/production-role-models");
   const { data: researchSearchData, refetch: refetchResearchSearch } = useApi<{ researchSearch: Partial<ResearchSearchDraft> }>("/project/research-search");
   const { data: notifyData, refetch: refetchNotify } = useApi<{ channels: unknown[] }>("/project/notify");
   const { data: detectionData, refetch: refetchDetection } = useApi<{ detection: unknown | null }>("/project/detection");
@@ -239,19 +321,22 @@ export function ProjectSettings({ nav, theme, t }: { nav: Nav; theme: Theme; t: 
         </div>
       )}
 
-      <SettingsCard title="Autonomous Production Models" description="Choose one registered model for each fixed production responsibility. Arbitrary model strings are rejected by the server." icon={<Bot size={18} />}>
-        <div className="grid gap-3 md:grid-cols-2">
+      <div data-testid="production-role-models" data-verification-values="VERIFIED_IN_CURRENT_CATALOG SAVED_MODEL_NOT_IN_CURRENT_CATALOG UNVERIFIED_MANUAL_MODEL_ID CATALOG_UNAVAILABLE">
+      <SettingsCard title="Autonomous Production Models" description="Search the current OpenRouter catalog or enter an exact provider/model slug for each fixed production responsibility." icon={<Bot size={18} />}>
+        <div className="grid gap-3 lg:grid-cols-2">
           {([
-            ["writer", "Writer", "Drafts and revises chapter prose."],
+            ["writer", "Writer", "Initial chapter prose generation."],
             ["logicAuditor", "Logic Auditor", "Independently checks canon and logic."],
             ["commercialReader", "Commercial Reader", "Evaluates reader and market effect."],
             ["reviser", "Reviser", "Applies bounded review findings."],
             ["observerReflector", "Observer / Reflector", "Settles chapter facts and state."],
-          ] as const).map(([key,label,description]) => <label key={key} className="text-sm"><span className="font-semibold">{label}</span><span className="ml-2 text-xs text-muted-foreground">{description}</span><select aria-label={label} value={productionRoles[key]} onChange={(event)=>setProductionRoles((current)=>({...current,[key]:event.target.value}))} className={`${fieldClass} mt-1`}><option value="">Not configured</option>{(productionRolesData?.registeredModels ?? []).map((model)=><option key={model} value={model}>{model}</option>)}</select></label>)}
+          ] as const).map(([key,label,description]) => <ProductionModelField key={key} role={key} label={label} description={description} value={productionRoles[key]} savedValue={productionRolesData?.selection[key] ?? ""} data={productionRolesData ?? undefined} onChange={(model)=>setProductionRoles((current)=>({...current,[key]:model}))} />)}
         </div>
-        <p className="text-xs text-muted-foreground">Connected service: {productionRolesData?.service ?? "none"}. Options come from the current registered service catalog; saving does not contact the provider.</p>
-        <button disabled={saving === "production-roles" || !(productionRolesData?.registeredModels.length)} onClick={()=>void runSave("production-roles",async()=>{await putApi("/project/production-role-models",{selection:productionRoles});await refetchProductionRoles();},"Autonomous production models saved and reloaded from disk.")} className="rounded-lg bg-primary px-4 py-2 text-sm font-bold text-primary-foreground disabled:opacity-40">Save production models</button>
+        <p className="text-xs text-muted-foreground">Connected service: {productionRolesData?.service ?? "none"}. Catalog: {productionRolesData?.catalogStatus ?? "loading"}. Saving records explicit model IDs only and does not call a model.</p>
+        <p className="text-xs text-amber-700 dark:text-amber-300">OpenRouter role routing remains explicit. Studio never chooses openrouter/auto automatically and never adds automatic fallback.</p>
+        <button disabled={saving === "production-roles" || !productionRolesData?.connected} onClick={()=>void runSave("production-roles",async()=>{await putApi("/project/production-role-models",{selection:productionRoles});await refetchProductionRoles();},"Autonomous production models saved and reloaded from disk.")} className="rounded-lg bg-primary px-4 py-2 text-sm font-bold text-primary-foreground disabled:opacity-40">Save production models</button>
       </SettingsCard>
+      </div>
 
       {/* Chat UI preferences — applied immediately, persisted in this browser's localStorage */}
       <SettingsCard title={t("settings.chatUi")} description={t("settings.chatUiHint")} icon={<MessageSquare size={18} />}>
