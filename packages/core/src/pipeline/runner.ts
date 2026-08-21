@@ -17,6 +17,7 @@ import { ComposerAgent, composeGovernedChapter, contextBudgetFromClient, type Co
 import { WriterAgent, type WriteChapterInput, type WriteChapterOutput } from "../agents/writer.js";
 import { ChapterAnalyzerAgent } from "../agents/chapter-analyzer.js";
 import { ContinuityAuditor } from "../agents/continuity.js";
+import { CommercialReaderAgent } from "../agents/commercial-reader.js";
 import { ReviserAgent, DEFAULT_REVISE_MODE, type ReviseMode } from "../agents/reviser.js";
 import { StateValidatorAgent, type ValidationResult, type ValidationWarning } from "../agents/state-validator.js";
 import { RadarAgent } from "../agents/radar.js";
@@ -56,6 +57,13 @@ import {
 } from "./chapter-state-recovery.js";
 import { persistChapterArtifacts } from "./chapter-persistence.js";
 import { runChapterReviewCycle } from "./chapter-review-cycle.js";
+import {
+  runBoundedReviewCycle,
+  scoredLogicReviewFromAudit,
+  type BoundedReviewResult,
+  type ReviewFinding,
+  type RoleTokenUsage,
+} from "./bounded-review.js";
 import { validateChapterTruthPersistence } from "./chapter-truth-validation.js";
 import { loadPersistedPlan, relativeToBookDir, savePersistedPlan } from "./persisted-governed-plan.js";
 import { selectBookReferenceContext } from "../references/reference-context.js";
@@ -243,6 +251,8 @@ export interface PipelineConfig {
   readonly defaultLLMConfig?: LLMConfig;
   readonly foundationReviewRetries?: number;
   readonly writingReviewRetries?: number;
+  /** Enable independent logic/commercial review and a hard maximum of two revisions. */
+  readonly boundedAutonomousReview?: boolean;
   /**
    * "auto" (default): writeNextChapter runs the audit→revise loop inline.
    * "manual": stop right after the draft (no auto audit/revise) so review/revise
@@ -264,12 +274,19 @@ export interface PipelineConfig {
   readonly logger?: Logger;
   readonly onStreamProgress?: OnStreamProgress;
   readonly onContextCompression?: ContextCompressionCallback;
+  readonly onAutonomousStage?: (event: {
+    readonly stage: "WRITING" | "LOGIC_REVIEW" | "READER_REVIEW" | "REVISING_1" | "RESCUE_REVISING_2" | "SETTLING_STATE" | "APPROVED";
+    readonly role: string;
+    readonly provider: string | null;
+    readonly model: string | null;
+  }) => Promise<void> | void;
 }
 
 export interface TokenUsageSummary {
   readonly promptTokens: number;
   readonly completionTokens: number;
   readonly totalTokens: number;
+  readonly actualCostUsd?: number;
 }
 
 export interface ChapterContextTraceSummary {
@@ -288,11 +305,17 @@ export interface ChapterPipelineResult {
   readonly wordCount: number;
   readonly auditResult: AuditResult;
   readonly revised: boolean;
-  readonly status: "ready-for-review" | "audit-failed" | "state-degraded";
+  readonly status: "ready-for-review" | "audit-failed" | "state-degraded" | "held-after-two-revisions";
   readonly lengthWarnings?: ReadonlyArray<string>;
   readonly lengthTelemetry?: LengthTelemetry;
   readonly tokenUsage?: TokenUsageSummary;
   readonly contextTrace?: ChapterContextTraceSummary;
+  readonly autonomousReview?: Omit<BoundedReviewResult, "finalContent" | "candidates" | "bestCandidate"> & {
+    readonly candidates: ReadonlyArray<{ readonly label: string; readonly sha256: string; readonly combinedScore: number }>;
+    readonly bestCandidate: { readonly label: string; readonly sha256: string; readonly combinedScore: number };
+  };
+  readonly roleUsage?: Readonly<Record<string, RoleTokenUsage>>;
+  readonly candidateEvidencePath?: string;
 }
 
 export interface WriteChaptersOptions {
@@ -667,7 +690,10 @@ export class PipelineRunner {
   }
 
   private resolveOverride(agentName: string): { model: string; client: LLMClient } {
-    const override = this.config.modelOverrides?.[agentName];
+    const override = this.config.modelOverrides?.[agentName]
+      ?? ((agentName === "chapter-analyzer" || agentName === "state-validator")
+        ? this.config.modelOverrides?.["observer-reflector"]
+        : undefined);
     if (!override) {
       return { model: this.config.model, client: this.config.client };
     }
@@ -1938,6 +1964,19 @@ export class PipelineRunner {
         temperatureOverride,
         externalContext,
       );
+      if (result.status === "held-after-two-revisions") {
+        await writeProductionRunSnapshot({
+          rootDir: bookDir,
+          runPath,
+          run: createProductionRunSnapshot({
+            ...baseRun,
+            status: "needs-review",
+            artifacts: result.candidateEvidencePath ? [result.candidateEvidencePath] : [],
+            observations: [],
+          }),
+        });
+        return result;
+      }
       const chapterPrefix = `${paddedChapter}_`;
       const chapterFile = (await readdir(join(bookDir, "chapters")))
         .find((file) => file.startsWith(chapterPrefix) && file.endsWith(".md"));
@@ -2036,6 +2075,15 @@ export class PipelineRunner {
 
     // 1. Write chapter
     const writer = new WriterAgent(this.agentCtxFor("writer", bookId));
+    if (this.config.boundedAutonomousReview) {
+      const identity = this.resolveOverride("writer");
+      await this.config.onAutonomousStage?.({
+        stage: "WRITING",
+        role: "writer",
+        provider: identity.client.service ?? identity.client.provider,
+        model: identity.model,
+      });
+    }
     this.logStage(stageLanguage, { zh: "撰写章节草稿", en: "writing chapter draft" });
     const output = await writer.writeChapter({
       book,
@@ -2057,6 +2105,8 @@ export class PipelineRunner {
     let auditResult: AuditResult;
     let postReviseCount: number;
     let repairApplied: boolean;
+    let autonomousReviewResult: BoundedReviewResult | undefined;
+    let roleUsage: Record<string, RoleTokenUsage> | undefined;
 
     if ((this.config.chapterReviewMode ?? "auto") === "manual") {
       // C4a: write-only checkpoint. Stop right after the draft — skip the
@@ -2076,6 +2126,107 @@ export class PipelineRunner {
           ? "Not reviewed yet (manual mode: stopped after writing — run review when ready)."
           : "尚未审查（手动模式：写完即停，需要时点“审查”）。",
       };
+    } else if (this.config.boundedAutonomousReview) {
+      const logicIdentity = this.resolveOverride("auditor");
+      const commercialIdentity = this.resolveOverride("commercial-reader");
+      const auditor = new ContinuityAuditor(this.agentCtxFor("auditor", bookId));
+      const commercialReader = new CommercialReaderAgent(this.agentCtxFor("commercial-reader", bookId));
+      autonomousReviewResult = await runBoundedReviewCycle({
+        initialContent: output.content,
+        reviewLogic: async (content, candidateSha) => scoredLogicReviewFromAudit(
+          await auditor.auditChapter(
+            bookDir,
+            content,
+            chapterNumber,
+            book.genre,
+            reducedControlInput,
+          ),
+          {
+            candidateSha,
+            provider: logicIdentity.client.service ?? logicIdentity.client.provider,
+            model: logicIdentity.model,
+          },
+        ),
+        reviewCommercial: (content, candidateSha) => commercialReader.reviewChapter({
+          chapterNumber,
+          content,
+          candidateSha,
+          chapterIntent: reducedControlInput.chapterIntent,
+        }),
+        revise: async (content, findings, round) => {
+          this.logStage(stageLanguage, round === 1
+            ? { zh: "执行定向修订 1/2", en: "running targeted revision 1/2" }
+            : { zh: "执行救援修订 2/2", en: "running rescue revision 2/2" });
+          const reviser = new ReviserAgent(this.agentCtxFor("reviser", bookId));
+          const revised = await reviser.reviseChapter(
+            bookDir,
+            content,
+            chapterNumber,
+            this.reviewFindingsAsAuditIssues(findings),
+            "auto",
+            book.genre,
+            { ...reducedControlInput, lengthSpec },
+          );
+          return { content: revised.revisedContent, tokenUsage: revised.tokenUsage };
+        },
+        onStage: async (stage) => {
+          const role = stage === "LOGIC_REVIEW"
+            ? "auditor"
+            : stage === "READER_REVIEW" ? "commercial-reader" : "reviser";
+          const identity = this.resolveOverride(role);
+          await this.config.onAutonomousStage?.({
+            stage,
+            role,
+            provider: identity.client.service ?? identity.client.provider,
+            model: identity.model,
+          });
+        },
+      });
+      roleUsage = {
+        writer: output.tokenUsage ?? { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+        ...autonomousReviewResult.usageByRole,
+      };
+      totalUsage = Object.values(roleUsage).reduce(
+        (sum, usage) => PipelineRunner.addUsage(sum, usage),
+        { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      );
+      finalContent = autonomousReviewResult.finalContent;
+      finalWordCount = countChapterLength(finalContent, lengthSpec.countingMode);
+      revised = autonomousReviewResult.revisionCount > 0;
+      postReviseCount = revised ? finalWordCount : 0;
+      repairApplied = revised;
+      const latestReviews = autonomousReviewResult.candidates.at(-1)?.reviews ?? [];
+      const findings = latestReviews.flatMap((review) => review.findings);
+      auditResult = {
+        passed: autonomousReviewResult.status === "APPROVED",
+        overallScore: latestReviews.length > 0
+          ? Math.round(latestReviews.reduce((sum, review) => sum + review.totalScore, 0) / latestReviews.length)
+          : 0,
+        issues: this.reviewFindingsAsAuditIssues(findings),
+        summary: autonomousReviewResult.status === "APPROVED"
+          ? `Bounded autonomous review ${autonomousReviewResult.grade} approved.`
+          : `HELD_AFTER_TWO_REVISIONS: ${autonomousReviewResult.holdReason ?? "REVISION_LIMIT_REACHED"}`,
+      };
+      if (autonomousReviewResult.status === "HELD_AFTER_TWO_REVISIONS") {
+        const candidateEvidencePath = await this.persistBoundedReviewEvidence(
+          bookDir,
+          chapterNumber,
+          autonomousReviewResult,
+        );
+        return {
+          chapterNumber,
+          title: output.title,
+          wordCount: finalWordCount,
+          auditResult,
+          revised,
+          status: "held-after-two-revisions",
+          tokenUsage: totalUsage,
+          roleUsage,
+          autonomousReview: this.projectBoundedReview(autonomousReviewResult),
+          candidateEvidencePath,
+          ...(writeInput.contextTrace ? { contextTrace: writeInput.contextTrace } : {}),
+        };
+      }
     } else {
       const auditor = new ContinuityAuditor(this.agentCtxFor("auditor", bookId));
       const reviewResult = await runChapterReviewCycle({
@@ -2126,6 +2277,15 @@ export class PipelineRunner {
 
     this.throwIfOperationAborted();
     this.throwIfOperationAborted();
+    if (this.config.boundedAutonomousReview) {
+      const identity = this.resolveOverride("state-validator");
+      await this.config.onAutonomousStage?.({
+        stage: "SETTLING_STATE",
+        role: "observer-reflector",
+        provider: identity.client.service ?? identity.client.provider,
+        model: identity.model,
+      });
+    }
     // 4. Save the final chapter and truth files from a single persistence source
     this.logStage(stageLanguage, { zh: "落盘最终章节", en: "persisting final chapter" });
     this.logStage(stageLanguage, { zh: "生成最终真相文件", en: "rebuilding final truth files" });
@@ -2318,6 +2478,14 @@ export class PipelineRunner {
       lengthTelemetry,
       degradedIssues,
       tokenUsage: totalUsage,
+      ...(roleUsage ? { roleUsage } : {}),
+      ...(autonomousReviewResult ? {
+        autonomousReview: {
+          status: autonomousReviewResult.status,
+          grade: autonomousReviewResult.grade,
+          revisionCount: autonomousReviewResult.revisionCount,
+        },
+      } : {}),
       loadChapterIndex: () => this.state.loadChapterIndex(bookId),
       saveChapter: () => writer.saveChapter(bookDir, persistenceOutput, gp.numericalSystem, pipelineLang),
       saveTruthFiles: async () => {
@@ -2380,6 +2548,8 @@ export class PipelineRunner {
       lengthWarnings,
       lengthTelemetry,
       tokenUsage: totalUsage,
+      ...(roleUsage ? { roleUsage } : {}),
+      ...(autonomousReviewResult ? { autonomousReview: this.projectBoundedReview(autonomousReviewResult) } : {}),
       ...(writeInput.contextTrace ? { contextTrace: writeInput.contextTrace } : {}),
     };
   }
@@ -3188,15 +3358,99 @@ ${matrix}`,
     }
   }
 
+  private reviewFindingsAsAuditIssues(findings: ReadonlyArray<ReviewFinding>): AuditIssue[] {
+    return findings.map((finding) => ({
+      severity: finding.severity === "CRITICAL" || finding.severity === "MAJOR"
+        ? "critical"
+        : finding.severity === "MINOR" ? "warning" : "info",
+      category: finding.impact || "bounded-review",
+      description: finding.evidence,
+      suggestion: finding.requiredOutcome,
+      repairScope: finding.severity === "CRITICAL" || finding.severity === "MAJOR" ? "structural" : "local",
+    }));
+  }
+
+  private projectBoundedReview(result: BoundedReviewResult): NonNullable<ChapterPipelineResult["autonomousReview"]> {
+    return {
+      status: result.status,
+      grade: result.grade,
+      revisionCount: result.revisionCount,
+      holdReason: result.holdReason,
+      usageByRole: result.usageByRole,
+      candidates: result.candidates.map(({ label, sha256, combinedScore }) => ({ label, sha256, combinedScore })),
+      bestCandidate: {
+        label: result.bestCandidate.label,
+        sha256: result.bestCandidate.sha256,
+        combinedScore: result.bestCandidate.combinedScore,
+      },
+    };
+  }
+
+  private async persistBoundedReviewEvidence(
+    bookDir: string,
+    chapterNumber: number,
+    result: BoundedReviewResult,
+  ): Promise<string> {
+    const chapter = String(chapterNumber).padStart(4, "0");
+    const base = join("story", "runtime", "bounded-autonomous", `chapter-${chapter}`);
+    const reviewPayload = {
+      schema_version: "1.0",
+      chapter_number: chapterNumber,
+      status: result.status,
+      grade: result.grade,
+      revision_count: result.revisionCount,
+      hold_reason: result.holdReason ?? null,
+      best_candidate: {
+        label: result.bestCandidate.label,
+        sha256: result.bestCandidate.sha256,
+        combined_score: result.bestCandidate.combinedScore,
+      },
+      candidates: result.candidates.map((candidate) => ({
+        label: candidate.label,
+        sha256: candidate.sha256,
+        combined_score: candidate.combinedScore,
+        reviews: candidate.reviews,
+      })),
+      usage_by_role: result.usageByRole,
+    };
+    await commitAtomicFileSet({
+      rootDir: bookDir,
+      writes: [
+        ...result.candidates.map((candidate) => ({
+          relativePath: join(base, `${candidate.label.toLowerCase()}.md`),
+          content: candidate.content,
+        })),
+        {
+          relativePath: join(base, "review.json"),
+          content: `${JSON.stringify(reviewPayload, null, 2)}\n`,
+        },
+      ],
+    });
+    if (this.config.boundedAutonomousReview) {
+      await this.config.onAutonomousStage?.({
+        stage: "APPROVED",
+        role: "state-manager",
+        provider: null,
+        model: null,
+      });
+    }
+    return toPosixPath(join(base, "review.json"));
+  }
+
   private static addUsage(
     a: TokenUsageSummary,
-    b?: { readonly promptTokens: number; readonly completionTokens: number; readonly totalTokens: number },
+    b?: { readonly promptTokens: number; readonly completionTokens: number; readonly totalTokens: number; readonly actualCostUsd?: number },
   ): TokenUsageSummary {
     if (!b) return a;
+    const aHasUsage = a.promptTokens > 0 || a.completionTokens > 0 || a.totalTokens > 0;
+    const actualCostUsd = b.actualCostUsd !== undefined && (!aHasUsage || a.actualCostUsd !== undefined)
+      ? (a.actualCostUsd ?? 0) + b.actualCostUsd
+      : undefined;
     return {
       promptTokens: a.promptTokens + b.promptTokens,
       completionTokens: a.completionTokens + b.completionTokens,
       totalTokens: a.totalTokens + b.totalTokens,
+      ...(actualCostUsd !== undefined ? { actualCostUsd } : {}),
     };
   }
 

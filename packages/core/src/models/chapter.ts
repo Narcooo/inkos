@@ -36,6 +36,18 @@ export const ChapterMetaSchema = z.object({
     promptTokens: z.number().int().default(0),
     completionTokens: z.number().int().default(0),
     totalTokens: z.number().int().default(0),
+    actualCostUsd: z.number().nonnegative().optional(),
+  }).optional(),
+  roleUsage: z.record(z.string(), z.object({
+    promptTokens: z.number().int().default(0),
+    completionTokens: z.number().int().default(0),
+    totalTokens: z.number().int().default(0),
+    actualCostUsd: z.number().nonnegative().optional(),
+  })).optional(),
+  autonomousReview: z.object({
+    status: z.enum(["APPROVED", "HELD_AFTER_TWO_REVISIONS"]),
+    grade: z.enum(["A", "B", "C", "D", "E"]),
+    revisionCount: z.number().int().min(0).max(2),
   }).optional(),
 });
 

@@ -289,6 +289,9 @@ export async function runWorkerAgent(
         promptTokens: final.usage.input,
         completionTokens: final.usage.output,
         totalTokens: final.usage.totalTokens,
+        ...(typeof final.usage.cost?.total === "number" && final.usage.cost.total > 0
+          ? { actualCostUsd: final.usage.cost.total }
+          : {}),
       },
     };
   } finally {

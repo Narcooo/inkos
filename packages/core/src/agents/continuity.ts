@@ -23,10 +23,13 @@ export interface AuditResult {
   readonly parseFailed?: boolean;
   /** 0-100 overall quality score. Present when the auditor supports scoring. */
   readonly overallScore?: number;
+  /** Weighted logic/canon dimensions used by bounded autonomous production. */
+  readonly dimensionScores?: Readonly<Record<string, number>>;
   readonly tokenUsage?: {
     readonly promptTokens: number;
     readonly completionTokens: number;
     readonly totalTokens: number;
+    readonly actualCostUsd?: number;
   };
 }
 
@@ -479,10 +482,21 @@ For every issue, set repair_scope as a typed routing hint: "local" for wording, 
 Audit dimensions:
 ${dimList}
 
+Bounded logic/canon scoring weights: blueprint_transition 20, causal_logic 20, canon_continuity 20, character_motivation 15, state_inheritance 10, hooks_disclosure 10, narrative_clarity 5.
+
 Output format MUST be JSON:
 {
   "passed": true/false,
   "overall_score": 0-100,
+  "dimension_scores": {
+    "blueprint_transition": 0-100,
+    "causal_logic": 0-100,
+    "canon_continuity": 0-100,
+    "character_motivation": 0-100,
+    "state_inheritance": 0-100,
+    "hooks_disclosure": 0-100,
+    "narrative_clarity": 0-100
+  },
   "issues": [
 	    {
 	      "severity": "critical|warning|info",
@@ -521,10 +535,21 @@ Score holistically — do not let a single minor issue tank the score.`
 审查维度：
 ${dimList}
 
+有界逻辑/Canon评分权重：章纲目标与前后章衔接20、因果链与情节逻辑20、Canon/人物/事实连续性20、人物动机与行为可信度15、时间/空间/物品/状态继承10、伏笔/信息披露与回收10、叙述清晰度5。
+
 输出格式必须为 JSON：
 {
   "passed": true/false,
   "overall_score": 0-100,
+  "dimension_scores": {
+    "blueprint_transition": 0-100,
+    "causal_logic": 0-100,
+    "canon_continuity": 0-100,
+    "character_motivation": 0-100,
+    "state_inheritance": 0-100,
+    "hooks_disclosure": 0-100,
+    "narrative_clarity": 0-100
+  },
   "issues": [
 	    {
 	      "severity": "critical|warning|info",
@@ -799,6 +824,12 @@ ${overrides}\n`;
       const overallScore = typeof rawScore === "number" && Number.isFinite(rawScore)
         ? Math.round(Math.max(0, Math.min(100, rawScore)))
         : undefined;
+      const rawDimensions = parsed.dimension_scores ?? parsed.dimensionScores;
+      const dimensionScores = rawDimensions && typeof rawDimensions === "object" && !Array.isArray(rawDimensions)
+        ? Object.fromEntries(Object.entries(rawDimensions)
+          .filter(([, value]) => typeof value === "number" && Number.isFinite(value))
+          .map(([key, value]) => [key, Math.round(Math.max(0, Math.min(100, value as number)))]))
+        : undefined;
       return {
         passed: Boolean(parsed.passed ?? false),
         issues: Array.isArray(parsed.issues)
@@ -812,6 +843,7 @@ ${overrides}\n`;
           : [],
         summary: String(parsed.summary ?? ""),
         overallScore,
+        ...(dimensionScores && Object.keys(dimensionScores).length > 0 ? { dimensionScores } : {}),
       };
     } catch {
       return null;

@@ -54,6 +54,8 @@ describe("persistChapterArtifacts", () => {
       lengthWarnings: ["warn"],
       degradedIssues: [],
       tokenUsage: ZERO_USAGE,
+      roleUsage: { writer: ZERO_USAGE, "commercial-reader": ZERO_USAGE },
+      autonomousReview: { status: "APPROVED", grade: "A", revisionCount: 0 },
       loadChapterIndex: async () => [] satisfies ReadonlyArray<ChapterMeta>,
       saveChapter,
       saveTruthFiles,
@@ -81,6 +83,8 @@ describe("persistChapterArtifacts", () => {
         ],
         reviewNote: undefined,
         tokenUsage: ZERO_USAGE,
+        roleUsage: { writer: ZERO_USAGE, "commercial-reader": ZERO_USAGE },
+        autonomousReview: { status: "APPROVED", grade: "A", revisionCount: 0 },
       }),
     ]);
     expect(markBookActiveIfNeeded).toHaveBeenCalledTimes(1);

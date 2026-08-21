@@ -32,6 +32,17 @@ interface BookSummary {
   readonly chaptersWritten: number;
   readonly language?: string;
   readonly fanficMode?: string;
+  readonly autonomous?: {
+    readonly totalChapters: number;
+    readonly nextChapter: number;
+    readonly currentVolume: { readonly volumeNumber: number; readonly startChapter: number; readonly endChapter: number };
+    readonly runtimeStatus: string;
+    readonly startEnabled: boolean;
+    readonly budget: { readonly preferredUsd: number; readonly hardCapUsd: number };
+    readonly actualCostUsd: number | null;
+    readonly currentVolumeForecast: { readonly lowUsd: number | null; readonly baseUsd: number | null; readonly highUsd: number | null };
+    readonly fullBookForecast: { readonly lowUsd: number | null; readonly baseUsd: number | null; readonly highUsd: number | null };
+  };
 }
 
 interface Nav {
@@ -127,6 +138,7 @@ function BookMenu({ bookId, bookTitle, nav, t, onDelete, onOpenChange }: {
 export function Dashboard({ nav, sse, theme, t }: { nav: Nav; sse: { messages: ReadonlyArray<SSEMessage> }; theme: Theme; t: TFunction }) {
   const c = useColors(theme);
   const [menuOpenBookId, setMenuOpenBookId] = useState<string | null>(null);
+  const [autonomousPending, setAutonomousPending] = useState<string | null>(null);
   const { data, loading, error, refetch } = useApi<{ books: ReadonlyArray<BookSummary> }>("/books");
   const writingBooks = useMemo(() => deriveActiveBookIds(sse.messages), [sse.messages]);
   const serviceStoreServices = useServiceStore((s) => s.services);
@@ -215,6 +227,27 @@ export function Dashboard({ nav, sse, theme, t }: { nav: Nav; sse: { messages: R
         {data.books.map((book, index) => {
           const isWriting = writingBooks.has(book.id);
           const staggerClass = `stagger-${Math.min(index + 1, 5)}`;
+          const autonomous = book.autonomous;
+          const runAutonomous = async (mode: "current-volume" | "full-book") => {
+            if (!autonomous || autonomousPending) return;
+            setAutonomousPending(`${book.id}:${mode}`);
+            try {
+              await fetchJson(`/books/${book.id}/autonomous-production/start`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  mode,
+                  preferredBudgetUsd: autonomous.budget.preferredUsd,
+                  hardCapUsd: autonomous.budget.hardCapUsd,
+                }),
+              });
+              refetch();
+            } catch (e) {
+              alert(e instanceof Error ? e.message : "Autonomous production failed to start");
+            } finally {
+              setAutonomousPending(null);
+            }
+          };
           return (
             <div
               key={book.id}
@@ -267,6 +300,16 @@ export function Dashboard({ nav, sse, theme, t }: { nav: Nav; sse: { messages: R
                       </span>
                     )}
                   </div>
+                  {autonomous && (
+                    <div className="mt-4 rounded-xl border border-border/40 bg-secondary/20 p-3 text-xs space-y-2">
+                      <div className="font-semibold">Volume {autonomous.currentVolume.volumeNumber} · {String(autonomous.currentVolume.startChapter).padStart(3, "0")}–{String(autonomous.currentVolume.endChapter).padStart(3, "0")} · cursor {String(autonomous.nextChapter).padStart(3, "0")} / {autonomous.totalChapters} · {autonomous.runtimeStatus}</div>
+                      <div className="text-muted-foreground">Actual {autonomous.actualCostUsd === null ? "UNAVAILABLE" : `$${autonomous.actualCostUsd.toFixed(4)}`} · volume forecast {autonomous.currentVolumeForecast.baseUsd === null ? "UNAVAILABLE" : `$${autonomous.currentVolumeForecast.baseUsd.toFixed(4)}`} · book forecast {autonomous.fullBookForecast.baseUsd === null ? "UNAVAILABLE" : `$${autonomous.fullBookForecast.baseUsd.toFixed(4)}`}</div>
+                      <div className="flex flex-wrap gap-2">
+                        <button disabled={!autonomous.startEnabled || autonomousPending !== null} onClick={() => void runAutonomous("current-volume")} className="rounded-lg bg-primary px-3 py-1.5 font-bold text-primary-foreground disabled:opacity-40">Run / Resume Current Volume</button>
+                        <button disabled={!autonomous.startEnabled || autonomousPending !== null} onClick={() => void runAutonomous("full-book")} className="rounded-lg border border-primary/30 px-3 py-1.5 font-bold text-primary disabled:opacity-40">Run / Resume Full Book</button>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-3 shrink-0 ml-6">

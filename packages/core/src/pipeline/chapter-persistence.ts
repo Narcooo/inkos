@@ -7,6 +7,7 @@ export interface ChapterPersistenceUsage {
   readonly promptTokens: number;
   readonly completionTokens: number;
   readonly totalTokens: number;
+  readonly actualCostUsd?: number;
 }
 
 export type ChapterPersistenceStatus = "ready-for-review" | "audit-failed" | "state-degraded";
@@ -21,6 +22,12 @@ export async function persistChapterArtifacts(params: {
   readonly lengthTelemetry?: LengthTelemetry;
   readonly degradedIssues: ReadonlyArray<AuditIssue>;
   readonly tokenUsage?: ChapterPersistenceUsage;
+  readonly roleUsage?: Readonly<Record<string, ChapterPersistenceUsage>>;
+  readonly autonomousReview?: {
+    readonly status: "APPROVED" | "HELD_AFTER_TWO_REVISIONS";
+    readonly grade: "A" | "B" | "C" | "D" | "E";
+    readonly revisionCount: number;
+  };
   readonly loadChapterIndex: () => Promise<ReadonlyArray<ChapterMeta>>;
   readonly saveChapter: () => Promise<void>;
   readonly saveTruthFiles: () => Promise<void>;
@@ -56,6 +63,8 @@ export async function persistChapterArtifacts(params: {
       : undefined,
     lengthTelemetry: params.lengthTelemetry,
     tokenUsage: params.tokenUsage,
+    roleUsage: params.roleUsage,
+    autonomousReview: params.autonomousReview,
   };
   const existingIdx = existingIndex.findIndex((e) => e.number === params.chapterNumber);
   const updatedIndex = existingIdx >= 0

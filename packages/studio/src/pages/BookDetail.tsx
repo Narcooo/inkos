@@ -6,6 +6,7 @@ import type { SSEMessage } from "../hooks/use-sse";
 import { useColors } from "../hooks/use-colors";
 import { deriveBookActivity, shouldRefetchBookView } from "../hooks/use-book-activity";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { AutonomousProductionPanel } from "../components/AutonomousProductionPanel";
 import {
   ChevronLeft,
   Zap,
@@ -516,6 +517,8 @@ export function BookDetail({
           </button>
         </div>
       </div>
+
+      <AutonomousProductionPanel bookId={bookId} />
 
       {(writing || drafting || activity.lastError) && (
         <div

@@ -263,6 +263,7 @@ export interface LLMResponse {
     readonly promptTokens: number;
     readonly completionTokens: number;
     readonly totalTokens: number;
+    readonly actualCostUsd?: number;
   };
 }
 

@@ -457,6 +457,17 @@ describe("PipelineRunner", () => {
     }
   });
 
+  it("routes observer and reflector support calls through the explicit low-cost override", () => {
+    const runner = new PipelineRunner({
+      client: { provider: "openai", apiFormat: "chat", stream: false, defaults: { temperature: 0.7, maxTokens: 4096, thinkingBudget: 0 } } as ConstructorParameters<typeof PipelineRunner>[0]["client"],
+      model: "expensive-writer",
+      projectRoot: process.cwd(),
+      modelOverrides: { "observer-reflector": "low-cost-state-model" },
+    });
+    expect(runner.createAgentContext("chapter-analyzer").model).toBe("low-cost-state-model");
+    expect(runner.createAgentContext("state-validator").model).toBe("low-cost-state-model");
+  });
+
   it("initializes control documents during book creation", async () => {
     const root = await mkdtemp(join(tmpdir(), "inkos-init-book-test-"));
     const bookId = "bootstrap-book";

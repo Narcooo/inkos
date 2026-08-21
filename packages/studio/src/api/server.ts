@@ -131,6 +131,7 @@ import {
   type RequestedIntent,
   type SessionKind,
   type AgentSessionAttachment,
+  runBoundedAutonomousScope,
 } from "@actalk/inkos-core";
 import { isConfirmedProductionAction } from "../shared/confirmed-production.js";
 import { summarizeToolResult } from "../shared/tool-result.js";
@@ -145,6 +146,15 @@ import {
   saveStudioTaskSnapshot,
   type StudioTaskSnapshot,
 } from "./task-store.js";
+import {
+  AutonomousJobRegistry,
+  DEFAULT_AUTONOMOUS_BUDGET,
+  loadAutonomousRuntime,
+  loadSafeAutonomousConfig,
+  projectAutonomousProductionView,
+  requireBookProductionMap,
+  saveAutonomousRuntime,
+} from "./autonomous-production.js";
 
 // -- Studio server language (read per request from the project config's `language`) --
 
@@ -2556,6 +2566,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
   const state = new StateManager(root);
   let cachedConfig = initialConfig;
   const activeConfirmedTasks = new Map<string, AbortController>();
+  const autonomousJobs = new AutonomousJobRegistry();
   // 确认式生产任务的单任务名额（sessionId → taskId）。原来的检查是"await 读快照
   // → 之后才 set controller"的 check-then-act：两个并发确认请求都能通过检查，
   // 双任务同时启动、快照互相覆盖。这里在任何 await 之前同步占位，占位失败的
@@ -2721,6 +2732,30 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     return normalizeStudioLanguage(raw.language);
   }
 
+  async function loadAutonomousView(
+    bookId: string,
+    budgetOverride?: { readonly preferredUsd: number; readonly hardCapUsd: number },
+  ) {
+    const [map, book, chapters, nextChapter, runtime, safeConfig] = await Promise.all([
+      requireBookProductionMap(root, bookId),
+      state.loadBookConfig(bookId),
+      state.loadChapterIndex(bookId),
+      state.getNextChapterNumber(bookId),
+      loadAutonomousRuntime(root, bookId),
+      loadSafeAutonomousConfig(root),
+    ]);
+    return projectAutonomousProductionView({
+      map,
+      targetChapters: book.targetChapters,
+      nextChapter,
+      chapters,
+      config: safeConfig,
+      runtime,
+      active: autonomousJobs.isActive(bookId),
+      budget: budgetOverride ?? runtime?.budget ?? DEFAULT_AUTONOMOUS_BUDGET,
+    });
+  }
+
   async function buildPipelineConfig(
     overrides?: Partial<Pick<PipelineConfig, "externalContext" | "client" | "model" | "revisionGate">> & {
       readonly currentConfig?: ProjectConfig;
@@ -2792,7 +2827,22 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
 
   app.get("/api/v1/books", async (c) => {
     const bookIds = await state.listBooks();
-    const books = await Promise.all(bookIds.map((id) => loadStudioBookListSummary(state, id)));
+    const books = await Promise.all(bookIds.map(async (id) => {
+      const summary = await loadStudioBookListSummary(state, id);
+      const autonomous = await loadAutonomousView(id).then((view) => ({
+        totalChapters: view.totalChapters,
+        nextChapter: view.nextChapter,
+        currentVolume: view.currentVolume,
+        runtimeStatus: view.runtimeStatus,
+        startEnabled: view.startEnabled,
+        runtimeBlockers: view.runtimeBlockers,
+        budget: view.budget,
+        actualCostUsd: view.economics.actual.costUsd,
+        currentVolumeForecast: view.economics.currentVolumeForecast,
+        fullBookForecast: view.economics.fullBookForecast,
+      })).catch(() => null);
+      return { ...summary, ...(autonomous ? { autonomous } : {}) };
+    }));
     return c.json({ books });
   });
 
@@ -2806,6 +2856,135 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     } catch {
       return c.json({ error: `Book "${id}" not found` }, 404);
     }
+  });
+
+  app.get("/api/v1/books/:id/autonomous-production", async (c) => {
+    return c.json(await loadAutonomousView(c.req.param("id")));
+  });
+
+  app.post("/api/v1/books/:id/autonomous-production/start", async (c) => {
+    const bookId = c.req.param("id");
+    const body: {
+      mode?: string;
+      preferredBudgetUsd?: number;
+      hardCapUsd?: number;
+    } = await c.req.json().catch(() => ({}));
+    const mode = body.mode === "full-book" ? "full-book" : body.mode === "current-volume" ? "current-volume" : null;
+    if (!mode) throw new ApiError(400, "AUTONOMOUS_MODE_INVALID", "mode must be current-volume or full-book");
+    const budget = {
+      preferredUsd: body.preferredBudgetUsd ?? DEFAULT_AUTONOMOUS_BUDGET.preferredUsd,
+      hardCapUsd: body.hardCapUsd ?? DEFAULT_AUTONOMOUS_BUDGET.hardCapUsd,
+    };
+    if (!Number.isFinite(budget.preferredUsd) || budget.preferredUsd <= 0
+      || !Number.isFinite(budget.hardCapUsd) || budget.hardCapUsd <= budget.preferredUsd) {
+      throw new ApiError(400, "AUTONOMOUS_BUDGET_INVALID", "Hard cap must be greater than the positive preferred budget.");
+    }
+
+    const admission = await loadAutonomousView(bookId, budget);
+    if (!admission.startEnabled) {
+      throw new ApiError(409, "AUTONOMOUS_ADMISSION_BLOCKED", admission.runtimeBlockers.join(", "));
+    }
+    // Synchronous reservation closes the double-click window before any more awaits.
+    if (!autonomousJobs.reserve(bookId)) {
+      throw new ApiError(409, "AUTONOMOUS_JOB_ALREADY_RUNNING", "A bounded production job is already active for this book.");
+    }
+
+    const pipelineConfig = await buildPipelineConfig({ bookIdForSettings: bookId }).catch((error) => {
+      autonomousJobs.release(bookId);
+      throw error;
+    });
+    const pipeline = new PipelineRunner({
+      ...pipelineConfig,
+      chapterReviewMode: "auto",
+      boundedAutonomousReview: true,
+      onAutonomousStage: async (event) => {
+        const nextChapter = await state.getNextChapterNumber(bookId);
+        await saveAutonomousRuntime(root, bookId, {
+          status: "RUNNING",
+          mode,
+          nextChapter,
+          updatedAt: new Date().toISOString(),
+          budget,
+          phase: event.stage,
+          activeRole: event.role,
+          activeProvider: event.provider,
+          activeModel: event.model,
+        });
+      },
+    });
+    const productionMap = await requireBookProductionMap(root, bookId);
+    let verifiedActualCost = admission.economics.currentVolumeActual.costUsd;
+    const startedNextChapter = admission.nextChapter;
+    await saveAutonomousRuntime(root, bookId, {
+      status: "RUNNING",
+      mode,
+      nextChapter: startedNextChapter,
+      updatedAt: new Date().toISOString(),
+      budget,
+    });
+
+    void runBoundedAutonomousScope({
+      map: productionMap,
+      mode,
+      getNextChapter: () => state.getNextChapterNumber(bookId),
+      shouldStop: () => autonomousJobs.shouldStop(bookId),
+      beforeNextProviderCall: () => ({
+        allowed: verifiedActualCost === null || verifiedActualCost < budget.hardCapUsd,
+        ...(verifiedActualCost !== null && verifiedActualCost >= budget.hardCapUsd
+          ? { reason: "HARD_COST_CAP_REACHED" }
+          : {}),
+      }),
+      runChapter: async () => {
+        const result = await pipeline.writeNextChapter(bookId);
+        if (result.tokenUsage?.actualCostUsd !== undefined) {
+          verifiedActualCost = (verifiedActualCost ?? 0) + result.tokenUsage.actualCostUsd;
+        }
+        broadcast("autonomous:chapter-complete", {
+          bookId,
+          chapterNumber: result.chapterNumber,
+          status: result.status,
+          grade: result.autonomousReview?.grade,
+          revisionCount: result.autonomousReview?.revisionCount,
+        });
+        if (mode === "full-book" && productionMap.volumes.some((volume) => volume.endChapter === result.chapterNumber)) {
+          verifiedActualCost = 0;
+        }
+        return result;
+      },
+      persistProgress: async (progress) => {
+        await saveAutonomousRuntime(root, bookId, {
+          status: progress.status,
+          mode: progress.mode,
+          nextChapter: progress.nextChapter,
+          updatedAt: new Date().toISOString(),
+          budget,
+        });
+      },
+    }).then(
+      (result) => broadcast("autonomous:complete", { bookId, status: result.status, nextChapter: result.nextChapter }),
+      async (error) => {
+        const nextChapter = await state.getNextChapterNumber(bookId).catch(() => startedNextChapter);
+        await saveAutonomousRuntime(root, bookId, {
+          status: "PAUSED",
+          mode,
+          nextChapter,
+          updatedAt: new Date().toISOString(),
+          lastError: error instanceof Error ? error.message : String(error),
+          budget,
+        }).catch(() => undefined);
+        broadcast("autonomous:error", { bookId, error: error instanceof Error ? error.message : String(error) });
+      },
+    ).finally(() => autonomousJobs.release(bookId));
+
+    return c.json({ status: "RUNNING", mode, bookId }, 202);
+  });
+
+  app.post("/api/v1/books/:id/autonomous-production/stop", async (c) => {
+    const bookId = c.req.param("id");
+    if (!autonomousJobs.requestStop(bookId)) {
+      throw new ApiError(409, "AUTONOMOUS_JOB_NOT_RUNNING", "No bounded production job is active for this book.");
+    }
+    return c.json({ status: "STOP_REQUESTED_AFTER_CURRENT_CHAPTER", bookId });
   });
 
   // --- Genres ---
