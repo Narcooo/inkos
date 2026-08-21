@@ -59,6 +59,30 @@ export class AutonomousJobRegistry {
   }
 }
 
+export class AutonomousCostGuard {
+  private reservedUsd = 0;
+  constructor(private currentUsd: number | null, private nextCallConservativeUsd: number | null, private readonly hardCapUsd: number) {}
+  check(reserve: boolean): { readonly allowed: boolean; readonly reason?: string } {
+    if (this.currentUsd === null || this.nextCallConservativeUsd === null) return { allowed: false, reason: "COST_GUARD_UNAVAILABLE" };
+    if (this.currentUsd + this.reservedUsd + this.nextCallConservativeUsd >= this.hardCapUsd) return { allowed: false, reason: "NEXT_PROVIDER_CALL_COULD_REACH_HARD_CAP" };
+    if (reserve) this.reservedUsd += this.nextCallConservativeUsd;
+    return { allowed: true };
+  }
+  settle(actualCostUsd?: number): void {
+    if (this.currentUsd === null) return;
+    if (typeof actualCostUsd === "number" && Number.isFinite(actualCostUsd) && actualCostUsd >= 0) {
+      this.currentUsd += actualCostUsd;
+      this.nextCallConservativeUsd = Math.max(this.nextCallConservativeUsd ?? 0, actualCostUsd);
+    } else if (this.reservedUsd > 0) {
+      this.currentUsd += this.reservedUsd;
+    } else {
+      this.currentUsd = null;
+    }
+    this.reservedUsd = 0;
+  }
+  resetVolume(): void { this.currentUsd = 0; this.reservedUsd = 0; }
+}
+
 interface ChapterProjection {
   readonly number: number;
   readonly status: string;
@@ -185,7 +209,11 @@ export function projectAutonomousProductionView(params: {
     hardCapUsd: params.budget.hardCapUsd,
     records: currentVolumeUsageRecords,
   });
-  if (!economics.budget.allowNextProviderCall) blockers.push("HARD_COST_CAP_REACHED");
+  if (!currentVolumeEconomics.budget.allowNextProviderCall) {
+    blockers.push(currentVolumeEconomics.budget.guardStatus === "COST_UNAVAILABLE"
+      ? "COST_GUARD_UNAVAILABLE"
+      : "HARD_COST_CAP_REACHED");
+  }
 
   return {
     bookId: params.map.bookId,
@@ -206,7 +234,11 @@ export function projectAutonomousProductionView(params: {
     roles,
     revisionPolicy: { normal: 1, rescue: 1, maximum: 2 },
     budget: params.budget,
-    economics: { ...economics, currentVolumeActual: currentVolumeEconomics.actual },
+    economics: {
+      ...economics,
+      currentVolumeActual: currentVolumeEconomics.actual,
+      budget: currentVolumeEconomics.budget,
+    },
     runtimeBlockers: blockers,
     startEnabled: blockers.length === 0 && !scope.complete,
   };

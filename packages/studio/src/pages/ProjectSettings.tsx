@@ -25,6 +25,7 @@ import {
   groupPromptPacksForDisplay,
   type PromptPacksResponse,
 } from "./prompt-pack-ui-state";
+import type { ProductionRoleSelection } from "./production-role-models";
 
 interface Nav {
   toDashboard: () => void;
@@ -95,6 +96,7 @@ export function ProjectSettings({ nav, theme, t }: { nav: Nav; theme: Theme; t: 
   const isZh = t("nav.connected") === "\u5DF2\u8FDE\u63A5";
   const { data: overridesData, refetch: refetchOverrides } = useApi<{ overrides: Record<string, unknown> }>("/project/model-overrides");
   const { data: defaultModelData, refetch: refetchDefaultModel } = useApi<{ service: string | null; defaultModel: string | null }>("/project/default-model");
+  const { data: productionRolesData, refetch: refetchProductionRoles } = useApi<{ service: string | null; registeredModels: string[]; selection: Record<keyof ProductionRoleSelection, string | null> }>("/project/production-role-models");
   const { data: researchSearchData, refetch: refetchResearchSearch } = useApi<{ researchSearch: Partial<ResearchSearchDraft> }>("/project/research-search");
   const { data: notifyData, refetch: refetchNotify } = useApi<{ channels: unknown[] }>("/project/notify");
   const { data: detectionData, refetch: refetchDetection } = useApi<{ detection: unknown | null }>("/project/detection");
@@ -102,6 +104,7 @@ export function ProjectSettings({ nav, theme, t }: { nav: Nav; theme: Theme; t: 
   const { data: promptPacksData, refetch: refetchPromptPacks } = useApi<PromptPacksResponse>("/prompt-packs");
   const [defaultService, setDefaultService] = useState("");
   const [defaultModel, setDefaultModel] = useState("");
+  const [productionRoles, setProductionRoles] = useState<ProductionRoleSelection>({ writer: "", logicAuditor: "", commercialReader: "", reviser: "", observerReflector: "" });
   const [researchSearch, setResearchSearch] = useState<ResearchSearchDraft>({ ...DEFAULT_RESEARCH_SEARCH });
   const [overrideRows, setOverrideRows] = useState<OverrideRow[]>([]);
   const [notifyChannels, setNotifyChannels] = useState<NotifyChannelDraft[]>([]);
@@ -133,6 +136,17 @@ export function ProjectSettings({ nav, theme, t }: { nav: Nav; theme: Theme; t: 
     setDefaultService(defaultModelData.service ?? "");
     setDefaultModel(defaultModelData.defaultModel ?? "");
   }, [defaultModelData]);
+
+  useEffect(() => {
+    if (!productionRolesData) return;
+    setProductionRoles({
+      writer: productionRolesData.selection.writer ?? "",
+      logicAuditor: productionRolesData.selection.logicAuditor ?? "",
+      commercialReader: productionRolesData.selection.commercialReader ?? "",
+      reviser: productionRolesData.selection.reviser ?? "",
+      observerReflector: productionRolesData.selection.observerReflector ?? "",
+    });
+  }, [productionRolesData]);
 
   useEffect(() => {
     if (!researchSearchData) return;
@@ -224,6 +238,20 @@ export function ProjectSettings({ nav, theme, t }: { nav: Nav; theme: Theme; t: 
           {notice.message}
         </div>
       )}
+
+      <SettingsCard title="Autonomous Production Models" description="Choose one registered model for each fixed production responsibility. Arbitrary model strings are rejected by the server." icon={<Bot size={18} />}>
+        <div className="grid gap-3 md:grid-cols-2">
+          {([
+            ["writer", "Writer", "Drafts and revises chapter prose."],
+            ["logicAuditor", "Logic Auditor", "Independently checks canon and logic."],
+            ["commercialReader", "Commercial Reader", "Evaluates reader and market effect."],
+            ["reviser", "Reviser", "Applies bounded review findings."],
+            ["observerReflector", "Observer / Reflector", "Settles chapter facts and state."],
+          ] as const).map(([key,label,description]) => <label key={key} className="text-sm"><span className="font-semibold">{label}</span><span className="ml-2 text-xs text-muted-foreground">{description}</span><select aria-label={label} value={productionRoles[key]} onChange={(event)=>setProductionRoles((current)=>({...current,[key]:event.target.value}))} className={`${fieldClass} mt-1`}><option value="">Not configured</option>{(productionRolesData?.registeredModels ?? []).map((model)=><option key={model} value={model}>{model}</option>)}</select></label>)}
+        </div>
+        <p className="text-xs text-muted-foreground">Connected service: {productionRolesData?.service ?? "none"}. Options come from the current registered service catalog; saving does not contact the provider.</p>
+        <button disabled={saving === "production-roles" || !(productionRolesData?.registeredModels.length)} onClick={()=>void runSave("production-roles",async()=>{await putApi("/project/production-role-models",{selection:productionRoles});await refetchProductionRoles();},"Autonomous production models saved and reloaded from disk.")} className="rounded-lg bg-primary px-4 py-2 text-sm font-bold text-primary-foreground disabled:opacity-40">Save production models</button>
+      </SettingsCard>
 
       {/* Chat UI preferences — applied immediately, persisted in this browser's localStorage */}
       <SettingsCard title={t("settings.chatUi")} description={t("settings.chatUiHint")} icon={<MessageSquare size={18} />}>

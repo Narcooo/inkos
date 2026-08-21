@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AutonomousJobRegistry, projectAutonomousProductionView } from "./autonomous-production.js";
+import { AutonomousCostGuard, AutonomousJobRegistry, projectAutonomousProductionView } from "./autonomous-production.js";
 
 const map = {
   schemaVersion: "1.0" as const,
@@ -33,8 +33,25 @@ describe("autonomous production Studio projection", () => {
     expect(view.currentVolume).toMatchObject({ volumeId: "volume-001", startChapter: 1, endChapter: 38 });
     expect(view.completedChapters).toBe(4);
     expect(view.budget).toMatchObject({ preferredUsd: 15, hardCapUsd: 30 });
-    expect(view.startEnabled).toBe(true);
-    expect(view.economics.actual.costStatus).toBe("UNAVAILABLE");
+    expect(view.economics.actual.costStatus).toBe("COST_UNAVAILABLE");
+    expect(view.runtimeBlockers).toContain("COST_GUARD_UNAVAILABLE");
+    expect(view.startEnabled).toBe(false);
+  });
+
+  it("keeps the cost guard fail-closed when no actual or defensible estimate exists", () => {
+    const view = projectAutonomousProductionView({
+      map,
+      targetChapters: 156,
+      nextChapter: 5,
+      chapters: [1, 2, 3, 4].map((number) => ({ number, status: "ready-for-review", tokenUsage: { promptTokens: 10, completionTokens: 20, totalTokens: 30 } })),
+      config: { defaultModel: "gpt", modelOverrides: { auditor: "deepseek", "commercial-reader": "gemini", "observer-reflector": "flash" } },
+      runtime: null,
+      active: false,
+      budget: { preferredUsd: 15, hardCapUsd: 30 },
+    });
+    expect(view.runtimeBlockers).toContain("COST_GUARD_UNAVAILABLE");
+    expect(view.economics.budget.guardStatus).toBe("COST_UNAVAILABLE");
+    expect(view.startEnabled).toBe(false);
   });
 
   it("fails closed for state repair and missing independent role configuration", () => {
@@ -83,6 +100,20 @@ describe("autonomous production Studio projection", () => {
     expect(jobs.isActive("book")).toBe(false);
   });
 
+  it("reserves a conservative estimate before every provider stage and fails closed before the cap", () => {
+    const guard = new AutonomousCostGuard(10, 6, 30);
+    expect(guard.check(true)).toEqual({ allowed: true });
+    expect(guard.check(true)).toEqual({ allowed: true });
+    expect(guard.check(true)).toEqual({ allowed: true });
+    expect(guard.check(true)).toEqual({ allowed: false, reason: "NEXT_PROVIDER_CALL_COULD_REACH_HARD_CAP" });
+    guard.settle(5);
+    expect(guard.check(true)).toEqual({ allowed: true });
+  });
+
+  it("fails closed when neither actual cost nor a conservative estimate is available", () => {
+    expect(new AutonomousCostGuard(null, null, 30).check(true)).toEqual({ allowed: false, reason: "COST_GUARD_UNAVAILABLE" });
+  });
+
   it("projects a persisted RUNNING state as resumable PAUSED after Studio restart", () => {
     const view = projectAutonomousProductionView({
       map,
@@ -95,6 +126,7 @@ describe("autonomous production Studio projection", () => {
       budget: { preferredUsd: 15, hardCapUsd: 30 },
     });
     expect(view.runtimeStatus).toBe("PAUSED");
-    expect(view.startEnabled).toBe(true);
+    expect(view.startEnabled).toBe(false);
+    expect(view.runtimeBlockers).toContain("COST_GUARD_UNAVAILABLE");
   });
 });

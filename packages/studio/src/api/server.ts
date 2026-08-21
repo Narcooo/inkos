@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
 import { serve } from "@hono/node-server";
+import { buildProductionRoleOverrides, validateProductionRoleSelection, type ProductionRoleSelection } from "../pages/production-role-models.js";
 import { gzipSync } from "node:zlib";
 import { randomUUID } from "node:crypto";
 import {
@@ -148,6 +149,7 @@ import {
 } from "./task-store.js";
 import {
   AutonomousJobRegistry,
+  AutonomousCostGuard,
   DEFAULT_AUTONOMOUS_BUDGET,
   loadAutonomousRuntime,
   loadSafeAutonomousConfig,
@@ -2893,11 +2895,20 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       autonomousJobs.release(bookId);
       throw error;
     });
+    const costGuard = new AutonomousCostGuard(
+      admission.economics.currentVolumeActual.costUsd ?? admission.economics.currentVolumeActual.estimatedCostUsd,
+      admission.economics.budget.nextCallConservativeUsd,
+      budget.hardCapUsd,
+    );
     const pipeline = new PipelineRunner({
       ...pipelineConfig,
       chapterReviewMode: "auto",
       boundedAutonomousReview: true,
       onAutonomousStage: async (event) => {
+        if (event.provider !== null) {
+          const providerAdmission = costGuard.check(true);
+          if (!providerAdmission.allowed) throw new Error(providerAdmission.reason);
+        }
         const nextChapter = await state.getNextChapterNumber(bookId);
         await saveAutonomousRuntime(root, bookId, {
           status: "RUNNING",
@@ -2913,7 +2924,6 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       },
     });
     const productionMap = await requireBookProductionMap(root, bookId);
-    let verifiedActualCost = admission.economics.currentVolumeActual.costUsd;
     const startedNextChapter = admission.nextChapter;
     await saveAutonomousRuntime(root, bookId, {
       status: "RUNNING",
@@ -2922,23 +2932,19 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       updatedAt: new Date().toISOString(),
       budget,
     });
+    broadcast("autonomous:start", { bookId, mode, nextChapter: startedNextChapter });
 
     void runBoundedAutonomousScope({
       map: productionMap,
       mode,
       getNextChapter: () => state.getNextChapterNumber(bookId),
       shouldStop: () => autonomousJobs.shouldStop(bookId),
-      beforeNextProviderCall: () => ({
-        allowed: verifiedActualCost === null || verifiedActualCost < budget.hardCapUsd,
-        ...(verifiedActualCost !== null && verifiedActualCost >= budget.hardCapUsd
-          ? { reason: "HARD_COST_CAP_REACHED" }
-          : {}),
-      }),
+      beforeNextProviderCall: () => {
+        return costGuard.check(false);
+      },
       runChapter: async () => {
         const result = await pipeline.writeNextChapter(bookId);
-        if (result.tokenUsage?.actualCostUsd !== undefined) {
-          verifiedActualCost = (verifiedActualCost ?? 0) + result.tokenUsage.actualCostUsd;
-        }
+        costGuard.settle(result.tokenUsage?.actualCostUsd);
         broadcast("autonomous:chapter-complete", {
           bookId,
           chapterNumber: result.chapterNumber,
@@ -2947,7 +2953,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
           revisionCount: result.autonomousReview?.revisionCount,
         });
         if (mode === "full-book" && productionMap.volumes.some((volume) => volume.endChapter === result.chapterNumber)) {
-          verifiedActualCost = 0;
+          costGuard.resetVolume();
         }
         return result;
       },
@@ -3557,15 +3563,21 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
   app.post("/api/v1/books/:id/repair-state/:chapter", async (c) => {
     const id = c.req.param("id");
     const chapterNum = parseInt(c.req.param("chapter"), 10);
-    try {
-      const pipeline = new PipelineRunner(await buildPipelineConfig());
-      const result = await pipeline.repairChapterState(id, chapterNum);
+    if (!Number.isInteger(chapterNum) || chapterNum < 1) throw new ApiError(400, "CHAPTER_NUMBER_INVALID", "chapter must be a positive integer");
+    if (!autonomousJobs.reserve(id)) throw new ApiError(409, "AUTONOMOUS_JOB_ALREADY_RUNNING", "Production or state repair is already active for this book.");
+    const pipeline = new PipelineRunner(await buildPipelineConfig({ bookIdForSettings: id }).catch((error) => { autonomousJobs.release(id); throw error; }));
+    const current = await loadAutonomousView(id).catch(() => null);
+    await saveAutonomousRuntime(root, id, { status: "REPAIRING", mode: current?.runtime?.mode ?? "current-volume", nextChapter: current?.nextChapter ?? chapterNum + 1, updatedAt: new Date().toISOString(), budget: current?.budget ?? DEFAULT_AUTONOMOUS_BUDGET, phase: "SETTLING_STATE" });
+    broadcast("repair-state:start", { bookId: id, chapter: chapterNum });
+    void pipeline.repairChapterState(id, chapterNum).then(async () => {
+      const nextChapter = await state.getNextChapterNumber(id);
+      await saveAutonomousRuntime(root, id, { status: "READY", mode: current?.runtime?.mode ?? "current-volume", nextChapter, updatedAt: new Date().toISOString(), budget: current?.budget ?? DEFAULT_AUTONOMOUS_BUDGET });
       broadcast("repair-state:complete", { bookId: id, chapter: chapterNum });
-      return c.json(result);
-    } catch (e) {
-      broadcast("repair-state:error", { bookId: id, chapter: chapterNum, error: String(e) });
-      return c.json({ error: String(e) }, 500);
-    }
+    }, async (error) => {
+      await saveAutonomousRuntime(root, id, { status: "BLOCKED", mode: current?.runtime?.mode ?? "current-volume", nextChapter: current?.nextChapter ?? chapterNum + 1, updatedAt: new Date().toISOString(), budget: current?.budget ?? DEFAULT_AUTONOMOUS_BUDGET, lastError: error instanceof Error ? error.message : String(error) }).catch(() => undefined);
+      broadcast("repair-state:error", { bookId: id, chapter: chapterNum, error: error instanceof Error ? error.message : String(error) });
+    }).finally(() => autonomousJobs.release(id));
+    return c.json({ status: "REPAIRING", bookId: id, chapter: chapterNum }, 202);
   });
 
   app.post("/api/v1/books/:id/foundation/revise", async (c) => {
@@ -5659,6 +5671,44 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
   });
 
   // --- Model overrides ---
+
+  async function loadProductionRoleModels() {
+    const raw = await loadRawConfig(root);
+    const llm = raw.llm && typeof raw.llm === "object" && !Array.isArray(raw.llm) ? raw.llm as Record<string, unknown> : {};
+    const service = typeof llm.service === "string" ? llm.service : "";
+    const configured = normalizeServiceConfig(llm.services).find((entry) => serviceConfigKey(entry) === service);
+    const endpoint = getAllEndpoints().find((entry) => entry.id === service);
+    const secrets = await loadSecrets(root);
+    const connected = Boolean(secrets.services[service]?.apiKey) || Boolean(endpoint && isApiKeyOptionalForEndpoint({ provider: resolveServiceProviderFamily(service) ?? "openai", baseUrl: resolveServicePreset(service)?.baseUrl ?? endpoint.baseUrl }));
+    const registeredModels = connected ? mergeServiceModelIds(
+      endpoint?.models.filter((model) => model.enabled !== false && isTextChatModelId(model.id)).map((model) => model.id) ?? [],
+      configured?.models ?? [],
+    ) : [];
+    const overrides = raw.modelOverrides && typeof raw.modelOverrides === "object" && !Array.isArray(raw.modelOverrides) ? raw.modelOverrides as Record<string, unknown> : {};
+    const model = (key: string) => typeof overrides[key] === "string" ? overrides[key] as string : null;
+    const defaultModel = typeof llm.defaultModel === "string" ? llm.defaultModel : typeof llm.model === "string" ? llm.model : null;
+    return { raw, llm, service, connected, registeredModels, overrides, selection: { writer: defaultModel, logicAuditor: model("auditor"), commercialReader: model("commercial-reader"), reviser: model("reviser"), observerReflector: model("observer-reflector") } };
+  }
+
+  app.get("/api/v1/project/production-role-models", async (c) => {
+    const current = await loadProductionRoleModels();
+    return c.json({ service: current.service || null, connected: current.connected, registeredModels: current.registeredModels, selection: current.selection });
+  });
+
+  app.put("/api/v1/project/production-role-models", async (c) => {
+    const body = await c.req.json<{ selection?: ProductionRoleSelection }>();
+    const current = await loadProductionRoleModels();
+    let selection: ProductionRoleSelection;
+    try { selection = validateProductionRoleSelection(body.selection as ProductionRoleSelection, current.registeredModels); }
+    catch (error) { return c.json({ error: error instanceof Error ? error.message : String(error) }, 400); }
+    const next = buildProductionRoleOverrides(selection, current.overrides);
+    current.llm.defaultModel = next.defaultModel;
+    current.raw.modelOverrides = next.modelOverrides;
+    syncTopLevelLlmMirror(current.llm);
+    await saveRawConfig(root, current.raw);
+    const persisted = await loadProductionRoleModels();
+    return c.json({ ok: true, service: persisted.service || null, connected: persisted.connected, registeredModels: persisted.registeredModels, selection: persisted.selection });
+  });
 
   app.get("/api/v1/project/model-overrides", async (c) => {
     const raw = JSON.parse(await readFile(join(root, "inkos.json"), "utf-8"));

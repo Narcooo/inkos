@@ -1,183 +1,65 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchJson } from "../hooks/use-api";
+import type { SSEMessage } from "../hooks/use-sse";
+import { ConfirmDialog } from "./ConfirmDialog";
 
-interface Forecast {
-  readonly lowUsd: number | null;
-  readonly baseUsd: number | null;
-  readonly highUsd: number | null;
-  readonly sampleSize: number;
-  readonly confidence: string;
-}
-
-interface AutonomousView {
-  readonly title: string;
-  readonly totalChapters: number;
-  readonly completedChapters: number;
-  readonly nextChapter: number;
-  readonly currentVolume: {
-    readonly volumeId: string;
-    readonly volumeNumber: number;
-    readonly title: string;
-    readonly startChapter: number;
-    readonly endChapter: number;
-    readonly chapterCount: number;
-  };
-  readonly currentVolumeCompleted: number;
-  readonly runtimeStatus: string;
+interface Forecast { readonly lowUsd: number | null; readonly baseUsd: number | null; readonly highUsd: number | null; readonly sampleSize: number; readonly confidence: string }
+interface Actual { readonly providerCalls: number; readonly totalTokens: number; readonly costUsd: number | null; readonly estimatedCostUsd?: number | null; readonly costStatus: string }
+export interface AutonomousView {
+  readonly title: string; readonly totalChapters: number; readonly completedChapters: number; readonly nextChapter: number;
+  readonly currentVolume: { readonly volumeId: string; readonly volumeNumber: number; readonly title: string; readonly startChapter: number; readonly endChapter: number; readonly chapterCount: number };
+  readonly currentVolumeCompleted: number; readonly runtimeStatus: string;
   readonly runtime?: { readonly lastError?: string; readonly phase?: string; readonly activeRole?: string; readonly activeProvider?: string | null; readonly activeModel?: string | null; readonly updatedAt?: string } | null;
-  readonly roles: Record<string, string | null>;
-  readonly revisionPolicy: { readonly normal: number; readonly rescue: number; readonly maximum: number };
+  readonly roles: Record<string, string | null>; readonly revisionPolicy: { readonly normal: number; readonly rescue: number; readonly maximum: number };
   readonly budget: { readonly preferredUsd: number; readonly hardCapUsd: number };
-  readonly economics: {
-    readonly actual: { readonly providerCalls: number; readonly totalTokens: number; readonly costUsd: number | null; readonly costStatus: string };
-    readonly currentVolumeForecast: Forecast;
-    readonly fullBookForecast: Forecast;
-    readonly currentVolumeActual: { readonly providerCalls: number; readonly totalTokens: number; readonly costUsd: number | null; readonly costStatus: string };
-    readonly byRole: Readonly<Record<string, { readonly providerCalls: number; readonly promptTokens: number; readonly completionTokens: number; readonly totalTokens: number; readonly actualCostUsd: number | null }>>;
-  };
-  readonly runtimeBlockers: ReadonlyArray<string>;
-  readonly startEnabled: boolean;
+  readonly economics: { readonly actual: Actual; readonly currentVolumeForecast: Forecast; readonly fullBookForecast: Forecast; readonly currentVolumeActual: Actual; readonly byRole: Readonly<Record<string, { readonly providerCalls: number; readonly promptTokens: number; readonly completionTokens: number; readonly totalTokens: number; readonly actualCostUsd: number | null }>>; readonly budget?: { readonly guardStatus: string; readonly nextCallConservativeUsd: number | null; readonly allowNextProviderCall: boolean } };
+  readonly runtimeBlockers: ReadonlyArray<string>; readonly startEnabled: boolean;
 }
 
-function money(value: number | null): string {
-  return value === null ? "UNAVAILABLE" : `$${value.toFixed(4)}`;
-}
+const romans = ["0", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"];
+const ch = (n: number) => String(n).padStart(3, "0");
+const money = (n: number | null | undefined) => n == null ? "Unavailable" : `$${n.toFixed(2)}`;
+const forecastRange = (value: Forecast) => value.lowUsd == null || value.highUsd == null ? "Unavailable" : `${money(value.lowUsd)}–${money(value.highUsd)}`;
+const humanBlocker = (code: string) => ({
+  LOGIC_AUDITOR_MODEL_NOT_CONFIGURED: "Logic Auditor model is not configured.",
+  COMMERCIAL_READER_MODEL_NOT_CONFIGURED: "Commercial Reader model is not configured.",
+  OBSERVER_REFLECTOR_MODEL_NOT_CONFIGURED: "Observer / Reflector model is not configured.",
+  COST_GUARD_UNAVAILABLE: "Verified cost data is unavailable; production remains safely paused.",
+}[code] ?? code);
 
-function forecast(value: Forecast): string {
-  return value.baseUsd === null
-    ? `UNAVAILABLE · ${value.sampleSize} chapter sample · ${value.confidence}`
-    : `${money(value.lowUsd)} / ${money(value.baseUsd)} / ${money(value.highUsd)} · ${value.confidence}`;
-}
+export function autonomousFallbackPollMs(status: string): number | null { return status === "RUNNING" || status === "REPAIRING" ? 12_000 : null; }
 
-function chapter(value: number): string {
-  return String(value).padStart(3, "0");
-}
-
-export function AutonomousProductionPanel({ bookId }: { readonly bookId: string }) {
-  const [view, setView] = useState<AutonomousView | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
-  const [preferred, setPreferred] = useState(15);
-  const [hardCap, setHardCap] = useState(30);
-  const budgetBook = useRef<string | null>(null);
-
-  const load = useCallback(async () => {
-    try {
-      const next = await fetchJson<AutonomousView>(`/books/${encodeURIComponent(bookId)}/autonomous-production`);
-      setView(next);
-      if (budgetBook.current !== bookId) {
-        budgetBook.current = bookId;
-        setPreferred(next.budget.preferredUsd);
-        setHardCap(next.budget.hardCapUsd);
-      }
-      setError(null);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    }
-  }, [bookId]);
-
-  useEffect(() => {
-    void load();
-    const timer = window.setInterval(() => void load(), 4_000);
-    return () => window.clearInterval(timer);
-  }, [load]);
-
-  const start = async (mode: "current-volume" | "full-book") => {
-    if (pending) return;
-    setPending(true);
-    try {
-      await fetchJson(`/books/${encodeURIComponent(bookId)}/autonomous-production/start`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode, preferredBudgetUsd: preferred, hardCapUsd: hardCap }),
-      });
-      await load();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setPending(false);
-    }
-  };
-
-  const stop = async () => {
-    if (pending) return;
-    setPending(true);
-    try {
-      await fetchJson(`/books/${encodeURIComponent(bookId)}/autonomous-production/stop`, { method: "POST" });
-      await load();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setPending(false);
-    }
-  };
-
-  if (!view) {
-    return <section className="rounded-2xl border border-border/40 p-5 text-sm text-muted-foreground">{error ?? "Loading bounded production…"}</section>;
-  }
-  const running = view.runtimeStatus === "RUNNING";
-  const volume = view.currentVolume;
+export function AutonomousProductionCard({ view, pending, error, onStart, onStop, onRepair, onConfigureModels }: {
+  readonly view: AutonomousView; readonly pending: boolean; readonly error: string | null;
+  readonly onStart: (mode: "current-volume" | "full-book") => void; readonly onStop: () => void; readonly onRepair: (chapter: number) => void; readonly onConfigureModels: () => void;
+}) {
+  const v = view.currentVolume;
+  const repair = view.runtimeBlockers.map((b) => /^PENDING_STATE_REPAIR_CHAPTER_(\d+)$/.exec(b)).find(Boolean);
+  const missingModels = view.runtimeBlockers.some((b) => b.endsWith("MODEL_NOT_CONFIGURED"));
+  const costUnavailable = view.runtimeBlockers.includes("COST_GUARD_UNAVAILABLE");
+  const active = view.runtimeStatus === "RUNNING" || view.runtimeStatus === "REPAIRING";
   const progress = Math.min(100, Math.round((view.completedChapters / view.totalChapters) * 100));
+  return <section data-testid="autonomous-production" className="paper-sheet rounded-2xl border border-primary/20 p-5 shadow-sm space-y-4">
+    <div className="flex items-start justify-between gap-3"><div><h2 className="text-lg font-bold">Autonomous Production</h2><p className="text-sm text-muted-foreground">Volume {romans[v.volumeNumber] ?? v.volumeNumber} · Chapters {ch(v.startChapter)}–{ch(v.endChapter)}</p></div><span className="rounded-full border px-3 py-1 text-xs font-bold">{view.runtimeStatus}</span></div>
+    <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-3"><div><span className="text-muted-foreground">Current Chapter</span><div className="font-semibold">{ch(view.nextChapter)}</div></div><div><span className="text-muted-foreground">Volume progress</span><div className="font-semibold">{view.currentVolumeCompleted} / {v.chapterCount} in volume</div></div><div><span className="text-muted-foreground">Book progress</span><div className="font-semibold">{view.completedChapters} / {view.totalChapters} in book</div></div></div>
+    <div className="h-1.5 overflow-hidden rounded-full bg-secondary"><div className="h-full bg-primary" style={{width:`${progress}%`}} /></div>
+    <div className="grid grid-cols-2 gap-3 text-xs md:grid-cols-4"><div><span className="text-muted-foreground">Current Volume Forecast</span><div className="font-semibold">{forecastRange(view.economics.currentVolumeForecast)}</div></div><div><span className="text-muted-foreground">Current Volume Actual</span><div className="font-semibold">{money(view.economics.currentVolumeActual.costUsd)}</div></div><div><span className="text-muted-foreground">Full Book Actual</span><div className="font-semibold">{money(view.economics.actual.costUsd)}</div></div><div><span className="text-muted-foreground">Current Volume Hard Cap</span><div className="font-semibold">{money(view.budget.hardCapUsd)}</div></div></div>
+    {repair ? <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-sm"><p>Chapter {ch(Number(repair[1]))} state requires repair before production can continue.</p><p className="mt-1 text-xs text-muted-foreground">This may use the configured Observer / Reflector model and incur cost.</p><button disabled={pending || active} onClick={() => onRepair(Number(repair[1]))} className="mt-3 rounded-lg bg-amber-600 px-4 py-2 font-bold text-white disabled:opacity-40">Repair Chapter {ch(Number(repair[1]))} State</button></div>
+      : missingModels ? <div className="rounded-xl border p-3 text-sm"><p>Production role models must be configured before starting.</p><button onClick={onConfigureModels} className="mt-3 rounded-lg bg-primary px-4 py-2 font-bold text-primary-foreground">Configure Models</button></div>
+      : costUnavailable ? <div className="rounded-xl border border-amber-500/30 p-3 text-sm">Verified cost data is unavailable. The hard-cap guard is fail-closed.</div>
+      : <div className="flex flex-wrap gap-2"><button disabled={!view.startEnabled || pending} onClick={() => onStart("current-volume")} className="rounded-lg bg-primary px-4 py-2 font-bold text-primary-foreground disabled:opacity-40">Run / Resume Current Volume</button>{active && <button disabled={pending} onClick={onStop} className="rounded-lg border px-4 py-2 font-bold">Stop after current chapter</button>}</div>}
+    {(error || view.runtime?.lastError) && <p className="text-sm text-destructive">{error ?? view.runtime?.lastError}</p>}
+    <details className="rounded-xl border border-border/50 p-3 text-xs"><summary className="cursor-pointer font-semibold">高级详情</summary><div className="mt-3 space-y-2 text-muted-foreground"><p>Phase: {view.runtime?.phase ?? view.runtimeStatus} · active role: {view.runtime?.activeRole ?? "none"} · provider: {view.runtime?.activeProvider ?? "none"} · model: {view.runtime?.activeModel ?? "none"}</p><p>Calls: {view.economics.actual.providerCalls} · total tokens: {view.economics.actual.totalTokens} · cost source: {view.economics.actual.costStatus} · confidence: {view.economics.currentVolumeForecast.confidence}</p><p>Roles: {Object.entries(view.roles).map(([r,m]) => `${r}=${m ?? "NOT_CONFIGURED"}`).join(" · ")}</p>{Object.entries(view.economics.byRole).map(([role,usage])=><p key={role}>{role}: {usage.providerCalls} calls · input {usage.promptTokens} · output {usage.completionTokens} · total {usage.totalTokens} · cost {money(usage.actualCostUsd)}</p>)}<p>Revision policy: normal {view.revisionPolicy.normal} · rescue {view.revisionPolicy.rescue} · maximum {view.revisionPolicy.maximum}</p>{view.runtimeBlockers.map((b) => <p key={b}>{humanBlocker(b)} <code>({b})</code></p>)}{view.runtime?.lastError&&<p>Last error: {view.runtime.lastError}</p>}<p>Last activity: {view.runtime?.updatedAt ?? "not started"}</p><button disabled={!view.startEnabled || pending} onClick={() => onStart("full-book")} className="rounded-lg border px-3 py-2 font-semibold disabled:opacity-40">Run / Resume Full Book</button></div></details>
+  </section>;
+}
 
-  return (
-    <section data-testid="autonomous-production" className="paper-sheet rounded-2xl border border-primary/20 p-5 shadow-sm space-y-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-bold">Bounded Autonomous Book Production</h2>
-          <p className="text-sm text-muted-foreground">
-            Volume {volume.volumeNumber} · {chapter(volume.startChapter)}–{chapter(volume.endChapter)} · cursor {chapter(view.nextChapter)} · full book 001–{chapter(view.totalChapters)}
-          </p>
-        </div>
-        <span className="rounded-full border border-border/60 bg-secondary/40 px-3 py-1 text-xs font-bold">{view.runtimeStatus}</span>
-      </div>
-
-      <div className="h-2 overflow-hidden rounded-full bg-secondary">
-        <div className="h-full bg-primary transition-all" style={{ width: `${progress}%` }} />
-      </div>
-      <div className="grid gap-3 text-sm md:grid-cols-3">
-        <div><span className="text-muted-foreground">Completed</span><div className="font-semibold">{view.completedChapters}/{view.totalChapters} · volume {view.currentVolumeCompleted}/{volume.chapterCount}</div></div>
-        <div><span className="text-muted-foreground">Revision policy</span><div className="font-semibold">Normal {view.revisionPolicy.normal} + Rescue {view.revisionPolicy.rescue} · third forbidden</div></div>
-        <div><span className="text-muted-foreground">Current volume / full-book actual</span><div className="font-semibold">{money(view.economics.currentVolumeActual.costUsd)} / {money(view.economics.actual.costUsd)} · {view.economics.actual.totalTokens.toLocaleString()} tokens · {view.economics.actual.providerCalls} calls</div></div>
-      </div>
-      <div className="text-xs text-muted-foreground">Phase {view.runtime?.phase ?? view.runtimeStatus} · active role {view.runtime?.activeRole ?? "none"} · model {view.runtime?.activeModel ?? "none"} · last activity {view.runtime?.updatedAt ?? "not started"}</div>
-
-      <div className="grid gap-3 text-xs md:grid-cols-2">
-        <div className="rounded-xl bg-secondary/30 p-3"><span className="text-muted-foreground">Current volume forecast low / base / high</span><div className="mt-1 font-semibold">{forecast(view.economics.currentVolumeForecast)}</div></div>
-        <div className="rounded-xl bg-secondary/30 p-3"><span className="text-muted-foreground">Full-book forecast low / base / high</span><div className="mt-1 font-semibold">{forecast(view.economics.fullBookForecast)}</div></div>
-      </div>
-
-      <div className="grid gap-2 text-xs md:grid-cols-5">
-        {Object.entries(view.roles).map(([role, model]) => (
-          <div key={role} className="rounded-lg border border-border/40 p-2"><span className="text-muted-foreground">{role}</span><div className="truncate font-medium" title={model ?? "NOT_CONFIGURED"}>{model ?? "NOT_CONFIGURED"}</div></div>
-        ))}
-      </div>
-
-      <div className="overflow-x-auto rounded-xl border border-border/40">
-        <table className="w-full min-w-[620px] text-left text-xs">
-          <thead className="bg-secondary/40 text-muted-foreground"><tr><th className="p-2">Role</th><th className="p-2">Calls</th><th className="p-2">Input</th><th className="p-2">Output</th><th className="p-2">Total</th><th className="p-2">Actual cost</th></tr></thead>
-          <tbody>{Object.entries(view.economics.byRole).map(([role, usage]) => <tr key={role} className="border-t border-border/30"><td className="p-2 font-medium">{role}</td><td className="p-2">{usage.providerCalls}</td><td className="p-2">{usage.promptTokens.toLocaleString()}</td><td className="p-2">{usage.completionTokens.toLocaleString()}</td><td className="p-2">{usage.totalTokens.toLocaleString()}</td><td className="p-2">{money(usage.actualCostUsd)}</td></tr>)}</tbody>
-        </table>
-      </div>
-
-      <div className="flex flex-wrap items-end gap-3">
-        <label className="text-xs text-muted-foreground">Preferred volume budget
-          <input aria-label="Preferred volume budget" type="number" min="0.01" step="0.01" value={preferred} onChange={(event) => setPreferred(Number(event.target.value))} disabled={running} className="mt-1 block w-28 rounded-lg border border-border/50 bg-background px-3 py-2 text-foreground" />
-        </label>
-        <label className="text-xs text-muted-foreground">Hard volume cap
-          <input aria-label="Hard volume cap" type="number" min="0.02" step="0.01" value={hardCap} onChange={(event) => setHardCap(Number(event.target.value))} disabled={running} className="mt-1 block w-28 rounded-lg border border-border/50 bg-background px-3 py-2 text-foreground" />
-        </label>
-        <button disabled={!view.startEnabled || pending} onClick={() => void start("current-volume")} className="rounded-xl bg-primary px-4 py-2.5 text-sm font-bold text-primary-foreground disabled:opacity-40">Run / Resume Current Volume</button>
-        <button disabled={!view.startEnabled || pending} onClick={() => void start("full-book")} className="rounded-xl border border-primary/30 px-4 py-2.5 text-sm font-bold text-primary disabled:opacity-40">Run / Resume Full Book</button>
-        {running && <button disabled={pending} onClick={() => void stop()} className="rounded-xl border border-destructive/30 px-4 py-2.5 text-sm font-bold text-destructive disabled:opacity-40">Stop after current chapter</button>}
-      </div>
-
-      {(view.runtimeBlockers.length > 0 || error || view.runtime?.lastError) && (
-        <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-xs">
-          <div className="font-bold">Runtime blockers</div>
-          {view.runtimeBlockers.map((blocker) => <div key={blocker}>{blocker}</div>)}
-          {(error ?? view.runtime?.lastError) && <div>{error ?? view.runtime?.lastError}</div>}
-        </div>
-      )}
-    </section>
-  );
+export function AutonomousProductionPanel({ bookId, messages = [], onConfigureModels = () => undefined }: { readonly bookId: string; readonly messages?: ReadonlyArray<SSEMessage>; readonly onConfigureModels?: () => void }) {
+  const [view,setView]=useState<AutonomousView|null>(null); const [error,setError]=useState<string|null>(null); const [pending,setPending]=useState(false); const [confirmRepair,setConfirmRepair]=useState<number|null>(null); const budgetBook=useRef<string|null>(null); const preferred=useRef(15); const hardCap=useRef(30);
+  const load=useCallback(async()=>{try{const next=await fetchJson<AutonomousView>(`/books/${encodeURIComponent(bookId)}/autonomous-production`);setView(next);if(budgetBook.current!==bookId){budgetBook.current=bookId;preferred.current=next.budget.preferredUsd;hardCap.current=next.budget.hardCapUsd;}setError(null);}catch(e){setError(e instanceof Error?e.message:String(e));}},[bookId]);
+  useEffect(()=>{void load();},[load]);
+  const recent=messages.at(-1); useEffect(()=>{if(recent && (recent.event.startsWith("autonomous:")||recent.event.startsWith("repair-state:"))) void load();},[recent,load]);
+  useEffect(()=>{const ms=view?autonomousFallbackPollMs(view.runtimeStatus):null;if(ms===null)return;const timer=window.setInterval(()=>void load(),ms);return()=>window.clearInterval(timer);},[view?.runtimeStatus,load]);
+  const action=async(path:string,body?:unknown)=>{if(pending)return;setPending(true);try{await fetchJson(path,{method:"POST",headers:body?{"Content-Type":"application/json"}:undefined,body:body?JSON.stringify(body):undefined});await load();}catch(e){setError(e instanceof Error?e.message:String(e));}finally{setPending(false);}};
+  if(!view)return <section className="rounded-2xl border p-5 text-sm text-muted-foreground">{error??"Loading autonomous production…"}</section>;
+  return <><AutonomousProductionCard view={view} pending={pending} error={error} onStart={(mode)=>void action(`/books/${encodeURIComponent(bookId)}/autonomous-production/start`,{mode,preferredBudgetUsd:preferred.current,hardCapUsd:hardCap.current})} onStop={()=>void action(`/books/${encodeURIComponent(bookId)}/autonomous-production/stop`)} onRepair={setConfirmRepair} onConfigureModels={onConfigureModels}/><ConfirmDialog open={confirmRepair!==null} title="Repair persisted chapter state?" message={`Repair Chapter ${ch(confirmRepair??0)} using the existing Observer / Reflector settlement path. This can make a model call and incur cost.`} confirmLabel="Repair state" cancelLabel="Cancel" variant="danger" onCancel={()=>setConfirmRepair(null)} onConfirm={()=>{const n=confirmRepair;setConfirmRepair(null);if(n!==null)void action(`/books/${encodeURIComponent(bookId)}/repair-state/${n}`);}}/></>;
 }

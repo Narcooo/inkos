@@ -26,9 +26,22 @@ export function projectAutonomousEconomics(params: {
   const allCostVerified = records.length > 0 && records.every((record) =>
     typeof record.actualCostUsd === "number" && Number.isFinite(record.actualCostUsd) && record.actualCostUsd >= 0,
   );
+  const verifiedCosts = records
+    .map((record) => record.actualCostUsd)
+    .filter((cost): cost is number => typeof cost === "number" && Number.isFinite(cost) && cost >= 0);
   const actualCostUsd = allCostVerified
     ? records.reduce((sum, record) => sum + record.actualCostUsd!, 0)
     : null;
+  const nextCallConservativeUsd = verifiedCosts.length > 0 ? Math.max(...verifiedCosts) : null;
+  const estimatedCostUsd = !allCostVerified && nextCallConservativeUsd !== null
+    ? nextCallConservativeUsd * records.length
+    : null;
+  const costStatus = allCostVerified
+    ? "VERIFIED_ACTUAL_COST" as const
+    : estimatedCostUsd !== null
+      ? "VERIFIED_ESTIMATED_COST" as const
+      : "COST_UNAVAILABLE" as const;
+  const effectiveCostUsd = actualCostUsd ?? estimatedCostUsd;
   const promptTokens = records.reduce((sum, record) => sum + record.promptTokens, 0);
   const completionTokens = records.reduce((sum, record) => sum + record.completionTokens, 0);
   const roles: Record<string, { providerCalls: number; promptTokens: number; completionTokens: number; totalTokens: number; actualCostUsd: number | null }> = {};
@@ -45,10 +58,10 @@ export function projectAutonomousEconomics(params: {
   }
 
   const forecast = (remaining: number): ForecastRange => {
-    if (actualCostUsd === null || params.completedChapters < 1) {
+    if (effectiveCostUsd === null || params.completedChapters < 1) {
       return { lowUsd: null, baseUsd: null, highUsd: null, sampleSize: params.completedChapters, confidence: "LOW" };
     }
-    const baseUsd = (actualCostUsd / params.completedChapters) * remaining;
+    const baseUsd = (effectiveCostUsd / params.completedChapters) * remaining;
     return {
       lowUsd: baseUsd * 0.8,
       baseUsd,
@@ -57,8 +70,11 @@ export function projectAutonomousEconomics(params: {
       confidence: params.completedChapters >= 10 ? "HIGH" : params.completedChapters >= 4 ? "MEDIUM" : "LOW",
     };
   };
-  const hardCapReached = actualCostUsd !== null && actualCostUsd >= params.hardCapUsd;
-  const preferredExceeded = actualCostUsd !== null && actualCostUsd >= params.preferredBudgetUsd;
+  const hardCapReached = effectiveCostUsd !== null && effectiveCostUsd >= params.hardCapUsd;
+  const preferredExceeded = effectiveCostUsd !== null && effectiveCostUsd >= params.preferredBudgetUsd;
+  const allowNextProviderCall = effectiveCostUsd !== null
+    && nextCallConservativeUsd !== null
+    && effectiveCostUsd + nextCallConservativeUsd < params.hardCapUsd;
 
   return {
     actual: {
@@ -67,7 +83,8 @@ export function projectAutonomousEconomics(params: {
       completionTokens,
       totalTokens: promptTokens + completionTokens,
       costUsd: actualCostUsd,
-      costStatus: allCostVerified ? "ACTUAL" as const : "UNAVAILABLE" as const,
+      estimatedCostUsd,
+      costStatus,
     },
     byRole: roles,
     currentVolumeForecast: forecast(params.currentVolumeRemaining),
@@ -77,7 +94,14 @@ export function projectAutonomousEconomics(params: {
       hardCapUsd: params.hardCapUsd,
       preferredExceeded,
       hardCapReached,
-      allowNextProviderCall: !hardCapReached,
+      guardStatus: costStatus,
+      nextCallConservativeUsd,
+      allowNextProviderCall,
+      ...(!allowNextProviderCall
+        ? { reason: costStatus === "COST_UNAVAILABLE"
+            ? "COST_GUARD_UNAVAILABLE"
+            : "NEXT_PROVIDER_CALL_COULD_REACH_HARD_CAP" }
+        : {}),
     },
   };
 }

@@ -61,6 +61,7 @@ interface Nav {
   toChapter: (bookId: string, num: number) => void;
   toAnalytics: (bookId: string) => void;
   toTruth: (bookId: string) => void;
+  toProjectSettings: () => void;
 }
 
 function translateChapterStatus(status: string, t: TFunction): string {
@@ -410,13 +411,6 @@ export function BookDetail({
     });
   };
 
-  const handleRepairState = async (chapterNum: number) => {
-    await runBookAction(`repair-state-${chapterNum}`, async () => {
-      await fetchJson(`/books/${bookId}/repair-state/${chapterNum}`, { method: "POST" });
-      return data?.book.language === "en" ? `Chapter ${chapterNum} state repaired.` : `第 ${chapterNum} 章状态已修复。`;
-    });
-  };
-
   if (loading) return (
     <div className="flex flex-col items-center justify-center py-32 space-y-4">
       <div className="w-8 h-8 border-2 border-primary/20 border-t-primary rounded-full animate-spin" />
@@ -518,7 +512,7 @@ export function BookDetail({
         </div>
       </div>
 
-      <AutonomousProductionPanel bookId={bookId} />
+      <AutonomousProductionPanel bookId={bookId} messages={sse.messages} onConfigureModels={nav.toProjectSettings} />
 
       {(writing || drafting || activity.lastError) && (
         <div
@@ -787,18 +781,6 @@ export function BookDetail({
                           ? <div className="w-3.5 h-3.5 border-2 border-muted-foreground/20 border-t-muted-foreground rounded-full animate-spin" />
                           : <RefreshCw size={14} />}
                       </button>
-                      {ch.status === "state-degraded" && (
-                        <button
-                          onClick={() => handleRepairState(ch.number)}
-                          disabled={bookActionPending === `repair-state-${ch.number}`}
-                          className="p-2 rounded-lg bg-amber-500/10 text-amber-600 hover:bg-amber-500 hover:text-white transition-all shadow-sm disabled:opacity-50"
-                          title={t("book.repairState")}
-                        >
-                          {bookActionPending === `repair-state-${ch.number}`
-                            ? <div className="w-3.5 h-3.5 border-2 border-amber-600/20 border-t-amber-600 rounded-full animate-spin" />
-                            : <Settings2 size={14} />}
-                        </button>
-                      )}
                       <select
                         disabled={revisingChapters.includes(ch.number)}
                         value=""

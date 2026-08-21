@@ -6507,6 +6507,38 @@ describe("createStudioServer daemon lifecycle", () => {
     expect(raw.llm.model).toBe("deepseek-v4-flash");
   });
 
+  it("shares the autonomous mutex with repair-state and rejects a double click without a second repair transport", async () => {
+    let releaseRepair!: () => void;
+    repairChapterStateMock.mockImplementationOnce(() => new Promise<void>((resolve) => { releaseRepair = resolve; }));
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+    const first = await app.request("http://localhost/api/v1/books/demo-book/repair-state/4", { method: "POST" });
+    expect(first.status).toBe(202);
+    const second = await app.request("http://localhost/api/v1/books/demo-book/repair-state/4", { method: "POST" });
+    expect(second.status).toBe(409);
+    expect(repairChapterStateMock).toHaveBeenCalledTimes(1);
+    releaseRepair();
+    await vi.waitFor(() => expect(repairChapterStateMock).toHaveBeenCalledTimes(1));
+  });
+
+  it("persists fixed production roles only from the current registered model catalog", async () => {
+    loadSecretsMock.mockResolvedValue({ services: { openai: { apiKey: "test-only-secret" } } });
+    const raw = JSON.parse(await readFile(join(root, "inkos.json"), "utf-8"));
+    raw.llm = { ...raw.llm, service: "openai", defaultModel: "gpt-5.4", services: [{ service: "openai", models: ["gpt-5.4", "review-model"] }] };
+    raw.modelOverrides = { unrelated: "preserved" };
+    await writeFile(join(root, "inkos.json"), JSON.stringify(raw, null, 2), "utf-8");
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+    const selection = { writer: "gpt-5.4", logicAuditor: "review-model", commercialReader: "review-model", reviser: "gpt-5.4", observerReflector: "review-model" };
+    const saved = await app.request("http://localhost/api/v1/project/production-role-models", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ selection }) });
+    expect(saved.status).toBe(200);
+    await expect(saved.json()).resolves.toMatchObject({ ok: true, service: "openai", selection });
+    const persisted = JSON.parse(await readFile(join(root, "inkos.json"), "utf-8"));
+    expect(persisted.modelOverrides).toMatchObject({ unrelated: "preserved", auditor: "review-model", "commercial-reader": "review-model", reviser: "gpt-5.4", "observer-reflector": "review-model" });
+    const rejected = await app.request("http://localhost/api/v1/project/production-role-models", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ selection: { ...selection, writer: "invented/model" } }) });
+    expect(rejected.status).toBe(400);
+  });
+
   it("project advanced settings expose detection config", async () => {
     const { createStudioServer } = await import("./server.js");
     const app = createStudioServer(cloneProjectConfig() as never, root);
@@ -6560,7 +6592,8 @@ describe("createStudioServer daemon lifecycle", () => {
     expect(composeChapterMock).toHaveBeenCalledWith("demo-book", "use the plan");
 
     const repairRes = await app.request("http://localhost/api/v1/books/demo-book/repair-state/3", { method: "POST" });
-    await expect(repairRes.json()).resolves.toMatchObject({ chapterNumber: 3, status: "ready-for-review" });
+    expect(repairRes.status).toBe(202);
+    await expect(repairRes.json()).resolves.toMatchObject({ chapter: 3, status: "REPAIRING" });
     expect(repairChapterStateMock).toHaveBeenCalledWith("demo-book", 3);
 
     const reviseFoundationRes = await app.request("http://localhost/api/v1/books/demo-book/foundation/revise", {
