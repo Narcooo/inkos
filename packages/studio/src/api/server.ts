@@ -150,6 +150,7 @@ import {
 import {
   AutonomousJobRegistry,
   AutonomousCostGuard,
+  classifyStateRepairError,
   DEFAULT_AUTONOMOUS_BUDGET,
   loadAutonomousRuntime,
   loadSafeAutonomousConfig,
@@ -1645,6 +1646,7 @@ const bookCreateStatus = new Map<string, { status: "creating" | "error"; error?:
 // 内存缓存：service -> 模型列表 + 更新时间戳；避免每次 sidebar 挂载时都打真实 LLM /models
 const modelListCache = new Map<string, { models: Array<{ id: string; name: string }>; at: number }>();
 const productionRoleCatalogCache = new Map<string, { models: ReadonlyArray<ProductionModelCatalogEntry>; at: number }>();
+const productionRoleCatalogPending = new Map<string, Promise<ReadonlyArray<ProductionModelCatalogEntry>>>();
 const PRODUCTION_ROLE_CATALOG_TTL_MS = 5 * 60_000;
 
 interface ServiceConfigEntry {
@@ -2740,13 +2742,14 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     bookId: string,
     budgetOverride?: { readonly preferredUsd: number; readonly hardCapUsd: number },
   ) {
-    const [map, book, chapters, nextChapter, runtime, safeConfig] = await Promise.all([
+    const [map, book, chapters, nextChapter, runtime, safeConfig, productionModels] = await Promise.all([
       requireBookProductionMap(root, bookId),
       state.loadBookConfig(bookId),
       state.loadChapterIndex(bookId),
       state.getNextChapterNumber(bookId),
       loadAutonomousRuntime(root, bookId),
       loadSafeAutonomousConfig(root),
+      loadProductionRoleModels(),
     ]);
     return projectAutonomousProductionView({
       map,
@@ -2754,6 +2757,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       nextChapter,
       chapters,
       config: safeConfig,
+      catalog: productionModels.catalog,
       runtime,
       active: autonomousJobs.isActive(bookId),
       budget: budgetOverride ?? runtime?.budget ?? DEFAULT_AUTONOMOUS_BUDGET,
@@ -3566,19 +3570,56 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     const id = c.req.param("id");
     const chapterNum = parseInt(c.req.param("chapter"), 10);
     if (!Number.isInteger(chapterNum) || chapterNum < 1) throw new ApiError(400, "CHAPTER_NUMBER_INVALID", "chapter must be a positive integer");
-    if (!autonomousJobs.reserve(id)) throw new ApiError(409, "AUTONOMOUS_JOB_ALREADY_RUNNING", "Production or state repair is already active for this book.");
-    const pipeline = new PipelineRunner(await buildPipelineConfig({ bookIdForSettings: id }).catch((error) => { autonomousJobs.release(id); throw error; }));
     const current = await loadAutonomousView(id).catch(() => null);
-    await saveAutonomousRuntime(root, id, { status: "REPAIRING", mode: current?.runtime?.mode ?? "current-volume", nextChapter: current?.nextChapter ?? chapterNum + 1, updatedAt: new Date().toISOString(), budget: current?.budget ?? DEFAULT_AUTONOMOUS_BUDGET, phase: "SETTLING_STATE" });
+    const pendingRepair = current?.runtimeBlockers.includes(`PENDING_STATE_REPAIR_CHAPTER_${chapterNum}`) === true;
+    if (!pendingRepair) throw new ApiError(409, "CHAPTER_STATE_REPAIR_NOT_REQUIRED", `Chapter ${chapterNum} is not waiting for state repair.`);
+    if (current?.runtime?.status === "REPAIRING") throw new ApiError(409, "STATE_REPAIR_ALREADY_PERSISTED", "A persisted state repair is already in progress and must be reconciled before another transport.");
+    const repairHighUsd = current?.economics.repairForecast.highUsd ?? null;
+    const priorRepairUpperUsd = current?.runtime?.repairOutcome?.reservedCostUpperUsd ?? 0;
+    const historicalUpperUsd = current?.economics.currentVolumeActual.historicalConservativeUpperUsd ?? null;
+    if (repairHighUsd === null || historicalUpperUsd === null) {
+      throw new ApiError(409, "COST_GUARD_UNAVAILABLE", "Verified catalog pricing is required before state repair can call a model.");
+    }
+    if (historicalUpperUsd + repairHighUsd >= (current?.budget.hardCapUsd ?? DEFAULT_AUTONOMOUS_BUDGET.hardCapUsd)) {
+      throw new ApiError(409, "NEXT_PROVIDER_CALL_COULD_REACH_HARD_CAP", "The bounded state-repair estimate could reach the current volume hard cap.");
+    }
+    if (!autonomousJobs.reserve(id)) throw new ApiError(409, "AUTONOMOUS_JOB_ALREADY_RUNNING", "Production or state repair is already active for this book.");
+    let pipeline: PipelineRunner;
+    try {
+      pipeline = new PipelineRunner(await buildPipelineConfig({ bookIdForSettings: id }));
+      await saveAutonomousRuntime(root, id, { status: "REPAIRING", mode: current?.runtime?.mode ?? "current-volume", nextChapter: current?.nextChapter ?? chapterNum + 1, updatedAt: new Date().toISOString(), budget: current?.budget ?? DEFAULT_AUTONOMOUS_BUDGET, phase: "SETTLING_STATE" });
+    } catch (error) {
+      autonomousJobs.release(id);
+      throw error;
+    }
     broadcast("repair-state:start", { bookId: id, chapter: chapterNum });
-    void pipeline.repairChapterState(id, chapterNum).then(async () => {
-      const nextChapter = await state.getNextChapterNumber(id);
-      await saveAutonomousRuntime(root, id, { status: "READY", mode: current?.runtime?.mode ?? "current-volume", nextChapter, updatedAt: new Date().toISOString(), budget: current?.budget ?? DEFAULT_AUTONOMOUS_BUDGET });
-      broadcast("repair-state:complete", { bookId: id, chapter: chapterNum });
-    }, async (error) => {
-      await saveAutonomousRuntime(root, id, { status: "BLOCKED", mode: current?.runtime?.mode ?? "current-volume", nextChapter: current?.nextChapter ?? chapterNum + 1, updatedAt: new Date().toISOString(), budget: current?.budget ?? DEFAULT_AUTONOMOUS_BUDGET, lastError: error instanceof Error ? error.message : String(error) }).catch(() => undefined);
-      broadcast("repair-state:error", { bookId: id, chapter: chapterNum, error: error instanceof Error ? error.message : String(error) });
-    }).finally(() => autonomousJobs.release(id));
+    void (async () => {
+      try {
+        const result = await pipeline.repairChapterState(id, chapterNum);
+        const nextChapter = await state.getNextChapterNumber(id);
+        await saveAutonomousRuntime(root, id, {
+          status: result.status === "audit-failed" ? "BLOCKED" : "READY",
+          mode: current?.runtime?.mode ?? "current-volume",
+          nextChapter,
+          updatedAt: new Date().toISOString(),
+          budget: current?.budget ?? DEFAULT_AUTONOMOUS_BUDGET,
+          repairOutcome: {
+            chapter: chapterNum,
+            status: result.status === "audit-failed" ? "STATE_REPAIRED_REVIEW_STILL_REQUIRED" : "STATE_REPAIRED",
+            errorCode: null,
+            reservedCostUpperUsd: priorRepairUpperUsd + repairHighUsd,
+          },
+        });
+        broadcast("repair-state:complete", { bookId: id, chapter: chapterNum });
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorCode = classifyStateRepairError(errorMessage);
+        await saveAutonomousRuntime(root, id, { status: "BLOCKED", mode: current?.runtime?.mode ?? "current-volume", nextChapter: current?.nextChapter ?? chapterNum + 1, updatedAt: new Date().toISOString(), budget: current?.budget ?? DEFAULT_AUTONOMOUS_BUDGET, lastError: errorMessage, repairOutcome: { chapter: chapterNum, status: "REPAIR_FAILED", errorCode, reservedCostUpperUsd: priorRepairUpperUsd + repairHighUsd } }).catch(() => undefined);
+        broadcast("repair-state:error", { bookId: id, chapter: chapterNum, error: errorMessage });
+      } finally {
+        autonomousJobs.release(id);
+      }
+    })();
     return c.json({ status: "REPAIRING", bookId: id, chapter: chapterNum }, 202);
   });
 
@@ -5700,8 +5741,14 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
         if (cached && Date.now() - cached.at < PRODUCTION_ROLE_CATALOG_TTL_MS) {
           catalog = cached.models;
         } else {
-          const probed = await probeModelsFromUpstream(baseUrl, apiKey, 10_000);
-          catalog = probed.filter(isTextGenerationCatalogModel);
+          let pending = productionRoleCatalogPending.get(cacheKey);
+          if (!pending) {
+            pending = probeModelsFromUpstream(baseUrl, apiKey, 10_000)
+              .then((probed) => probed.filter(isTextGenerationCatalogModel))
+              .finally(() => productionRoleCatalogPending.delete(cacheKey));
+            productionRoleCatalogPending.set(cacheKey, pending);
+          }
+          catalog = await pending;
           productionRoleCatalogCache.set(cacheKey, { models: catalog, at: Date.now() });
         }
         if (catalog.length > 0) catalogStatus = "AVAILABLE";

@@ -47,8 +47,9 @@ describe("compact autonomous production card", () => {
     expect(html).toContain("005");
     expect(html).toContain("4 / 38 in volume");
     expect(html).toContain("4 / 156 in book");
-    expect(html).toContain("Chapter 004 state requires repair before production can continue.");
-    expect(html).toContain("Repair Chapter 004 State");
+    expect(html).toContain("Production role models must be configured before starting.");
+    expect(html).toContain("Configure Models");
+    expect(html).not.toContain("Repair Chapter 004 State");
     expect(html).toContain("<details");
     expect(html).not.toContain("<details open");
     expect(html).not.toContain("<table");
@@ -59,5 +60,45 @@ describe("compact autonomous production card", () => {
     expect(autonomousFallbackPollMs("BLOCKED")).toBeNull();
     expect(autonomousFallbackPollMs("RUNNING")).toBe(12_000);
     expect(autonomousFallbackPollMs("REPAIRING")).toBe(12_000);
+  });
+
+  it("keeps the compact cost surface truthful and shows the bounded repair forecast", () => {
+    const view: AutonomousView = {
+      ...blockedView,
+      runtimeBlockers: ["PENDING_STATE_REPAIR_CHAPTER_4"],
+      economics: {
+        ...blockedView.economics,
+        historicalRecordedActualUsd: null,
+        historicalCalculatedEstimateUsd: 0.42,
+        remainingVolumeForecast: { lowUsd: 1, baseUsd: 2, highUsd: 3, sampleSize: 4, confidence: "MEDIUM" },
+        currentVolumeEstimatedTotal: { lowUsd: 1.4, baseUsd: 2.4, highUsd: 3.6, sampleSize: 4, confidence: "MEDIUM" },
+        fullBookForecast: { lowUsd: 4, baseUsd: 7, highUsd: 12, sampleSize: 4, confidence: "MEDIUM" },
+        repairForecast: { lowUsd: 0.05, baseUsd: 0.08, highUsd: 0.16, sampleSize: 1, confidence: "LOW" },
+      },
+    };
+    const html = renderToStaticMarkup(createElement(AutonomousProductionCard, {
+      view, pending: false, error: null, onStart: () => undefined, onStop: () => undefined,
+      onRepair: () => undefined, onConfigureModels: () => undefined,
+    }));
+    expect(html).toContain("Remaining Volume Forecast");
+    expect(html).toContain("Current Volume Estimated Total");
+    expect(html).toContain("Bounded repair forecast: $0.05–$0.16");
+    expect(html).toContain("Historical Recorded Actual: Unavailable");
+    expect(html).toContain("Historical Calculated Estimate: $0.42");
+    expect(html).not.toContain("<table");
+  });
+
+  it("does not offer state repair again after settlement restored an audit-failed chapter", () => {
+    const view: AutonomousView = {
+      ...blockedView,
+      runtimeBlockers: ["PENDING_CHAPTER_REVIEW_4"],
+      chapterAttention: { chapter: 4, status: "AUDIT_FAILED_STATE_SETTLED" },
+    };
+    const html = renderToStaticMarkup(createElement(AutonomousProductionCard, {
+      view, pending: false, error: null, onStart: () => undefined, onStop: () => undefined,
+      onRepair: () => undefined, onConfigureModels: () => undefined,
+    }));
+    expect(html).toContain("Chapter 004 state is settled; independent review still failed.");
+    expect(html).not.toContain("Repair Chapter 004 State");
   });
 });

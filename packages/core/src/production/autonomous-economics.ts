@@ -4,6 +4,10 @@ export interface AutonomousUsageRecord {
   readonly promptTokens: number;
   readonly completionTokens: number;
   readonly actualCostUsd?: number;
+  /** Catalog-priced token estimate. This is never provider actual cost. */
+  readonly calculatedCostUsd?: number;
+  /** Conservative upper used only for hard-cap admission. */
+  readonly conservativeCostUsd?: number;
 }
 
 export interface ForecastRange {
@@ -21,6 +25,9 @@ export function projectAutonomousEconomics(params: {
   readonly preferredBudgetUsd: number;
   readonly hardCapUsd: number;
   readonly records: ReadonlyArray<AutonomousUsageRecord>;
+  readonly remainingChapterConservativeUsd?: number;
+  readonly nextCallConservativeUsd?: number;
+  readonly additionalHistoricalConservativeUsd?: number;
 }) {
   const records = [...new Map(params.records.map((record) => [record.identity, record])).values()];
   const allCostVerified = records.length > 0 && records.every((record) =>
@@ -32,15 +39,38 @@ export function projectAutonomousEconomics(params: {
   const actualCostUsd = allCostVerified
     ? records.reduce((sum, record) => sum + record.actualCostUsd!, 0)
     : null;
-  const nextCallConservativeUsd = verifiedCosts.length > 0 ? Math.max(...verifiedCosts) : null;
-  const estimatedCostUsd = !allCostVerified && nextCallConservativeUsd !== null
-    ? nextCallConservativeUsd * records.length
+  const allCalculated = records.length > 0 && records.every((record) =>
+    typeof record.calculatedCostUsd === "number" && Number.isFinite(record.calculatedCostUsd) && record.calculatedCostUsd >= 0,
+  );
+  const calculatedCosts = records.map((record) => record.calculatedCostUsd)
+    .filter((cost): cost is number => typeof cost === "number" && Number.isFinite(cost) && cost >= 0);
+  const calculatedCostUsd = allCalculated
+    ? records.reduce((sum, record) => sum + record.calculatedCostUsd!, 0)
     : null;
+  const allConservative = records.length > 0 && records.every((record) => {
+    const value = record.conservativeCostUsd ?? record.calculatedCostUsd;
+    return typeof value === "number" && Number.isFinite(value) && value >= 0;
+  });
+  const conservativeCosts = allConservative
+    ? records.map((record) => Math.max(
+        record.conservativeCostUsd ?? 0,
+        record.calculatedCostUsd ?? 0,
+        record.actualCostUsd ?? 0,
+      ))
+    : [];
+  const historicalConservativeUpperUsd = allConservative
+    ? conservativeCosts.reduce((sum, cost) => sum + cost, 0) + (params.additionalHistoricalConservativeUsd ?? 0)
+    : null;
+  const observedConservativeUsd = conservativeCosts.length > 0 ? Math.max(...conservativeCosts) : null;
+  const nextCallConservativeUsd = params.nextCallConservativeUsd
+    ?? params.remainingChapterConservativeUsd
+    ?? observedConservativeUsd;
+  const estimatedCostUsd = calculatedCostUsd;
   const costStatus = allCostVerified
     ? "VERIFIED_ACTUAL_COST" as const
-    : estimatedCostUsd !== null
-      ? "VERIFIED_ESTIMATED_COST" as const
-      : "COST_UNAVAILABLE" as const;
+    : calculatedCostUsd !== null
+      ? "CALCULATED_ESTIMATE" as const
+    : "COST_UNAVAILABLE" as const;
   const effectiveCostUsd = actualCostUsd ?? estimatedCostUsd;
   const promptTokens = records.reduce((sum, record) => sum + record.promptTokens, 0);
   const completionTokens = records.reduce((sum, record) => sum + record.completionTokens, 0);
@@ -61,20 +91,31 @@ export function projectAutonomousEconomics(params: {
     if (effectiveCostUsd === null || params.completedChapters < 1) {
       return { lowUsd: null, baseUsd: null, highUsd: null, sampleSize: params.completedChapters, confidence: "LOW" };
     }
-    const baseUsd = (effectiveCostUsd / params.completedChapters) * remaining;
+    const basePerChapterUsd = effectiveCostUsd / params.completedChapters;
+    const baseUsd = basePerChapterUsd * remaining;
+    const conservativePerChapterUsd = Math.max(
+      basePerChapterUsd * 1.25,
+      params.remainingChapterConservativeUsd ?? 0,
+    );
     return {
       lowUsd: baseUsd * 0.8,
       baseUsd,
-      highUsd: baseUsd * 1.25,
+      highUsd: conservativePerChapterUsd * remaining,
       sampleSize: params.completedChapters,
       confidence: params.completedChapters >= 10 ? "HIGH" : params.completedChapters >= 4 ? "MEDIUM" : "LOW",
     };
   };
   const hardCapReached = effectiveCostUsd !== null && effectiveCostUsd >= params.hardCapUsd;
   const preferredExceeded = effectiveCostUsd !== null && effectiveCostUsd >= params.preferredBudgetUsd;
+  const conservativeVolumeTotalUsd = historicalConservativeUpperUsd !== null && nextCallConservativeUsd !== null
+    ? historicalConservativeUpperUsd + (params.currentVolumeRemaining > 0
+      ? (forecast(params.currentVolumeRemaining).highUsd ?? nextCallConservativeUsd)
+      : nextCallConservativeUsd)
+    : null;
   const allowNextProviderCall = effectiveCostUsd !== null
     && nextCallConservativeUsd !== null
-    && effectiveCostUsd + nextCallConservativeUsd < params.hardCapUsd;
+    && conservativeVolumeTotalUsd !== null
+    && conservativeVolumeTotalUsd < params.hardCapUsd;
 
   return {
     actual: {
@@ -85,6 +126,8 @@ export function projectAutonomousEconomics(params: {
       costUsd: actualCostUsd,
       estimatedCostUsd,
       costStatus,
+      historicalCalculatedEstimateUsd: calculatedCostUsd,
+      historicalConservativeUpperUsd,
     },
     byRole: roles,
     currentVolumeForecast: forecast(params.currentVolumeRemaining),
@@ -96,6 +139,7 @@ export function projectAutonomousEconomics(params: {
       hardCapReached,
       guardStatus: costStatus,
       nextCallConservativeUsd,
+      conservativeVolumeTotalUsd,
       allowNextProviderCall,
       ...(!allowNextProviderCall
         ? { reason: costStatus === "COST_UNAVAILABLE"

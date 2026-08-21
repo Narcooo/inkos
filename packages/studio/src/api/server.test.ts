@@ -25,6 +25,7 @@ const deleteLatestChapterMock = vi.fn();
 const saveChapterIndexMock = vi.fn();
 const loadChapterIndexMock = vi.fn();
 const loadBookConfigMock = vi.fn();
+const getNextChapterNumberMock = vi.fn();
 const createLLMClientMock = vi.fn(() => ({}));
 const chatCompletionMock = vi.fn();
 const runWorkerAgentMock = vi.fn();
@@ -193,6 +194,7 @@ const probeModelsFromUpstreamMock = vi.fn(async (): Promise<ReadonlyArray<{
   contextWindow: number;
   inputPrice?: string;
   outputPrice?: string;
+  maxOutputTokens?: number;
   inputModalities?: ReadonlyArray<string>;
   outputModalities?: ReadonlyArray<string>;
   supportedParameters?: ReadonlyArray<string>;
@@ -246,7 +248,7 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
     }
 
     async getNextChapterNumber(_bookId?: string): Promise<number> {
-      return 1;
+      return await getNextChapterNumberMock(_bookId);
     }
 
     async ensureControlDocuments(): Promise<void> {
@@ -326,6 +328,9 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
 
   return {
     StateManager: MockStateManager,
+    loadBookProductionMap: actual.loadBookProductionMap,
+    projectAutonomousEconomics: actual.projectAutonomousEconomics,
+    resolveProductionScope: actual.resolveProductionScope,
     PipelineRunner: MockPipelineRunner,
     Scheduler: MockScheduler,
     createLLMClient: createLLMClientMock,
@@ -524,6 +529,7 @@ describe("createStudioServer daemon lifecycle", () => {
     saveChapterIndexMock.mockReset();
     loadChapterIndexMock.mockReset();
     loadBookConfigMock.mockReset();
+    getNextChapterNumberMock.mockReset();
     generatePlayImageMock.mockClear();
     await mkdir(join(root, "books", "demo-book", "chapters"), { recursive: true });
     await writeFile(join(root, "books", "demo-book", "chapters", "0003_Demo.md"), "# Demo\n\nBody", "utf-8");
@@ -681,6 +687,7 @@ describe("createStudioServer daemon lifecycle", () => {
       createdAt: "2026-04-12T00:00:00.000Z",
       updatedAt: "2026-04-12T00:00:00.000Z",
     });
+    getNextChapterNumberMock.mockResolvedValue(1);
     saveChapterIndexMock.mockResolvedValue(undefined);
     rollbackToChapterMock.mockResolvedValue([]);
     deleteLatestChapterMock.mockResolvedValue({
@@ -6518,8 +6525,19 @@ describe("createStudioServer daemon lifecycle", () => {
   });
 
   it("shares the autonomous mutex with repair-state and rejects a double click without a second repair transport", async () => {
+    const raw = JSON.parse(await readFile(join(root, "inkos.json"), "utf-8"));
+    raw.llm = { ...raw.llm, service: "openrouter", defaultModel: "openai/gpt", model: "openai/gpt", services: [{ service: "openrouter" }] };
+    raw.modelOverrides = { auditor: "deepseek/chat", "commercial-reader": "google/gemini", reviser: "openai/gpt", "observer-reflector": "deepseek/flash" };
+    await writeFile(join(root, "inkos.json"), JSON.stringify(raw, null, 2), "utf-8");
+    await mkdir(join(root, "books", "demo-book", "story", "outline"), { recursive: true });
+    await writeFile(join(root, "books", "demo-book", "story", "outline", "book-production-map.json"), JSON.stringify({ schema_version: "1.0", book_id: "demo-book", authority_book_id: "authority", title: "Demo", total_chapters: 4, volumes: [{ volume_id: "volume-001", volume_number: 1, title: "One", start_chapter: 1, end_chapter: 4, chapter_count: 4 }] }), "utf-8");
+    loadSecretsMock.mockResolvedValue({ services: { openrouter: { apiKey: "test-only-secret" } } });
+    probeModelsFromUpstreamMock.mockResolvedValue(["openai/gpt", "deepseek/chat", "google/gemini", "deepseek/flash"].map((id) => ({ id, name: id, contextWindow: 128_000, maxOutputTokens: 16_000, inputPrice: "0.000001", outputPrice: "0.000004", inputModalities: ["text"], outputModalities: ["text"] })));
+    loadBookConfigMock.mockResolvedValue({ id: "demo-book", title: "Demo", genre: "urban", targetChapters: 4 });
+    getNextChapterNumberMock.mockResolvedValue(5);
+    loadChapterIndexMock.mockResolvedValue([1, 2, 3, 4].map((number) => ({ number, title: `Chapter ${number}`, status: number === 4 ? "state-degraded" : "approved", wordCount: 1, auditIssues: [], lengthWarnings: [], tokenUsage: { promptTokens: 10, completionTokens: 20, totalTokens: 30 } })));
     let releaseRepair!: () => void;
-    repairChapterStateMock.mockImplementationOnce(() => new Promise<void>((resolve) => { releaseRepair = resolve; }));
+    repairChapterStateMock.mockImplementationOnce(() => new Promise((resolve) => { releaseRepair = () => resolve({ status: "ready-for-review" }); }));
     const { createStudioServer } = await import("./server.js");
     const app = createStudioServer(cloneProjectConfig() as never, root);
     const first = await app.request("http://localhost/api/v1/books/demo-book/repair-state/4", { method: "POST" });
@@ -6529,6 +6547,76 @@ describe("createStudioServer daemon lifecycle", () => {
     expect(repairChapterStateMock).toHaveBeenCalledTimes(1);
     releaseRepair();
     await vi.waitFor(() => expect(repairChapterStateMock).toHaveBeenCalledTimes(1));
+    await vi.waitFor(async () => {
+      const runtime = JSON.parse(await readFile(join(root, "books", "demo-book", "story", "runtime", "bounded-autonomous", "production-state.json"), "utf-8"));
+      expect(runtime.repairOutcome.status).toBe("STATE_REPAIRED");
+    });
+  });
+
+  it("uses the existing catalog for autonomous economics and persists a truthful repair outcome", async () => {
+    const raw = JSON.parse(await readFile(join(root, "inkos.json"), "utf-8"));
+    raw.llm = { ...raw.llm, service: "openrouter", defaultModel: "openai/gpt-5.6-terra", model: "openai/gpt-5.6-terra", services: [{ service: "openrouter" }] };
+    raw.modelOverrides = {
+      auditor: "deepseek/deepseek-v4-pro-0813",
+      "commercial-reader": "google/gemini-3.7-flash",
+      reviser: "openai/gpt-5.6-terra",
+      "observer-reflector": "deepseek/deepseek-v4-flash-0731",
+    };
+    await writeFile(join(root, "inkos.json"), JSON.stringify(raw, null, 2), "utf-8");
+    await mkdir(join(root, "books", "demo-book", "story", "outline"), { recursive: true });
+    await writeFile(join(root, "books", "demo-book", "story", "outline", "book-production-map.json"), JSON.stringify({
+      schema_version: "1.0", book_id: "demo-book", authority_book_id: "authority", title: "Demo Book", total_chapters: 156,
+      volumes: [
+        { volume_id: "volume-001", volume_number: 1, title: "One", start_chapter: 1, end_chapter: 38, chapter_count: 38 },
+        { volume_id: "volume-002", volume_number: 2, title: "Two", start_chapter: 39, end_chapter: 78, chapter_count: 40 },
+        { volume_id: "volume-003", volume_number: 3, title: "Three", start_chapter: 79, end_chapter: 118, chapter_count: 40 },
+        { volume_id: "volume-004", volume_number: 4, title: "Four", start_chapter: 119, end_chapter: 156, chapter_count: 38 },
+      ],
+    }, null, 2), "utf-8");
+    loadSecretsMock.mockResolvedValue({ services: { openrouter: { apiKey: "test-only-secret" } } });
+    const selections = ["openai/gpt-5.6-terra", "deepseek/deepseek-v4-pro-0813", "google/gemini-3.7-flash", "deepseek/deepseek-v4-flash-0731"];
+    probeModelsFromUpstreamMock.mockResolvedValue(selections.map((id) => ({
+      id, name: id, contextWindow: 128_000, maxOutputTokens: 16_000,
+      inputPrice: "0.000001", outputPrice: "0.000004", inputModalities: ["text"], outputModalities: ["text"],
+    })));
+    loadBookConfigMock.mockResolvedValue({ id: "demo-book", title: "Demo Book", genre: "urban", targetChapters: 156 });
+    getNextChapterNumberMock.mockResolvedValue(5);
+    loadChapterIndexMock.mockResolvedValue([1, 2, 3, 4].map((number) => ({
+      number, title: `Chapter ${number}`, status: number === 4 ? "state-degraded" : "approved", wordCount: 2_000,
+      auditIssues: [], lengthWarnings: [], tokenUsage: { promptTokens: 1_000, completionTokens: 2_000, totalTokens: 3_000 },
+    })));
+    repairChapterStateMock.mockResolvedValue({
+      chapterNumber: 4, title: "Chapter 4", wordCount: 2_000, revised: false, status: "audit-failed",
+      auditResult: { passed: false, issues: [], summary: "state repaired but chapter still needs review" },
+    });
+    const runtimeDir = join(root, "books", "demo-book", "story", "runtime", "bounded-autonomous");
+    await mkdir(runtimeDir, { recursive: true });
+    await writeFile(join(runtimeDir, "production-state.json"), JSON.stringify({
+      status: "BLOCKED",
+      mode: "current-volume",
+      nextChapter: 5,
+      updatedAt: "2026-08-21T08:35:53.107Z",
+      budget: { preferredUsd: 15, hardCapUsd: 30 },
+      repairOutcome: { chapter: 4, status: "REPAIR_FAILED", errorCode: "STATE_REPAIR_FAILED", reservedCostUpperUsd: 0.05 },
+    }, null, 2), "utf-8");
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const viewResponse = await app.request("http://localhost/api/v1/books/demo-book/autonomous-production");
+    const view = await viewResponse.json() as any;
+    expect(view.economics.actual).toMatchObject({ costUsd: null, costStatus: "CALCULATED_ESTIMATE" });
+    expect(view.runtimeBlockers).not.toContain("COST_GUARD_UNAVAILABLE");
+    expect(view.economics.repairForecast.highUsd).toBeGreaterThan(0);
+
+    const repair = await app.request("http://localhost/api/v1/books/demo-book/repair-state/4", { method: "POST" });
+    expect(repair.status).toBe(202);
+    await vi.waitFor(async () => {
+      const runtime = JSON.parse(await readFile(join(root, "books", "demo-book", "story", "runtime", "bounded-autonomous", "production-state.json"), "utf-8"));
+      expect(runtime.status).toBe("BLOCKED");
+      expect(runtime.repairOutcome).toMatchObject({ chapter: 4, status: "STATE_REPAIRED_REVIEW_STILL_REQUIRED", errorCode: null });
+      expect(runtime.repairOutcome.reservedCostUpperUsd).toBeCloseTo(0.05 + view.economics.repairForecast.highUsd, 10);
+    });
+    expect(repairChapterStateMock).toHaveBeenCalledTimes(1);
   });
 
   it("persists fixed production roles to existing fields and permits an explicit manual OpenRouter slug", async () => {
@@ -6563,9 +6651,11 @@ describe("createStudioServer daemon lifecycle", () => {
     const { createStudioServer } = await import("./server.js");
     const app = createStudioServer(cloneProjectConfig() as never, root);
 
-    const first = await app.request("http://localhost/api/v1/project/production-role-models");
+    const [first, second] = await Promise.all([
+      app.request("http://localhost/api/v1/project/production-role-models"),
+      app.request("http://localhost/api/v1/project/production-role-models"),
+    ]);
     const firstBody = await first.json() as Record<string, unknown>;
-    const second = await app.request("http://localhost/api/v1/project/production-role-models");
 
     expect(first.status).toBe(200);
     expect(firstBody).toMatchObject({
@@ -6653,9 +6743,9 @@ describe("createStudioServer daemon lifecycle", () => {
     expect(composeChapterMock).toHaveBeenCalledWith("demo-book", "use the plan");
 
     const repairRes = await app.request("http://localhost/api/v1/books/demo-book/repair-state/3", { method: "POST" });
-    expect(repairRes.status).toBe(202);
-    await expect(repairRes.json()).resolves.toMatchObject({ chapter: 3, status: "REPAIRING" });
-    expect(repairChapterStateMock).toHaveBeenCalledWith("demo-book", 3);
+    expect(repairRes.status).toBe(409);
+    await expect(repairRes.json()).resolves.toMatchObject({ error: { code: "CHAPTER_STATE_REPAIR_NOT_REQUIRED" } });
+    expect(repairChapterStateMock).not.toHaveBeenCalled();
 
     const reviseFoundationRes = await app.request("http://localhost/api/v1/books/demo-book/foundation/revise", {
       method: "POST", headers: { "Content-Type": "application/json" },

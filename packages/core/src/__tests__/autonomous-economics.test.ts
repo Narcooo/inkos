@@ -38,6 +38,31 @@ describe("autonomous production economics", () => {
     expect(result.budget.allowNextProviderCall).toBe(false);
   });
 
+  it("keeps provider actual unavailable while projecting a clearly labelled calculated estimate", () => {
+    const result = projectAutonomousEconomics({
+      completedChapters: 2,
+      currentVolumeRemaining: 3,
+      fullBookRemaining: 8,
+      preferredBudgetUsd: 15,
+      hardCapUsd: 30,
+      records: [
+        { identity: "writer-1", role: "writer", promptTokens: 1_000, completionTokens: 2_000, calculatedCostUsd: 0.11 },
+        { identity: "writer-2", role: "writer", promptTokens: 800, completionTokens: 1_200, calculatedCostUsd: 0.07 },
+      ],
+      remainingChapterConservativeUsd: 0.25,
+      nextCallConservativeUsd: 0.12,
+    });
+
+    expect(result.actual.costUsd).toBeNull();
+    expect(result.actual.estimatedCostUsd).toBeCloseTo(0.18);
+    expect(result.actual.costStatus).toBe("CALCULATED_ESTIMATE");
+    expect(result.currentVolumeForecast).toMatchObject({ baseUsd: 0.27, highUsd: 0.75 });
+    expect(result.fullBookForecast).toMatchObject({ baseUsd: 0.72, highUsd: 2 });
+    expect(result.budget.guardStatus).toBe("CALCULATED_ESTIMATE");
+    expect(result.budget.conservativeVolumeTotalUsd).toBeCloseTo(0.93);
+    expect(result.budget.allowNextProviderCall).toBe(true);
+  });
+
   it("pauses before the next call when actual cost reaches the hard cap", () => {
     const result = projectAutonomousEconomics({
       completedChapters: 1,
@@ -59,8 +84,8 @@ describe("autonomous production economics", () => {
       preferredBudgetUsd: 15,
       hardCapUsd: 30,
       records: [
-        { identity: "one", role: "writer", promptTokens: 1, completionTokens: 1, actualCostUsd: 12 },
-        { identity: "two", role: "logic", promptTokens: 1, completionTokens: 1, actualCostUsd: 4 },
+        { identity: "one", role: "writer", promptTokens: 1, completionTokens: 1, actualCostUsd: 12, conservativeCostUsd: 12 },
+        { identity: "two", role: "logic", promptTokens: 1, completionTokens: 1, actualCostUsd: 4, conservativeCostUsd: 4 },
       ],
     });
     expect(allowed.budget.guardStatus).toBe("VERIFIED_ACTUAL_COST");
@@ -74,15 +99,15 @@ describe("autonomous production economics", () => {
       preferredBudgetUsd: 15,
       hardCapUsd: 25,
       records: [
-        { identity: "one", role: "writer", promptTokens: 1, completionTokens: 1, actualCostUsd: 12 },
-        { identity: "two", role: "logic", promptTokens: 1, completionTokens: 1, actualCostUsd: 4 },
+        { identity: "one", role: "writer", promptTokens: 1, completionTokens: 1, actualCostUsd: 12, conservativeCostUsd: 12 },
+        { identity: "two", role: "logic", promptTokens: 1, completionTokens: 1, actualCostUsd: 4, conservativeCostUsd: 4 },
       ],
     });
     expect(blocked.budget.allowNextProviderCall).toBe(false);
     expect(blocked.budget.reason).toBe("NEXT_PROVIDER_CALL_COULD_REACH_HARD_CAP");
   });
 
-  it("uses a conservative verified estimate when only part of usage reports actual cost", () => {
+  it("fails closed when only part of usage has verified cost", () => {
     const result = projectAutonomousEconomics({
       completedChapters: 2,
       currentVolumeRemaining: 1,
@@ -94,9 +119,9 @@ describe("autonomous production economics", () => {
         { identity: "unpriced", role: "logic", promptTokens: 1, completionTokens: 1 },
       ],
     });
-    expect(result.actual.costStatus).toBe("VERIFIED_ESTIMATED_COST");
+    expect(result.actual.costStatus).toBe("COST_UNAVAILABLE");
     expect(result.actual.costUsd).toBeNull();
-    expect(result.actual.estimatedCostUsd).toBe(6);
-    expect(result.budget.nextCallConservativeUsd).toBe(3);
+    expect(result.actual.estimatedCostUsd).toBeNull();
+    expect(result.budget.allowNextProviderCall).toBe(false);
   });
 });

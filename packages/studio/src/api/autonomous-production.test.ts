@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AutonomousCostGuard, AutonomousJobRegistry, projectAutonomousProductionView } from "./autonomous-production.js";
+import { AutonomousCostGuard, AutonomousJobRegistry, classifyStateRepairError, projectAutonomousProductionView } from "./autonomous-production.js";
 
 const map = {
   schemaVersion: "1.0" as const,
@@ -14,6 +14,13 @@ const map = {
     { volumeId: "volume-004", volumeNumber: 4, title: "Four", startChapter: 119, endChapter: 156, chapterCount: 38 },
   ],
 };
+
+const catalog = [
+  { id: "gpt", name: "GPT", contextWindow: 128_000, maxOutputTokens: 16_000, inputPrice: "0.000001", outputPrice: "0.000004", inputModalities: ["text"], outputModalities: ["text"] },
+  { id: "deepseek", name: "DeepSeek", contextWindow: 128_000, maxOutputTokens: 16_000, inputPrice: "0.0000005", outputPrice: "0.000002", inputModalities: ["text"], outputModalities: ["text"] },
+  { id: "gemini", name: "Gemini", contextWindow: 128_000, maxOutputTokens: 16_000, inputPrice: "0.0000004", outputPrice: "0.0000015", inputModalities: ["text"], outputModalities: ["text"] },
+  { id: "flash", name: "Flash", contextWindow: 128_000, maxOutputTokens: 16_000, inputPrice: "0.0000002", outputPrice: "0.000001", inputModalities: ["text"], outputModalities: ["text"] },
+];
 
 describe("autonomous production Studio projection", () => {
   it("derives current volume and budget without hard-coded chapter boundaries", () => {
@@ -51,6 +58,66 @@ describe("autonomous production Studio projection", () => {
     });
     expect(view.runtimeBlockers).toContain("COST_GUARD_UNAVAILABLE");
     expect(view.economics.budget.guardStatus).toBe("COST_UNAVAILABLE");
+    expect(view.startEnabled).toBe(false);
+  });
+
+  it("binds catalog pricing to legacy tokens and projects all required conservative estimates", () => {
+    const view = projectAutonomousProductionView({
+      map,
+      targetChapters: 156,
+      nextChapter: 5,
+      chapters: [1, 2, 3, 4].map((number) => ({ number, status: number === 4 ? "state-degraded" : "approved", tokenUsage: { promptTokens: 1_000, completionTokens: 2_000, totalTokens: 3_000 } })),
+      config: { defaultModel: "gpt", modelOverrides: { auditor: "deepseek", "commercial-reader": "gemini", reviser: "gpt", "observer-reflector": "flash" } },
+      catalog,
+      runtime: null,
+      active: false,
+      budget: { preferredUsd: 15, hardCapUsd: 30 },
+    });
+
+    expect(Object.values(view.rolePricing).every((entry) => entry.status === "VERIFIED_IN_CURRENT_CATALOG")).toBe(true);
+    expect(view.economics.actual).toMatchObject({ costUsd: null, costStatus: "CALCULATED_ESTIMATE" });
+    expect(view.economics.historicalCalculatedEstimateUsd).toBeGreaterThan(0);
+    expect(view.economics.remainingVolumeForecast.highUsd).toBeGreaterThan(0);
+    expect(view.economics.currentVolumeEstimatedTotal.highUsd!).toBeGreaterThan(view.economics.remainingVolumeForecast.highUsd!);
+    expect(view.economics.fullBookForecast.highUsd!).toBeGreaterThan(view.economics.currentVolumeEstimatedTotal.highUsd!);
+    expect(view.economics.repairForecast.highUsd).toBeCloseTo(0.4288, 10);
+    expect(view.runtimeBlockers).not.toContain("COST_GUARD_UNAVAILABLE");
+    expect(view.runtimeBlockers).toContain("PENDING_STATE_REPAIR_CHAPTER_4");
+  });
+
+  it("projects repaired state with its original audit failure truthfully instead of offering another repair", () => {
+    const view = projectAutonomousProductionView({
+      map,
+      targetChapters: 156,
+      nextChapter: 5,
+      chapters: [1, 2, 3, 4].map((number) => ({ number, status: number === 4 ? "audit-failed" : "approved", tokenUsage: { promptTokens: 1_000, completionTokens: 2_000, totalTokens: 3_000 } })),
+      config: { defaultModel: "gpt", modelOverrides: { auditor: "deepseek", "commercial-reader": "gemini", reviser: "gpt", "observer-reflector": "flash" } },
+      catalog,
+      runtime: { status: "READY", mode: "current-volume", nextChapter: 5, updatedAt: "2026-08-21T08:35:53.107Z", repairOutcome: { chapter: 4, status: "STATE_REPAIRED_REVIEW_STILL_REQUIRED", errorCode: null } },
+      active: false,
+      budget: { preferredUsd: 15, hardCapUsd: 30 },
+    });
+    expect(view.repairOutcome).toEqual({ chapter: 4, status: "STATE_REPAIRED_REVIEW_STILL_REQUIRED", errorCode: null });
+    expect(view.runtimeBlockers).not.toContain("PENDING_STATE_REPAIR_CHAPTER_4");
+    expect(view.runtimeBlockers).toContain("PENDING_CHAPTER_REVIEW_4");
+    expect(view.chapterAttention).toEqual({ chapter: 4, status: "AUDIT_FAILED_STATE_SETTLED" });
+    expect(view.startEnabled).toBe(false);
+  });
+
+  it("fails closed for repair when catalog context capacity is unavailable", () => {
+    const view = projectAutonomousProductionView({
+      map,
+      targetChapters: 156,
+      nextChapter: 5,
+      chapters: [1, 2, 3, 4].map((number) => ({ number, status: number === 4 ? "state-degraded" : "approved", tokenUsage: { promptTokens: 1_000, completionTokens: 2_000, totalTokens: 3_000 } })),
+      config: { defaultModel: "gpt", modelOverrides: { auditor: "deepseek", "commercial-reader": "gemini", reviser: "gpt", "observer-reflector": "flash" } },
+      catalog: catalog.map((entry) => ({ ...entry, contextWindow: 0 })),
+      runtime: null,
+      active: false,
+      budget: { preferredUsd: 15, hardCapUsd: 30 },
+    });
+
+    expect(view.economics.repairForecast.highUsd).toBeNull();
     expect(view.startEnabled).toBe(false);
   });
 
@@ -112,6 +179,12 @@ describe("autonomous production Studio projection", () => {
 
   it("fails closed when neither actual cost nor a conservative estimate is available", () => {
     expect(new AutonomousCostGuard(null, null, 30).check(true)).toEqual({ allowed: false, reason: "COST_GUARD_UNAVAILABLE" });
+  });
+
+  it("classifies persisted repair failures without replacing the real message", () => {
+    expect(classifyStateRepairError("Cannot repair chapter 4 safely: baseline snapshot 3 is unavailable")).toBe("STATE_REPAIR_BASELINE_UNAVAILABLE");
+    expect(classifyStateRepairError("State repair still failed for chapter 4.")).toBe("STATE_REPAIR_VALIDATION_FAILED");
+    expect(classifyStateRepairError("provider rejected request")).toBe("STATE_REPAIR_FAILED");
   });
 
   it("projects a persisted RUNNING state as resumable PAUSED after Studio restart", () => {

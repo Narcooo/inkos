@@ -11,6 +11,7 @@ export interface ProbedModel {
   readonly contextWindow: number;
   readonly inputPrice?: string;
   readonly outputPrice?: string;
+  readonly maxOutputTokens?: number;
   readonly inputModalities?: ReadonlyArray<string>;
   readonly outputModalities?: ReadonlyArray<string>;
   readonly supportedParameters?: ReadonlyArray<string>;
@@ -29,6 +30,9 @@ interface UpstreamModelRecord {
     readonly completion?: unknown;
   };
   readonly supported_parameters?: unknown;
+  readonly top_provider?: {
+    readonly max_completion_tokens?: unknown;
+  };
 }
 
 function stringArray(value: unknown): ReadonlyArray<string> | undefined {
@@ -64,6 +68,9 @@ export async function probeModelsFromUpstream(
           contextWindow: typeof m.context_length === "number" && Number.isFinite(m.context_length) ? m.context_length : 0,
           ...(typeof m.pricing?.prompt === "string" ? { inputPrice: m.pricing.prompt } : {}),
           ...(typeof m.pricing?.completion === "string" ? { outputPrice: m.pricing.completion } : {}),
+          ...(typeof m.top_provider?.max_completion_tokens === "number" && Number.isFinite(m.top_provider.max_completion_tokens)
+            ? { maxOutputTokens: m.top_provider.max_completion_tokens }
+            : {}),
           ...(inputModalities ? { inputModalities } : {}),
           ...(outputModalities ? { outputModalities } : {}),
           ...(supportedParameters ? { supportedParameters } : {}),

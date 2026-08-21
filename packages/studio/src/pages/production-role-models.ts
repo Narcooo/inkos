@@ -20,9 +20,20 @@ export interface ProductionModelCatalogEntry {
   readonly contextWindow: number;
   readonly inputPrice?: string;
   readonly outputPrice?: string;
+  readonly maxOutputTokens?: number;
   readonly inputModalities?: ReadonlyArray<string>;
   readonly outputModalities?: ReadonlyArray<string>;
   readonly supportedParameters?: ReadonlyArray<string>;
+}
+
+export interface BoundProductionRolePricing {
+  readonly modelId: string;
+  readonly status: "VERIFIED_IN_CURRENT_CATALOG" | "MODEL_NOT_IN_CURRENT_CATALOG" | "PRICING_UNAVAILABLE";
+  readonly inputUsdPerToken: number | null;
+  readonly outputUsdPerToken: number | null;
+  readonly pricingUnit: "USD_PER_TOKEN";
+  readonly contextWindow: number | null;
+  readonly maxOutputTokens: number | null;
 }
 
 const EXPLICIT_MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]*\/[A-Za-z0-9][A-Za-z0-9._:+-]*$/;
@@ -69,4 +80,40 @@ export function buildProductionRoleOverrides(
       "observer-reflector": selection.observerReflector,
     },
   };
+}
+
+function finiteNonNegativePrice(value: string | undefined): number | null {
+  if (value === undefined || value.trim() === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+export function bindProductionRolePricing(
+  selection: ProductionRoleSelection,
+  catalog: ReadonlyArray<ProductionModelCatalogEntry>,
+): Readonly<Record<keyof ProductionRoleSelection, BoundProductionRolePricing>> {
+  const byId = new Map(catalog.map((model) => [model.id, model]));
+  const result = {} as Record<keyof ProductionRoleSelection, BoundProductionRolePricing>;
+  for (const role of PRODUCTION_ROLE_KEYS) {
+    const modelId = selection[role];
+    const model = byId.get(modelId);
+    const inputUsdPerToken = finiteNonNegativePrice(model?.inputPrice);
+    const outputUsdPerToken = finiteNonNegativePrice(model?.outputPrice);
+    result[role] = {
+      modelId,
+      status: !model
+        ? "MODEL_NOT_IN_CURRENT_CATALOG"
+        : inputUsdPerToken === null || outputUsdPerToken === null
+          ? "PRICING_UNAVAILABLE"
+          : "VERIFIED_IN_CURRENT_CATALOG",
+      inputUsdPerToken,
+      outputUsdPerToken,
+      pricingUnit: "USD_PER_TOKEN",
+      contextWindow: model && Number.isFinite(model.contextWindow) && model.contextWindow > 0 ? model.contextWindow : null,
+      maxOutputTokens: model?.maxOutputTokens !== undefined && Number.isFinite(model.maxOutputTokens) && model.maxOutputTokens > 0
+        ? model.maxOutputTokens
+        : null,
+    };
+  }
+  return result;
 }
