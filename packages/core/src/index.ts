@@ -2,6 +2,7 @@
 export { type BookConfig, type Platform, type Genre, type BookStatus, type FanficMode, type ChapterReviewMode, type RevisionGate, BookConfigSchema, PlatformSchema, GenreSchema, BookStatusSchema, FanficModeSchema, normalizePlatformId, normalizePlatformOrOther, resolveChapterReviewMode, resolveRevisionGate } from "./models/book.js";
 export { type ChapterMeta, type ChapterStatus, ChapterMetaSchema, ChapterStatusSchema } from "./models/chapter.js";
 export { type ProjectConfig, type LLMConfig, type NotifyChannel, type DetectionConfig, type QualityGates, type FoundationConfig, type WritingConfig, type AgentLLMOverride, type ResearchSearchConfig, ProjectConfigSchema, LLMConfigSchema, AgentLLMOverrideSchema, DetectionConfigSchema, QualityGatesSchema, FoundationConfigSchema, WritingConfigSchema, ResearchSearchConfigSchema } from "./models/project.js";
+export { type RadarConfig, type XquikRadarCategory, type XquikRadarConfig, type XquikRadarRegion, type XquikRadarSourceName, RadarConfigSchema, XquikRadarConfigSchema, XQUIK_RADAR_CATEGORIES, XQUIK_RADAR_REGIONS, XQUIK_RADAR_SOURCES } from "./models/radar.js";
 export { type CurrentState, type ParticleLedger, type PendingHooks, type PendingHook, type LedgerEntry } from "./models/state.js";
 export { type GenreProfile, type ParsedGenreProfile, GenreProfileSchema, parseGenreProfile } from "./models/genre-profile.js";
 export { type BookRules, type ParsedBookRules, BookRulesSchema, parseBookRules, tryParseBookRulesFrontmatter } from "./models/book-rules.js";
@@ -515,7 +516,7 @@ export { ContinuityAuditor, type AuditResult, type AuditIssue } from "./agents/c
 export { ReviserAgent, DEFAULT_REVISE_MODE, type ReviseOutput, type ReviseMode } from "./agents/reviser.js";
 export { PolisherAgent, type PolishChapterInput, type PolishChapterOutput } from "./agents/polisher.js";
 export { RadarAgent, type RadarResult, type RadarRecommendation } from "./agents/radar.js";
-export { FanqieRadarSource, QidianRadarSource, TextRadarSource, type RadarSource, type PlatformRankings, type RankingEntry } from "./agents/radar-source.js";
+export { FanqieRadarSource, QidianRadarSource, TextRadarSource, XquikRadarSource, createConfiguredRadarSources, type RadarSource, type PlatformRankings, type RankingEntry, type XquikRadarSourceOptions } from "./agents/radar-source.js";
 export { readGenreProfile, readBookRules, listAvailableGenres, getBuiltinGenresDir } from "./agents/rules-reader.js";
 export { buildWriterSystemPrompt, buildGoldenOpeningDiscipline } from "./agents/writer-prompts.js";
 export { analyzeAITells, type AITellResult, type AITellIssue } from "./agents/ai-tells.js";

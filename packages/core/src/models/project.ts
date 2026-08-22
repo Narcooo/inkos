@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { RadarConfigSchema } from "./radar.js";
 
 // C1 (v2.0.0 breaking): `maxTokens` 字段已被 providers bank 接管；zod 用 strip mode 静默丢弃老配置里的 `maxTokens`。
 const LLMServiceEntrySchema = z.object({
@@ -142,6 +143,7 @@ export const ProjectConfigSchema = z.object({
     reviewRetries: 1,
   }),
   researchSearch: ResearchSearchConfigSchema,
+  radar: RadarConfigSchema,
   modelOverrides: z.record(z.string(), ModelOverrideValueSchema).optional(),
   daemon: z.object({
     schedule: z.object({
