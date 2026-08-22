@@ -12,7 +12,7 @@ const LLMServiceEntrySchema = z.object({
 });
 
 const LLMCoverConfigSchema = z.object({
-  service: z.enum(["kkaiapi", "openai", "google"]),
+  service: z.enum(["kkaiapi", "openai", "google", "dashscope"]),
   model: z.string().min(1),
   baseUrl: z.string().url().optional(),
 }).optional();
