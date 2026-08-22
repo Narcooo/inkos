@@ -13,6 +13,7 @@ import {
   LLMConfigSchema,
   NotifyChannelSchema,
 } from "../models/project.js";
+import { RadarConfigSchema } from "../models/radar.js";
 import {
   ChapterIntentSchema,
   ChapterMemoSchema,
@@ -399,6 +400,27 @@ describe("ProjectConfigSchema", () => {
     expect(() =>
       ProjectConfigSchema.parse({ name: "p", version: "0.1.0" }),
     ).toThrow();
+  });
+});
+
+describe("RadarConfigSchema", () => {
+  it("defaults an enabled Xquik source to bounded entertainment signals", () => {
+    const result = RadarConfigSchema.parse({ xquik: { enabled: true } });
+
+    expect(result?.xquik).toEqual({
+      enabled: true,
+      apiKeyEnv: "XQUIK_API_KEY",
+      category: "entertainment",
+      region: "global",
+      hours: 24,
+      limit: 30,
+    });
+  });
+
+  it("rejects unsupported filters and unsafe environment variable names", () => {
+    expect(() => RadarConfigSchema.parse({ xquik: { enabled: true, hours: 73 } })).toThrow();
+    expect(() => RadarConfigSchema.parse({ xquik: { enabled: true, region: "ZZ" } })).toThrow();
+    expect(() => RadarConfigSchema.parse({ xquik: { enabled: true, apiKeyEnv: "A=B" } })).toThrow();
   });
 });
 

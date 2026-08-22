@@ -29,6 +29,9 @@ const createLLMClientMock = vi.fn(() => ({}));
 const chatCompletionMock = vi.fn();
 const runWorkerAgentMock = vi.fn();
 const loadProjectConfigMock = vi.fn();
+const createConfiguredRadarSourcesMock = vi.fn<
+  (_config: unknown) => ReadonlyArray<unknown> | undefined
+>();
 const pipelineConfigs: unknown[] = [];
 const pipelineAbortSignals: Array<AbortSignal | undefined> = [];
 const processProjectInteractionRequestMock = vi.fn();
@@ -330,6 +333,7 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
     chatCompletion: chatCompletionMock,
     runWorkerAgent: runWorkerAgentMock,
     loadProjectConfig: loadProjectConfigMock,
+    createConfiguredRadarSources: createConfiguredRadarSourcesMock,
     processProjectInteractionRequest: processProjectInteractionRequestMock,
     createInteractionToolsFromDeps: createInteractionToolsFromDepsMock,
     deleteLatestChapter: deleteLatestChapterMock,
@@ -682,6 +686,7 @@ describe("createStudioServer daemon lifecycle", () => {
       discarded: [3],
     });
     pipelineConfigs.length = 0;
+    createConfiguredRadarSourcesMock.mockReset().mockReturnValue(undefined);
     pipelineAbortSignals.length = 0;
     runAgentSessionMock.mockReset();
     abortAgentSessionMock.mockReset();
@@ -1038,6 +1043,7 @@ describe("createStudioServer daemon lifecycle", () => {
 
     expect(response.status).toBe(200);
     expect(runRadarMock).toHaveBeenCalledTimes(1);
+    expect(createConfiguredRadarSourcesMock).toHaveBeenCalledWith(undefined);
     expect(pipelineConfigs.at(-1)).toMatchObject({
       model: "fresh-model",
       defaultLLMConfig: expect.objectContaining({
@@ -1045,6 +1051,32 @@ describe("createStudioServer daemon lifecycle", () => {
         baseUrl: "https://fresh.example.com/v1",
       }),
     });
+  });
+
+  it("passes configured radar sources to Studio scans", async () => {
+    const radar = {
+      xquik: {
+        enabled: true,
+        apiKeyEnv: "XQUIK_API_KEY",
+        category: "entertainment",
+        region: "global",
+        hours: 24,
+        limit: 30,
+      },
+    };
+    const sources = [{ name: "xquik", fetch: vi.fn() }];
+    loadProjectConfigMock.mockResolvedValue({ ...cloneProjectConfig(), radar });
+    createConfiguredRadarSourcesMock.mockReturnValue(sources);
+
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+    const response = await app.request("http://localhost/api/v1/radar/scan", {
+      method: "POST",
+    });
+
+    expect(response.status).toBe(200);
+    expect(createConfiguredRadarSourcesMock).toHaveBeenCalledWith(radar);
+    expect(pipelineConfigs.at(-1)).toMatchObject({ radarSources: sources });
   });
 
   it("persists Studio radar scans and exposes scan history", async () => {
