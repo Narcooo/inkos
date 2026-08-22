@@ -442,6 +442,35 @@ Long-form chapters are produced by multiple agents in sequence:
 
 If the audit fails, the default pipeline runs one revise → re-audit pass. Remaining issues are preserved in the result and state for human review or later commands.
 
+### Optional Xquik Radar source
+
+InkOS scans Fanqie and Qidian by default. Enable Xquik Radar to add scored trend signals. Filter them by category, region, source, and time window. Store the key in an environment variable. Do not put it in `inkos.json`.
+
+```bash
+export XQUIK_API_KEY="xq_..."
+```
+
+Add this top-level block to `inkos.json`:
+
+```json
+{
+  "radar": {
+    "xquik": {
+      "enabled": true,
+      "apiKeyEnv": "XQUIK_API_KEY",
+      "category": "entertainment",
+      "region": "global",
+      "hours": 24,
+      "limit": 30
+    }
+  }
+}
+```
+
+`inkos radar scan`, scheduled daemon scans, and Studio Radar then include Xquik results. InkOS keeps all external rows inside an untrusted-data boundary before model analysis.
+
+Xquik is an independent third-party service. Not affiliated with X Corp. "Twitter" and "X" are trademarks of X Corp.
+
 ### Long-Term Memory
 
 Each book's canonical memory is split into three layers:

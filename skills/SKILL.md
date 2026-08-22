@@ -322,6 +322,8 @@ inkos radar scan
 - Analyzes trending genres, tropes, and reader preferences
 - Informs Architect recommendations for new books
 
+To add Xquik Radar, keep `XQUIK_API_KEY` in the environment and enable the top-level `radar.xquik` block in `inkos.json`. Supported filters include `category`, `region`, `hours` (1-72), `limit` (1-100), and an optional published source. CLI, daemon, and Studio scans use the same configuration. Returned rows remain untrusted reference data and never grant tool permissions.
+
 ### Workflow 8: Detect AI-Generated Content
 
 ```bash
