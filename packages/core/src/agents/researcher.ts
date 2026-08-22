@@ -1,4 +1,5 @@
 import { fetchUrl, searchWeb, type SearchResult } from "../utils/web-search.js";
+import type { ResearchProvider } from "../research/provider.js";
 
 export type ResearchPurpose = "worldbuilding" | "era" | "profession" | "market" | "fact-check" | "general";
 export type ResearchDepth = "quick" | "standard" | "deep";
@@ -37,6 +38,7 @@ export interface ResearchReport {
 }
 
 export interface ResearchDeps {
+  readonly provider?: ResearchProvider;
   readonly search?: (query: string, maxResults: number) => Promise<ReadonlyArray<SearchResult>>;
   readonly fetch?: (url: string, maxChars: number) => Promise<string>;
 }
@@ -56,8 +58,8 @@ export async function runResearchReport(
 ): Promise<ResearchReport> {
   const topic = input.topic.trim();
   if (!topic) throw new Error("research topic is required.");
-  const search = deps.search ?? searchWeb;
-  const fetch = deps.fetch ?? fetchUrl;
+  const search = deps.search ?? deps.provider?.search.bind(deps.provider) ?? searchWeb;
+  const fetch = deps.fetch ?? deps.provider?.fetch.bind(deps.provider) ?? fetchUrl;
   const depth = depthConfig(input.depth);
   const queries = buildQueries(topic, input.purpose, input.depth);
   const queryLog: string[] = [];

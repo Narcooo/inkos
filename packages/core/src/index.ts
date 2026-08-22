@@ -537,6 +537,12 @@ export * from "./prompts/index.js";
 // Utils
 export { isNewLayoutBook, isBookFoundationComplete } from "./utils/outline-paths.js";
 export { fetchUrl, searchWeb } from "./utils/web-search.js";
+export type { ResearchProvider } from "./research/provider.js";
+export {
+  OpenWebSearchProvider,
+  OpenWebSearchProviderError,
+  type OpenWebSearchProviderOptions,
+} from "./research/open-websearch-provider.js";
 export {
   runResearchReport,
   type ResearchDepth,
