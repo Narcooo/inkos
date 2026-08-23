@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vitest";
-import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
+import { describe, expect, it, vi } from "vitest";
+import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { claimAutonomousJob, createAutonomousPipelineActions, deriveAutonomousJobIdentity, refreshAutonomousJobClaim, releaseAutonomousJob, runBoundedAutonomousScope } from "../production/bounded-autonomous-controller.js";
+import { claimAutonomousJob, createAutonomousPipelineActions, createAutonomousProviderExecution, deriveAutonomousJobIdentity, refreshAutonomousJobClaim, releaseAutonomousJob, runBoundedAutonomousScope } from "../production/bounded-autonomous-controller.js";
+import { LLMCallExecutionError } from "../llm/provider.js";
 import type { BookProductionMap } from "../production/book-production-map.js";
 import type { ChapterMeta } from "../models/chapter.js";
 
@@ -17,6 +18,29 @@ const map: BookProductionMap = {
     { volumeId: "volume-002", volumeNumber: 2, title: "Two", startChapter: 4, endChapter: 6, chapterCount: 3 },
   ],
 };
+
+function providerFailure(params: {
+  readonly classification: "RETRYABLE_PROVIDER_HTTP" | "RETRYABLE_PRE_TRANSPORT" | "AMBIGUOUS_PROVIDER_OUTCOME" | "DETERMINISTIC_PROVIDER_ERROR";
+  readonly status?: number;
+  readonly retryAfterMs?: number;
+  readonly logicalStepId?: string;
+  readonly revisionRound?: number;
+}) {
+  return new LLMCallExecutionError("safe synthetic provider failure", {
+    logicalStepId: params.logicalStepId ?? "step-1",
+    inputFingerprint: "a".repeat(64),
+    provider: "openrouter",
+    model: "provider/model",
+    role: "auditor",
+    stage: "LOGIC_REVIEW",
+    ...(params.revisionRound !== undefined ? { revisionRound: params.revisionRound } : {}),
+    classification: params.classification,
+    transportStarted: params.classification !== "RETRYABLE_PRE_TRANSPORT",
+    transportReturned: params.classification === "RETRYABLE_PROVIDER_HTTP" || params.classification === "DETERMINISTIC_PROVIDER_ERROR",
+    ...(params.status ? { httpStatus: params.status } : {}),
+    ...(params.retryAfterMs ? { retryAfterMs: params.retryAfterMs } : {}),
+  });
+}
 
 describe("bounded autonomous production controller", () => {
   it("derives one stable job identity for the same book, mode, and dynamic volume", () => {
@@ -77,6 +101,32 @@ describe("bounded autonomous production controller", () => {
     expect(result.status).toBe("VOLUME_COMPLETE");
     expect(result.nextChapter).toBe(4);
     expect(states.at(-1)).toBe("VOLUME_COMPLETE");
+  });
+
+  it("derives the formal 001-038 stop from its map and never starts chapter 039", async () => {
+    const formalShape: BookProductionMap = {
+      schemaVersion: "1.0", bookId: "formal-shape", authorityBookId: "authority", title: "Formal Shape", totalChapters: 156,
+      volumes: [
+        { volumeId: "volume-001", volumeNumber: 1, title: "One", startChapter: 1, endChapter: 38, chapterCount: 38 },
+        { volumeId: "volume-002", volumeNumber: 2, title: "Two", startChapter: 39, endChapter: 78, chapterCount: 40 },
+        { volumeId: "volume-003", volumeNumber: 3, title: "Three", startChapter: 79, endChapter: 118, chapterCount: 40 },
+        { volumeId: "volume-004", volumeNumber: 4, title: "Four", startChapter: 119, endChapter: 156, chapterCount: 38 },
+      ],
+    };
+    let next = 5;
+    const calls: number[] = [];
+    const result = await runBoundedAutonomousScope({
+      map: formalShape,
+      mode: "current-volume",
+      getNextChapter: async () => next,
+      runChapter: async () => { calls.push(next); next += 1; return { status: "ready-for-review" }; },
+      shouldStop: () => false,
+      persistProgress: async () => undefined,
+    });
+    expect(calls.at(0)).toBe(5);
+    expect(calls.at(-1)).toBe(38);
+    expect(calls).not.toContain(39);
+    expect(result).toMatchObject({ status: "VOLUME_COMPLETE", nextChapter: 39, targetChapter: 38 });
   });
 
   it("stops after an atomic chapter when stop is requested", async () => {
@@ -143,6 +193,243 @@ describe("bounded autonomous production controller", () => {
     });
     expect(calls).toBe(3);
     expect(result.status).toBe("VOLUME_COMPLETE");
+  });
+
+  it("persists HTTP 429 waiting for at least 300 seconds and retries automatically with a fake clock", async () => {
+    let now = Date.parse("2026-08-23T00:00:00.000Z");
+    let next = 1;
+    let calls = 0;
+    const waits: number[] = [];
+    const states: Array<{ status: string; nextRetryAt?: string; attempt?: number }> = [];
+    const result = await runBoundedAutonomousScope({
+      map,
+      mode: "current-volume",
+      getNextChapter: async () => next,
+      runChapter: async () => {
+        calls += 1;
+        if (calls === 1) throw providerFailure({ classification: "RETRYABLE_PROVIDER_HTTP", status: 429, revisionRound: 1 });
+        next += 1;
+        return { status: "ready-for-review" };
+      },
+      shouldStop: () => false,
+      persistProgress: async (state) => { states.push(state); },
+      providerRecovery: {
+        execute: async (_chapter, task) => task(),
+        loadPersistedProgress: async () => null,
+        now: () => now,
+        sleep: async (ms) => { waits.push(ms); now += ms; },
+      },
+    });
+    expect(waits[0]).toBe(300_000);
+    expect(states).toContainEqual(expect.objectContaining({ status: "WAITING_PROVIDER_RETRY", attempt: 1, revisionRound: 1 }));
+    expect(states.find((state) => state.status === "WAITING_PROVIDER_RETRY")?.nextRetryAt).toBe("2026-08-23T00:05:00.000Z");
+    expect(calls).toBe(4);
+    expect(result.status).toBe("VOLUME_COMPLETE");
+  });
+
+  it("uses 300 then 900 seconds for HTTP 503 and pauses after the third failed transport", async () => {
+    let now = 0;
+    let calls = 0;
+    const waits: number[] = [];
+    const states: Array<{ status: string; attempt?: number; transportRetryCount?: number }> = [];
+    const result = await runBoundedAutonomousScope({
+      map,
+      mode: "current-volume",
+      getNextChapter: async () => 1,
+      runChapter: async () => { calls += 1; throw providerFailure({ classification: "RETRYABLE_PROVIDER_HTTP", status: 503 }); },
+      shouldStop: () => false,
+      persistProgress: async (state) => { states.push(state); },
+      providerRecovery: {
+        execute: async (_chapter, task) => task(),
+        loadPersistedProgress: async () => null,
+        now: () => now,
+        sleep: async (ms) => { waits.push(ms); now += ms; },
+      },
+    });
+    expect(waits).toEqual([300_000, 900_000]);
+    expect(calls).toBe(3);
+    expect(result).toMatchObject({ status: "PAUSED_PROVIDER_UNAVAILABLE", attempt: 3, transportRetryCount: 2 });
+    expect(states.at(-1)).toMatchObject({ status: "PAUSED_PROVIDER_UNAVAILABLE", attempt: 3, transportRetryCount: 2 });
+    expect((result as any).providerAttemptHistory).toHaveLength(3);
+    expect(new Set((result as any).providerAttemptHistory.map((entry: any) => entry.transportAttemptId)).size).toBe(3);
+    expect((result as any).providerAttemptHistory.map((entry: any) => entry.attempt)).toEqual([1, 2, 3]);
+  });
+
+  it.each([
+    { retryAfterMs: 600_000, expected: 600_000 },
+    { retryAfterMs: 10_000, expected: 300_000 },
+  ])("applies Retry-After against the first retry lower bound", async ({ retryAfterMs, expected }) => {
+    let now = 0;
+    let next = 1;
+    let calls = 0;
+    const waits: number[] = [];
+    await runBoundedAutonomousScope({
+      map,
+      mode: "current-volume",
+      getNextChapter: async () => next,
+      runChapter: async () => {
+        calls += 1;
+        if (calls === 1) throw providerFailure({ classification: "RETRYABLE_PROVIDER_HTTP", status: 429, retryAfterMs });
+        next = 4;
+        return { status: "ready-for-review" };
+      },
+      shouldStop: () => false,
+      persistProgress: async () => undefined,
+      providerRecovery: { execute: async (_chapter, task) => task(), loadPersistedProgress: async () => null, now: () => now, sleep: async (ms) => { waits.push(ms); now += ms; } },
+    });
+    expect(waits).toEqual([expected]);
+  });
+
+  it.each([
+    { retryAfterMs: 1_200_000, expectedSecondWait: 1_200_000 },
+    { retryAfterMs: 10_000, expectedSecondWait: 900_000 },
+  ])("applies Retry-After against the second retry lower bound", async ({ retryAfterMs, expectedSecondWait }) => {
+    let now = 0;
+    let next = 1;
+    let calls = 0;
+    const waits: number[] = [];
+    await runBoundedAutonomousScope({
+      map,
+      mode: "current-volume",
+      getNextChapter: async () => next,
+      runChapter: async () => {
+        calls += 1;
+        if (calls === 1) throw providerFailure({ classification: "RETRYABLE_PROVIDER_HTTP", status: 503 });
+        if (calls === 2) throw providerFailure({ classification: "RETRYABLE_PROVIDER_HTTP", status: 503, retryAfterMs });
+        next = 4;
+        return { status: "ready-for-review" };
+      },
+      shouldStop: () => false,
+      persistProgress: async () => undefined,
+      providerRecovery: { execute: async (_chapter, task) => task(), loadPersistedProgress: async () => null, now: () => now, sleep: async (ms) => { waits.push(ms); now += ms; } },
+    });
+    expect(waits).toEqual([300_000, expectedSecondWait]);
+  });
+
+  it("reloads one waiting job after a simulated server restart and continues without another click", async () => {
+    let persisted: any = null;
+    let now = 0;
+    await expect(runBoundedAutonomousScope({
+      map,
+      mode: "current-volume",
+      getNextChapter: async () => 1,
+      runChapter: async () => { throw providerFailure({ classification: "RETRYABLE_PROVIDER_HTTP", status: 503 }); },
+      shouldStop: () => false,
+      persistProgress: async (state) => { persisted = state; },
+      providerRecovery: {
+        execute: async (_chapter, task) => task(), loadPersistedProgress: async () => null, now: () => now,
+        sleep: async () => { throw new Error("SIMULATED_SERVER_RESTART"); },
+      },
+    })).rejects.toThrow("SIMULATED_SERVER_RESTART");
+    expect(persisted).toMatchObject({ status: "WAITING_PROVIDER_RETRY", attempt: 1 });
+
+    now = Date.parse(persisted.nextRetryAt);
+    let next = 1;
+    let resumedCalls = 0;
+    const resumed = await runBoundedAutonomousScope({
+      map,
+      mode: "current-volume",
+      getNextChapter: async () => next,
+      runChapter: async () => { resumedCalls += 1; next = 4; return { status: "ready-for-review" }; },
+      shouldStop: () => false,
+      persistProgress: async (state) => { persisted = state; },
+      providerRecovery: {
+        execute: async (_chapter, task) => task(), loadPersistedProgress: async () => persisted, now: () => now,
+        sleep: async (ms) => { now += ms; },
+      },
+    });
+    expect(resumed.jobId).toBe(persisted.jobId);
+    expect(resumedCalls).toBe(1);
+    expect(resumed.status).toBe("VOLUME_COMPLETE");
+  });
+
+  it("fails closed without retry when the provider outcome may be ambiguous", async () => {
+    let calls = 0;
+    const sleep = vi.fn();
+    const result = await runBoundedAutonomousScope({
+      map,
+      mode: "current-volume",
+      getNextChapter: async () => 1,
+      runChapter: async () => { calls += 1; throw providerFailure({ classification: "AMBIGUOUS_PROVIDER_OUTCOME" }); },
+      shouldStop: () => false,
+      persistProgress: async () => undefined,
+      providerRecovery: { execute: async (_chapter, task) => task(), loadPersistedProgress: async () => null, now: () => 0, sleep },
+    });
+    expect(result).toMatchObject({ status: "PAUSED_AMBIGUOUS_PROVIDER_OUTCOME", attempt: 1 });
+    expect(calls).toBe(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it.each([400, 401, 403])("does not retry deterministic HTTP %s", async (status) => {
+    const sleep = vi.fn();
+    let calls = 0;
+    const result = await runBoundedAutonomousScope({
+      map,
+      mode: "current-volume",
+      getNextChapter: async () => 1,
+      runChapter: async () => { calls += 1; throw providerFailure({ classification: "DETERMINISTIC_PROVIDER_ERROR", status }); },
+      shouldStop: () => false,
+      persistProgress: async () => undefined,
+      providerRecovery: { execute: async (_chapter, task) => task(), loadPersistedProgress: async () => null, now: () => 0, sleep },
+    });
+    expect(result.status).toBe("PAUSED_DETERMINISTIC_PROVIDER_ERROR");
+    expect(calls).toBe(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("pauses a deterministic parser or business failure without a technical retry", async () => {
+    const sleep = vi.fn();
+    let calls = 0;
+    const result = await runBoundedAutonomousScope({
+      map,
+      mode: "current-volume",
+      getNextChapter: async () => 1,
+      runChapter: async () => { calls += 1; throw new Error("DETERMINISTIC_PARSER_FAILURE"); },
+      shouldStop: () => false,
+      persistProgress: async () => undefined,
+      providerRecovery: { execute: async (_chapter, task) => task(), loadPersistedProgress: async () => null, now: () => 0, sleep },
+    });
+    expect(result).toMatchObject({
+      status: "PAUSED_DETERMINISTIC_PROVIDER_ERROR",
+      checkpoint: "DETERMINISTIC_PIPELINE_ERROR",
+      lastErrorClassification: "DETERMINISTIC_PIPELINE_ERROR",
+    });
+    expect(calls).toBe(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("atomically reuses a saved response artifact without a second transport or duplicate usage identity", async () => {
+    const root = await mkdtemp(join(tmpdir(), "inkos-autonomous-response-artifact-"));
+    try {
+      let transportCalls = 0;
+      const runtimeDir = join(root, "books", "book", "story", "runtime", "bounded-autonomous");
+      await mkdir(runtimeDir, { recursive: true });
+      await writeFile(join(runtimeDir, "production-state.json"), JSON.stringify({
+        jobId: "job", status: "RUNNING", mode: "current-volume", volumeId: "volume-001",
+        startChapter: 4, targetChapter: 4, nextChapter: 4, completedThisRun: 0,
+      }), "utf-8");
+      const stages = { stage: "LOGIC_REVIEW", role: "auditor", provider: "openrouter", model: "provider/model", revisionRound: 0, reviewRound: 1 } as const;
+      const execution = createAutonomousProviderExecution({ projectRoot: root, bookId: "book", jobId: "job", getActiveStage: () => stages });
+      const run = () => execution.runProviderCall(4, async () => {
+        transportCalls += 1;
+        return { content: "synthetic result", usage: { promptTokens: 3, completionTokens: 2, totalTokens: 5 } };
+      }, { provider: "openrouter", model: "provider/model", inputFingerprint: "b".repeat(64) });
+      const first = await run();
+      const second = await run();
+      expect(second).toEqual(first);
+      expect(transportCalls).toBe(1);
+      const artifact = JSON.parse(await readFile(execution.responseArtifactPath("b".repeat(64), "openrouter", "provider/model", 4), "utf-8"));
+      expect(artifact).toMatchObject({ response_artifact_status: "COMPLETE", usage_identity: artifact.logical_step_id });
+      const runtime = JSON.parse(await readFile(join(runtimeDir, "production-state.json"), "utf-8"));
+      expect(runtime).toMatchObject({
+        responseArtifactStatus: "COMPLETE",
+        checkpoint: "RESPONSE_ARTIFACT_PERSISTED",
+        attempt: 1,
+      });
+      expect(runtime.providerAttemptHistory).toHaveLength(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("grants one durable cross-process claim and rejects a concurrent owner", async () => {

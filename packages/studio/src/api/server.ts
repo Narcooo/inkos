@@ -133,6 +133,7 @@ import {
   type SessionKind,
   type AgentSessionAttachment,
   createAutonomousPipelineActions,
+  createAutonomousProviderExecution,
   claimAutonomousJob,
   deriveAutonomousJobIdentity,
   refreshAutonomousJobClaim,
@@ -2881,8 +2882,11 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     const body: { mode?: string } = await c.req.json().catch(() => ({}));
     const mode = body.mode === "full-book" ? "full-book" : body.mode === "current-volume" ? "current-volume" : null;
     if (!mode) throw new ApiError(400, "AUTONOMOUS_MODE_INVALID", "mode must be current-volume or full-book");
+    const persistedRuntime = await loadAutonomousRuntime(root, bookId);
+    const recoveringProviderWait = persistedRuntime?.status === "WAITING_PROVIDER_RETRY"
+      && persistedRuntime.mode === mode;
     const admission = await loadAutonomousView(bookId);
-    if (!admission.startEnabled) {
+    if (!admission.startEnabled && !recoveringProviderWait) {
       throw new ApiError(409, "AUTONOMOUS_ADMISSION_BLOCKED", admission.runtimeBlockers.join(", "));
     }
     // Synchronous reservation closes the double-click window before any more awaits.
@@ -2898,6 +2902,13 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     let durableClaim: AutonomousJobClaim | undefined;
     let stopDurableHeartbeat: (() => void) | undefined;
     let durableClaimFailure: unknown;
+    let activeStage = {
+      stage: "PREPARING",
+      role: "writer",
+      provider: null as string | null,
+      model: null as string | null,
+    };
+    let providerRecovery: ReturnType<typeof createAutonomousProviderExecution>;
     try {
       const pipelineConfig = await buildPipelineConfig({ bookIdForSettings: bookId });
       pipeline = new PipelineRunner({
@@ -2905,6 +2916,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
         chapterReviewMode: "auto",
         boundedAutonomousReview: true,
         onAutonomousStage: async (event) => {
+          activeStage = event;
           if (durableClaimFailure) throw durableClaimFailure;
           if (durableClaim) await refreshAutonomousJobClaim(root, bookId, durableClaim);
           const nextChapter = await state.getNextChapterNumber(bookId);
@@ -2924,18 +2936,29 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       });
       productionMap = await requireBookProductionMap(root, bookId);
       jobId = deriveAutonomousJobIdentity({ map: productionMap, mode, nextChapter: startedNextChapter });
+      if (recoveringProviderWait && persistedRuntime?.jobId !== jobId) {
+        throw new Error("AUTONOMOUS_WAITING_JOB_IDENTITY_MISMATCH");
+      }
+      providerRecovery = createAutonomousProviderExecution({
+        projectRoot: root,
+        bookId,
+        jobId,
+        getActiveStage: () => activeStage,
+      });
       durableClaim = await claimAutonomousJob({ projectRoot: root, bookId, jobId });
       stopDurableHeartbeat = startAutonomousJobHeartbeat(root, bookId, durableClaim, (error) => { durableClaimFailure = error; });
       actions = await createAutonomousPipelineActions({ bookId, state, pipeline });
-      await saveAutonomousRuntime(root, bookId, {
-        jobId,
-        status: "RUNNING",
-        mode,
-        nextChapter: startedNextChapter,
-        updatedAt: new Date().toISOString(),
-        budget: AUTONOMOUS_BUDGET_NOT_CONFIGURED,
-        lastError: null,
-      });
+      if (!recoveringProviderWait) {
+        await saveAutonomousRuntime(root, bookId, {
+          jobId,
+          status: "RUNNING",
+          mode,
+          nextChapter: startedNextChapter,
+          updatedAt: new Date().toISOString(),
+          budget: AUTONOMOUS_BUDGET_NOT_CONFIGURED,
+          lastError: null,
+        });
+      }
     } catch (error) {
       stopDurableHeartbeat?.();
       if (durableClaim) await releaseAutonomousJob(root, bookId, durableClaim).catch(() => undefined);
@@ -2949,9 +2972,9 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       mode,
       getNextChapter: () => state.getNextChapterNumber(bookId),
       shouldStop: () => autonomousJobs.shouldStop(bookId),
-      ...(actions.resumePendingChapter ? { resumePendingChapter: async () => {
+      ...(actions.resumePendingChapter ? { resumePendingChapter: async (options?: { readonly safeReplayStage?: string }) => {
         if (durableClaimFailure) throw durableClaimFailure;
-        const result = await actions.resumePendingChapter!();
+        const result = await actions.resumePendingChapter!(options);
         if (durableClaimFailure) throw durableClaimFailure;
         return result;
       } } : {}),
@@ -2972,15 +2995,13 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
         if (durableClaimFailure) throw durableClaimFailure;
         if (durableClaim) await refreshAutonomousJobClaim(root, bookId, durableClaim);
         await saveAutonomousRuntime(root, bookId, {
-          jobId: progress.jobId,
-          status: progress.status,
-          mode: progress.mode,
-          nextChapter: progress.nextChapter,
+          ...progress,
           updatedAt: new Date().toISOString(),
           budget: AUTONOMOUS_BUDGET_NOT_CONFIGURED,
           lastError: null,
         });
       },
+      providerRecovery,
     }).then(
       async (result) => {
         if (result.status === "VOLUME_COMPLETE" || result.status === "BOOK_COMPLETE") {
@@ -3016,19 +3037,30 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
             });
           }
         }
-        broadcast("autonomous:complete", { bookId, status: result.status, nextChapter: result.nextChapter });
+        const paused = result.status.startsWith("PAUSED_")
+          || result.status === "REVIEW_EXHAUSTED"
+          || result.status === "HELD_AFTER_TWO_REVISIONS";
+        broadcast(paused ? "autonomous:paused" : "autonomous:complete", { bookId, status: result.status, nextChapter: result.nextChapter });
       },
       async (error) => {
         const nextChapter = await state.getNextChapterNumber(bookId).catch(() => startedNextChapter);
-        await saveAutonomousRuntime(root, bookId, {
-          jobId,
-          status: "PAUSED",
-          mode,
-          nextChapter,
-          updatedAt: new Date().toISOString(),
-          lastError: error instanceof Error ? error.message : String(error),
-          budget: AUTONOMOUS_BUDGET_NOT_CONFIGURED,
-        }).catch(() => undefined);
+        const latest = await loadAutonomousRuntime(root, bookId).catch(() => null);
+        const controllerAlreadyPersistedTerminalProviderState = latest?.jobId === jobId && (
+          latest.status === "PAUSED_PROVIDER_UNAVAILABLE"
+          || latest.status === "PAUSED_AMBIGUOUS_PROVIDER_OUTCOME"
+          || latest.status === "PAUSED_DETERMINISTIC_PROVIDER_ERROR"
+        );
+        if (!controllerAlreadyPersistedTerminalProviderState) {
+          await saveAutonomousRuntime(root, bookId, {
+            jobId,
+            status: "PAUSED",
+            mode,
+            nextChapter,
+            updatedAt: new Date().toISOString(),
+            lastError: error instanceof Error ? error.message : String(error),
+            budget: AUTONOMOUS_BUDGET_NOT_CONFIGURED,
+          }).catch(() => undefined);
+        }
         broadcast("autonomous:error", { bookId, error: error instanceof Error ? error.message : String(error) });
       },
     ).finally(async () => {
@@ -3038,6 +3070,27 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     });
 
     return c.json({ status: "RUNNING", mode, bookId }, 202);
+  });
+
+  // Re-enter the exact same Studio -> Core start path for durable Provider
+  // waits. The persisted job identity and filesystem lease remain authoritative;
+  // no browser request or second scheduler is required after a process restart.
+  const startupBookIds = state.listBooks();
+  void startupBookIds.then(async (bookIds) => {
+      for (const bookId of bookIds) {
+        const runtime = await loadAutonomousRuntime(root, bookId).catch(() => null);
+        if (runtime?.status !== "WAITING_PROVIDER_RETRY") continue;
+        const response = await app.request(`http://localhost/api/v1/books/${encodeURIComponent(bookId)}/autonomous-production/start`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mode: runtime.mode }),
+        });
+        if (response.status !== 202 && response.status !== 409) {
+          console.error("[studio] Failed to recover durable autonomous Provider wait", { bookId, status: response.status });
+        }
+      }
+  }).catch((error) => {
+    console.error("[studio] Failed to scan durable autonomous Provider waits", error);
   });
 
   app.post("/api/v1/books/:id/autonomous-production/stop", async (c) => {

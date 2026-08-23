@@ -8,6 +8,7 @@ const getNextChapterNumberMock = vi.fn();
 const runBoundedAutonomousScopeMock = vi.fn();
 const loadBookProductionMapMock = vi.fn();
 const createAutonomousPipelineActionsMock = vi.fn();
+const createAutonomousProviderExecutionMock = vi.fn();
 const resolveProductionScopeMock = vi.fn();
 const saveAutonomousProductionStateMock = vi.fn();
 const claimAutonomousJobMock = vi.fn();
@@ -41,6 +42,7 @@ vi.mock("@actalk/inkos-core", () => ({
   startAutonomousJobHeartbeat: vi.fn(() => () => undefined),
   loadBookProductionMap: loadBookProductionMapMock,
   createAutonomousPipelineActions: createAutonomousPipelineActionsMock,
+  createAutonomousProviderExecution: createAutonomousProviderExecutionMock,
   resolveProductionScope: resolveProductionScopeMock,
   runBoundedAutonomousScope: runBoundedAutonomousScopeMock,
   saveAutonomousProductionState: saveAutonomousProductionStateMock,
@@ -98,6 +100,12 @@ describe("inkos auto command", () => {
     runBoundedAutonomousScopeMock.mockResolvedValue({ status: "VOLUME_COMPLETE", nextChapter: 6 });
     resolveProductionScopeMock.mockReturnValue({ complete: false, startChapter: 3, targetChapter: 5, currentVolume: { volumeId: "volume-001" } });
     createAutonomousPipelineActionsMock.mockResolvedValue({ runChapter: writeNextChapterMock });
+    createAutonomousProviderExecutionMock.mockReturnValue({
+      execute: async (_chapter: number, task: () => Promise<unknown>) => task(),
+      loadPersistedProgress: loadAutonomousProductionStateMock,
+      now: () => 0,
+      sleep: async () => undefined,
+    });
     claimAutonomousJobMock.mockResolvedValue({ jobId: "autonomous-test", claimId: "claim", ownerPid: 1 });
     releaseAutonomousJobMock.mockResolvedValue(undefined);
     loadAutonomousProductionStateMock.mockResolvedValue(null);
@@ -126,6 +134,15 @@ describe("inkos auto command", () => {
       expect.objectContaining({ chapterReviewMode: "auto" }),
     );
     expect(pipelineRunnerConfigs).toContainEqual(expect.objectContaining({ boundedAutonomousReview: true }));
+    expect(createAutonomousProviderExecutionMock).toHaveBeenCalledWith(expect.objectContaining({
+      projectRoot: "/project",
+      bookId: "demo-book",
+      jobId: "autonomous-test",
+      getActiveStage: expect.any(Function),
+    }));
+    expect(runBoundedAutonomousScopeMock).toHaveBeenCalledWith(expect.objectContaining({
+      providerRecovery: expect.objectContaining({ execute: expect.any(Function) }),
+    }));
     expect(exitSpy).not.toHaveBeenCalled();
   });
 

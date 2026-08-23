@@ -1,6 +1,6 @@
 import type { LLMConfig } from "../models/project.js";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   streamSimple as piStreamSimple,
   completeSimple as piCompleteSimple,
@@ -275,6 +275,57 @@ export interface LLMOutcomeRecord {
   readonly model: string;
   readonly usage: LLMResponse["usage"];
   readonly returnedAt: string;
+}
+
+export type LLMFailureClassification =
+  | "RETRYABLE_PROVIDER_HTTP"
+  | "RETRYABLE_PRE_TRANSPORT"
+  | "AMBIGUOUS_PROVIDER_OUTCOME"
+  | "DETERMINISTIC_PROVIDER_ERROR";
+
+export interface LLMCallExecutionIdentity {
+  readonly logicalStepId: string;
+  readonly inputFingerprint: string;
+  readonly provider: string;
+  readonly model: string;
+  readonly role: string;
+  readonly stage: string;
+  readonly revisionRound?: number;
+  readonly reviewRound?: number;
+}
+
+export interface LLMCallFailureMetadata extends LLMCallExecutionIdentity {
+  readonly classification: LLMFailureClassification;
+  readonly transportStarted: boolean;
+  readonly transportReturned: boolean;
+  readonly httpStatus?: number;
+  readonly retryAfterMs?: number;
+}
+
+export class LLMCallExecutionError extends Error {
+  readonly metadata: LLMCallFailureMetadata;
+
+  constructor(message: string, metadata: LLMCallFailureMetadata, options?: { readonly cause?: unknown }) {
+    super(message, options);
+    this.name = "LLMCallExecutionError";
+    this.metadata = metadata;
+  }
+}
+
+export interface LLMCallExecutionPolicy {
+  readonly prepare: (request: {
+    readonly provider: string;
+    readonly model: string;
+    readonly inputFingerprint: string;
+  }) => Promise<{ readonly identity: LLMCallExecutionIdentity; readonly cachedResponse?: LLMResponse }>;
+  readonly persistSuccess: (identity: LLMCallExecutionIdentity, response: LLMResponse) => Promise<void>;
+}
+
+const llmCallExecutionPolicyStorage = new AsyncLocalStorage<LLMCallExecutionPolicy>();
+
+/** Installs the durable autonomous call policy without changing ordinary CLI/chat behavior. */
+export function runWithLLMCallExecutionPolicy<T>(policy: LLMCallExecutionPolicy, task: () => Promise<T>): Promise<T> {
+  return llmCallExecutionPolicyStorage.run(policy, task);
 }
 
 type LLMOutcomeObserver = (record: LLMOutcomeRecord) => Promise<void>;
@@ -708,7 +759,9 @@ function collectErrorText(error: unknown, depth = 0): string {
   const parts = [String(error)];
   if (error instanceof Error) {
     parts.push(error.name, error.message);
-    const cause = (error as Error & { cause?: unknown }).cause;
+    const extended = error as Error & { cause?: unknown; code?: unknown };
+    if (extended.code) parts.push(String(extended.code));
+    const cause = extended.cause;
     if (cause) parts.push(collectErrorText(cause, depth + 1));
   } else if (typeof error === "object") {
     const err = error as { code?: unknown; cause?: unknown; message?: unknown; name?: unknown };
@@ -718,6 +771,120 @@ function collectErrorText(error: unknown, depth = 0): string {
     if (err.cause) parts.push(collectErrorText(err.cause, depth + 1));
   }
   return parts.join("\n");
+}
+
+function collectErrorObjects(error: unknown, depth = 0): object[] {
+  if (depth > 4 || error === null || typeof error !== "object") return [];
+  const current = error as { cause?: unknown; error?: unknown };
+  return [error, ...collectErrorObjects(current.cause, depth + 1), ...collectErrorObjects(current.error, depth + 1)];
+}
+
+function readHttpStatus(error: unknown): number | undefined {
+  for (const value of collectErrorObjects(error)) {
+    const candidate = value as { status?: unknown; statusCode?: unknown; code?: unknown; response?: { status?: unknown } };
+    for (const raw of [candidate.status, candidate.statusCode, candidate.response?.status]) {
+      const parsed = Number(raw);
+      if (Number.isInteger(parsed) && parsed >= 100 && parsed <= 599) return parsed;
+    }
+  }
+  const match = /(?:status(?: code)?\s*[:=]?\s*|http\s+|^|\s)([1-5][0-9]{2})(?:\s|\b)/i.exec(collectErrorText(error));
+  return match ? Number(match[1]) : undefined;
+}
+
+function parseRetryAfterValue(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) return Math.ceil(value * 1_000);
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds * 1_000);
+  const date = Date.parse(value);
+  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : undefined;
+}
+
+function readRetryAfterMs(error: unknown): number | undefined {
+  for (const value of collectErrorObjects(error)) {
+    const candidate = value as {
+      retryAfter?: unknown;
+      headers?: Record<string, unknown> | { get?(name: string): unknown };
+      response?: { headers?: Record<string, unknown> | { get?(name: string): unknown } };
+    };
+    const headers = candidate.response?.headers ?? candidate.headers;
+    const headerValue = headers && typeof (headers as { get?: unknown }).get === "function"
+      ? (headers as { get(name: string): unknown }).get("retry-after")
+      : headers && typeof headers === "object"
+        ? (headers as Record<string, unknown>)["retry-after"] ?? (headers as Record<string, unknown>)["Retry-After"]
+        : undefined;
+    const parsed = parseRetryAfterValue(candidate.retryAfter ?? headerValue);
+    if (parsed !== undefined) return parsed;
+  }
+  return undefined;
+}
+
+const PRE_TRANSPORT_CODES = new Set(["ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED", "UND_ERR_CONNECT_TIMEOUT"]);
+const AMBIGUOUS_TRANSPORT_MARKERS = [
+  "ECONNRESET",
+  "ETIMEDOUT",
+  "EPIPE",
+  "UND_ERR_SOCKET",
+  "socket hang up",
+  "network socket disconnected",
+  "other side closed",
+  "stream closed without",
+];
+
+export function classifyLLMCallFailure(error: unknown): {
+  readonly classification: LLMFailureClassification;
+  readonly transportStarted: boolean;
+  readonly transportReturned: boolean;
+  readonly httpStatus?: number;
+  readonly retryAfterMs?: number;
+} {
+  const text = collectErrorText(error);
+  const lower = text.toLowerCase();
+  const errorObjects = collectErrorObjects(error);
+  const explicitTransportStarted = errorObjects
+    .map((value) => (value as { transportStarted?: unknown }).transportStarted)
+    .find((value): value is boolean => typeof value === "boolean");
+  const explicitTransportReturned = errorObjects
+    .map((value) => (value as { transportReturned?: unknown }).transportReturned)
+    .find((value): value is boolean => typeof value === "boolean");
+  const httpStatus = readHttpStatus(error);
+  const retryAfterMs = readRetryAfterMs(error);
+  const deterministicModelError = lower.includes("model_not_available")
+    || lower.includes("model not available")
+    || lower.includes("invalid model")
+    || lower.includes("model not found")
+    || lower.includes("unsupported parameter")
+    || lower.includes("unsupported role");
+  if (httpStatus !== undefined) {
+    const retryable = [408, 429, 500, 502, 503, 504].includes(httpStatus) && !deterministicModelError;
+    return {
+      classification: retryable ? "RETRYABLE_PROVIDER_HTTP" : "DETERMINISTIC_PROVIDER_ERROR",
+      transportStarted: true,
+      transportReturned: true,
+      httpStatus,
+      ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
+    };
+  }
+  const code = errorObjects.map((value) => String((value as { code?: unknown }).code ?? "")).find((value) => PRE_TRANSPORT_CODES.has(value));
+  if (code || [...PRE_TRANSPORT_CODES].some((marker) => text.includes(marker))) {
+    return { classification: "RETRYABLE_PRE_TRANSPORT", transportStarted: false, transportReturned: false };
+  }
+  if (explicitTransportStarted === false) {
+    return { classification: "RETRYABLE_PRE_TRANSPORT", transportStarted: false, transportReturned: false };
+  }
+  if (AMBIGUOUS_TRANSPORT_MARKERS.some((marker) => lower.includes(marker.toLowerCase())) || error instanceof PartialResponseError || error instanceof LLMStreamInactivityError) {
+    return { classification: "AMBIGUOUS_PROVIDER_OUTCOME", transportStarted: true, transportReturned: false };
+  }
+  const transientPhrase = ["temporarily unavailable", "service unavailable", "rate limit", "rate limited", "try again later"].some((marker) => lower.includes(marker));
+  if (transientPhrase && !deterministicModelError) {
+    return {
+      classification: "RETRYABLE_PROVIDER_HTTP",
+      transportStarted: explicitTransportStarted ?? true,
+      transportReturned: explicitTransportReturned ?? true,
+      ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
+    };
+  }
+  return { classification: "DETERMINISTIC_PROVIDER_ERROR", transportStarted: false, transportReturned: false };
 }
 
 function isTransientLLMTransportError(error: unknown): boolean {
@@ -1483,9 +1650,41 @@ export async function chatCompletion(
   const onTextDelta = options?.onTextDelta;
   const signal = options?.signal;
   const errorCtx = { baseUrl: client._piModel?.baseUrl ?? "(unknown)", model, service: client.service };
-  const modelCall = beginAgentModelCall();
+  const executionPolicy = llmCallExecutionPolicyStorage.getStore();
+  const inputFingerprint = createHash("sha256").update(JSON.stringify({
+    provider: client.service ?? client.provider,
+    model,
+    messages,
+    temperature: resolved.temperature,
+    maxTokens: resolved.maxTokens,
+    stream: client.stream,
+  }), "utf-8").digest("hex");
+  let executionIdentity: LLMCallExecutionIdentity | undefined;
+  let modelCall: ReturnType<typeof beginAgentModelCall>;
 
   try {
+    if (executionPolicy) {
+      const prepared = await executionPolicy.prepare({
+        provider: client.service ?? client.provider,
+        model,
+        inputFingerprint,
+      });
+      executionIdentity = prepared.identity;
+      if (prepared.cachedResponse) {
+        const observer = llmOutcomeObserverStorage.getStore();
+        if (observer) {
+          await observer({
+            modelCallId: executionIdentity.logicalStepId,
+            provider: executionIdentity.provider,
+            model: executionIdentity.model,
+            usage: prepared.cachedResponse.usage,
+            returnedAt: new Date().toISOString(),
+          });
+        }
+        return prepared.cachedResponse;
+      }
+    }
+    modelCall = beginAgentModelCall();
     const response = await withTransientLLMRetry(
       async (attempt) => {
         signal?.throwIfAborted();
@@ -1550,12 +1749,15 @@ export async function chatCompletion(
       },
       // Retrying after UI text deltas have been emitted can duplicate visible
       // text; callers can also opt out (e.g. fast-fail diagnostics).
-      { enabled: (options?.retry ?? true) && !onTextDelta, signal },
+      { enabled: !executionPolicy && (options?.retry ?? true) && !onTextDelta, signal },
     );
+    if (executionPolicy && executionIdentity) {
+      await executionPolicy.persistSuccess(executionIdentity, response);
+    }
     const observer = llmOutcomeObserverStorage.getStore();
     if (observer) {
       await observer({
-        modelCallId: modelCall?.modelCallId ?? randomUUID(),
+        modelCallId: executionIdentity?.logicalStepId ?? modelCall?.modelCallId ?? randomUUID(),
         provider: client.service ?? client.provider,
         model,
         usage: response.usage,
@@ -1567,7 +1769,15 @@ export async function chatCompletion(
     // 注意：中断的流（PartialResponseError）不再"打捞"半截内容当成功返回——
     // 那会产出写到一半就结束的章节/设定文件。重试由 withTransientLLMRetry
     // 负责（完整重新生成）；重试耗尽后如实抛错。
-    throw wrapLLMError(error, errorCtx);
+    const wrapped = wrapLLMError(error, errorCtx);
+    if (executionIdentity && !(wrapped instanceof LLMCallExecutionError)) {
+      const classified = classifyLLMCallFailure(error);
+      throw new LLMCallExecutionError(wrapped.message, {
+        ...executionIdentity,
+        ...classified,
+      }, { cause: wrapped });
+    }
+    throw wrapped;
   }
 }
 

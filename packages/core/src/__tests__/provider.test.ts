@@ -3,6 +3,8 @@ import type { AssistantMessage, Model, Api } from "@mariozechner/pi-ai";
 import {
   __resetFixedTemperatureWarnings,
   chatCompletion,
+  LLMCallExecutionError,
+  runWithLLMCallExecutionPolicy,
   runWithLLMOutcomeObserver,
   type LLMClient,
 } from "../llm/provider.js";
@@ -189,6 +191,43 @@ describe("chatCompletion via pi-ai", () => {
       model: "test-model",
       usage: { promptTokens: 11, completionTokens: 7, totalTokens: 18 },
     });
+  });
+
+  it("delegates autonomous retry to the durable controller instead of retrying in memory", async () => {
+    mockStreamSimple.mockReturnValue(makeErrorStream("503 Service Unavailable"));
+    const persistSuccess = vi.fn();
+    const task = runWithLLMCallExecutionPolicy({
+      prepare: async ({ inputFingerprint, provider, model }) => ({
+        identity: { logicalStepId: "durable-step", inputFingerprint, provider, model, role: "auditor", stage: "LOGIC_REVIEW" },
+      }),
+      persistSuccess,
+    }, () => chatCompletion(makeClient(), "test-model", [{ role: "user", content: "ping" }]));
+
+    const error = await captureError(task);
+    expect(error).toBeInstanceOf(LLMCallExecutionError);
+    expect((error as LLMCallExecutionError).metadata.classification).toBe("RETRYABLE_PROVIDER_HTTP");
+    expect(mockStreamSimple).toHaveBeenCalledTimes(1);
+    expect(persistSuccess).not.toHaveBeenCalled();
+  });
+
+  it("reuses a durable cached response without transport or duplicate success persistence", async () => {
+    const cachedResponse = { content: "cached", usage: { promptTokens: 3, completionTokens: 2, totalTokens: 5 } };
+    const persistSuccess = vi.fn();
+    const records: unknown[] = [];
+    const result = await runWithLLMOutcomeObserver(async (record) => { records.push(record); }, () =>
+      runWithLLMCallExecutionPolicy({
+        prepare: async ({ inputFingerprint, provider, model }) => ({
+          identity: { logicalStepId: "durable-step", inputFingerprint, provider, model, role: "auditor", stage: "LOGIC_REVIEW" },
+          cachedResponse,
+        }),
+        persistSuccess,
+      }, () => chatCompletion(makeClient(), "test-model", [{ role: "user", content: "ping" }])));
+
+    expect(result).toEqual(cachedResponse);
+    expect(mockStreamSimple).not.toHaveBeenCalled();
+    expect(persistSuccess).not.toHaveBeenCalled();
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ modelCallId: "durable-step" });
   });
 
   it("throws when stream produces no text content", async () => {

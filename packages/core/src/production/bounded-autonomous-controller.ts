@@ -5,12 +5,23 @@ import { promisify } from "node:util";
 import { dirname, join } from "node:path";
 import { resolveProductionScope, type BookProductionMap, type ProductionMode } from "./book-production-map.js";
 import type { ChapterMeta } from "../models/chapter.js";
+import {
+  LLMCallExecutionError,
+  runWithLLMCallExecutionPolicy,
+  type LLMCallExecutionIdentity,
+  type LLMCallExecutionPolicy,
+  type LLMResponse,
+} from "../llm/provider.js";
 
 export type AutonomousRunStatus =
   | "RUNNING"
   | "VOLUME_COMPLETE"
   | "BOOK_COMPLETE"
   | "PAUSED_BY_USER"
+  | "WAITING_PROVIDER_RETRY"
+  | "PAUSED_PROVIDER_UNAVAILABLE"
+  | "PAUSED_AMBIGUOUS_PROVIDER_OUTCOME"
+  | "PAUSED_DETERMINISTIC_PROVIDER_ERROR"
   | "REVIEW_EXHAUSTED"
   | "HELD_AFTER_TWO_REVISIONS";
 
@@ -24,6 +35,55 @@ export interface AutonomousRunProgress {
   readonly nextChapter: number;
   readonly completedThisRun: number;
   readonly reason?: string;
+  readonly logicalStepId?: string;
+  readonly chapterNumber?: number;
+  readonly role?: string;
+  readonly stage?: string;
+  readonly provider?: string;
+  readonly requestedModel?: string;
+  readonly attempt?: number;
+  readonly maxAttempts?: number;
+  readonly transportRetryCount?: number;
+  readonly transportAttemptId?: string;
+  readonly providerAttemptHistory?: ReadonlyArray<{
+    readonly transportAttemptId: string;
+    readonly logicalStepId: string;
+    readonly chapterNumber: number;
+    readonly role: string;
+    readonly provider: string;
+    readonly requestedModel: string;
+    readonly attempt: number;
+    readonly classification: string;
+    readonly transportStarted: boolean;
+    readonly transportReturned: boolean;
+    readonly httpStatus?: number;
+    readonly recordedAt: string;
+  }>;
+  readonly nextRetryAt?: string;
+  readonly retryAfterMs?: number;
+  readonly lastRetryableClassification?: string;
+  readonly lastErrorClassification?: string;
+  readonly lastHttpStatus?: number;
+  readonly checkpoint?: string;
+  readonly responseArtifactStatus?: "NONE" | "COMPLETE";
+  readonly revisionRound?: number;
+  readonly reviewRound?: number;
+}
+
+export interface AutonomousStageMetadata {
+  readonly stage: string;
+  readonly role: string;
+  readonly provider: string | null;
+  readonly model: string | null;
+  readonly revisionRound?: number;
+  readonly reviewRound?: number;
+}
+
+export interface AutonomousProviderRecovery {
+  readonly execute: <T>(chapterNumber: number, task: () => Promise<T>) => Promise<T>;
+  readonly loadPersistedProgress: () => Promise<AutonomousRunProgress | null>;
+  readonly now: () => number;
+  readonly sleep: (delayMs: number) => Promise<void>;
 }
 
 export function autonomousProductionStatePath(projectRoot: string, bookId: string): string {
@@ -366,6 +426,222 @@ export async function saveAutonomousProductionState(
   await rename(temp, path);
 }
 
+interface PersistedProviderResponseArtifact {
+  readonly schema_version: "1.0";
+  readonly job_id: string;
+  readonly logical_step_id: string;
+  readonly usage_identity: string;
+  readonly chapter_number: number;
+  readonly role: string;
+  readonly stage: string;
+  readonly provider: string;
+  readonly requested_model: string;
+  readonly input_fingerprint: string;
+  readonly response_artifact_status: "COMPLETE";
+  readonly content_sha256: string;
+  readonly response: LLMResponse;
+  readonly completed_at: string;
+}
+
+function providerResponseArtifactDir(projectRoot: string, bookId: string): string {
+  return join(projectRoot, "books", bookId, "story", "runtime", "bounded-autonomous", "provider-responses");
+}
+
+function logicalProviderStepId(params: {
+  readonly jobId: string;
+  readonly chapterNumber: number;
+  readonly stage: AutonomousStageMetadata;
+  readonly provider: string;
+  readonly model: string;
+  readonly inputFingerprint: string;
+}): string {
+  const raw = [
+    "inkos-autonomous-provider-step-v1",
+    params.jobId,
+    params.chapterNumber,
+    params.stage.stage,
+    params.stage.role,
+    params.provider,
+    params.model,
+    params.inputFingerprint,
+  ].join("\n");
+  return `provider-step-${createHash("sha256").update(raw, "utf-8").digest("hex")}`;
+}
+
+/**
+ * Binds Provider calls to the existing durable autonomous job. Successful
+ * responses are saved before agent parsing and replayed by identity after a
+ * process restart; ordinary non-autonomous calls never enter this context.
+ */
+export function createAutonomousProviderExecution(params: {
+  readonly projectRoot: string;
+  readonly bookId: string;
+  readonly jobId: string;
+  readonly getActiveStage: () => AutonomousStageMetadata;
+  readonly now?: () => number;
+  readonly sleep?: (delayMs: number) => Promise<void>;
+}): AutonomousProviderRecovery & {
+  readonly responseArtifactPath: (inputFingerprint: string, provider: string, model: string, chapterNumber: number) => string;
+  readonly runProviderCall: (chapterNumber: number, transport: () => Promise<LLMResponse>, request: { readonly provider: string; readonly model: string; readonly inputFingerprint: string }) => Promise<LLMResponse>;
+} {
+  let activeChapter = 0;
+  const identify = (request: { readonly provider: string; readonly model: string; readonly inputFingerprint: string }): LLMCallExecutionIdentity => {
+    const stage = params.getActiveStage();
+    const logicalStepId = logicalProviderStepId({
+      jobId: params.jobId,
+      chapterNumber: activeChapter,
+      stage,
+      provider: request.provider,
+      model: request.model,
+      inputFingerprint: request.inputFingerprint,
+    });
+    return {
+      logicalStepId,
+      inputFingerprint: request.inputFingerprint,
+      provider: request.provider,
+      model: request.model,
+      role: stage.role,
+      stage: stage.stage,
+      ...(stage.revisionRound !== undefined ? { revisionRound: stage.revisionRound } : {}),
+      ...(stage.reviewRound !== undefined ? { reviewRound: stage.reviewRound } : {}),
+    };
+  };
+  const artifactPathForIdentity = (identity: LLMCallExecutionIdentity) => join(providerResponseArtifactDir(params.projectRoot, params.bookId), `${identity.logicalStepId}.json`);
+  const markResponseArtifactComplete = async (identity: LLMCallExecutionIdentity): Promise<void> => {
+    const progress = await loadAutonomousProductionState<AutonomousRunProgress>(params.projectRoot, params.bookId);
+    if (progress?.jobId !== params.jobId) return;
+    const history = [...(progress.providerAttemptHistory ?? [])];
+    const existingSuccess = history.find((entry) => entry.logicalStepId === identity.logicalStepId && entry.classification === "SUCCESS");
+    const attempt = existingSuccess?.attempt ?? Math.max(0, ...history
+      .filter((entry) => entry.logicalStepId === identity.logicalStepId)
+      .map((entry) => entry.attempt)) + 1;
+    const transportAttemptId = existingSuccess?.transportAttemptId ?? `${identity.logicalStepId}:transport-attempt:${attempt}`;
+    if (!existingSuccess) {
+      history.push({
+        transportAttemptId,
+        logicalStepId: identity.logicalStepId,
+        chapterNumber: activeChapter,
+        role: identity.role,
+        provider: identity.provider,
+        requestedModel: identity.model,
+        attempt,
+        classification: "SUCCESS",
+        transportStarted: true,
+        transportReturned: true,
+        recordedAt: new Date(params.now?.() ?? Date.now()).toISOString(),
+      });
+    }
+    await saveAutonomousProductionState(params.projectRoot, params.bookId, {
+      ...progress,
+      logicalStepId: identity.logicalStepId,
+      chapterNumber: activeChapter,
+      role: identity.role,
+      stage: identity.stage,
+      provider: identity.provider,
+      requestedModel: identity.model,
+      attempt,
+      maxAttempts: 3,
+      transportRetryCount: Math.max(0, attempt - 1),
+      transportAttemptId,
+      providerAttemptHistory: history,
+      checkpoint: "RESPONSE_ARTIFACT_PERSISTED",
+      responseArtifactStatus: "COMPLETE",
+    });
+  };
+  const readArtifact = async (identity: LLMCallExecutionIdentity): Promise<LLMResponse | undefined> => {
+    let artifact: PersistedProviderResponseArtifact;
+    try {
+      artifact = JSON.parse(await readFile(artifactPathForIdentity(identity), "utf-8")) as PersistedProviderResponseArtifact;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw new Error("AUTONOMOUS_PROVIDER_RESPONSE_ARTIFACT_INVALID", { cause: error });
+    }
+    const contentSha = createHash("sha256").update(artifact.response.content, "utf-8").digest("hex");
+    if (
+      artifact.schema_version !== "1.0"
+      || artifact.job_id !== params.jobId
+      || artifact.logical_step_id !== identity.logicalStepId
+      || artifact.usage_identity !== identity.logicalStepId
+      || artifact.chapter_number !== activeChapter
+      || artifact.role !== identity.role
+      || artifact.stage !== identity.stage
+      || artifact.provider !== identity.provider
+      || artifact.requested_model !== identity.model
+      || artifact.input_fingerprint !== identity.inputFingerprint
+      || artifact.response_artifact_status !== "COMPLETE"
+      || artifact.content_sha256 !== contentSha
+    ) {
+      throw new Error("AUTONOMOUS_PROVIDER_RESPONSE_ARTIFACT_IDENTITY_MISMATCH");
+    }
+    await markResponseArtifactComplete(identity);
+    return artifact.response;
+  };
+  const persistArtifact = async (identity: LLMCallExecutionIdentity, response: LLMResponse): Promise<void> => {
+    const path = artifactPathForIdentity(identity);
+    const existing = await readArtifact(identity);
+    if (existing) {
+      if (JSON.stringify(existing) !== JSON.stringify(response)) throw new Error("AUTONOMOUS_PROVIDER_RESPONSE_ARTIFACT_CONFLICT");
+      return;
+    }
+    const artifact: PersistedProviderResponseArtifact = {
+      schema_version: "1.0",
+      job_id: params.jobId,
+      logical_step_id: identity.logicalStepId,
+      usage_identity: identity.logicalStepId,
+      chapter_number: activeChapter,
+      role: identity.role,
+      stage: identity.stage,
+      provider: identity.provider,
+      requested_model: identity.model,
+      input_fingerprint: identity.inputFingerprint,
+      response_artifact_status: "COMPLETE",
+      content_sha256: createHash("sha256").update(response.content, "utf-8").digest("hex"),
+      response,
+      completed_at: new Date(params.now?.() ?? Date.now()).toISOString(),
+    };
+    await mkdir(dirname(path), { recursive: true });
+    const temp = `${path}.${process.pid}.${randomUUID()}.tmp`;
+    await writeFile(temp, `${JSON.stringify(artifact, null, 2)}\n`, "utf-8");
+    try {
+      await rename(temp, path);
+    } catch (error) {
+      await unlink(temp).catch(() => undefined);
+      throw error;
+    }
+    await markResponseArtifactComplete(identity);
+  };
+  const policy: LLMCallExecutionPolicy = {
+    prepare: async (request) => {
+      const identity = identify(request);
+      const cachedResponse = await readArtifact(identity);
+      return { identity, ...(cachedResponse ? { cachedResponse } : {}) };
+    },
+    persistSuccess: persistArtifact,
+  };
+  const runProviderCall = async (chapterNumber: number, transport: () => Promise<LLMResponse>, request: { readonly provider: string; readonly model: string; readonly inputFingerprint: string }) => {
+    activeChapter = chapterNumber;
+    const prepared = await policy.prepare(request);
+    if (prepared.cachedResponse) return prepared.cachedResponse;
+    const response = await transport();
+    await policy.persistSuccess(prepared.identity, response);
+    return response;
+  };
+  return {
+    execute: async (chapterNumber, task) => {
+      activeChapter = chapterNumber;
+      return runWithLLMCallExecutionPolicy(policy, task);
+    },
+    loadPersistedProgress: () => loadAutonomousProductionState<AutonomousRunProgress>(params.projectRoot, params.bookId),
+    now: params.now ?? Date.now,
+    sleep: params.sleep ?? ((delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs))),
+    responseArtifactPath: (inputFingerprint, provider, model, chapterNumber) => {
+      activeChapter = chapterNumber;
+      return artifactPathForIdentity(identify({ inputFingerprint, provider, model }));
+    },
+    runProviderCall,
+  };
+}
+
 export function deriveAutonomousJobIdentity(params: {
   readonly map: BookProductionMap;
   readonly mode: ProductionMode;
@@ -393,7 +669,7 @@ export async function createAutonomousPipelineActions<
   };
   readonly pipeline: {
     writeNextChapter(bookId: string, wordCount?: number): Promise<ChapterResult>;
-    resumeAuditFailedChapterBounded(bookId: string, chapterNumber: number): Promise<ResumeResult>;
+    resumeAuditFailedChapterBounded(bookId: string, chapterNumber: number, options?: { readonly safeReplayStage?: string }): Promise<ResumeResult>;
   };
 }) {
   const index = await params.state.loadChapterIndex(params.bookId);
@@ -415,8 +691,8 @@ export async function createAutonomousPipelineActions<
   };
   return {
     ...(pending ? {
-      resumePendingChapter: async () => {
-        const result = await params.pipeline.resumeAuditFailedChapterBounded(params.bookId, pending.number);
+      resumePendingChapter: async (options?: { readonly safeReplayStage?: string }) => {
+        const result = await params.pipeline.resumeAuditFailedChapterBounded(params.bookId, pending.number, options);
         if (result.status === "approved") await approve(pending.number);
         return result;
       },
@@ -433,17 +709,23 @@ export async function runBoundedAutonomousScope(params: {
   readonly map: BookProductionMap;
   readonly mode: ProductionMode;
   readonly getNextChapter: () => Promise<number>;
-  readonly resumePendingChapter?: () => Promise<{ readonly status: string; readonly chapterNumber: number }>;
+  readonly resumePendingChapter?: (options?: { readonly safeReplayStage?: string }) => Promise<{ readonly status: string; readonly chapterNumber: number }>;
   readonly runChapter: () => Promise<{ readonly status: string }>;
   readonly shouldStop: () => boolean;
   readonly persistProgress: (progress: AutonomousRunProgress) => Promise<void>;
+  readonly providerRecovery?: AutonomousProviderRecovery;
 }): Promise<AutonomousRunProgress> {
   const initialNext = await params.getNextChapter();
   const scope = resolveProductionScope(params.map, initialNext, params.mode);
   const jobId = deriveAutonomousJobIdentity({ map: params.map, mode: params.mode, nextChapter: initialNext });
   let completedThisRun = 0;
 
-  const project = (status: AutonomousRunStatus, nextChapter: number, reason?: string): AutonomousRunProgress => ({
+  const project = (
+    status: AutonomousRunStatus,
+    nextChapter: number,
+    reason?: string,
+    details: Partial<AutonomousRunProgress> = {},
+  ): AutonomousRunProgress => ({
     jobId,
     status,
     mode: params.mode,
@@ -456,7 +738,132 @@ export async function runBoundedAutonomousScope(params: {
     nextChapter,
     completedThisRun,
     ...(reason ? { reason } : {}),
+    ...details,
   });
+
+  const persistedProgress = params.providerRecovery
+    ? await params.providerRecovery.loadPersistedProgress()
+    : null;
+  let retryState = persistedProgress;
+  if (retryState?.jobId !== jobId || retryState.status !== "WAITING_PROVIDER_RETRY") retryState = null;
+  let providerAttemptHistory = persistedProgress?.jobId === jobId
+    ? [...(persistedProgress.providerAttemptHistory ?? [])]
+    : [];
+
+  const retryDetails = async (error: LLMCallExecutionError, attempt: number, details: Partial<AutonomousRunProgress> = {}): Promise<Partial<AutonomousRunProgress>> => {
+    const latest = params.providerRecovery ? await params.providerRecovery.loadPersistedProgress() : null;
+    if (latest?.jobId === jobId) providerAttemptHistory = [...(latest.providerAttemptHistory ?? providerAttemptHistory)];
+    const transportAttemptId = `${error.metadata.logicalStepId}:transport-attempt:${attempt}`;
+    if (!providerAttemptHistory.some((entry) => entry.transportAttemptId === transportAttemptId)) {
+      providerAttemptHistory = [...providerAttemptHistory, {
+        transportAttemptId,
+        logicalStepId: error.metadata.logicalStepId,
+        chapterNumber: details.chapterNumber ?? 0,
+        role: error.metadata.role,
+        provider: error.metadata.provider,
+        requestedModel: error.metadata.model,
+        attempt,
+        classification: error.metadata.classification,
+        transportStarted: error.metadata.transportStarted,
+        transportReturned: error.metadata.transportReturned,
+        ...(error.metadata.httpStatus !== undefined ? { httpStatus: error.metadata.httpStatus } : {}),
+        recordedAt: new Date(params.providerRecovery?.now() ?? Date.now()).toISOString(),
+      }];
+    }
+    return {
+      logicalStepId: error.metadata.logicalStepId,
+      chapterNumber: details.chapterNumber,
+      role: error.metadata.role,
+      stage: error.metadata.stage,
+      provider: error.metadata.provider,
+      requestedModel: error.metadata.model,
+      attempt,
+      maxAttempts: 3,
+      transportRetryCount: Math.max(0, attempt - 1),
+      transportAttemptId,
+      providerAttemptHistory,
+      lastRetryableClassification: error.metadata.classification,
+      lastErrorClassification: error.metadata.classification,
+      ...(error.metadata.httpStatus !== undefined ? { lastHttpStatus: error.metadata.httpStatus } : {}),
+      ...(error.metadata.retryAfterMs !== undefined ? { retryAfterMs: error.metadata.retryAfterMs } : {}),
+      responseArtifactStatus: "NONE",
+      ...(error.metadata.revisionRound !== undefined ? { revisionRound: error.metadata.revisionRound } : {}),
+      ...(error.metadata.reviewRound !== undefined ? { reviewRound: error.metadata.reviewRound } : {}),
+      ...details,
+    };
+  };
+
+  const executeRecoverably = async <T>(chapterNumber: number, action: (safeReplayStage?: string) => Promise<T>): Promise<T | AutonomousRunProgress> => {
+    let previous = retryState;
+    if (previous?.nextRetryAt && params.providerRecovery) {
+      const remaining = Math.max(0, Date.parse(previous.nextRetryAt) - params.providerRecovery.now());
+      if (remaining > 0) await params.providerRecovery.sleep(remaining);
+    }
+    while (true) {
+      try {
+        const result = params.providerRecovery
+          ? await params.providerRecovery.execute(chapterNumber, () => action(previous?.stage))
+          : await action();
+        retryState = null;
+        return result;
+      } catch (error) {
+        if (!params.providerRecovery) throw error;
+        if (!(error instanceof LLMCallExecutionError)) {
+          const paused = project(
+            "PAUSED_DETERMINISTIC_PROVIDER_ERROR",
+            chapterNumber,
+            error instanceof Error ? error.message : String(error),
+            {
+              chapterNumber,
+              checkpoint: "DETERMINISTIC_PIPELINE_ERROR",
+              lastErrorClassification: "DETERMINISTIC_PIPELINE_ERROR",
+            },
+          );
+          await params.persistProgress(paused);
+          return paused;
+        }
+        const priorAttempt = previous?.logicalStepId === error.metadata.logicalStepId ? previous.attempt ?? 0 : 0;
+        const attempt = priorAttempt + 1;
+        const base = await retryDetails(error, attempt, { chapterNumber });
+        if (error.metadata.classification === "RETRYABLE_PROVIDER_HTTP" || error.metadata.classification === "RETRYABLE_PRE_TRANSPORT") {
+          if (attempt >= 3) {
+            const paused = project("PAUSED_PROVIDER_UNAVAILABLE", chapterNumber, "PROVIDER_RETRY_EXHAUSTED", {
+              ...base,
+              checkpoint: "PROVIDER_RETRY_EXHAUSTED",
+            });
+            await params.persistProgress(paused);
+            return paused;
+          }
+          const minimum = attempt === 1 ? 300_000 : 900_000;
+          const delayMs = Math.max(minimum, error.metadata.retryAfterMs ?? 0);
+          const waiting = project("WAITING_PROVIDER_RETRY", chapterNumber, "PROVIDER_TEMPORARY_INTERRUPTION", {
+            ...base,
+            nextRetryAt: new Date(params.providerRecovery.now() + delayMs).toISOString(),
+            checkpoint: "RETRY_SCHEDULED",
+          });
+          await params.persistProgress(waiting);
+          previous = waiting;
+          retryState = waiting;
+          await params.providerRecovery.sleep(delayMs);
+          continue;
+        }
+        if (error.metadata.classification === "AMBIGUOUS_PROVIDER_OUTCOME") {
+          const paused = project("PAUSED_AMBIGUOUS_PROVIDER_OUTCOME", chapterNumber, "PROVIDER_OUTCOME_MAY_HAVE_EXECUTED", {
+            ...base,
+            checkpoint: "AMBIGUOUS_PROVIDER_OUTCOME",
+          });
+          await params.persistProgress(paused);
+          return paused;
+        }
+        const paused = project("PAUSED_DETERMINISTIC_PROVIDER_ERROR", chapterNumber, error.message, {
+          ...base,
+          checkpoint: "DETERMINISTIC_PROVIDER_ERROR",
+        });
+        await params.persistProgress(paused);
+        return paused;
+      }
+    }
+  };
 
   if (scope.complete) {
     const complete = project("BOOK_COMPLETE", initialNext);
@@ -464,9 +871,10 @@ export async function runBoundedAutonomousScope(params: {
     return complete;
   }
 
-  await params.persistProgress(project("RUNNING", initialNext));
+  if (!retryState) await params.persistProgress(project("RUNNING", initialNext));
   if (params.resumePendingChapter) {
-    const resumed = await params.resumePendingChapter();
+    const resumed = await executeRecoverably(initialNext, (safeReplayStage) => params.resumePendingChapter!({ ...(safeReplayStage ? { safeReplayStage } : {}) }));
+    if ("mode" in resumed) return resumed;
     if (resumed.status === "held-after-two-revisions" || resumed.status === "review-exhausted") {
       const held = project("REVIEW_EXHAUSTED", initialNext, "REVISION_LIMIT_REACHED");
       await params.persistProgress(held);
@@ -487,7 +895,8 @@ export async function runBoundedAutonomousScope(params: {
       await params.persistProgress(paused);
       return paused;
     }
-    const result = await params.runChapter();
+    const result = await executeRecoverably(nextChapter, () => params.runChapter());
+    if ("mode" in result) return result;
     if (result.status === "state-degraded") {
       throw new Error("STATE_SETTLEMENT_FAILED");
     }

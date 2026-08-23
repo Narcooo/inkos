@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   AutonomousProductionCard,
   autonomousFallbackPollMs,
+  formatRetryCountdown,
   type AutonomousView,
 } from "./AutonomousProductionPanel.js";
 
@@ -80,7 +81,7 @@ describe("compact autonomous production card", () => {
       view, pending: false, error: null, onStart: () => undefined, onStop: () => undefined,
       onRepair: () => undefined, onConfigureModels: () => undefined,
     }));
-    expect(html).toContain("Current Volume Calculated Cost");
+    expect(html).toContain("Current Volume Recorded Actual");
     expect(html).toContain("Current Volume Forecast");
     expect(html.indexOf("Full Book Forecast")).toBeLessThan(html.indexOf("<details"));
     expect(html).toContain("Bounded repair forecast: $0.05–$0.16");
@@ -122,5 +123,53 @@ describe("compact autonomous production card", () => {
     expect(html).toContain("Resume Autonomous Production");
     expect(html).toContain("Not Configured");
     expect(html).not.toContain("Repair Chapter 004 State");
+  });
+
+  it("shows a local retry countdown and disables Resume while the durable job waits", () => {
+    const view: AutonomousView = {
+      ...blockedView,
+      runtimeStatus: "WAITING_PROVIDER_RETRY",
+      runtimeBlockers: [],
+      startEnabled: false,
+      runtime: {
+        status: "WAITING_PROVIDER_RETRY",
+        phase: "LOGIC_REVIEW",
+        activeRole: "auditor",
+        activeProvider: "openrouter",
+        activeModel: "provider/model",
+        nextRetryAt: "2026-08-23T00:05:00.000Z",
+        attempt: 1,
+        maxAttempts: 3,
+        lastHttpStatus: 429,
+        responseArtifactStatus: "NONE",
+      },
+    };
+    const html = renderToStaticMarkup(createElement(AutonomousProductionCard, {
+      view, pending: false, error: null, onStart: () => undefined, onStop: () => undefined,
+      onRepair: () => undefined, onConfigureModels: () => undefined,
+    }));
+    expect(html).toContain("Provider temporary interruption");
+    expect(html).toContain("Next retry");
+    expect(html).toMatch(/<button disabled=""/);
+    expect(autonomousFallbackPollMs("WAITING_PROVIDER_RETRY")).toBe(12_000);
+    expect(formatRetryCountdown("2026-08-23T00:05:00.000Z", Date.parse("2026-08-23T00:00:01.000Z"))).toBe("4m 59s");
+  });
+
+  it("warns that an ambiguous Provider outcome may have incurred cost and does not auto-retry", () => {
+    const view: AutonomousView = {
+      ...blockedView,
+      runtimeStatus: "PAUSED_AMBIGUOUS_PROVIDER_OUTCOME",
+      runtimeBlockers: [],
+      startEnabled: true,
+      runtime: { status: "PAUSED_AMBIGUOUS_PROVIDER_OUTCOME", attempt: 1 },
+    };
+    const html = renderToStaticMarkup(createElement(AutonomousProductionCard, {
+      view, pending: false, error: null, onStart: () => undefined, onStop: () => undefined,
+      onRepair: () => undefined, onConfigureModels: () => undefined,
+    }));
+    expect(html).toContain("Provider outcome is ambiguous");
+    expect(html).toContain("may have incurred cost");
+    expect(html).toContain("check Provider logs before choosing Resume");
+    expect(autonomousFallbackPollMs(view.runtimeStatus)).toBeNull();
   });
 });

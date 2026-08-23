@@ -37,6 +37,12 @@ vi.mock("@actalk/inkos-core", () => ({
     currentVolume: { volumeId: "volume-001", volumeNumber: 1, title: "One", startChapter: 1, endChapter: 3, chapterCount: 3 },
   })),
   createAutonomousPipelineActions: vi.fn(async ({ pipeline }) => ({ runChapter: pipeline.writeNextChapter })),
+  createAutonomousProviderExecution: vi.fn(() => ({
+    execute: async (_chapter: number, task: () => Promise<unknown>) => task(),
+    loadPersistedProgress: async () => null,
+    now: () => 0,
+    sleep: async () => undefined,
+  })),
   claimAutonomousJob: vi.fn(async () => ({ jobId: "autonomous-test", claimId: "claim", ownerPid: 1 })),
   releaseAutonomousJob: vi.fn(async () => undefined),
   deriveAutonomousJobIdentity: vi.fn(() => "autonomous-test"),

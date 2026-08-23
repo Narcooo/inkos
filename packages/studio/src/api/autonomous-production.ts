@@ -31,6 +31,35 @@ export interface AutonomousRuntimeProjection {
   readonly activeRole?: string;
   readonly activeProvider?: string | null;
   readonly activeModel?: string | null;
+  readonly logicalStepId?: string;
+  readonly chapterNumber?: number;
+  readonly attempt?: number;
+  readonly maxAttempts?: number;
+  readonly transportRetryCount?: number;
+  readonly transportAttemptId?: string;
+  readonly providerAttemptHistory?: ReadonlyArray<{
+    readonly transportAttemptId: string;
+    readonly logicalStepId: string;
+    readonly chapterNumber: number;
+    readonly role: string;
+    readonly provider: string;
+    readonly requestedModel: string;
+    readonly attempt: number;
+    readonly classification: string;
+    readonly transportStarted: boolean;
+    readonly transportReturned: boolean;
+    readonly httpStatus?: number;
+    readonly recordedAt: string;
+  }>;
+  readonly nextRetryAt?: string;
+  readonly retryAfterMs?: number;
+  readonly lastRetryableClassification?: string;
+  readonly lastErrorClassification?: string;
+  readonly lastHttpStatus?: number;
+  readonly checkpoint?: string;
+  readonly responseArtifactStatus?: "NONE" | "COMPLETE";
+  readonly revisionRound?: number;
+  readonly reviewRound?: number;
   readonly budget?: { readonly status: "BUDGET_NOT_CONFIGURED" };
   readonly lastChapter?: {
     readonly number: number;
@@ -335,8 +364,10 @@ export function projectAutonomousProductionView(params: {
     currentVolumeCompleted: params.chapters.filter((chapter) =>
       chapter.number >= scope.currentVolume.startChapter && chapter.number <= scope.currentVolume.endChapter,
     ).length,
-    runtimeStatus: params.active
-      ? "RUNNING"
+    runtimeStatus: params.runtime?.status === "WAITING_PROVIDER_RETRY"
+      ? "WAITING_PROVIDER_RETRY"
+      : params.active
+        ? "RUNNING"
       : params.runtime?.status === "RUNNING"
         ? "PAUSED"
         : blockers.length > 0 ? "BLOCKED" : params.runtime?.status ?? "READY",
@@ -368,7 +399,9 @@ export function projectAutonomousProductionView(params: {
       .filter((chapter) => chapter.status === "drafted")
       .map((chapter) => ({ chapter: chapter.number, status: "LEGACY_DRAFT_PRESERVED" as const })),
     runtimeBlockers: blockers,
-    startEnabled: blockers.length === 0 && !scope.complete,
+    startEnabled: blockers.length === 0
+      && !scope.complete
+      && params.runtime?.status !== "WAITING_PROVIDER_RETRY",
   };
 }
 

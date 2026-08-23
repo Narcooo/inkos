@@ -190,6 +190,27 @@ describe("autonomous production Studio projection", () => {
     expect(view.runtimeBlockers).not.toContain("COST_GUARD_UNAVAILABLE");
   });
 
+  it("keeps a durable Provider wait non-resumable by the user while automatic recovery owns it", () => {
+    const view = projectAutonomousProductionView({
+      map,
+      targetChapters: 156,
+      nextChapter: 5,
+      chapters: [1, 2, 3, 4].map((number) => ({ number, status: number === 4 ? "audit-failed" : "approved" })),
+      config: { defaultModel: "gpt", modelOverrides: { auditor: "deepseek", "commercial-reader": "gemini", reviser: "gpt", "observer-reflector": "flash" } },
+      catalog,
+      runtime: {
+        jobId: "autonomous-waiting", status: "WAITING_PROVIDER_RETRY", mode: "current-volume", nextChapter: 5,
+        updatedAt: "2026-08-23T00:00:00.000Z", nextRetryAt: "2026-08-23T00:05:00.000Z",
+        attempt: 1, maxAttempts: 3, phase: "LOGIC_REVIEW",
+      },
+      active: true,
+      budget: AUTONOMOUS_BUDGET_NOT_CONFIGURED,
+    });
+    expect(view.runtimeStatus).toBe("WAITING_PROVIDER_RETRY");
+    expect(view.startEnabled).toBe(false);
+    expect(view.runtimeBlockers).not.toContain("COST_GUARD_UNAVAILABLE");
+  });
+
   it("keeps a two-revision exhaustion fail-closed across Studio restart", () => {
     const view = projectAutonomousProductionView({
       map,

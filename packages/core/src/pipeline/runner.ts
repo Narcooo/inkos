@@ -1822,7 +1822,11 @@ export class PipelineRunner {
   }
 
   /** Resume a settled audit-failed chapter without invoking the Writer generation path. */
-  async resumeAuditFailedChapterBounded(bookId: string, chapterNumber: number): Promise<ResumeAuditFailedChapterResult> {
+  async resumeAuditFailedChapterBounded(
+    bookId: string,
+    chapterNumber: number,
+    options: { readonly safeReplayStage?: string } = {},
+  ): Promise<ResumeAuditFailedChapterResult> {
     const index = await this.state.loadChapterIndex(bookId);
     const chapter = index.find((item) => item.number === chapterNumber);
     if (!chapter || chapter.status !== "audit-failed") {
@@ -1837,7 +1841,7 @@ export class PipelineRunner {
     if (saved?.status === "REVIEW_EXHAUSTED") {
       return { chapterNumber, status: "held-after-two-revisions", revisionCount: 2, logicReviewCount: saved.logicReviewCount, commercialReviewCount: saved.commercialReviewCount, roleUsage: saved.roleUsage ?? {} };
     }
-    if (saved?.inFlightStage) {
+    if (saved?.inFlightStage && saved.inFlightStage !== options.safeReplayStage) {
       throw new Error(`AUTONOMOUS_STAGE_OUTCOME_UNKNOWN:${saved.inFlightStage}`);
     }
 
@@ -1892,7 +1896,9 @@ export class PipelineRunner {
         });
         await persist("RUNNING", "REVISION_AND_LOGIC");
         const revised = await runWithLLMOutcomeObserver(async (record) => {
-          modelOutcomes.push({ ...record, stage: "REVISION_AND_LOGIC" });
+          if (!modelOutcomes.some((existing) => existing.modelCallId === record.modelCallId)) {
+            modelOutcomes.push({ ...record, stage: "REVISION_AND_LOGIC" });
+          }
           await persist("RUNNING", "REVISION_AND_LOGIC");
         }, () => this.reviseDraft(bookId, chapterNumber, "rework", undefined, {
           persistedFindings: findings,
@@ -1942,7 +1948,9 @@ export class PipelineRunner {
       });
       await persist("RUNNING", "COMMERCIAL_REVIEW");
       const commercial = await runWithLLMOutcomeObserver(async (record) => {
-        modelOutcomes.push({ ...record, stage: "COMMERCIAL_REVIEW" });
+        if (!modelOutcomes.some((existing) => existing.modelCallId === record.modelCallId)) {
+          modelOutcomes.push({ ...record, stage: "COMMERCIAL_REVIEW" });
+        }
         await persist("RUNNING", "COMMERCIAL_REVIEW");
       }, () => new CommercialReaderAgent(this.agentCtxFor("commercial-reader", bookId)).reviewChapter({
         chapterNumber,

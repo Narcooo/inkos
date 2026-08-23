@@ -4,6 +4,7 @@ import {
   StateManager,
   claimAutonomousJob,
   createAutonomousPipelineActions,
+  createAutonomousProviderExecution,
   deriveAutonomousJobIdentity,
   loadBookProductionMap,
   loadAutonomousProductionState,
@@ -82,12 +83,19 @@ export const autoCommand = new Command("auto")
       const config = await loadConfig();
       // `inkos auto` is unattended batch writing, so the audit→revise loop must
       // run inline: force "auto" regardless of book/project reviewMode settings.
+      let activeStage = {
+        stage: "PREPARING",
+        role: "writer",
+        provider: null as string | null,
+        model: null as string | null,
+      };
       const pipeline = new PipelineRunner({
         ...buildPipelineConfig(config, root, {
           quiet: opts.quiet,
           chapterReviewMode: "auto",
         }),
         boundedAutonomousReview: true,
+        onAutonomousStage: (event) => { activeStage = event; },
       });
 
       if (!opts.json) log(formatAutoWriteStart(language, bookId, startChapter, targetChapter));
@@ -100,6 +108,12 @@ export const autoCommand = new Command("auto")
         throw new Error(`AUTONOMOUS_TARGET_MUST_MATCH_CURRENT_VOLUME: expected ${dynamicScope.targetChapter}`);
       }
       const jobId = deriveAutonomousJobIdentity({ map: productionMap, mode: "current-volume", nextChapter: startChapter });
+      const providerRecovery = createAutonomousProviderExecution({
+        projectRoot: root,
+        bookId,
+        jobId,
+        getActiveStage: () => activeStage,
+      });
       const persisted = await loadAutonomousProductionState<{ readonly jobId?: string; readonly status?: string }>(root, bookId);
       if (persisted?.jobId === jobId && (persisted.status === "REVIEW_EXHAUSTED" || persisted.status === "HELD_AFTER_TWO_REVISIONS")) {
         throw new Error("REVISION_LIMIT_REACHED");
@@ -152,6 +166,7 @@ export const autoCommand = new Command("auto")
             const current = await loadAutonomousProductionState<Record<string, unknown>>(root, bookId);
             await saveAutonomousProductionState(root, bookId, { ...(current ?? {}), ...value });
           },
+          providerRecovery,
         });
       } finally {
         stopHeartbeat();
