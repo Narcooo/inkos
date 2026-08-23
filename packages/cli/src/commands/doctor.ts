@@ -19,12 +19,12 @@ import {
 } from "../localization.js";
 
 function buildDoctorProbePlans(
-  preferredApiFormat: "chat" | "responses" | undefined,
+  preferredApiFormat: "chat" | "responses" | "anthropic" | undefined,
   preferredStream: boolean | undefined,
-): Array<{ apiFormat: "chat" | "responses"; stream: boolean }> {
-  const plans: Array<{ apiFormat: "chat" | "responses"; stream: boolean }> = [];
+): Array<{ apiFormat: "chat" | "responses" | "anthropic"; stream: boolean }> {
+  const plans: Array<{ apiFormat: "chat" | "responses" | "anthropic"; stream: boolean }> = [];
   const seen = new Set<string>();
-  const push = (apiFormat: "chat" | "responses", stream: boolean) => {
+  const push = (apiFormat: "chat" | "responses" | "anthropic", stream: boolean) => {
     const key = `${apiFormat}:${stream ? "1" : "0"}`;
     if (seen.has(key)) return;
     seen.add(key);
@@ -35,7 +35,11 @@ function buildDoctorProbePlans(
     push(preferredApiFormat, preferredStream ?? false);
     push(preferredApiFormat, !(preferredStream ?? false));
   }
-  const alternate = preferredApiFormat === "responses" ? "chat" : "responses";
+  const alternate = preferredApiFormat === "responses"
+    ? "chat"
+    : preferredApiFormat === "anthropic"
+      ? "chat"
+      : "responses";
   push(alternate, false);
   push(alternate, true);
   push("chat", false);
@@ -304,7 +308,7 @@ export const doctorCommand = new Command("doctor")
           : [llmConfig.model];
         const plans = llmConfig.provider === "openai"
           ? buildDoctorProbePlans(llmConfig.apiFormat, llmConfig.stream)
-          : [{ apiFormat: (llmConfig.apiFormat ?? "chat") as "chat" | "responses", stream: llmConfig.stream ?? true }];
+          : [{ apiFormat: (llmConfig.apiFormat ?? "chat") as "chat" | "responses" | "anthropic", stream: llmConfig.stream ?? true }];
 
         for (const model of modelCandidates) {
           for (const plan of plans) {

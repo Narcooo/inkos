@@ -57,6 +57,31 @@ describe("resolveEffectiveLLMConfig", () => {
     expect(result.diagnostics.warnings.join("\n")).toContain("旧顶层");
   });
 
+  it("Studio consumer preserves a custom Anthropic Messages protocol", async () => {
+    await writeProject({
+      configSource: "studio",
+      service: "custom:Anthropic Gateway",
+      services: [{
+        service: "custom",
+        name: "Anthropic Gateway",
+        baseUrl: "https://gateway.example",
+        apiFormat: "anthropic",
+      }],
+      defaultModel: "claude-compatible-model",
+    });
+
+    const result = await resolveEffectiveLLMConfig({
+      consumer: "studio",
+      projectRoot: root,
+      envLayers: { global: {}, project: {}, process: {} },
+      requireApiKey: false,
+    });
+
+    expect(result.llm.provider).toBe("custom");
+    expect(result.llm.apiFormat).toBe("anthropic");
+    expect(result.llm.baseUrl).toBe("https://gateway.example");
+  });
+
   it("CLI consumer 允许 INKOS_LLM_SERVICE 切换服务，并从 provider bank 推导 baseUrl", async () => {
     await writeProject({
       configSource: "studio",

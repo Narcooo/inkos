@@ -413,6 +413,16 @@ describe("LLMConfigSchema", () => {
     expect(result.provider).toBe("openai");
   });
 
+  it("accepts Anthropic Messages as an API format", () => {
+    const result = LLMConfigSchema.parse({
+      provider: "custom",
+      baseUrl: "https://gateway.example",
+      model: "claude-compatible-model",
+      apiFormat: "anthropic",
+    });
+    expect(result.apiFormat).toBe("anthropic");
+  });
+
   it("rejects invalid provider", () => {
     expect(() =>
       LLMConfigSchema.parse({
