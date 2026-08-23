@@ -125,6 +125,36 @@ describe("compact autonomous production card", () => {
     expect(html).not.toContain("Repair Chapter 004 State");
   });
 
+  it("shows the preserved rescue candidate and final-review-only recovery action", () => {
+    const view: AutonomousView = {
+      ...blockedView,
+      runtimeStatus: "RECOVERY_READY_FINAL_REVIEW",
+      runtimeBlockers: [],
+      startEnabled: true,
+      chapterAttention: { chapter: 4, status: "AUDIT_FAILED_STATE_SETTLED" },
+      finalReviewRecovery: {
+        chapter: 4,
+        rescueCandidate: "PRESERVED",
+        rescueGeneration: "REUSED",
+        writerRegeneration: false,
+        normalRevisionRegeneration: false,
+        rescueRevisionRegeneration: false,
+        nextAction: "FINAL_RE_REVIEW",
+        additionalRevisionAllowed: false,
+      },
+    };
+    const html = renderToStaticMarkup(createElement(AutonomousProductionCard, {
+      view, pending: false, error: null, onStart: () => undefined, onStop: () => undefined,
+      onRepair: () => undefined, onConfigureModels: () => undefined,
+    }));
+    expect(html).toContain("RECOVERY_READY_FINAL_REVIEW");
+    expect(html).toContain("Rescue candidate: PRESERVED");
+    expect(html).toContain("GPT Rescue generation: REUSED");
+    expect(html).toContain("Next action: FINAL_RE_REVIEW");
+    expect(html).toContain("Additional revision allowed: NO");
+    expect(html).toContain("Resume Autonomous Production");
+  });
+
   it("shows a local retry countdown and disables Resume while the durable job waits", () => {
     const view: AutonomousView = {
       ...blockedView,

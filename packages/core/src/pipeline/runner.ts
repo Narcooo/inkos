@@ -305,7 +305,7 @@ export interface ChapterPipelineResult {
   readonly wordCount: number;
   readonly auditResult: AuditResult;
   readonly revised: boolean;
-  readonly status: "ready-for-review" | "audit-failed" | "state-degraded" | "held-after-two-revisions";
+  readonly status: "ready-for-review" | "accepted-with-findings" | "audit-failed" | "state-degraded" | "blocked-critical-findings" | "held-after-two-revisions";
   readonly lengthWarnings?: ReadonlyArray<string>;
   readonly lengthTelemetry?: LengthTelemetry;
   readonly tokenUsage?: TokenUsageSummary;
@@ -366,6 +366,7 @@ export interface ReviseResult {
     readonly category: string;
     readonly description: string;
     readonly suggestion?: string;
+    readonly repairScope?: AuditIssue["repairScope"];
   }>;
   readonly skippedReason?: string;
   readonly revisionDiagnostics?: {
@@ -394,7 +395,7 @@ export interface ReviseResult {
 
 export interface ResumeAuditFailedChapterResult {
   readonly chapterNumber: number;
-  readonly status: "approved" | "held-after-two-revisions";
+  readonly status: "approved" | "accepted-with-findings" | "blocked-critical-findings" | "held-after-two-revisions";
   readonly revisionCount: 1 | 2;
   readonly logicReviewCount: number;
   readonly commercialReviewCount: number;
@@ -402,7 +403,7 @@ export interface ResumeAuditFailedChapterResult {
 }
 
 interface AutonomousResumeEvidence {
-  readonly status: "RUNNING" | "APPROVED" | "REVIEW_EXHAUSTED";
+  readonly status: "RUNNING" | "APPROVED" | "ACCEPTED_WITH_FINDINGS" | "BLOCKED_CRITICAL_FINDINGS" | "REVIEW_EXHAUSTED";
   readonly revisionCount: number;
   readonly logicReviewCount: number;
   readonly commercialReviewCount: number;
@@ -413,12 +414,26 @@ interface AutonomousResumeEvidence {
   readonly phase?: "ROUND_COMPLETE" | "AWAITING_COMMERCIAL";
   readonly inFlightStage?: "REVISION_AND_LOGIC" | "COMMERCIAL_REVIEW";
   readonly modelOutcomes?: ReadonlyArray<LLMOutcomeRecord & { readonly stage: string }>;
+  readonly unresolvedFindings?: ReadonlyArray<{
+    readonly finding_id: string;
+    readonly book_id: string;
+    readonly chapter_number: number;
+    readonly candidate_version: string;
+    readonly audit_round: 2;
+    readonly dimension: string;
+    readonly severity: "warning" | "info";
+    readonly evidence: string;
+    readonly required_outcome: string;
+    readonly disposition: "DEFERRED_TO_ROLLING_OR_VOLUME_REVIEW";
+  }>;
 }
 
 export interface ReviseDraftOptions {
   readonly persistedFindings?: ReadonlyArray<AuditIssue>;
   /** Keep the durable chapter checkpoint pending until all independent reviews pass. */
   readonly preserveAuditFailedStatus?: boolean;
+  /** The second bounded revision is decided by its structured final review, not the generic improvement heuristic. */
+  readonly finalBoundedRevision?: boolean;
 }
 
 export interface TruthFiles {
@@ -1663,19 +1678,25 @@ export class PipelineRunner {
       const aiDidNotWorsen = effectivePostRevision.aiTellCount <= preRevision.aiTellCount;
       const didNotWorsen = blockingDidNotWorsen && criticalDidNotWorsen && aiDidNotWorsen;
       const revisionGate = this.config.revisionGate ?? "strict";
-      const shouldApplyRevision = revisionGate === "always"
+      const shouldApplyRevision = options?.finalBoundedRevision
+        ? effectivePostRevision.auditResult.parseFailed !== true && effectivePostRevision.criticalCount === 0
+        : revisionGate === "always"
         ? true
         : revisionGate === "lenient"
           ? didNotWorsen
           : didNotWorsen && (improvedBlocking || improvedAITells);
-      const remainingIssues = effectivePostRevision.revisionBlockingIssues
-        .filter((issue) => issue.severity === "warning" || issue.severity === "critical")
+      const remainingIssues = (options?.finalBoundedRevision
+        ? effectivePostRevision.auditResult.issues
+        : effectivePostRevision.revisionBlockingIssues.filter(
+            (issue) => issue.severity === "warning" || issue.severity === "critical",
+          ))
         .slice(0, 6)
         .map((issue) => ({
           severity: issue.severity,
           category: issue.category,
           description: issue.description,
           ...(issue.suggestion ? { suggestion: issue.suggestion } : {}),
+          ...(issue.repairScope ? { repairScope: issue.repairScope } : {}),
         }));
       const revisionDiagnostics = {
         standard: REVISION_GATE_STANDARDS[revisionGate],
@@ -1838,8 +1859,11 @@ export class PipelineRunner {
       const count = Math.min(2, Math.max(1, saved.revisionCount)) as 1 | 2;
       return { chapterNumber, status: "approved", revisionCount: count, logicReviewCount: saved.logicReviewCount, commercialReviewCount: saved.commercialReviewCount, roleUsage: saved.roleUsage ?? {} };
     }
-    if (saved?.status === "REVIEW_EXHAUSTED") {
-      return { chapterNumber, status: "held-after-two-revisions", revisionCount: 2, logicReviewCount: saved.logicReviewCount, commercialReviewCount: saved.commercialReviewCount, roleUsage: saved.roleUsage ?? {} };
+    if (saved?.status === "ACCEPTED_WITH_FINDINGS") {
+      return { chapterNumber, status: "accepted-with-findings", revisionCount: 2, logicReviewCount: saved.logicReviewCount, commercialReviewCount: saved.commercialReviewCount, roleUsage: saved.roleUsage ?? {} };
+    }
+    if (saved?.status === "BLOCKED_CRITICAL_FINDINGS") {
+      return { chapterNumber, status: "blocked-critical-findings", revisionCount: 2, logicReviewCount: saved.logicReviewCount, commercialReviewCount: saved.commercialReviewCount, roleUsage: saved.roleUsage ?? {} };
     }
     if (saved?.inFlightStage && saved.inFlightStage !== options.safeReplayStage) {
       throw new Error(`AUTONOMOUS_STAGE_OUTCOME_UNKNOWN:${saved.inFlightStage}`);
@@ -1847,14 +1871,21 @@ export class PipelineRunner {
 
     const baselineRoleUsage = { ...(saved?.baselineRoleUsage ?? chapter.roleUsage ?? {}) };
     const roleUsage: Record<string, RoleTokenUsage> = { ...(saved?.roleUsage ?? {}) };
-    const reviewRounds: Array<Record<string, unknown>> = [...(saved?.reviewRounds ?? [])];
+    const legacyExhausted = saved?.status === "REVIEW_EXHAUSTED";
+    const reviewRounds: Array<Record<string, unknown>> = legacyExhausted
+      ? [...(saved?.reviewRounds ?? [])].slice(0, 1)
+      : [...(saved?.reviewRounds ?? [])];
     const modelOutcomes: Array<LLMOutcomeRecord & { readonly stage: string }> = [...(saved?.modelOutcomes ?? [])];
-    let findings = [...(saved?.currentFindings ?? this.parsePersistedAuditFindings(chapter.auditIssues))];
-    let logicReviewCount = saved?.logicReviewCount ?? 0;
+    const legacyRoundOne = legacyExhausted
+      ? (reviewRounds[0]?.logic as { findings?: ReadonlyArray<AuditIssue> } | undefined)?.findings
+      : undefined;
+    let findings = [...(legacyRoundOne ?? saved?.currentFindings ?? this.parsePersistedAuditFindings(chapter.auditIssues))];
+    let logicReviewCount = legacyExhausted ? Math.max(0, (saved?.logicReviewCount ?? 1) - 1) : saved?.logicReviewCount ?? 0;
     let commercialReviewCount = saved?.commercialReviewCount ?? 0;
-    let revisionCount = saved?.revisionCount ?? 0;
+    let revisionCount = legacyExhausted ? 1 : saved?.revisionCount ?? 0;
     let phase = saved?.phase;
 
+    let unresolvedFindings: AutonomousResumeEvidence["unresolvedFindings"] = saved?.unresolvedFindings;
     const persist = async (status: AutonomousResumeEvidence["status"], inFlightStage?: AutonomousResumeEvidence["inFlightStage"]) => {
       await this.persistAutonomousResumeEvidence(bookDir, chapterNumber, {
         status,
@@ -1866,11 +1897,12 @@ export class PipelineRunner {
         reviewRounds,
         modelOutcomes,
         currentFindings: findings,
+        ...(unresolvedFindings ? { unresolvedFindings } : {}),
         ...(phase ? { phase } : {}),
         ...(inFlightStage ? { inFlightStage } : {}),
       });
     };
-    const syncChapter = async (status: "audit-failed" | "approved") => {
+    const syncChapter = async (status: "audit-failed" | "approved" | "accepted-with-findings") => {
       const latest = await this.state.loadChapterIndex(bookId);
       await this.state.saveChapterIndex(bookId, latest.map((item) => item.number === chapterNumber
         ? {
@@ -1882,6 +1914,104 @@ export class PipelineRunner {
           }
         : item));
     };
+
+    if (legacyExhausted) {
+      const book = await this.state.loadBookConfig(bookId);
+      const content = await this.readChapterContent(bookDir, chapterNumber);
+      const auditor = new ContinuityAuditor(this.agentCtxFor("auditor", bookId));
+      const { profile } = await this.loadGenreProfile(book.genre);
+      const language = book.language ?? profile.language;
+      const persistedChapterBrief = await readChapterUserBrief(bookDir, chapterNumber);
+      const effectiveExternalContext = mergeChapterRevisionInstructions(
+        persistedChapterBrief,
+        this.config.externalContext,
+      );
+      const reviewControlInput = await this.createGovernedArtifacts(
+        book,
+        bookDir,
+        chapterNumber,
+        effectiveExternalContext,
+        { reuseExistingIntentWhenContextMissing: true },
+      );
+      const identity = this.resolveOverride("auditor");
+      await this.config.onAutonomousStage?.({
+        stage: "LOGIC_REVIEW",
+        role: "logicAuditor",
+        provider: identity.client.service ?? identity.client.provider,
+        model: identity.model,
+      });
+      await persist("RUNNING", "REVISION_AND_LOGIC");
+      const modelOutcomeCountBefore = modelOutcomes.length;
+      const finalReview = await runWithLLMOutcomeObserver(async (record) => {
+        if (!modelOutcomes.some((existing) => existing.modelCallId === record.modelCallId)) {
+          modelOutcomes.push({ ...record, stage: "REVISION_AND_LOGIC" });
+        }
+        await persist("RUNNING", "REVISION_AND_LOGIC");
+      }, () => this.evaluateMergedAudit({
+        auditor,
+        book,
+        bookDir,
+        chapterContent: content,
+        chapterNumber,
+        language,
+        auditOptions: reviewControlInput
+          ? {
+              temperature: 0,
+              chapterIntent: reviewControlInput.plan.intentMarkdown,
+              chapterMemo: reviewControlInput.plan.memo,
+              contextPackage: reviewControlInput.composed.contextPackage,
+              ruleStack: reviewControlInput.composed.ruleStack,
+            }
+          : { temperature: 0 },
+      }));
+      if (finalReview.auditResult.tokenUsage && modelOutcomes.length > modelOutcomeCountBefore) {
+        roleUsage["logic-canon-auditor"] = PipelineRunner.addUsage(
+          roleUsage["logic-canon-auditor"] ?? { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+          finalReview.auditResult.tokenUsage,
+        );
+      }
+      logicReviewCount += 1;
+      revisionCount = 2;
+      findings = finalReview.auditResult.issues.map((issue) => ({
+        severity: issue.severity,
+        category: issue.category,
+        description: issue.description,
+        suggestion: issue.suggestion ?? "Resolve the persisted review finding.",
+        ...(issue.repairScope ? { repairScope: issue.repairScope } : {}),
+      }));
+      reviewRounds.push({ round: 2, logic: { passed: finalReview.auditResult.passed, findings }, commercial: null, finalDecision: true });
+      phase = "ROUND_COMPLETE";
+      const hasBlocking = findings.some((finding) => finding.severity === "critical"
+        || (finding.severity === "warning" && finding.repairScope === "structural"));
+      if (hasBlocking) {
+        await syncChapter("audit-failed");
+        await persist("BLOCKED_CRITICAL_FINDINGS");
+        return { chapterNumber, status: "blocked-critical-findings", revisionCount: 2, logicReviewCount, commercialReviewCount, roleUsage };
+      }
+      if (findings.length === 0) {
+        await syncChapter("approved");
+        await persist("APPROVED");
+        return { chapterNumber, status: "approved", revisionCount: 2, logicReviewCount, commercialReviewCount, roleUsage };
+      }
+      const candidateVersion = createHash("sha256").update(content, "utf-8").digest("hex");
+      unresolvedFindings = findings
+        .filter((finding): finding is AuditIssue & { severity: "warning" | "info" } => finding.severity !== "critical")
+        .map((finding, index) => ({
+        finding_id: `chapter-${String(chapterNumber).padStart(4, "0")}-final-${String(index + 1).padStart(2, "0")}`,
+        book_id: bookId,
+        chapter_number: chapterNumber,
+        candidate_version: candidateVersion,
+        audit_round: 2 as const,
+        dimension: finding.category,
+        severity: finding.severity,
+        evidence: finding.description,
+        required_outcome: finding.suggestion ?? "Reassess during the next rolling or volume review.",
+        disposition: "DEFERRED_TO_ROLLING_OR_VOLUME_REVIEW" as const,
+        }));
+      await syncChapter("accepted-with-findings");
+      await persist("ACCEPTED_WITH_FINDINGS");
+      return { chapterNumber, status: "accepted-with-findings", revisionCount: 2, logicReviewCount, commercialReviewCount, roleUsage };
+    }
 
     for (const round of [1, 2] as const) {
       if (round <= revisionCount && phase !== "AWAITING_COMMERCIAL") continue;
@@ -1895,6 +2025,7 @@ export class PipelineRunner {
           model: identity.model,
         });
         await persist("RUNNING", "REVISION_AND_LOGIC");
+        const modelOutcomeCountBefore = modelOutcomes.length;
         const revised = await runWithLLMOutcomeObserver(async (record) => {
           if (!modelOutcomes.some((existing) => existing.modelCallId === record.modelCallId)) {
             modelOutcomes.push({ ...record, stage: "REVISION_AND_LOGIC" });
@@ -1903,8 +2034,9 @@ export class PipelineRunner {
         }, () => this.reviseDraft(bookId, chapterNumber, "rework", undefined, {
           persistedFindings: findings,
           preserveAuditFailedStatus: true,
+          finalBoundedRevision: round === 2,
         }));
-        if (revised.roleUsage) {
+        if (revised.roleUsage && (!legacyExhausted || modelOutcomes.length > modelOutcomeCountBefore)) {
           for (const [role, usage] of Object.entries(revised.roleUsage)) {
             roleUsage[role] = PipelineRunner.addUsage(roleUsage[role] ?? { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, usage);
           }
@@ -1916,7 +2048,51 @@ export class PipelineRunner {
           category: issue.category,
           description: issue.description,
           suggestion: issue.suggestion ?? "Resolve the persisted review finding.",
+          ...(issue.repairScope ? { repairScope: issue.repairScope } : {}),
         }));
+        if (round === 2) {
+          findings = logicFindings.map((issue) => ({
+            severity: issue.severity,
+            category: issue.category,
+            description: issue.description,
+            suggestion: issue.suggestion ?? "Resolve the persisted review finding.",
+            ...(issue.repairScope ? { repairScope: issue.repairScope } : {}),
+          }));
+          reviewRounds.push({ round, logic: { passed: revised.auditPassed === true, findings }, commercial: null, finalDecision: true });
+          phase = "ROUND_COMPLETE";
+          const hasBlocking = findings.some((finding) => finding.severity === "critical"
+            || (finding.severity === "warning" && finding.repairScope === "structural"));
+          if (!revised.applied || hasBlocking) {
+            await syncChapter("audit-failed");
+            await persist("BLOCKED_CRITICAL_FINDINGS");
+            return { chapterNumber, status: "blocked-critical-findings", revisionCount: 2, logicReviewCount, commercialReviewCount, roleUsage };
+          }
+          if (findings.length === 0) {
+            await syncChapter("approved");
+            await persist("APPROVED");
+            return { chapterNumber, status: "approved", revisionCount: 2, logicReviewCount, commercialReviewCount, roleUsage };
+          }
+          const candidateVersion = createHash("sha256")
+            .update(await this.readChapterContent(bookDir, chapterNumber), "utf-8")
+            .digest("hex");
+          unresolvedFindings = findings
+            .filter((finding): finding is AuditIssue & { severity: "warning" | "info" } => finding.severity !== "critical")
+            .map((finding, index) => ({
+              finding_id: `chapter-${String(chapterNumber).padStart(4, "0")}-final-${String(index + 1).padStart(2, "0")}`,
+              book_id: bookId,
+              chapter_number: chapterNumber,
+              candidate_version: candidateVersion,
+              audit_round: 2 as const,
+              dimension: finding.category,
+              severity: finding.severity,
+              evidence: finding.description,
+              required_outcome: finding.suggestion ?? "Reassess during the next rolling or volume review.",
+              disposition: "DEFERRED_TO_ROLLING_OR_VOLUME_REVIEW" as const,
+            }));
+          await syncChapter("accepted-with-findings");
+          await persist("ACCEPTED_WITH_FINDINGS");
+          return { chapterNumber, status: "accepted-with-findings", revisionCount: 2, logicReviewCount, commercialReviewCount, roleUsage };
+        }
         await syncChapter("audit-failed");
         if (!revised.applied || !revised.auditPassed) {
           findings = logicFindings.map((issue) => ({
@@ -1928,8 +2104,7 @@ export class PipelineRunner {
           reviewRounds.push({ round, logic: { passed: false, findings }, commercial: null });
           phase = "ROUND_COMPLETE";
           await syncChapter("audit-failed");
-          await persist(round === 2 ? "REVIEW_EXHAUSTED" : "RUNNING");
-          if (round === 2) break;
+          await persist("RUNNING");
           continue;
         }
         phase = "AWAITING_COMMERCIAL";
@@ -2250,7 +2425,7 @@ export class PipelineRunner {
         temperatureOverride,
         externalContext,
       );
-      if (result.status === "held-after-two-revisions") {
+      if (result.status === "held-after-two-revisions" || result.status === "blocked-critical-findings") {
         await writeProductionRunSnapshot({
           rootDir: bookDir,
           runPath,
@@ -2491,9 +2666,11 @@ export class PipelineRunner {
         issues: this.reviewFindingsAsAuditIssues(findings),
         summary: autonomousReviewResult.status === "APPROVED"
           ? `Bounded autonomous review ${autonomousReviewResult.grade} approved.`
-          : `HELD_AFTER_TWO_REVISIONS: ${autonomousReviewResult.holdReason ?? "REVISION_LIMIT_REACHED"}`,
+          : autonomousReviewResult.status === "ACCEPTED_WITH_FINDINGS"
+            ? `Bounded autonomous review ${autonomousReviewResult.grade} accepted with deferred non-blocking findings.`
+            : `BLOCKED_CRITICAL_FINDINGS: ${autonomousReviewResult.holdReason ?? "CRITICAL_OR_MAJOR_FINDINGS_REMAIN"}`,
       };
-      if (autonomousReviewResult.status === "HELD_AFTER_TWO_REVISIONS") {
+      if (autonomousReviewResult.status === "HELD_AFTER_TWO_REVISIONS" || autonomousReviewResult.status === "BLOCKED_CRITICAL_FINDINGS") {
         const candidateEvidencePath = await this.persistBoundedReviewEvidence(
           bookDir,
           chapterNumber,
@@ -2505,7 +2682,7 @@ export class PipelineRunner {
           wordCount: finalWordCount,
           auditResult,
           revised,
-          status: "held-after-two-revisions",
+          status: autonomousReviewResult.status === "BLOCKED_CRITICAL_FINDINGS" ? "blocked-critical-findings" : "held-after-two-revisions",
           tokenUsage: totalUsage,
           roleUsage,
           autonomousReview: this.projectBoundedReview(autonomousReviewResult),
@@ -2753,7 +2930,9 @@ export class PipelineRunner {
       }
     }
 
-    const resolvedStatus = chapterStatus ?? (auditResult.passed ? "ready-for-review" : "audit-failed");
+    const resolvedStatus = chapterStatus ?? (autonomousReviewResult?.status === "ACCEPTED_WITH_FINDINGS"
+      ? "accepted-with-findings"
+      : auditResult.passed ? "ready-for-review" : "audit-failed");
     await persistChapterArtifacts({
       chapterNumber,
       chapterTitle: persistenceOutput.title,

@@ -62,7 +62,7 @@ describe("bounded autonomous chapter review", () => {
     expect(stages).toEqual(["LOGIC_REVIEW", "READER_REVIEW"]);
   });
 
-  it("runs one normal and one rescue revision, then holds without a third", async () => {
+  it("runs one normal and one rescue revision, then blocks critical findings without a third", async () => {
     const logic = vi.fn()
       .mockResolvedValueOnce(review("logic-canon-auditor", 72, "MAJOR"))
       .mockResolvedValueOnce(review("logic-canon-auditor", 78, "MAJOR"))
@@ -72,12 +72,32 @@ describe("bounded autonomous chapter review", () => {
       .mockResolvedValueOnce({ content: "revision one", tokenUsage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } })
       .mockResolvedValueOnce({ content: "revision two", tokenUsage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } });
     const result = await runBoundedReviewCycle({ initialContent: "draft", reviewLogic: logic, reviewCommercial: commercial, revise });
-    expect(result.status).toBe("HELD_AFTER_TWO_REVISIONS");
+    expect(result.status).toBe("BLOCKED_CRITICAL_FINDINGS");
     expect(result.revisionCount).toBe(2);
     expect(result.candidates.map((candidate) => candidate.label)).toEqual(["INITIAL", "REVISION_1", "REVISION_2"]);
     expect(revise).toHaveBeenCalledTimes(2);
     expect(logic).toHaveBeenCalledTimes(3);
     expect(commercial).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts only noncritical findings after the final rescue review without a third revision", async () => {
+    const logic = vi.fn()
+      .mockResolvedValueOnce(review("logic-canon-auditor", 72, "MINOR"))
+      .mockResolvedValueOnce(review("logic-canon-auditor", 78, "MINOR"))
+      .mockResolvedValueOnce(review("logic-canon-auditor", 81, "MINOR"));
+    const revise = vi.fn()
+      .mockResolvedValueOnce({ content: "revision one" })
+      .mockResolvedValueOnce({ content: "revision two" });
+    const result = await runBoundedReviewCycle({
+      initialContent: "draft",
+      reviewLogic: logic,
+      reviewCommercial: vi.fn().mockResolvedValue(review("commercial-reader", 90)),
+      revise,
+    });
+    expect(result.status).toBe("ACCEPTED_WITH_FINDINGS");
+    expect(result.finalContent).toBe("revision two");
+    expect(result.revisionCount).toBe(2);
+    expect(revise).toHaveBeenCalledTimes(2);
   });
 
   it("re-reviews both roles when both supplied findings", async () => {

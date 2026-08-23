@@ -60,7 +60,7 @@ export interface BoundedCandidate {
 }
 
 export interface BoundedReviewResult {
-  readonly status: "APPROVED" | "HELD_AFTER_TWO_REVISIONS";
+  readonly status: "APPROVED" | "ACCEPTED_WITH_FINDINGS" | "BLOCKED_CRITICAL_FINDINGS" | "HELD_AFTER_TWO_REVISIONS";
   readonly grade: "A" | "B" | "C" | "D" | "E";
   readonly finalContent: string;
   readonly revisionCount: 0 | 1 | 2;
@@ -243,20 +243,16 @@ export async function runBoundedReviewCycle(params: {
     if (logic.authorityBlocker || commercial.authorityBlocker) break;
   }
 
-  const bestCandidate = [...candidates].sort((left, right) => {
-    const blocking = (candidate: BoundedCandidate) => candidate.reviews
-      .flatMap((review) => review.findings)
-      .filter((finding) => finding.severity === "CRITICAL" || finding.severity === "MAJOR").length;
-    return blocking(left) - blocking(right) || right.combinedScore - left.combinedScore;
-  })[0]!;
+  const finalFindings = current.reviews.flatMap((review) => review.findings);
+  const finalBlocking = finalFindings.some((finding) => finding.severity === "CRITICAL" || finding.severity === "MAJOR");
   return {
-    status: "HELD_AFTER_TWO_REVISIONS",
+    status: finalBlocking ? "BLOCKED_CRITICAL_FINDINGS" : "ACCEPTED_WITH_FINDINGS",
     grade: currentGrade === "E" ? "E" : "D",
-    finalContent: bestCandidate.content,
+    finalContent: current.content,
     revisionCount: 2,
     candidates,
-    bestCandidate,
-    holdReason: logic.authorityBlocker || commercial.authorityBlocker ? "AUTHORITY_BLOCKER" : "REVISION_LIMIT_REACHED",
+    bestCandidate: current,
+    ...(finalBlocking ? { holdReason: logic.authorityBlocker || commercial.authorityBlocker ? "AUTHORITY_BLOCKER" as const : "REVISION_LIMIT_REACHED" as const } : {}),
     usageByRole,
   };
 }

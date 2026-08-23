@@ -3039,7 +3039,8 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
         }
         const paused = result.status.startsWith("PAUSED_")
           || result.status === "REVIEW_EXHAUSTED"
-          || result.status === "HELD_AFTER_TWO_REVISIONS";
+          || result.status === "HELD_AFTER_TWO_REVISIONS"
+          || result.status === "BLOCKED_CRITICAL_FINDINGS";
         broadcast(paused ? "autonomous:paused" : "autonomous:complete", { bookId, status: result.status, nextChapter: result.nextChapter });
       },
       async (error) => {

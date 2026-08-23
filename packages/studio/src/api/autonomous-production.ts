@@ -195,15 +195,31 @@ export function projectAutonomousProductionView(params: {
   const repairNeedsReconciliation = !params.active && params.runtime?.status === "REPAIRING";
   if (repairNeedsReconciliation) blockers.push("STATE_REPAIR_RECONCILIATION_REQUIRED");
   const auditFailed = params.chapters.find((chapter) => chapter.status === "audit-failed");
+  const finalReviewRecovery = auditFailed
+    && params.runtime?.status === "REVIEW_EXHAUSTED"
+    && params.runtime.responseArtifactStatus === "COMPLETE"
+    && (params.runtime.revisionRound === 2 || params.runtime.phase === "RESCUE_REVISING_2")
+      ? {
+          chapter: auditFailed.number,
+          rescueCandidate: "PRESERVED" as const,
+          rescueGeneration: "REUSED" as const,
+          writerRegeneration: false as const,
+          normalRevisionRegeneration: false as const,
+          rescueRevisionRegeneration: false as const,
+          nextAction: "FINAL_RE_REVIEW" as const,
+          additionalRevisionAllowed: false as const,
+        }
+      : undefined;
   if (!roles.writer) blockers.push("WRITER_MODEL_NOT_CONFIGURED");
   if (!roles.logicAuditor) blockers.push("LOGIC_AUDITOR_MODEL_NOT_CONFIGURED");
   if (!roles.commercialReader) blockers.push("COMMERCIAL_READER_MODEL_NOT_CONFIGURED");
   if (!roles.reviser) blockers.push("REVISER_MODEL_NOT_CONFIGURED");
   if (!roles.observerReflector) blockers.push("OBSERVER_REFLECTOR_MODEL_NOT_CONFIGURED");
   if (params.active) blockers.push("AUTONOMOUS_JOB_ALREADY_RUNNING");
-  if (params.runtime?.status === "REVIEW_EXHAUSTED" || params.runtime?.status === "HELD_AFTER_TWO_REVISIONS") {
+  if ((params.runtime?.status === "REVIEW_EXHAUSTED" && !finalReviewRecovery) || params.runtime?.status === "HELD_AFTER_TWO_REVISIONS") {
     blockers.push("REVIEW_EXHAUSTED");
   }
+  if (params.runtime?.status === "BLOCKED_CRITICAL_FINDINGS") blockers.push("BLOCKED_CRITICAL_FINDINGS");
   const orderedChapterNumbers = params.chapters.map((chapter) => chapter.number).sort((left, right) => left - right);
   if (orderedChapterNumbers.some((number, index) => number !== index + 1) || params.nextChapter !== orderedChapterNumbers.length + 1) {
     blockers.push("CHAPTER_CURSOR_INTEGRITY_MISMATCH");
@@ -364,7 +380,9 @@ export function projectAutonomousProductionView(params: {
     currentVolumeCompleted: params.chapters.filter((chapter) =>
       chapter.number >= scope.currentVolume.startChapter && chapter.number <= scope.currentVolume.endChapter,
     ).length,
-    runtimeStatus: params.runtime?.status === "WAITING_PROVIDER_RETRY"
+    runtimeStatus: finalReviewRecovery
+      ? "RECOVERY_READY_FINAL_REVIEW"
+      : params.runtime?.status === "WAITING_PROVIDER_RETRY"
       ? "WAITING_PROVIDER_RETRY"
       : params.active
         ? "RUNNING"
@@ -395,6 +413,7 @@ export function projectAutonomousProductionView(params: {
     chapterAttention: auditFailed
       ? { chapter: auditFailed.number, status: "AUDIT_FAILED_STATE_SETTLED" as const }
       : undefined,
+    finalReviewRecovery,
     legacyDrafts: params.chapters
       .filter((chapter) => chapter.status === "drafted")
       .map((chapter) => ({ chapter: chapter.number, status: "LEGACY_DRAFT_PRESERVED" as const })),

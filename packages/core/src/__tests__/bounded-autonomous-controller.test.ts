@@ -81,6 +81,38 @@ describe("bounded autonomous production controller", () => {
     expect(result.status).toBe("BOOK_COMPLETE");
   });
 
+  it("continues automatically after a final review accepts noncritical findings", async () => {
+    let next = 5;
+    const calls: string[] = [];
+    const result = await runBoundedAutonomousScope({
+      map,
+      mode: "current-volume",
+      getNextChapter: async () => next,
+      resumePendingChapter: async () => ({ status: "accepted-with-findings", chapterNumber: 4 }),
+      runChapter: async () => { calls.push(`write:${next}`); next += 1; return { status: "ready-for-review" }; },
+      shouldStop: () => false,
+      persistProgress: async () => undefined,
+    });
+    expect(calls).toEqual(["write:5", "write:6"]);
+    expect(result.status).toBe("BOOK_COMPLETE");
+  });
+
+  it("stops before the next chapter when final review has critical findings", async () => {
+    let next = 5;
+    const runChapter = vi.fn();
+    const result = await runBoundedAutonomousScope({
+      map,
+      mode: "current-volume",
+      getNextChapter: async () => next,
+      resumePendingChapter: async () => ({ status: "blocked-critical-findings", chapterNumber: 4 }),
+      runChapter,
+      shouldStop: () => false,
+      persistProgress: async () => undefined,
+    });
+    expect(runChapter).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ status: "BLOCKED_CRITICAL_FINDINGS", nextChapter: 5, reason: "FINAL_REVIEW_CRITICAL_FINDINGS" });
+  });
+
   it("runs exactly to the current dynamic volume boundary", async () => {
     let next = 2;
     const calls: number[] = [];

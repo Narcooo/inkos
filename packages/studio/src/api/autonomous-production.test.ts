@@ -211,7 +211,7 @@ describe("autonomous production Studio projection", () => {
     expect(view.runtimeBlockers).not.toContain("COST_GUARD_UNAVAILABLE");
   });
 
-  it("keeps a two-revision exhaustion fail-closed across Studio restart", () => {
+  it("projects legacy two-revision exhaustion with a complete rescue artifact as final-review recovery", () => {
     const view = projectAutonomousProductionView({
       map,
       targetChapters: 156,
@@ -219,12 +219,22 @@ describe("autonomous production Studio projection", () => {
       chapters: [1, 2, 3, 4].map((number) => ({ number, status: number === 4 ? "audit-failed" : "approved" })),
       config: { defaultModel: "gpt", modelOverrides: { auditor: "deepseek", "commercial-reader": "gemini", reviser: "gpt", "observer-reflector": "flash" } },
       catalog,
-      runtime: { jobId: "autonomous-deadbeef", status: "REVIEW_EXHAUSTED", mode: "current-volume", nextChapter: 5, updatedAt: "2026-08-21T00:00:00.000Z" },
+      runtime: { jobId: "autonomous-deadbeef", status: "REVIEW_EXHAUSTED", mode: "current-volume", nextChapter: 5, updatedAt: "2026-08-21T00:00:00.000Z", phase: "RESCUE_REVISING_2", responseArtifactStatus: "COMPLETE" },
       active: false,
       budget: AUTONOMOUS_BUDGET_NOT_CONFIGURED,
     });
-    expect(view.runtimeBlockers).toContain("REVIEW_EXHAUSTED");
-    expect(view.startEnabled).toBe(false);
-    expect(view.runtimeStatus).toBe("BLOCKED");
+    expect(view.runtimeBlockers).not.toContain("REVIEW_EXHAUSTED");
+    expect(view.startEnabled).toBe(true);
+    expect(view.runtimeStatus).toBe("RECOVERY_READY_FINAL_REVIEW");
+    expect(view.finalReviewRecovery).toEqual({
+      chapter: 4,
+      rescueCandidate: "PRESERVED",
+      rescueGeneration: "REUSED",
+      writerRegeneration: false,
+      normalRevisionRegeneration: false,
+      rescueRevisionRegeneration: false,
+      nextAction: "FINAL_RE_REVIEW",
+      additionalRevisionAllowed: false,
+    });
   });
 });

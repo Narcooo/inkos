@@ -12,6 +12,7 @@ export const ChapterStatusSchema = z.enum([
   "revising",
   "ready-for-review",
   "approved",
+  "accepted-with-findings",
   "rejected",
   "published",
   "imported",
@@ -45,7 +46,7 @@ export const ChapterMetaSchema = z.object({
     actualCostUsd: z.number().nonnegative().optional(),
   })).optional(),
   autonomousReview: z.object({
-    status: z.enum(["APPROVED", "HELD_AFTER_TWO_REVISIONS"]),
+    status: z.enum(["APPROVED", "ACCEPTED_WITH_FINDINGS", "BLOCKED_CRITICAL_FINDINGS", "HELD_AFTER_TWO_REVISIONS"]),
     grade: z.enum(["A", "B", "C", "D", "E"]),
     revisionCount: z.number().int().min(0).max(2),
   }).optional(),

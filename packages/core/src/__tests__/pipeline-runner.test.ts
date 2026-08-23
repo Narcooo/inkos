@@ -4895,7 +4895,7 @@ describe("PipelineRunner", () => {
     }
   }, SLOW_PIPELINE_TEST_TIMEOUT_MS);
 
-  it("stops after exactly two resume revisions and persists both review rounds", async () => {
+  it("makes the second revision the final review decision without a second commercial loop", async () => {
     const { root, runner, state, bookId } = await createRevisionGateFixture("always");
     const index = await state.loadChapterIndex(bookId);
     await state.saveChapterIndex(bookId, index.map((chapter) => ({
@@ -4923,13 +4923,197 @@ describe("PipelineRunner", () => {
       const result = await runner.resumeAuditFailedChapterBounded(bookId, 1);
       const saved = await state.loadChapterIndex(bookId);
       const evidence = JSON.parse(await readFile(join(state.bookDir(bookId), "story", "runtime", "bounded-autonomous", "chapter-0001", "resume-review.json"), "utf-8"));
-      expect(result).toMatchObject({ status: "held-after-two-revisions", revisionCount: 2, logicReviewCount: 2, commercialReviewCount: 2 });
+      expect(result).toMatchObject({ status: "approved", revisionCount: 2, logicReviewCount: 2, commercialReviewCount: 1 });
       expect(revisions).toHaveBeenCalledTimes(2);
       expect(logic).toHaveBeenCalledTimes(2);
-      expect(commercial).toHaveBeenCalledTimes(2);
-      expect(saved[0]?.status).toBe("audit-failed");
-      expect(evidence).toMatchObject({ status: "REVIEW_EXHAUSTED", revisionCount: 2 });
+      expect(commercial).toHaveBeenCalledTimes(1);
+      expect(saved[0]?.status).toBe("approved");
+      expect(evidence).toMatchObject({ status: "APPROVED", revisionCount: 2 });
       expect(evidence.reviewRounds).toHaveLength(2);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, SLOW_PIPELINE_TEST_TIMEOUT_MS);
+
+  it("applies the final rescue candidate and accepts only noncritical final findings", async () => {
+    const { root, runner, state, bookId } = await createRevisionGateFixture("strict");
+    const evidenceDir = join(state.bookDir(bookId), "story", "runtime", "bounded-autonomous", "chapter-0001");
+    await mkdir(evidenceDir, { recursive: true });
+    const roundOneFinding = {
+      severity: "warning" as const,
+      category: "pacing",
+      description: "Synthetic persisted soft finding.",
+      suggestion: "Tighten one transition.",
+      repairScope: "local" as const,
+    };
+    await writeFile(join(evidenceDir, "resume-review.json"), `${JSON.stringify({
+      schema_version: "1.0", chapter_number: 1, status: "RUNNING", revisionCount: 1,
+      logicReviewCount: 1, commercialReviewCount: 0, phase: "ROUND_COMPLETE",
+      baselineRoleUsage: {}, roleUsage: {},
+      reviewRounds: [{ round: 1, logic: { passed: false, findings: [roundOneFinding] }, commercial: null }],
+      currentFindings: [roundOneFinding], modelOutcomes: [],
+    }, null, 2)}\n`, "utf-8");
+    const finalSoftFinding = {
+      severity: "warning" as const,
+      category: "narrative_clarity",
+      description: "Synthetic final wording blemish.",
+      suggestion: "Defer the optional polish.",
+      repairScope: "local" as const,
+    };
+    const finalInformationalFinding = {
+      severity: "info" as const,
+      category: "canon_continuity",
+      description: "Synthetic informational continuity note.",
+      suggestion: "Carry the note into the rolling review.",
+      repairScope: "local" as const,
+    };
+    const revisions = vi.spyOn(ReviserAgent.prototype, "reviseChapter");
+    const logic = vi.spyOn(ContinuityAuditor.prototype, "auditChapter").mockResolvedValue(
+      createAuditResult({ passed: true, issues: [finalSoftFinding, finalInformationalFinding], summary: "safe with soft findings" }),
+    );
+    const commercial = vi.spyOn(CommercialReaderAgent.prototype, "reviewChapter");
+    const writerGeneration = vi.spyOn(WriterAgent.prototype, "writeChapter");
+
+    try {
+      const result = await runner.resumeAuditFailedChapterBounded(bookId, 1);
+      const saved = await state.loadChapterIndex(bookId);
+      const evidence = JSON.parse(await readFile(join(evidenceDir, "resume-review.json"), "utf-8"));
+      expect(result).toMatchObject({ status: "accepted-with-findings", revisionCount: 2, logicReviewCount: 2, commercialReviewCount: 0 });
+      expect(revisions).toHaveBeenCalledTimes(1);
+      expect(logic).toHaveBeenCalledTimes(1);
+      expect(commercial).not.toHaveBeenCalled();
+      expect(writerGeneration).not.toHaveBeenCalled();
+      expect(saved[0]?.status).toBe("accepted-with-findings");
+      expect(saved[0]?.auditIssues).toHaveLength(2);
+      expect(evidence).toMatchObject({ status: "ACCEPTED_WITH_FINDINGS", revisionCount: 2 });
+      expect(evidence.unresolvedFindings).toEqual([
+        expect.objectContaining({
+          chapter_number: 1,
+          audit_round: 2,
+          dimension: "narrative_clarity",
+          severity: "warning",
+          disposition: "DEFERRED_TO_ROLLING_OR_VOLUME_REVIEW",
+        }),
+        expect.objectContaining({
+          chapter_number: 1,
+          audit_round: 2,
+          dimension: "canon_continuity",
+          severity: "info",
+          disposition: "DEFERRED_TO_ROLLING_OR_VOLUME_REVIEW",
+        }),
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, SLOW_PIPELINE_TEST_TIMEOUT_MS);
+
+  it("blocks a critical final rescue finding without starting a third revision", async () => {
+    const { root, runner, state, bookId } = await createRevisionGateFixture("always");
+    const evidenceDir = join(state.bookDir(bookId), "story", "runtime", "bounded-autonomous", "chapter-0001");
+    await mkdir(evidenceDir, { recursive: true });
+    const roundOneFinding = {
+      severity: "warning" as const,
+      category: "pacing",
+      description: "Synthetic persisted finding.",
+      suggestion: "Repair it.",
+      repairScope: "local" as const,
+    };
+    await writeFile(join(evidenceDir, "resume-review.json"), `${JSON.stringify({
+      schema_version: "1.0", chapter_number: 1, status: "RUNNING", revisionCount: 1,
+      logicReviewCount: 1, commercialReviewCount: 0, phase: "ROUND_COMPLETE",
+      baselineRoleUsage: {}, roleUsage: {},
+      reviewRounds: [{ round: 1, logic: { passed: false, findings: [roundOneFinding] }, commercial: null }],
+      currentFindings: [roundOneFinding], modelOutcomes: [],
+    }, null, 2)}\n`, "utf-8");
+    const revisions = vi.spyOn(ReviserAgent.prototype, "reviseChapter");
+    vi.spyOn(ContinuityAuditor.prototype, "auditChapter").mockResolvedValue(
+      createAuditResult({
+        passed: false,
+        issues: [{
+          severity: "critical", category: "canon_continuity",
+          description: "Synthetic authority contradiction.", suggestion: "Do not continue.", repairScope: "structural",
+        }],
+        summary: "critical",
+      }),
+    );
+    const commercial = vi.spyOn(CommercialReaderAgent.prototype, "reviewChapter");
+
+    try {
+      const result = await runner.resumeAuditFailedChapterBounded(bookId, 1);
+      const evidence = JSON.parse(await readFile(join(evidenceDir, "resume-review.json"), "utf-8"));
+      expect(result).toMatchObject({ status: "blocked-critical-findings", revisionCount: 2 });
+      expect(revisions).toHaveBeenCalledTimes(1);
+      expect(commercial).not.toHaveBeenCalled();
+      expect(evidence).toMatchObject({ status: "BLOCKED_CRITICAL_FINDINGS", revisionCount: 2 });
+      expect(evidence.currentFindings).toEqual([
+        expect.objectContaining({ severity: "critical", category: "canon_continuity" }),
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, SLOW_PIPELINE_TEST_TIMEOUT_MS);
+
+  it("treats a structural final-review warning as a blocking major finding", async () => {
+    const { root, runner, state, bookId } = await createRevisionGateFixture("always");
+    const evidenceDir = join(state.bookDir(bookId), "story", "runtime", "bounded-autonomous", "chapter-0001");
+    await mkdir(evidenceDir, { recursive: true });
+    const finding = {
+      severity: "warning" as const, category: "causal_logic", description: "Synthetic structural warning.",
+      suggestion: "Do not inherit this state.", repairScope: "structural" as const,
+    };
+    await writeFile(join(evidenceDir, "resume-review.json"), `${JSON.stringify({
+      schema_version: "1.0", chapter_number: 1, status: "RUNNING", revisionCount: 1,
+      logicReviewCount: 1, commercialReviewCount: 0, phase: "ROUND_COMPLETE",
+      baselineRoleUsage: {}, roleUsage: {}, reviewRounds: [{ round: 1 }], currentFindings: [finding], modelOutcomes: [],
+    }, null, 2)}\n`, "utf-8");
+    vi.spyOn(ContinuityAuditor.prototype, "auditChapter").mockResolvedValue(
+      createAuditResult({ passed: true, issues: [finding], summary: "structured major" }),
+    );
+    const commercial = vi.spyOn(CommercialReaderAgent.prototype, "reviewChapter");
+    try {
+      const result = await runner.resumeAuditFailedChapterBounded(bookId, 1);
+      const evidence = JSON.parse(await readFile(join(evidenceDir, "resume-review.json"), "utf-8"));
+      expect(result.status).toBe("blocked-critical-findings");
+      expect(evidence).toMatchObject({ status: "BLOCKED_CRITICAL_FINDINGS" });
+      expect(evidence.currentFindings[0]).toMatchObject({ severity: "warning", repairScope: "structural" });
+      expect(commercial).not.toHaveBeenCalled();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, SLOW_PIPELINE_TEST_TIMEOUT_MS);
+
+  it("recovers legacy review exhaustion by replaying only the final bounded round", async () => {
+    const { root, runner, state, bookId } = await createRevisionGateFixture("strict");
+    const evidenceDir = join(state.bookDir(bookId), "story", "runtime", "bounded-autonomous", "chapter-0001");
+    await mkdir(evidenceDir, { recursive: true });
+    const roundOneFinding = {
+      severity: "warning" as const,
+      category: "pacing",
+      description: "Synthetic round-one finding.",
+      suggestion: "Repair it.",
+      repairScope: "local" as const,
+    };
+    await writeFile(join(evidenceDir, "resume-review.json"), `${JSON.stringify({
+      schema_version: "1.0", chapter_number: 1, status: "REVIEW_EXHAUSTED", revisionCount: 2,
+      logicReviewCount: 2, commercialReviewCount: 0, phase: "ROUND_COMPLETE",
+      baselineRoleUsage: {}, roleUsage: {},
+      reviewRounds: [
+        { round: 1, logic: { passed: false, findings: [roundOneFinding] }, commercial: null },
+        { round: 2, logic: { passed: false, findings: [{ ...roundOneFinding, category: "legacy-misclassified-final" }] }, commercial: null },
+      ],
+      currentFindings: [{ ...roundOneFinding, category: "legacy-misclassified-final" }], modelOutcomes: [],
+    }, null, 2)}\n`, "utf-8");
+    const revisions = vi.spyOn(ReviserAgent.prototype, "reviseChapter");
+    vi.spyOn(ContinuityAuditor.prototype, "auditChapter").mockResolvedValue(
+      createAuditResult({ passed: true, issues: [], summary: "final pass" }),
+    );
+    const commercial = vi.spyOn(CommercialReaderAgent.prototype, "reviewChapter");
+
+    try {
+      const result = await runner.resumeAuditFailedChapterBounded(bookId, 1);
+      expect(result).toMatchObject({ status: "approved", revisionCount: 2, logicReviewCount: 2, commercialReviewCount: 0 });
+      expect(revisions).not.toHaveBeenCalled();
+      expect(commercial).not.toHaveBeenCalled();
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -4958,10 +5142,10 @@ describe("PipelineRunner", () => {
     });
     try {
       const result = await runner.resumeAuditFailedChapterBounded(bookId, 1);
-      expect(result).toMatchObject({ status: "held-after-two-revisions", revisionCount: 2, logicReviewCount: 2, commercialReviewCount: 2 });
+      expect(result).toMatchObject({ status: "approved", revisionCount: 2, logicReviewCount: 2, commercialReviewCount: 1 });
       expect(revisions).toHaveBeenCalledTimes(1);
       expect(logic).toHaveBeenCalledTimes(1);
-      expect(commercial).toHaveBeenCalledTimes(1);
+      expect(commercial).not.toHaveBeenCalled();
     } finally {
       await rm(root, { recursive: true, force: true });
     }

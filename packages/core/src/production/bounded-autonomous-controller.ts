@@ -22,6 +22,7 @@ export type AutonomousRunStatus =
   | "PAUSED_PROVIDER_UNAVAILABLE"
   | "PAUSED_AMBIGUOUS_PROVIDER_OUTCOME"
   | "PAUSED_DETERMINISTIC_PROVIDER_ERROR"
+  | "BLOCKED_CRITICAL_FINDINGS"
   | "REVIEW_EXHAUSTED"
   | "HELD_AFTER_TWO_REVISIONS";
 
@@ -880,6 +881,11 @@ export async function runBoundedAutonomousScope(params: {
       await params.persistProgress(held);
       return held;
     }
+    if (resumed.status === "blocked-critical-findings") {
+      const blocked = project("BLOCKED_CRITICAL_FINDINGS", initialNext, "FINAL_REVIEW_CRITICAL_FINDINGS");
+      await params.persistProgress(blocked);
+      return blocked;
+    }
     await params.persistProgress(project("RUNNING", initialNext));
   }
   while (true) {
@@ -908,6 +914,12 @@ export async function runBoundedAutonomousScope(params: {
       const held = project("HELD_AFTER_TWO_REVISIONS", heldNext, "REVISION_LIMIT_REACHED");
       await params.persistProgress(held);
       return held;
+    }
+    if (result.status === "blocked-critical-findings") {
+      const blockedNext = await params.getNextChapter();
+      const blocked = project("BLOCKED_CRITICAL_FINDINGS", blockedNext, "FINAL_REVIEW_CRITICAL_FINDINGS");
+      await params.persistProgress(blocked);
+      return blocked;
     }
     completedThisRun += 1;
     const committedNext = await params.getNextChapter();

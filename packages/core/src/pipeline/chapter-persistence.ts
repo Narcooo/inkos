@@ -10,7 +10,7 @@ export interface ChapterPersistenceUsage {
   readonly actualCostUsd?: number;
 }
 
-export type ChapterPersistenceStatus = "ready-for-review" | "audit-failed" | "state-degraded";
+export type ChapterPersistenceStatus = "ready-for-review" | "accepted-with-findings" | "audit-failed" | "state-degraded";
 
 export async function persistChapterArtifacts(params: {
   readonly chapterNumber: number;
@@ -24,7 +24,7 @@ export async function persistChapterArtifacts(params: {
   readonly tokenUsage?: ChapterPersistenceUsage;
   readonly roleUsage?: Readonly<Record<string, ChapterPersistenceUsage>>;
   readonly autonomousReview?: {
-    readonly status: "APPROVED" | "HELD_AFTER_TWO_REVISIONS";
+    readonly status: "APPROVED" | "ACCEPTED_WITH_FINDINGS" | "BLOCKED_CRITICAL_FINDINGS" | "HELD_AFTER_TWO_REVISIONS";
     readonly grade: "A" | "B" | "C" | "D" | "E";
     readonly revisionCount: number;
   };
