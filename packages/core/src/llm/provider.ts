@@ -712,6 +712,8 @@ function isTransientLLMTransportError(error: unknown): boolean {
     "socket hang up",
     "other side closed",
     "network socket disconnected",
+    "aborted",
+    "The operation was aborted",
   ].some((needle) => text.includes(needle));
 }
 
