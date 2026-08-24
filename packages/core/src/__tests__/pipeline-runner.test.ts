@@ -5091,6 +5091,45 @@ describe("PipelineRunner", () => {
     }
   }, SLOW_PIPELINE_TEST_TIMEOUT_MS);
 
+  it("fails closed through the resume final-review path when passed=true but causal_logic is 79", async () => {
+    const { root, runner, state, bookId } = await createRevisionGateFixture("always");
+    const evidenceDir = join(state.bookDir(bookId), "story", "runtime", "bounded-autonomous", "chapter-0001");
+    await mkdir(evidenceDir, { recursive: true });
+    const finding = {
+      severity: "warning" as const, category: "causal_logic", description: "Synthetic causal gap.",
+      suggestion: "Repair the causal chain.", repairScope: "structural" as const,
+    };
+    await writeFile(join(evidenceDir, "resume-review.json"), `${JSON.stringify({
+      schema_version: "1.0", chapter_number: 1, status: "RUNNING", revisionCount: 1,
+      logicReviewCount: 1, commercialReviewCount: 0, phase: "ROUND_COMPLETE",
+      baselineRoleUsage: {}, roleUsage: {}, reviewRounds: [{ round: 1 }], currentFindings: [finding], modelOutcomes: [],
+    }, null, 2)}\n`, "utf-8");
+    vi.spyOn(ContinuityAuditor.prototype, "auditChapter").mockResolvedValue(
+      createAuditResult({
+        passed: true,
+        overallScore: 92,
+        dimensionScores: {
+          blueprint_transition: 95, causal_logic: 79, canon_continuity: 92,
+          character_motivation: 95, state_inheritance: 95, hooks_disclosure: 95, narrative_clarity: 93,
+        },
+        issues: [finding],
+        summary: "contradictory pass with a failed hard dimension",
+      }),
+    );
+    const commercial = vi.spyOn(CommercialReaderAgent.prototype, "reviewChapter");
+    try {
+      const result = await runner.resumeAuditFailedChapterBounded(bookId, 1);
+      const saved = await state.loadChapterIndex(bookId);
+      const evidence = JSON.parse(await readFile(join(evidenceDir, "resume-review.json"), "utf-8"));
+      expect(result.status).toBe("review-decision-contradictory");
+      expect(saved[0]?.status).toBe("audit-failed");
+      expect(evidence).toMatchObject({ status: "REVIEW_DECISION_CONTRADICTORY" });
+      expect(commercial).not.toHaveBeenCalled();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, SLOW_PIPELINE_TEST_TIMEOUT_MS);
+
   it("recovers legacy review exhaustion by replaying only the final bounded round", async () => {
     const { root, runner, state, bookId } = await createRevisionGateFixture("strict");
     const evidenceDir = join(state.bookDir(bookId), "story", "runtime", "bounded-autonomous", "chapter-0001");

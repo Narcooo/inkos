@@ -92,6 +92,9 @@ describe("bounded autonomous chapter review", () => {
     expect(classifyFinalAuditDecision({
       passed: false, overallScore: 88, dimensionScores: { ...dimensions, causal_logic: 79 }, issues: [], summary: "hard fail",
     })).toBe("BLOCKED_CRITICAL_FINDINGS");
+    expect(classifyFinalAuditDecision({
+      passed: true, overallScore: 92, dimensionScores: { ...dimensions, structural_integrity: 79 }, issues: [], summary: "contradictory structural pass",
+    })).toBe("REVIEW_DECISION_CONTRADICTORY");
   });
 
   it("accepts A/B candidates without revision", async () => {

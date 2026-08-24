@@ -45,14 +45,16 @@ export async function verifyOfflineFinalizationEvidence(params: {
     for (const id of [...new Set((evidence.modelOutcomes ?? []).map((entry) => entry.modelCallId).filter((value): value is string => /^provider-step-[a-f0-9]{64}$/u.test(value ?? "")))]) {
       const raw = await readFile(join(bookDir, "story", "runtime", "bounded-autonomous", "provider-responses", `${id}.json`));
       const artifact = JSON.parse(raw.toString("utf-8")) as {
-        job_id?: string; logical_step_id?: string; chapter_number?: number; response_artifact_status?: string;
+        job_id?: string; logical_step_id?: string; usage_identity?: string; chapter_number?: number; role?: string; stage?: string; response_artifact_status?: string;
         content_sha256?: string; response?: { readonly content?: string };
       };
       const content = artifact.response?.content;
-      if (artifact.job_id !== params.runtime.jobId || artifact.logical_step_id !== id
+      if (artifact.job_id !== params.runtime.jobId || artifact.logical_step_id !== id || artifact.usage_identity !== id
         || artifact.chapter_number !== params.nextChapter || artifact.response_artifact_status !== "COMPLETE"
         || typeof content !== "string" || createHash("sha256").update(content, "utf-8").digest("hex") !== artifact.content_sha256) continue;
-      if (/=== REVISED_CONTENT ===\s*[\s\S]+/u.test(content)) rescueFound = true;
+      if (artifact.role === "reviser" && artifact.stage === "RESCUE_REVISING_2"
+        && /=== REVISED_CONTENT ===\s*[\s\S]+/u.test(content)) rescueFound = true;
+      if (artifact.role !== "logicAuditor" || artifact.stage !== "LOGIC_REVIEW") continue;
       try {
         const audit = JSON.parse(content) as {
           passed: boolean; overall_score?: number; dimension_scores?: Readonly<Record<string, number>>;

@@ -36,15 +36,15 @@ describe("autonomous production Studio projection", () => {
     await mkdir(evidenceDir, { recursive: true });
     const dimensions = { blueprint_transition: 95, causal_logic: 90, canon_continuity: 92, character_motivation: 95, state_inheritance: 95, hooks_disclosure: 95, narrative_clarity: 93 };
     const responses = [
-      ["provider-step-" + "a".repeat(64), "=== REVISED_CONTENT ===\nSynthetic Chapter 004 rescue."],
-      ["provider-step-" + "b".repeat(64), JSON.stringify({ passed: true, overall_score: 92, dimension_scores: dimensions, issues: [{ severity: "warning", category: "causal_logic", description: "synthetic", suggestion: "defer", repair_scope: "structural" }], summary: "pass" })],
+      ["provider-step-" + "a".repeat(64), "reviser", "RESCUE_REVISING_2", "=== REVISED_CONTENT ===\nSynthetic Chapter 004 rescue."],
+      ["provider-step-" + "b".repeat(64), "logicAuditor", "LOGIC_REVIEW", JSON.stringify({ passed: true, overall_score: 92, dimension_scores: dimensions, issues: [{ severity: "warning", category: "causal_logic", description: "synthetic", suggestion: "defer", repair_scope: "structural" }], summary: "pass" })],
     ] as const;
     try {
       await writeFile(join(evidenceDir, "resume-review.json"), JSON.stringify({ chapter_number: 4, status: "REVIEW_EXHAUSTED", modelOutcomes: responses.map(([modelCallId]) => ({ modelCallId })) }));
-      for (const [id, content] of responses) {
+      for (const [id, role, stage, content] of responses) {
         await writeFile(join(responseDir, `${id}.json`), JSON.stringify({
           schema_version: "1.0", job_id: "job", logical_step_id: id, usage_identity: id,
-          chapter_number: 5, role: "synthetic", stage: "RESCUE_REVISING_2", provider: "openrouter", requested_model: "model",
+          chapter_number: 5, role, stage, provider: "openrouter", requested_model: "model",
           input_fingerprint: "c".repeat(64), response_artifact_status: "COMPLETE",
           content_sha256: createHash("sha256").update(content).digest("hex"), response: { content }, completed_at: "now",
         }));
@@ -55,6 +55,53 @@ describe("autonomous production Studio projection", () => {
       })).resolves.toBe(true);
     } finally {
       await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects offline finalization evidence when a referenced rescue has the wrong role or stage", async () => {
+    const dimensions = { blueprint_transition: 95, causal_logic: 90, canon_continuity: 92, character_motivation: 95, state_inheritance: 95, hooks_disclosure: 95, narrative_clarity: 93 };
+    for (const [index, identity] of [
+      { role: "auditor", stage: "RESCUE_REVISING_2" },
+      { role: "reviser", stage: "LOGIC_REVIEW" },
+    ].entries()) {
+      const root = await mkdtemp(join(tmpdir(), `inkos-offline-finalization-wrong-identity-${index}-`));
+      const bookDir = join(root, "books", "book");
+      const responseDir = join(bookDir, "story", "runtime", "bounded-autonomous", "provider-responses");
+      const evidenceDir = join(bookDir, "story", "runtime", "bounded-autonomous", "chapter-0004");
+      const rescueId = "provider-step-" + String(index + 1).repeat(64);
+      const finalId = "provider-step-" + String(index + 3).repeat(64);
+      const rescueContent = "=== REVISED_CONTENT ===\nSynthetic Chapter 004 rescue.";
+      const finalContent = JSON.stringify({
+        passed: true,
+        overall_score: 92,
+        dimension_scores: dimensions,
+        issues: [{ severity: "warning", category: "causal_logic", description: "synthetic", suggestion: "track", repair_scope: "structural" }],
+        summary: "pass",
+      });
+      try {
+        await mkdir(responseDir, { recursive: true });
+        await mkdir(evidenceDir, { recursive: true });
+        await writeFile(join(evidenceDir, "resume-review.json"), JSON.stringify({
+          chapter_number: 4, status: "REVIEW_EXHAUSTED", modelOutcomes: [{ modelCallId: rescueId }, { modelCallId: finalId }],
+        }));
+        for (const artifact of [
+          { id: rescueId, role: identity.role, stage: identity.stage, content: rescueContent },
+          { id: finalId, role: "logicAuditor", stage: "LOGIC_REVIEW", content: finalContent },
+        ]) {
+          await writeFile(join(responseDir, `${artifact.id}.json`), JSON.stringify({
+            schema_version: "1.0", job_id: "job", logical_step_id: artifact.id, usage_identity: artifact.id,
+            chapter_number: 5, role: artifact.role, stage: artifact.stage, provider: "openrouter", requested_model: "model",
+            input_fingerprint: "c".repeat(64), response_artifact_status: "COMPLETE",
+            content_sha256: createHash("sha256").update(artifact.content).digest("hex"), response: { content: artifact.content }, completed_at: "now",
+          }));
+        }
+        await expect(verifyOfflineFinalizationEvidence({
+          projectRoot: root, bookId: "book", pendingChapter: 4, nextChapter: 5,
+          runtime: { jobId: "job", status: "REVIEW_EXHAUSTED", mode: "current-volume", nextChapter: 5, updatedAt: "now" },
+        })).resolves.toBe(false);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
     }
   });
   it("derives current volume and budget without hard-coded chapter boundaries", () => {

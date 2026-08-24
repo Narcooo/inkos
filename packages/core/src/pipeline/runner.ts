@@ -362,6 +362,8 @@ export interface ReviseResult {
   readonly applied: boolean;
   readonly status: "unchanged" | "ready-for-review" | "audit-failed";
   readonly auditPassed?: boolean;
+  readonly auditOverallScore?: number;
+  readonly auditDimensionScores?: Readonly<Record<string, number>>;
   readonly auditIssues?: ReadonlyArray<{
     readonly severity: AuditIssue["severity"];
     readonly category: string;
@@ -1727,6 +1729,8 @@ export class PipelineRunner {
           status: "unchanged",
           skippedReason: `Manual revision kept original chapter: before blocking=${preRevision.blockingCount}, critical=${preRevision.criticalCount}, aiTell=${preRevision.aiTellCount}; after blocking=${effectivePostRevision.blockingCount}, critical=${effectivePostRevision.criticalCount}, aiTell=${effectivePostRevision.aiTellCount}.`,
           auditPassed: effectivePostRevision.auditResult.passed,
+          auditOverallScore: effectivePostRevision.auditResult.overallScore,
+          auditDimensionScores: effectivePostRevision.auditResult.dimensionScores,
           auditIssues: remainingIssues,
           revisionDiagnostics,
         };
@@ -1833,6 +1837,8 @@ export class PipelineRunner {
         applied: true,
         status: effectivePostRevision.auditResult.passed ? "ready-for-review" : "audit-failed",
         auditPassed: effectivePostRevision.auditResult.passed,
+        auditOverallScore: effectivePostRevision.auditResult.overallScore,
+        auditDimensionScores: effectivePostRevision.auditResult.dimensionScores,
         auditIssues: remainingIssues,
         revisionDiagnostics,
         lengthWarnings,
@@ -2078,19 +2084,24 @@ export class PipelineRunner {
           }));
           reviewRounds.push({ round, logic: { passed: revised.auditPassed === true, findings }, commercial: null, finalDecision: true });
           phase = "ROUND_COMPLETE";
-          const hasExplicitBlocking = findings.some((finding) => finding.blocking === true
-            || finding.severity === "critical" || finding.explicitSeverity === "MAJOR" || finding.explicitSeverity === "CRITICAL");
-          if (revised.auditPassed === true && hasExplicitBlocking) {
+          const finalDecision = classifyFinalAuditDecision({
+            passed: revised.auditPassed === true,
+            overallScore: revised.auditOverallScore,
+            dimensionScores: revised.auditDimensionScores,
+            issues: findings,
+            summary: "Final bounded revision audit.",
+          });
+          if (finalDecision === "REVIEW_DECISION_CONTRADICTORY") {
             await syncChapter("audit-failed");
             await persist("REVIEW_DECISION_CONTRADICTORY");
             return { chapterNumber, status: "review-decision-contradictory", revisionCount: 2, logicReviewCount, commercialReviewCount, roleUsage };
           }
-          if (!revised.applied || revised.auditPassed !== true || hasExplicitBlocking) {
+          if (!revised.applied || finalDecision === "BLOCKED_CRITICAL_FINDINGS") {
             await syncChapter("audit-failed");
             await persist("BLOCKED_CRITICAL_FINDINGS");
             return { chapterNumber, status: "blocked-critical-findings", revisionCount: 2, logicReviewCount, commercialReviewCount, roleUsage };
           }
-          if (findings.length === 0) {
+          if (finalDecision === "APPROVED") {
             await syncChapter("approved");
             await persist("APPROVED");
             return { chapterNumber, status: "approved", revisionCount: 2, logicReviewCount, commercialReviewCount, roleUsage };
@@ -4503,6 +4514,8 @@ ${matrix}`,
     return {
       auditResult: {
         passed: hasBlockedWords ? false : llmAudit.passed,
+        overallScore: llmAudit.overallScore,
+        dimensionScores: llmAudit.dimensionScores,
         issues,
         summary: llmAudit.summary,
         tokenUsage: llmAudit.tokenUsage,
