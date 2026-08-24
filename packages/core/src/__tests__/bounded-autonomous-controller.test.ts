@@ -489,6 +489,53 @@ describe("bounded autonomous production controller", () => {
     }
   });
 
+  it("does not replay or bind an unreferenced next-cursor artifact through runProviderCall", async () => {
+    const root = await mkdtemp(join(tmpdir(), "inkos-autonomous-unreferenced-runtime-replay-"));
+    try {
+      const runtimeDir = join(root, "books", "book", "story", "runtime", "bounded-autonomous");
+      const responseDir = join(runtimeDir, "provider-responses");
+      const evidenceDir = join(runtimeDir, "chapter-0004");
+      await mkdir(responseDir, { recursive: true });
+      await mkdir(evidenceDir, { recursive: true });
+      await writeFile(join(runtimeDir, "production-state.json"), JSON.stringify({
+        jobId: "job", status: "REVIEW_EXHAUSTED", mode: "current-volume", volumeId: "volume-002",
+        startChapter: 4, targetChapter: 6, nextChapter: 5, chapterNumber: 5, completedThisRun: 0,
+        responseArtifactStatus: "COMPLETE",
+      }), "utf-8");
+      await writeFile(join(evidenceDir, "resume-review.json"), JSON.stringify({
+        schema_version: "1.0", chapter_number: 4, status: "REVIEW_EXHAUSTED", modelOutcomes: [],
+      }), "utf-8");
+      const stages = { stage: "RESCUE_REVISING_2", role: "reviser", provider: "openrouter", model: "provider/model", revisionRound: 2 } as const;
+      const execution = createAutonomousProviderExecution({ projectRoot: root, bookId: "book", jobId: "job", getActiveStage: () => stages });
+      const fingerprint = "e".repeat(64);
+      const legacyPath = execution.responseArtifactPath(fingerprint, "openrouter", "provider/model", 5);
+      const legacyLogicalStepId = legacyPath.split(/[\\\\/]/).at(-1)!.replace(/\.json$/, "");
+      const legacyContent = "=== REVISED_CONTENT ===\nUnreferenced next-cursor artifact.";
+      const { createHash } = await import("node:crypto");
+      await writeFile(legacyPath, `${JSON.stringify({
+        schema_version: "1.0", job_id: "job", logical_step_id: legacyLogicalStepId,
+        usage_identity: legacyLogicalStepId, chapter_number: 5, role: "reviser", stage: "RESCUE_REVISING_2",
+        provider: "openrouter", requested_model: "provider/model", input_fingerprint: fingerprint,
+        response_artifact_status: "COMPLETE", content_sha256: createHash("sha256").update(legacyContent).digest("hex"),
+        response: { content: legacyContent }, completed_at: "2026-08-23T00:00:00.000Z",
+      }, null, 2)}\n`, "utf-8");
+      const freshResponse = { content: "fresh transport result", usage: { promptTokens: 2, completionTokens: 1, totalTokens: 3 } };
+      let transportCalls = 0;
+
+      const result = await execution.runProviderCall(4, async () => {
+        transportCalls += 1;
+        return freshResponse;
+      }, { provider: "openrouter", model: "provider/model", inputFingerprint: fingerprint });
+
+      expect(result).toEqual(freshResponse);
+      expect(transportCalls).toBe(1);
+      await expect(readFile(execution.responseArtifactBindingPath(fingerprint, "openrouter", "provider/model", 4)))
+        .rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("corrected-binds a legacy next-cursor artifact to the pending chapter without copying its response", async () => {
     const root = await mkdtemp(join(tmpdir(), "inkos-autonomous-corrected-binding-"));
     try {

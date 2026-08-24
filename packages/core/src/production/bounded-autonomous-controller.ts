@@ -728,17 +728,6 @@ export function createAutonomousProviderExecution(params: {
     }
     return { artifact, bytes };
   };
-  const writeCorrectedBinding = async (binding: CorrectedProviderArtifactBinding, path: string): Promise<void> => {
-    await mkdir(dirname(path), { recursive: true });
-    const temp = `${path}.${process.pid}.${randomUUID()}.tmp`;
-    await writeFile(temp, `${JSON.stringify(binding, null, 2)}\n`, "utf-8");
-    try {
-      await rename(temp, path);
-    } catch (error) {
-      await unlink(temp).catch(() => undefined);
-      throw error;
-    }
-  };
   const readArtifact = async (identity: LLMCallExecutionIdentity): Promise<LLMResponse | undefined> => {
     const direct = await readArtifactFile(artifactPathForIdentity(identity), identity, activeChapter, identity.logicalStepId);
     if (direct) {
@@ -751,7 +740,6 @@ export function createAutonomousProviderExecution(params: {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new Error("AUTONOMOUS_PROVIDER_RESPONSE_BINDING_INVALID", { cause: error });
     }
-    const persisted = await loadAutonomousProductionState<AutonomousRunProgress>(params.projectRoot, params.bookId);
     const sourceChapter = activeChapter + 1;
     const stage = params.getActiveStage();
     const sourceLogicalStepId = logicalProviderStepId({
@@ -762,31 +750,6 @@ export function createAutonomousProviderExecution(params: {
       model: identity.model,
       inputFingerprint: identity.inputFingerprint,
     });
-    if (!binding && persisted?.jobId === params.jobId && persisted.status === "REVIEW_EXHAUSTED"
-      && persisted.nextChapter === sourceChapter && persisted.chapterNumber === sourceChapter
-      && persisted.responseArtifactStatus === "COMPLETE") {
-      const source = await readArtifactFile(
-        join(providerResponseArtifactDir(params.projectRoot, params.bookId), `${sourceLogicalStepId}.json`),
-        identity,
-        sourceChapter,
-        sourceLogicalStepId,
-      );
-      if (source) {
-        binding = {
-          schema_version: "1.0",
-          binding_type: "CORRECTED_PENDING_CHAPTER_REFERENCE",
-          job_id: params.jobId,
-          logical_step_id: identity.logicalStepId,
-          chapter_number: activeChapter,
-          source_chapter_number: sourceChapter,
-          source_logical_step_id: sourceLogicalStepId,
-          source_artifact_sha256: createHash("sha256").update(source.bytes).digest("hex"),
-          source_content_sha256: source.artifact.content_sha256,
-          created_at: new Date(params.now?.() ?? Date.now()).toISOString(),
-        };
-        await writeCorrectedBinding(binding, bindingPath);
-      }
-    }
     if (!binding) return undefined;
     if (binding.schema_version !== "1.0" || binding.binding_type !== "CORRECTED_PENDING_CHAPTER_REFERENCE"
       || binding.job_id !== params.jobId || binding.logical_step_id !== identity.logicalStepId
