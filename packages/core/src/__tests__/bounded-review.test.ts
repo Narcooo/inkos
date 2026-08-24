@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { runBoundedReviewCycle, scoredLogicReviewFromAudit, type ScoredReview } from "../pipeline/bounded-review.js";
+import { classifyFinalAuditDecision, runBoundedReviewCycle, scoredLogicReviewFromAudit, type ScoredReview } from "../pipeline/bounded-review.js";
 
 function review(role: "logic-canon-auditor" | "commercial-reader", score: number, severity?: "CRITICAL" | "MAJOR" | "MINOR" | "NOTE"): ScoredReview {
   return {
@@ -17,7 +17,7 @@ function review(role: "logic-canon-auditor" | "commercial-reader", score: number
 }
 
 describe("bounded autonomous chapter review", () => {
-  it("requires all seven logic dimensions and maps structural warnings to MAJOR", () => {
+  it("requires all seven logic dimensions without promoting a structural warning to MAJOR", () => {
     const valid = scoredLogicReviewFromAudit({
       passed: false,
       overallScore: 10,
@@ -34,7 +34,7 @@ describe("bounded autonomous chapter review", () => {
       summary: "review",
     }, { candidateSha: "sha", provider: "deepseek", model: "deepseek-chat" });
     expect(valid.totalScore).toBe(82);
-    expect(valid.findings[0]?.severity).toBe("MAJOR");
+    expect(valid.findings[0]?.severity).toBe("MINOR");
     const incomplete = scoredLogicReviewFromAudit({
       passed: true,
       overallScore: 95,
@@ -43,6 +43,55 @@ describe("bounded autonomous chapter review", () => {
       summary: "incomplete",
     }, { candidateSha: "sha", provider: "deepseek", model: "deepseek-chat" });
     expect(incomplete.decision).toBe("INVALID_OUTPUT");
+  });
+
+  it("accepts a passed final review with score 92 and only nonblocking warning/info findings", () => {
+    const result = classifyFinalAuditDecision({
+      passed: true,
+      overallScore: 92,
+      dimensionScores: {
+        blueprint_transition: 95,
+        causal_logic: 90,
+        canon_continuity: 92,
+        character_motivation: 95,
+        state_inheritance: 95,
+        hooks_disclosure: 95,
+        narrative_clarity: 93,
+      },
+      issues: [
+        { severity: "warning", category: "causal_logic", description: "synthetic", suggestion: "defer", repairScope: "structural" },
+        { severity: "info", category: "canon_continuity", description: "synthetic", suggestion: "track", repairScope: "local" },
+      ],
+      summary: "passed with findings",
+    });
+    expect(result).toBe("ACCEPTED_WITH_FINDINGS");
+  });
+
+  it("distinguishes explicit blockers, contradictory passes, and hard-dimension failures", () => {
+    const dimensions = {
+      blueprint_transition: 95,
+      causal_logic: 90,
+      canon_continuity: 92,
+      character_motivation: 95,
+      state_inheritance: 95,
+      hooks_disclosure: 95,
+      narrative_clarity: 93,
+    };
+    expect(classifyFinalAuditDecision({
+      passed: false, overallScore: 70, dimensionScores: dimensions,
+      issues: [{ severity: "warning", explicitSeverity: "MAJOR", category: "logic", description: "synthetic", suggestion: "fix" }], summary: "fail",
+    })).toBe("BLOCKED_CRITICAL_FINDINGS");
+    expect(classifyFinalAuditDecision({
+      passed: false, overallScore: 70, dimensionScores: dimensions,
+      issues: [{ severity: "warning", blocking: true, category: "logic", description: "synthetic", suggestion: "fix" }], summary: "fail",
+    })).toBe("BLOCKED_CRITICAL_FINDINGS");
+    expect(classifyFinalAuditDecision({
+      passed: true, overallScore: 92, dimensionScores: dimensions,
+      issues: [{ severity: "warning", blocking: true, category: "logic", description: "synthetic", suggestion: "fix" }], summary: "contradiction",
+    })).toBe("REVIEW_DECISION_CONTRADICTORY");
+    expect(classifyFinalAuditDecision({
+      passed: false, overallScore: 88, dimensionScores: { ...dimensions, causal_logic: 79 }, issues: [], summary: "hard fail",
+    })).toBe("BLOCKED_CRITICAL_FINDINGS");
   });
 
   it("accepts A/B candidates without revision", async () => {

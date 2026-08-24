@@ -58,6 +58,7 @@ import {
 import { persistChapterArtifacts } from "./chapter-persistence.js";
 import { runChapterReviewCycle } from "./chapter-review-cycle.js";
 import {
+  classifyFinalAuditDecision,
   runBoundedReviewCycle,
   scoredLogicReviewFromAudit,
   type BoundedReviewResult,
@@ -367,6 +368,8 @@ export interface ReviseResult {
     readonly description: string;
     readonly suggestion?: string;
     readonly repairScope?: AuditIssue["repairScope"];
+    readonly blocking?: boolean;
+    readonly explicitSeverity?: AuditIssue["explicitSeverity"];
   }>;
   readonly skippedReason?: string;
   readonly revisionDiagnostics?: {
@@ -395,7 +398,7 @@ export interface ReviseResult {
 
 export interface ResumeAuditFailedChapterResult {
   readonly chapterNumber: number;
-  readonly status: "approved" | "accepted-with-findings" | "blocked-critical-findings" | "held-after-two-revisions";
+  readonly status: "approved" | "accepted-with-findings" | "blocked-critical-findings" | "review-decision-contradictory" | "held-after-two-revisions";
   readonly revisionCount: 1 | 2;
   readonly logicReviewCount: number;
   readonly commercialReviewCount: number;
@@ -403,7 +406,7 @@ export interface ResumeAuditFailedChapterResult {
 }
 
 interface AutonomousResumeEvidence {
-  readonly status: "RUNNING" | "APPROVED" | "ACCEPTED_WITH_FINDINGS" | "BLOCKED_CRITICAL_FINDINGS" | "REVIEW_EXHAUSTED";
+  readonly status: "RUNNING" | "APPROVED" | "ACCEPTED_WITH_FINDINGS" | "BLOCKED_CRITICAL_FINDINGS" | "REVIEW_DECISION_CONTRADICTORY" | "REVIEW_EXHAUSTED";
   readonly revisionCount: number;
   readonly logicReviewCount: number;
   readonly commercialReviewCount: number;
@@ -1697,6 +1700,8 @@ export class PipelineRunner {
           description: issue.description,
           ...(issue.suggestion ? { suggestion: issue.suggestion } : {}),
           ...(issue.repairScope ? { repairScope: issue.repairScope } : {}),
+          ...(issue.blocking !== undefined ? { blocking: issue.blocking } : {}),
+          ...(issue.explicitSeverity ? { explicitSeverity: issue.explicitSeverity } : {}),
         }));
       const revisionDiagnostics = {
         standard: REVISION_GATE_STANDARDS[revisionGate],
@@ -1865,6 +1870,9 @@ export class PipelineRunner {
     if (saved?.status === "BLOCKED_CRITICAL_FINDINGS") {
       return { chapterNumber, status: "blocked-critical-findings", revisionCount: 2, logicReviewCount: saved.logicReviewCount, commercialReviewCount: saved.commercialReviewCount, roleUsage: saved.roleUsage ?? {} };
     }
+    if (saved?.status === "REVIEW_DECISION_CONTRADICTORY") {
+      return { chapterNumber, status: "review-decision-contradictory", revisionCount: 2, logicReviewCount: saved.logicReviewCount, commercialReviewCount: saved.commercialReviewCount, roleUsage: saved.roleUsage ?? {} };
+    }
     if (saved?.inFlightStage && saved.inFlightStage !== options.safeReplayStage) {
       throw new Error(`AUTONOMOUS_STAGE_OUTCOME_UNKNOWN:${saved.inFlightStage}`);
     }
@@ -1978,24 +1986,30 @@ export class PipelineRunner {
         description: issue.description,
         suggestion: issue.suggestion ?? "Resolve the persisted review finding.",
         ...(issue.repairScope ? { repairScope: issue.repairScope } : {}),
+        ...(issue.blocking !== undefined ? { blocking: issue.blocking } : {}),
+        ...(issue.explicitSeverity ? { explicitSeverity: issue.explicitSeverity } : {}),
       }));
       reviewRounds.push({ round: 2, logic: { passed: finalReview.auditResult.passed, findings }, commercial: null, finalDecision: true });
       phase = "ROUND_COMPLETE";
-      const hasBlocking = findings.some((finding) => finding.severity === "critical"
-        || (finding.severity === "warning" && finding.repairScope === "structural"));
-      if (hasBlocking) {
+      const finalDecision = classifyFinalAuditDecision(finalReview.auditResult);
+      if (finalDecision === "REVIEW_DECISION_CONTRADICTORY") {
+        await syncChapter("audit-failed");
+        await persist("REVIEW_DECISION_CONTRADICTORY");
+        return { chapterNumber, status: "review-decision-contradictory", revisionCount: 2, logicReviewCount, commercialReviewCount, roleUsage };
+      }
+      if (finalDecision === "BLOCKED_CRITICAL_FINDINGS") {
         await syncChapter("audit-failed");
         await persist("BLOCKED_CRITICAL_FINDINGS");
         return { chapterNumber, status: "blocked-critical-findings", revisionCount: 2, logicReviewCount, commercialReviewCount, roleUsage };
       }
-      if (findings.length === 0) {
+      if (finalDecision === "APPROVED") {
         await syncChapter("approved");
         await persist("APPROVED");
         return { chapterNumber, status: "approved", revisionCount: 2, logicReviewCount, commercialReviewCount, roleUsage };
       }
       const candidateVersion = createHash("sha256").update(content, "utf-8").digest("hex");
       unresolvedFindings = findings
-        .filter((finding): finding is AuditIssue & { severity: "warning" | "info" } => finding.severity !== "critical")
+        .filter((finding): finding is AuditIssue & { severity: "warning" | "info" } => finding.severity === "warning" || finding.severity === "info")
         .map((finding, index) => ({
         finding_id: `chapter-${String(chapterNumber).padStart(4, "0")}-final-${String(index + 1).padStart(2, "0")}`,
         book_id: bookId,
@@ -2049,6 +2063,8 @@ export class PipelineRunner {
           description: issue.description,
           suggestion: issue.suggestion ?? "Resolve the persisted review finding.",
           ...(issue.repairScope ? { repairScope: issue.repairScope } : {}),
+          ...(issue.blocking !== undefined ? { blocking: issue.blocking } : {}),
+          ...(issue.explicitSeverity ? { explicitSeverity: issue.explicitSeverity } : {}),
         }));
         if (round === 2) {
           findings = logicFindings.map((issue) => ({
@@ -2057,12 +2073,19 @@ export class PipelineRunner {
             description: issue.description,
             suggestion: issue.suggestion ?? "Resolve the persisted review finding.",
             ...(issue.repairScope ? { repairScope: issue.repairScope } : {}),
+            ...(issue.blocking !== undefined ? { blocking: issue.blocking } : {}),
+            ...(issue.explicitSeverity ? { explicitSeverity: issue.explicitSeverity } : {}),
           }));
           reviewRounds.push({ round, logic: { passed: revised.auditPassed === true, findings }, commercial: null, finalDecision: true });
           phase = "ROUND_COMPLETE";
-          const hasBlocking = findings.some((finding) => finding.severity === "critical"
-            || (finding.severity === "warning" && finding.repairScope === "structural"));
-          if (!revised.applied || hasBlocking) {
+          const hasExplicitBlocking = findings.some((finding) => finding.blocking === true
+            || finding.severity === "critical" || finding.explicitSeverity === "MAJOR" || finding.explicitSeverity === "CRITICAL");
+          if (revised.auditPassed === true && hasExplicitBlocking) {
+            await syncChapter("audit-failed");
+            await persist("REVIEW_DECISION_CONTRADICTORY");
+            return { chapterNumber, status: "review-decision-contradictory", revisionCount: 2, logicReviewCount, commercialReviewCount, roleUsage };
+          }
+          if (!revised.applied || revised.auditPassed !== true || hasExplicitBlocking) {
             await syncChapter("audit-failed");
             await persist("BLOCKED_CRITICAL_FINDINGS");
             return { chapterNumber, status: "blocked-critical-findings", revisionCount: 2, logicReviewCount, commercialReviewCount, roleUsage };
@@ -2076,7 +2099,7 @@ export class PipelineRunner {
             .update(await this.readChapterContent(bookDir, chapterNumber), "utf-8")
             .digest("hex");
           unresolvedFindings = findings
-            .filter((finding): finding is AuditIssue & { severity: "warning" | "info" } => finding.severity !== "critical")
+            .filter((finding): finding is AuditIssue & { severity: "warning" | "info" } => finding.severity === "warning" || finding.severity === "info")
             .map((finding, index) => ({
               finding_id: `chapter-${String(chapterNumber).padStart(4, "0")}-final-${String(index + 1).padStart(2, "0")}`,
               book_id: bookId,

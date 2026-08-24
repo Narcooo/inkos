@@ -21,6 +21,23 @@ const LOGIC_WEIGHTS: Readonly<Record<(typeof LOGIC_DIMENSIONS)[number], number>>
   hooks_disclosure: 10,
   narrative_clarity: 5,
 };
+const HARD_LOGIC_DIMENSIONS = LOGIC_DIMENSIONS.filter((dimension) => dimension !== "narrative_clarity");
+const HARD_LOGIC_DIMENSION_MINIMUM = 80;
+
+export type FinalAuditDecision = "APPROVED" | "ACCEPTED_WITH_FINDINGS" | "BLOCKED_CRITICAL_FINDINGS" | "REVIEW_DECISION_CONTRADICTORY";
+
+export function classifyFinalAuditDecision(audit: AuditResult): FinalAuditDecision {
+  const explicitBlocking = audit.issues.some((issue) => issue.blocking === true
+    || issue.severity === "critical" || issue.explicitSeverity === "CRITICAL" || issue.explicitSeverity === "MAJOR");
+  const hardDimensionFailed = audit.dimensionScores !== undefined && HARD_LOGIC_DIMENSIONS.some((dimension) => {
+    const score = audit.dimensionScores?.[dimension];
+    return typeof score !== "number" || score < HARD_LOGIC_DIMENSION_MINIMUM;
+  });
+  const blocking = explicitBlocking || hardDimensionFailed || audit.passed !== true;
+  if (audit.passed === true && (explicitBlocking || hardDimensionFailed)) return "REVIEW_DECISION_CONTRADICTORY";
+  if (blocking) return "BLOCKED_CRITICAL_FINDINGS";
+  return audit.issues.length > 0 ? "ACCEPTED_WITH_FINDINGS" : "APPROVED";
+}
 
 export interface RoleTokenUsage {
   readonly promptTokens: number;
@@ -87,7 +104,7 @@ export function scoredLogicReviewFromAudit(
     findingId: `logic-${index + 1}`,
     severity: issue.severity === "critical"
       ? "CRITICAL"
-      : issue.severity === "warning" && issue.repairScope === "structural"
+      : issue.explicitSeverity === "MAJOR"
         ? "MAJOR"
         : issue.severity === "warning" ? "MINOR" : "NOTE",
     evidence: issue.description,

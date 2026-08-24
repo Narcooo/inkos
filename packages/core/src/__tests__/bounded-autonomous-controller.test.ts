@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { claimAutonomousJob, createAutonomousPipelineActions, createAutonomousProviderExecution, deriveAutonomousJobIdentity, refreshAutonomousJobClaim, releaseAutonomousJob, runBoundedAutonomousScope } from "../production/bounded-autonomous-controller.js";
+import { claimAutonomousJob, correctLegacyPendingChapterArtifactBindings, createAutonomousPipelineActions, createAutonomousProviderExecution, deriveAutonomousJobIdentity, refreshAutonomousJobClaim, releaseAutonomousJob, runBoundedAutonomousScope } from "../production/bounded-autonomous-controller.js";
 import { LLMCallExecutionError } from "../llm/provider.js";
 import type { BookProductionMap } from "../production/book-production-map.js";
 import type { ChapterMeta } from "../models/chapter.js";
@@ -94,6 +94,31 @@ describe("bounded autonomous production controller", () => {
       persistProgress: async () => undefined,
     });
     expect(calls).toEqual(["write:5", "write:6"]);
+    expect(result.status).toBe("BOOK_COMPLETE");
+  });
+
+  it("uses the pending chapter identity for recovery while preserving the next cursor", async () => {
+    let next = 5;
+    const executedChapters: number[] = [];
+    const progress: Array<{ nextChapter: number }> = [];
+    const result = await runBoundedAutonomousScope({
+      map,
+      mode: "current-volume",
+      getNextChapter: async () => next,
+      pendingChapterNumber: 4,
+      resumePendingChapter: async () => ({ status: "accepted-with-findings", chapterNumber: 4 }),
+      runChapter: async () => { next += 1; return { status: "ready-for-review" }; },
+      shouldStop: () => false,
+      persistProgress: async (entry) => { progress.push(entry); },
+      providerRecovery: {
+        execute: async (chapterNumber, task) => { executedChapters.push(chapterNumber); return task(); },
+        loadPersistedProgress: async () => null,
+        now: () => 0,
+        sleep: async () => undefined,
+      },
+    });
+    expect(executedChapters[0]).toBe(4);
+    expect(progress[0]?.nextChapter).toBe(5);
     expect(result.status).toBe("BOOK_COMPLETE");
   });
 
@@ -459,6 +484,55 @@ describe("bounded autonomous production controller", () => {
         attempt: 1,
       });
       expect(runtime.providerAttemptHistory).toHaveLength(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("corrected-binds a legacy next-cursor artifact to the pending chapter without copying its response", async () => {
+    const root = await mkdtemp(join(tmpdir(), "inkos-autonomous-corrected-binding-"));
+    try {
+      const runtimeDir = join(root, "books", "book", "story", "runtime", "bounded-autonomous");
+      const responseDir = join(runtimeDir, "provider-responses");
+      await mkdir(responseDir, { recursive: true });
+      await writeFile(join(runtimeDir, "production-state.json"), JSON.stringify({
+        jobId: "job", status: "REVIEW_EXHAUSTED", mode: "current-volume", volumeId: "volume-002",
+        startChapter: 4, targetChapter: 6, nextChapter: 5, chapterNumber: 5, completedThisRun: 0,
+        responseArtifactStatus: "COMPLETE",
+      }), "utf-8");
+      const stages = { stage: "RESCUE_REVISING_2", role: "reviser", provider: "openrouter", model: "provider/model", revisionRound: 2 } as const;
+      const execution = createAutonomousProviderExecution({ projectRoot: root, bookId: "book", jobId: "job", getActiveStage: () => stages });
+      const fingerprint = "c".repeat(64);
+      const legacyPath = execution.responseArtifactPath(fingerprint, "openrouter", "provider/model", 5);
+      const legacyLogicalStepId = legacyPath.split(/[\\/]/).at(-1)!.replace(/\.json$/, "");
+      const response = { content: "synthetic persisted final review", usage: { promptTokens: 3, completionTokens: 2, totalTokens: 5 } };
+      const { createHash } = await import("node:crypto");
+      await writeFile(legacyPath, `${JSON.stringify({
+        schema_version: "1.0", job_id: "job", logical_step_id: legacyLogicalStepId,
+        usage_identity: legacyLogicalStepId, chapter_number: 5, role: "reviser", stage: "RESCUE_REVISING_2",
+        provider: "openrouter", requested_model: "provider/model", input_fingerprint: fingerprint,
+        response_artifact_status: "COMPLETE", content_sha256: createHash("sha256").update(response.content).digest("hex"),
+        response, completed_at: "2026-08-23T00:00:00.000Z",
+      }, null, 2)}\n`, "utf-8");
+      const original = await readFile(legacyPath);
+      const corrected = await correctLegacyPendingChapterArtifactBindings({ projectRoot: root, bookId: "book", jobId: "job", pendingChapterNumber: 4 });
+      expect(corrected).toHaveLength(1);
+      let transportCalls = 0;
+      const replayed = await execution.runProviderCall(4, async () => {
+        transportCalls += 1;
+        return { content: "must not run", usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } };
+      }, { provider: "openrouter", model: "provider/model", inputFingerprint: fingerprint });
+      expect(replayed).toEqual(response);
+      expect(transportCalls).toBe(0);
+      expect(await readFile(legacyPath)).toEqual(original);
+      const binding = JSON.parse(await readFile(execution.responseArtifactBindingPath(fingerprint, "openrouter", "provider/model", 4), "utf-8"));
+      expect(binding).toMatchObject({
+        chapter_number: 4,
+        source_chapter_number: 5,
+        source_logical_step_id: legacyLogicalStepId,
+        source_artifact_sha256: createHash("sha256").update(original).digest("hex"),
+      });
+      expect(binding).not.toHaveProperty("response");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

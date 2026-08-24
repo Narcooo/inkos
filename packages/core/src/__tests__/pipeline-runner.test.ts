@@ -5053,7 +5053,7 @@ describe("PipelineRunner", () => {
     }
   }, SLOW_PIPELINE_TEST_TIMEOUT_MS);
 
-  it("treats a structural final-review warning as a blocking major finding", async () => {
+  it("offline-finalizes a passed score-92 structural warning as accepted with findings", async () => {
     const { root, runner, state, bookId } = await createRevisionGateFixture("always");
     const evidenceDir = join(state.bookDir(bookId), "story", "runtime", "bounded-autonomous", "chapter-0001");
     await mkdir(evidenceDir, { recursive: true });
@@ -5067,14 +5067,23 @@ describe("PipelineRunner", () => {
       baselineRoleUsage: {}, roleUsage: {}, reviewRounds: [{ round: 1 }], currentFindings: [finding], modelOutcomes: [],
     }, null, 2)}\n`, "utf-8");
     vi.spyOn(ContinuityAuditor.prototype, "auditChapter").mockResolvedValue(
-      createAuditResult({ passed: true, issues: [finding], summary: "structured major" }),
+      createAuditResult({
+        passed: true,
+        overallScore: 92,
+        dimensionScores: {
+          blueprint_transition: 95, causal_logic: 90, canon_continuity: 92,
+          character_motivation: 95, state_inheritance: 95, hooks_disclosure: 95, narrative_clarity: 93,
+        },
+        issues: [finding],
+        summary: "passed with a nonblocking structural warning",
+      }),
     );
     const commercial = vi.spyOn(CommercialReaderAgent.prototype, "reviewChapter");
     try {
       const result = await runner.resumeAuditFailedChapterBounded(bookId, 1);
       const evidence = JSON.parse(await readFile(join(evidenceDir, "resume-review.json"), "utf-8"));
-      expect(result.status).toBe("blocked-critical-findings");
-      expect(evidence).toMatchObject({ status: "BLOCKED_CRITICAL_FINDINGS" });
+      expect(result.status).toBe("accepted-with-findings");
+      expect(evidence).toMatchObject({ status: "ACCEPTED_WITH_FINDINGS" });
       expect(evidence.currentFindings[0]).toMatchObject({ severity: "warning", repairScope: "structural" });
       expect(commercial).not.toHaveBeenCalled();
     } finally {

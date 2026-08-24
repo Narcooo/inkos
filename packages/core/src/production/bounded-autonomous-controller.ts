@@ -23,6 +23,7 @@ export type AutonomousRunStatus =
   | "PAUSED_AMBIGUOUS_PROVIDER_OUTCOME"
   | "PAUSED_DETERMINISTIC_PROVIDER_ERROR"
   | "BLOCKED_CRITICAL_FINDINGS"
+  | "REVIEW_DECISION_CONTRADICTORY"
   | "REVIEW_EXHAUSTED"
   | "HELD_AFTER_TWO_REVISIONS";
 
@@ -444,8 +445,89 @@ interface PersistedProviderResponseArtifact {
   readonly completed_at: string;
 }
 
+interface CorrectedProviderArtifactBinding {
+  readonly schema_version: "1.0";
+  readonly binding_type: "CORRECTED_PENDING_CHAPTER_REFERENCE";
+  readonly job_id: string;
+  readonly logical_step_id: string;
+  readonly chapter_number: number;
+  readonly source_chapter_number: number;
+  readonly source_logical_step_id: string;
+  readonly source_artifact_sha256: string;
+  readonly source_content_sha256: string;
+  readonly created_at: string;
+}
+
 function providerResponseArtifactDir(projectRoot: string, bookId: string): string {
   return join(projectRoot, "books", bookId, "story", "runtime", "bounded-autonomous", "provider-responses");
+}
+
+export async function correctLegacyPendingChapterArtifactBindings(params: {
+  readonly projectRoot: string;
+  readonly bookId: string;
+  readonly jobId: string;
+  readonly pendingChapterNumber: number;
+}): Promise<ReadonlyArray<CorrectedProviderArtifactBinding>> {
+  const runtime = await loadAutonomousProductionState<AutonomousRunProgress>(params.projectRoot, params.bookId);
+  const sourceChapter = params.pendingChapterNumber + 1;
+  if (runtime?.jobId !== params.jobId || runtime.status !== "REVIEW_EXHAUSTED"
+    || runtime.nextChapter !== sourceChapter || runtime.chapterNumber !== sourceChapter
+    || runtime.responseArtifactStatus !== "COMPLETE") return [];
+  const dir = providerResponseArtifactDir(params.projectRoot, params.bookId);
+  const files = await readdir(dir).catch((error) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  });
+  const bindings: CorrectedProviderArtifactBinding[] = [];
+  for (const file of files.filter((entry) => /^provider-step-[a-f0-9]{64}\.json$/u.test(entry)).sort()) {
+    const sourcePath = join(dir, file);
+    const bytes = await readFile(sourcePath);
+    let artifact: PersistedProviderResponseArtifact;
+    try {
+      artifact = JSON.parse(bytes.toString("utf-8")) as PersistedProviderResponseArtifact;
+    } catch (error) {
+      throw new Error("AUTONOMOUS_PROVIDER_RESPONSE_ARTIFACT_INVALID", { cause: error });
+    }
+    const contentSha = createHash("sha256").update(artifact.response?.content ?? "", "utf-8").digest("hex");
+    if (artifact.schema_version !== "1.0" || artifact.job_id !== params.jobId
+      || artifact.chapter_number !== sourceChapter || artifact.response_artifact_status !== "COMPLETE"
+      || artifact.logical_step_id !== file.replace(/\.json$/u, "") || artifact.usage_identity !== artifact.logical_step_id
+      || artifact.content_sha256 !== contentSha) continue;
+    const correctedLogicalStepId = logicalProviderStepId({
+      jobId: params.jobId,
+      chapterNumber: params.pendingChapterNumber,
+      stage: { stage: artifact.stage, role: artifact.role, provider: artifact.provider, model: artifact.requested_model },
+      provider: artifact.provider,
+      model: artifact.requested_model,
+      inputFingerprint: artifact.input_fingerprint,
+    });
+    const binding: CorrectedProviderArtifactBinding = {
+      schema_version: "1.0",
+      binding_type: "CORRECTED_PENDING_CHAPTER_REFERENCE",
+      job_id: params.jobId,
+      logical_step_id: correctedLogicalStepId,
+      chapter_number: params.pendingChapterNumber,
+      source_chapter_number: sourceChapter,
+      source_logical_step_id: artifact.logical_step_id,
+      source_artifact_sha256: createHash("sha256").update(bytes).digest("hex"),
+      source_content_sha256: artifact.content_sha256,
+      created_at: new Date().toISOString(),
+    };
+    const path = join(dir, `${correctedLogicalStepId}.binding.json`);
+    try {
+      const existing = JSON.parse(await readFile(path, "utf-8")) as CorrectedProviderArtifactBinding;
+      if (JSON.stringify({ ...existing, created_at: binding.created_at }) !== JSON.stringify(binding)) {
+        throw new Error("AUTONOMOUS_PROVIDER_RESPONSE_BINDING_CONFLICT");
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      const temp = `${path}.${process.pid}.${randomUUID()}.tmp`;
+      await writeFile(temp, `${JSON.stringify(binding, null, 2)}\n`, "utf-8");
+      try { await rename(temp, path); } catch (renameError) { await unlink(temp).catch(() => undefined); throw renameError; }
+    }
+    bindings.push(binding);
+  }
+  return bindings;
 }
 
 function logicalProviderStepId(params: {
@@ -483,6 +565,7 @@ export function createAutonomousProviderExecution(params: {
   readonly sleep?: (delayMs: number) => Promise<void>;
 }): AutonomousProviderRecovery & {
   readonly responseArtifactPath: (inputFingerprint: string, provider: string, model: string, chapterNumber: number) => string;
+  readonly responseArtifactBindingPath: (inputFingerprint: string, provider: string, model: string, chapterNumber: number) => string;
   readonly runProviderCall: (chapterNumber: number, transport: () => Promise<LLMResponse>, request: { readonly provider: string; readonly model: string; readonly inputFingerprint: string }) => Promise<LLMResponse>;
 } {
   let activeChapter = 0;
@@ -508,6 +591,7 @@ export function createAutonomousProviderExecution(params: {
     };
   };
   const artifactPathForIdentity = (identity: LLMCallExecutionIdentity) => join(providerResponseArtifactDir(params.projectRoot, params.bookId), `${identity.logicalStepId}.json`);
+  const bindingPathForIdentity = (identity: LLMCallExecutionIdentity) => join(providerResponseArtifactDir(params.projectRoot, params.bookId), `${identity.logicalStepId}.binding.json`);
   const markResponseArtifactComplete = async (identity: LLMCallExecutionIdentity): Promise<void> => {
     const progress = await loadAutonomousProductionState<AutonomousRunProgress>(params.projectRoot, params.bookId);
     if (progress?.jobId !== params.jobId) return;
@@ -549,21 +633,32 @@ export function createAutonomousProviderExecution(params: {
       responseArtifactStatus: "COMPLETE",
     });
   };
-  const readArtifact = async (identity: LLMCallExecutionIdentity): Promise<LLMResponse | undefined> => {
-    let artifact: PersistedProviderResponseArtifact;
+  const readArtifactFile = async (
+    path: string,
+    identity: LLMCallExecutionIdentity,
+    expectedChapter: number,
+    expectedLogicalStepId: string,
+  ): Promise<{ readonly artifact: PersistedProviderResponseArtifact; readonly bytes: Buffer } | undefined> => {
+    let bytes: Buffer;
     try {
-      artifact = JSON.parse(await readFile(artifactPathForIdentity(identity), "utf-8")) as PersistedProviderResponseArtifact;
+      bytes = await readFile(path);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw new Error("AUTONOMOUS_PROVIDER_RESPONSE_ARTIFACT_INVALID", { cause: error });
+    }
+    let artifact: PersistedProviderResponseArtifact;
+    try {
+      artifact = JSON.parse(bytes.toString("utf-8")) as PersistedProviderResponseArtifact;
+    } catch (error) {
       throw new Error("AUTONOMOUS_PROVIDER_RESPONSE_ARTIFACT_INVALID", { cause: error });
     }
     const contentSha = createHash("sha256").update(artifact.response.content, "utf-8").digest("hex");
     if (
       artifact.schema_version !== "1.0"
       || artifact.job_id !== params.jobId
-      || artifact.logical_step_id !== identity.logicalStepId
-      || artifact.usage_identity !== identity.logicalStepId
-      || artifact.chapter_number !== activeChapter
+      || artifact.logical_step_id !== expectedLogicalStepId
+      || artifact.usage_identity !== expectedLogicalStepId
+      || artifact.chapter_number !== expectedChapter
       || artifact.role !== identity.role
       || artifact.stage !== identity.stage
       || artifact.provider !== identity.provider
@@ -574,8 +669,87 @@ export function createAutonomousProviderExecution(params: {
     ) {
       throw new Error("AUTONOMOUS_PROVIDER_RESPONSE_ARTIFACT_IDENTITY_MISMATCH");
     }
+    return { artifact, bytes };
+  };
+  const writeCorrectedBinding = async (binding: CorrectedProviderArtifactBinding, path: string): Promise<void> => {
+    await mkdir(dirname(path), { recursive: true });
+    const temp = `${path}.${process.pid}.${randomUUID()}.tmp`;
+    await writeFile(temp, `${JSON.stringify(binding, null, 2)}\n`, "utf-8");
+    try {
+      await rename(temp, path);
+    } catch (error) {
+      await unlink(temp).catch(() => undefined);
+      throw error;
+    }
+  };
+  const readArtifact = async (identity: LLMCallExecutionIdentity): Promise<LLMResponse | undefined> => {
+    const direct = await readArtifactFile(artifactPathForIdentity(identity), identity, activeChapter, identity.logicalStepId);
+    if (direct) {
+      await markResponseArtifactComplete(identity);
+      return direct.artifact.response;
+    }
+    const bindingPath = bindingPathForIdentity(identity);
+    let binding: CorrectedProviderArtifactBinding | undefined;
+    try {
+      binding = JSON.parse(await readFile(bindingPath, "utf-8")) as CorrectedProviderArtifactBinding;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new Error("AUTONOMOUS_PROVIDER_RESPONSE_BINDING_INVALID", { cause: error });
+    }
+    const persisted = await loadAutonomousProductionState<AutonomousRunProgress>(params.projectRoot, params.bookId);
+    const sourceChapter = activeChapter + 1;
+    const stage = params.getActiveStage();
+    const sourceLogicalStepId = logicalProviderStepId({
+      jobId: params.jobId,
+      chapterNumber: sourceChapter,
+      stage,
+      provider: identity.provider,
+      model: identity.model,
+      inputFingerprint: identity.inputFingerprint,
+    });
+    if (!binding && persisted?.jobId === params.jobId && persisted.status === "REVIEW_EXHAUSTED"
+      && persisted.nextChapter === sourceChapter && persisted.chapterNumber === sourceChapter
+      && persisted.responseArtifactStatus === "COMPLETE") {
+      const source = await readArtifactFile(
+        join(providerResponseArtifactDir(params.projectRoot, params.bookId), `${sourceLogicalStepId}.json`),
+        identity,
+        sourceChapter,
+        sourceLogicalStepId,
+      );
+      if (source) {
+        binding = {
+          schema_version: "1.0",
+          binding_type: "CORRECTED_PENDING_CHAPTER_REFERENCE",
+          job_id: params.jobId,
+          logical_step_id: identity.logicalStepId,
+          chapter_number: activeChapter,
+          source_chapter_number: sourceChapter,
+          source_logical_step_id: sourceLogicalStepId,
+          source_artifact_sha256: createHash("sha256").update(source.bytes).digest("hex"),
+          source_content_sha256: source.artifact.content_sha256,
+          created_at: new Date(params.now?.() ?? Date.now()).toISOString(),
+        };
+        await writeCorrectedBinding(binding, bindingPath);
+      }
+    }
+    if (!binding) return undefined;
+    if (binding.schema_version !== "1.0" || binding.binding_type !== "CORRECTED_PENDING_CHAPTER_REFERENCE"
+      || binding.job_id !== params.jobId || binding.logical_step_id !== identity.logicalStepId
+      || binding.chapter_number !== activeChapter || binding.source_chapter_number !== sourceChapter
+      || binding.source_logical_step_id !== sourceLogicalStepId) {
+      throw new Error("AUTONOMOUS_PROVIDER_RESPONSE_BINDING_IDENTITY_MISMATCH");
+    }
+    const source = await readArtifactFile(
+      join(providerResponseArtifactDir(params.projectRoot, params.bookId), `${binding.source_logical_step_id}.json`),
+      identity,
+      binding.source_chapter_number,
+      binding.source_logical_step_id,
+    );
+    if (!source || createHash("sha256").update(source.bytes).digest("hex") !== binding.source_artifact_sha256
+      || source.artifact.content_sha256 !== binding.source_content_sha256) {
+      throw new Error("AUTONOMOUS_PROVIDER_RESPONSE_BINDING_SOURCE_MISMATCH");
+    }
     await markResponseArtifactComplete(identity);
-    return artifact.response;
+    return source.artifact.response;
   };
   const persistArtifact = async (identity: LLMCallExecutionIdentity, response: LLMResponse): Promise<void> => {
     const path = artifactPathForIdentity(identity);
@@ -639,6 +813,10 @@ export function createAutonomousProviderExecution(params: {
       activeChapter = chapterNumber;
       return artifactPathForIdentity(identify({ inputFingerprint, provider, model }));
     },
+    responseArtifactBindingPath: (inputFingerprint, provider, model, chapterNumber) => {
+      activeChapter = chapterNumber;
+      return bindingPathForIdentity(identify({ inputFingerprint, provider, model }));
+    },
     runProviderCall,
   };
 }
@@ -691,6 +869,7 @@ export async function createAutonomousPipelineActions<
       : chapter));
   };
   return {
+    ...(pending ? { pendingChapterNumber: pending.number } : {}),
     ...(pending ? {
       resumePendingChapter: async (options?: { readonly safeReplayStage?: string }) => {
         const result = await params.pipeline.resumeAuditFailedChapterBounded(params.bookId, pending.number, options);
@@ -710,6 +889,7 @@ export async function runBoundedAutonomousScope(params: {
   readonly map: BookProductionMap;
   readonly mode: ProductionMode;
   readonly getNextChapter: () => Promise<number>;
+  readonly pendingChapterNumber?: number;
   readonly resumePendingChapter?: (options?: { readonly safeReplayStage?: string }) => Promise<{ readonly status: string; readonly chapterNumber: number }>;
   readonly runChapter: () => Promise<{ readonly status: string }>;
   readonly shouldStop: () => boolean;
@@ -874,7 +1054,7 @@ export async function runBoundedAutonomousScope(params: {
 
   if (!retryState) await params.persistProgress(project("RUNNING", initialNext));
   if (params.resumePendingChapter) {
-    const resumed = await executeRecoverably(initialNext, (safeReplayStage) => params.resumePendingChapter!({ ...(safeReplayStage ? { safeReplayStage } : {}) }));
+    const resumed = await executeRecoverably(params.pendingChapterNumber ?? initialNext, (safeReplayStage) => params.resumePendingChapter!({ ...(safeReplayStage ? { safeReplayStage } : {}) }));
     if ("mode" in resumed) return resumed;
     if (resumed.status === "held-after-two-revisions" || resumed.status === "review-exhausted") {
       const held = project("REVIEW_EXHAUSTED", initialNext, "REVISION_LIMIT_REACHED");
@@ -883,6 +1063,11 @@ export async function runBoundedAutonomousScope(params: {
     }
     if (resumed.status === "blocked-critical-findings") {
       const blocked = project("BLOCKED_CRITICAL_FINDINGS", initialNext, "FINAL_REVIEW_CRITICAL_FINDINGS");
+      await params.persistProgress(blocked);
+      return blocked;
+    }
+    if (resumed.status === "review-decision-contradictory") {
+      const blocked = project("REVIEW_DECISION_CONTRADICTORY", initialNext, "FINAL_REVIEW_DECISION_CONTRADICTORY", { chapterNumber: params.pendingChapterNumber ?? initialNext });
       await params.persistProgress(blocked);
       return blocked;
     }

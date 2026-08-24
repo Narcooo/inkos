@@ -133,6 +133,7 @@ import {
   type SessionKind,
   type AgentSessionAttachment,
   createAutonomousPipelineActions,
+  correctLegacyPendingChapterArtifactBindings,
   createAutonomousProviderExecution,
   claimAutonomousJob,
   deriveAutonomousJobIdentity,
@@ -164,6 +165,7 @@ import {
   projectAutonomousProductionView,
   requireBookProductionMap,
   saveAutonomousRuntime,
+  verifyOfflineFinalizationEvidence,
 } from "./autonomous-production.js";
 
 // -- Studio server language (read per request from the project config's `language`) --
@@ -2758,6 +2760,10 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       loadSafeAutonomousConfig(root),
       loadProductionRoleModels(),
     ]);
+    const pending = chapters.find((chapter) => chapter.status === "audit-failed");
+    const offlineFinalizationVerified = pending
+      ? await verifyOfflineFinalizationEvidence({ projectRoot: root, bookId, pendingChapter: pending.number, nextChapter, runtime })
+      : false;
     return projectAutonomousProductionView({
       map,
       targetChapters: book.targetChapters,
@@ -2766,6 +2772,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       config: safeConfig,
       catalog: productionModels.catalog,
       runtime,
+      offlineFinalizationVerified,
       active: autonomousJobs.isActive(bookId),
       budget: AUTONOMOUS_BUDGET_NOT_CONFIGURED,
     });
@@ -2939,6 +2946,15 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       if (recoveringProviderWait && persistedRuntime?.jobId !== jobId) {
         throw new Error("AUTONOMOUS_WAITING_JOB_IDENTITY_MISMATCH");
       }
+      actions = await createAutonomousPipelineActions({ bookId, state, pipeline });
+      if (actions.pendingChapterNumber !== undefined) {
+        await correctLegacyPendingChapterArtifactBindings({
+          projectRoot: root,
+          bookId,
+          jobId,
+          pendingChapterNumber: actions.pendingChapterNumber,
+        });
+      }
       providerRecovery = createAutonomousProviderExecution({
         projectRoot: root,
         bookId,
@@ -2947,7 +2963,6 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       });
       durableClaim = await claimAutonomousJob({ projectRoot: root, bookId, jobId });
       stopDurableHeartbeat = startAutonomousJobHeartbeat(root, bookId, durableClaim, (error) => { durableClaimFailure = error; });
-      actions = await createAutonomousPipelineActions({ bookId, state, pipeline });
       if (!recoveringProviderWait) {
         await saveAutonomousRuntime(root, bookId, {
           jobId,
@@ -2971,6 +2986,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       map: productionMap,
       mode,
       getNextChapter: () => state.getNextChapterNumber(bookId),
+      ...(actions.pendingChapterNumber !== undefined ? { pendingChapterNumber: actions.pendingChapterNumber } : {}),
       shouldStop: () => autonomousJobs.shouldStop(bookId),
       ...(actions.resumePendingChapter ? { resumePendingChapter: async (options?: { readonly safeReplayStage?: string }) => {
         if (durableClaimFailure) throw durableClaimFailure;
@@ -3040,6 +3056,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
         const paused = result.status.startsWith("PAUSED_")
           || result.status === "REVIEW_EXHAUSTED"
           || result.status === "HELD_AFTER_TWO_REVISIONS"
+          || result.status === "REVIEW_DECISION_CONTRADICTORY"
           || result.status === "BLOCKED_CRITICAL_FINDINGS";
         broadcast(paused ? "autonomous:paused" : "autonomous:complete", { bookId, status: result.status, nextChapter: result.nextChapter });
       },

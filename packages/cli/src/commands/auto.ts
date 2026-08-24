@@ -129,6 +129,7 @@ export const autoCommand = new Command("auto")
           map: productionMap,
           mode: "current-volume",
           getNextChapter: () => state.getNextChapterNumber(bookId),
+          ...(actions.pendingChapterNumber !== undefined ? { pendingChapterNumber: actions.pendingChapterNumber } : {}),
           shouldStop: () => false,
           ...(actions.resumePendingChapter ? { resumePendingChapter: actions.resumePendingChapter } : {}),
           runChapter: async () => {

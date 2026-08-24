@@ -39,6 +39,8 @@ export interface AuditIssue {
   readonly description: string;
   readonly suggestion: string;
   readonly repairScope?: "local" | "structural" | "unknown";
+  readonly blocking?: boolean;
+  readonly explicitSeverity?: "CRITICAL" | "MAJOR";
 }
 
 type PromptLanguage = "zh" | "en";
@@ -46,6 +48,11 @@ type PromptLanguage = "zh" | "en";
 function normalizeRepairScope(value: unknown): AuditIssue["repairScope"] {
   if (value === "local" || value === "structural" || value === "unknown") return value;
   return undefined;
+}
+
+function normalizeAuditSeverity(value: unknown): AuditIssue["severity"] {
+  if (value === "critical" || value === "warning" || value === "info") return value;
+  return "warning";
 }
 
 const DIMENSION_LABELS: Record<number, { readonly zh: string; readonly en: string }> = {
@@ -725,11 +732,13 @@ ${chapterContent}`;
           try {
             const issue = JSON.parse(match[0]);
 	            issues.push({
-	              severity: issue.severity ?? "warning",
+	              severity: normalizeAuditSeverity(issue.severity),
 	              category: issue.category ?? (language === "en" ? "Uncategorized" : "未分类"),
 	              description: issue.description ?? "",
 	              suggestion: issue.suggestion ?? "",
 	              repairScope: normalizeRepairScope(issue.repair_scope ?? issue.repairScope),
+	              ...(typeof issue.blocking === "boolean" ? { blocking: issue.blocking } : {}),
+	              ...(issue.severity === "major" ? { explicitSeverity: "MAJOR" as const } : {}),
 	            });
           } catch {
             // skip malformed individual issue
@@ -834,11 +843,13 @@ ${overrides}\n`;
         passed: Boolean(parsed.passed ?? false),
         issues: Array.isArray(parsed.issues)
 	          ? parsed.issues.map((i: Record<string, unknown>) => ({
-	              severity: (i.severity as string) ?? "warning",
+	              severity: normalizeAuditSeverity(i.severity),
 	              category: (i.category as string) ?? (language === "en" ? "Uncategorized" : "未分类"),
 	              description: (i.description as string) ?? "",
 	              suggestion: (i.suggestion as string) ?? "",
 	              repairScope: normalizeRepairScope(i.repair_scope ?? i.repairScope),
+	              ...(typeof i.blocking === "boolean" ? { blocking: i.blocking } : {}),
+	              ...(i.severity === "major" ? { explicitSeverity: "MAJOR" as const } : {}),
 	            }))
           : [],
         summary: String(parsed.summary ?? ""),

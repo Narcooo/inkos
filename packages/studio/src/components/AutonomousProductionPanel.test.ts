@@ -128,7 +128,7 @@ describe("compact autonomous production card", () => {
   it("shows the preserved rescue candidate and final-review-only recovery action", () => {
     const view: AutonomousView = {
       ...blockedView,
-      runtimeStatus: "RECOVERY_READY_FINAL_REVIEW",
+      runtimeStatus: "RECOVERY_READY_OFFLINE_FINALIZATION",
       runtimeBlockers: [],
       startEnabled: true,
       chapterAttention: { chapter: 4, status: "AUDIT_FAILED_STATE_SETTLED" },
@@ -136,10 +136,16 @@ describe("compact autonomous production card", () => {
         chapter: 4,
         rescueCandidate: "PRESERVED",
         rescueGeneration: "REUSED",
+        rescueArtifactIdentity: "VERIFIED_CHAPTER_004",
+        finalReview: "PRESERVED",
+        finalReviewDecision: "PASSED_WITH_NONBLOCKING_FINDINGS",
         writerRegeneration: false,
         normalRevisionRegeneration: false,
         rescueRevisionRegeneration: false,
-        nextAction: "FINAL_RE_REVIEW",
+        nextAction: "FINALIZE_CHAPTER_004_AND_CONTINUE",
+        additionalWriterCalls: 0,
+        additionalReviserCalls: 0,
+        additionalReviewerCalls: 0,
         additionalRevisionAllowed: false,
       },
     };
@@ -147,11 +153,12 @@ describe("compact autonomous production card", () => {
       view, pending: false, error: null, onStart: () => undefined, onStop: () => undefined,
       onRepair: () => undefined, onConfigureModels: () => undefined,
     }));
-    expect(html).toContain("RECOVERY_READY_FINAL_REVIEW");
+    expect(html).toContain("RECOVERY_READY_OFFLINE_FINALIZATION");
     expect(html).toContain("Rescue candidate: PRESERVED");
-    expect(html).toContain("GPT Rescue generation: REUSED");
-    expect(html).toContain("Next action: FINAL_RE_REVIEW");
-    expect(html).toContain("Additional revision allowed: NO");
+    expect(html).toContain("Rescue artifact identity: VERIFIED_CHAPTER_004");
+    expect(html).toContain("Decision: PASSED_WITH_NONBLOCKING_FINDINGS");
+    expect(html).toContain("Next action: FINALIZE_CHAPTER_004_AND_CONTINUE");
+    expect(html).toContain("Writer / Reviser / Reviewer calls: 0 / 0 / 0");
     expect(html).toContain("Resume Autonomous Production");
   });
 

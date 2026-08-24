@@ -1,7 +1,9 @@
 import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import {
   autonomousProductionStatePath,
+  classifyFinalAuditDecision,
   loadBookProductionMap,
   loadAutonomousProductionState,
   projectAutonomousEconomics,
@@ -19,6 +21,64 @@ import {
 } from "../pages/production-role-models.js";
 
 export const AUTONOMOUS_BUDGET_NOT_CONFIGURED = { status: "BUDGET_NOT_CONFIGURED" } as const;
+
+export async function verifyOfflineFinalizationEvidence(params: {
+  readonly projectRoot: string;
+  readonly bookId: string;
+  readonly pendingChapter: number;
+  readonly nextChapter: number;
+  readonly runtime: AutonomousRuntimeProjection | null;
+}): Promise<boolean> {
+  if (!params.runtime?.jobId || params.runtime.status !== "REVIEW_EXHAUSTED"
+    || params.nextChapter !== params.pendingChapter + 1 || params.runtime.nextChapter !== params.nextChapter) return false;
+  const bookDir = join(params.projectRoot, "books", params.bookId);
+  const evidencePath = join(bookDir, "story", "runtime", "bounded-autonomous", `chapter-${String(params.pendingChapter).padStart(4, "0")}`, "resume-review.json");
+  try {
+    const evidence = JSON.parse(await readFile(evidencePath, "utf-8")) as {
+      chapter_number?: number;
+      status?: string;
+      modelOutcomes?: ReadonlyArray<{ readonly modelCallId?: string }>;
+    };
+    if (evidence.chapter_number !== params.pendingChapter || evidence.status !== "REVIEW_EXHAUSTED") return false;
+    let rescueFound = false;
+    let finalReviewFound = false;
+    for (const id of [...new Set((evidence.modelOutcomes ?? []).map((entry) => entry.modelCallId).filter((value): value is string => /^provider-step-[a-f0-9]{64}$/u.test(value ?? "")))]) {
+      const raw = await readFile(join(bookDir, "story", "runtime", "bounded-autonomous", "provider-responses", `${id}.json`));
+      const artifact = JSON.parse(raw.toString("utf-8")) as {
+        job_id?: string; logical_step_id?: string; chapter_number?: number; response_artifact_status?: string;
+        content_sha256?: string; response?: { readonly content?: string };
+      };
+      const content = artifact.response?.content;
+      if (artifact.job_id !== params.runtime.jobId || artifact.logical_step_id !== id
+        || artifact.chapter_number !== params.nextChapter || artifact.response_artifact_status !== "COMPLETE"
+        || typeof content !== "string" || createHash("sha256").update(content, "utf-8").digest("hex") !== artifact.content_sha256) continue;
+      if (/=== REVISED_CONTENT ===\s*[\s\S]+/u.test(content)) rescueFound = true;
+      try {
+        const audit = JSON.parse(content) as {
+          passed: boolean; overall_score?: number; dimension_scores?: Readonly<Record<string, number>>;
+          issues?: ReadonlyArray<{ severity: "critical" | "major" | "warning" | "info"; category: string; description: string; suggestion: string; repair_scope?: "local" | "structural" | "unknown"; blocking?: boolean }>;
+        };
+        if (typeof audit.passed === "boolean" && classifyFinalAuditDecision({
+          passed: audit.passed,
+          overallScore: audit.overall_score,
+          dimensionScores: audit.dimension_scores,
+          issues: (audit.issues ?? []).map((issue) => ({
+            ...issue,
+            severity: issue.severity === "major" ? "warning" as const : issue.severity,
+            ...(issue.severity === "major" ? { explicitSeverity: "MAJOR" as const } : {}),
+            repairScope: issue.repair_scope,
+          })),
+          summary: "Persisted final review.",
+        }) === "ACCEPTED_WITH_FINDINGS") finalReviewFound = true;
+      } catch {
+        // A revision response is intentionally not JSON.
+      }
+    }
+    return rescueFound && finalReviewFound;
+  } catch {
+    return false;
+  }
+}
 
 export interface AutonomousRuntimeProjection {
   readonly jobId?: string;
@@ -169,6 +229,7 @@ export function projectAutonomousProductionView(params: {
   readonly config: SafeConfigProjection;
   readonly catalog?: ReadonlyArray<ProductionModelCatalogEntry>;
   readonly runtime: AutonomousRuntimeProjection | null;
+  readonly offlineFinalizationVerified?: boolean;
   readonly active: boolean;
   readonly budget?: { readonly status: "BUDGET_NOT_CONFIGURED" };
 }) {
@@ -199,14 +260,21 @@ export function projectAutonomousProductionView(params: {
     && params.runtime?.status === "REVIEW_EXHAUSTED"
     && params.runtime.responseArtifactStatus === "COMPLETE"
     && (params.runtime.revisionRound === 2 || params.runtime.phase === "RESCUE_REVISING_2")
+    && params.offlineFinalizationVerified === true
       ? {
           chapter: auditFailed.number,
           rescueCandidate: "PRESERVED" as const,
           rescueGeneration: "REUSED" as const,
+          rescueArtifactIdentity: `VERIFIED_CHAPTER_${String(auditFailed.number).padStart(3, "0")}` as const,
+          finalReview: "PRESERVED" as const,
+          finalReviewDecision: "PASSED_WITH_NONBLOCKING_FINDINGS" as const,
           writerRegeneration: false as const,
           normalRevisionRegeneration: false as const,
           rescueRevisionRegeneration: false as const,
-          nextAction: "FINAL_RE_REVIEW" as const,
+          nextAction: `FINALIZE_CHAPTER_${String(auditFailed.number).padStart(3, "0")}_AND_CONTINUE` as const,
+          additionalWriterCalls: 0 as const,
+          additionalReviserCalls: 0 as const,
+          additionalReviewerCalls: 0 as const,
           additionalRevisionAllowed: false as const,
         }
       : undefined;
@@ -219,6 +287,7 @@ export function projectAutonomousProductionView(params: {
   if ((params.runtime?.status === "REVIEW_EXHAUSTED" && !finalReviewRecovery) || params.runtime?.status === "HELD_AFTER_TWO_REVISIONS") {
     blockers.push("REVIEW_EXHAUSTED");
   }
+  if (params.runtime?.status === "REVIEW_DECISION_CONTRADICTORY") blockers.push("REVIEW_DECISION_CONTRADICTORY");
   if (params.runtime?.status === "BLOCKED_CRITICAL_FINDINGS") blockers.push("BLOCKED_CRITICAL_FINDINGS");
   const orderedChapterNumbers = params.chapters.map((chapter) => chapter.number).sort((left, right) => left - right);
   if (orderedChapterNumbers.some((number, index) => number !== index + 1) || params.nextChapter !== orderedChapterNumbers.length + 1) {
@@ -381,7 +450,7 @@ export function projectAutonomousProductionView(params: {
       chapter.number >= scope.currentVolume.startChapter && chapter.number <= scope.currentVolume.endChapter,
     ).length,
     runtimeStatus: finalReviewRecovery
-      ? "RECOVERY_READY_FINAL_REVIEW"
+      ? "RECOVERY_READY_OFFLINE_FINALIZATION"
       : params.runtime?.status === "WAITING_PROVIDER_RETRY"
       ? "WAITING_PROVIDER_RETRY"
       : params.active

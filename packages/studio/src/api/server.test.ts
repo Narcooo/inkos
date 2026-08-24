@@ -453,6 +453,7 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
     activatedSkillIds: actual.activatedSkillIds,
     mergeActivatedSkillGuidance: actual.mergeActivatedSkillGuidance,
     resolveProductionSkillActivations: actual.resolveProductionSkillActivations,
+    correctLegacyPendingChapterArtifactBindings: actual.correctLegacyPendingChapterArtifactBindings,
     createTranslationCreateTool: actual.createTranslationCreateTool,
     createLLMTranslationModel: createLLMTranslationModelMock,
     createTranslationProjectFromFile: actual.createTranslationProjectFromFile,
