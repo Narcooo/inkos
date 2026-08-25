@@ -56,7 +56,7 @@ export function createProgram(hooks: ProgramHooks = {}): Command {
     .option("--model <model>", "Override LLM model for this CLI run")
     .option("--api-key-env <envVar>", "Read LLM API key from this environment variable for this CLI run")
     .option("--base-url <url>", "Override LLM base URL for this CLI run")
-    .option("--api-format <chat|responses>", "Override LLM API format for this CLI run")
+    .option("--api-format <chat|responses|anthropic>", "Override LLM API format for this CLI run")
     .option("--stream", "Force streaming LLM responses for this CLI run")
     .option("--no-stream", "Force non-streaming LLM responses for this CLI run")
     .action(async () => {

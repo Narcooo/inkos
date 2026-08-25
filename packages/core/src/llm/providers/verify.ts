@@ -4,7 +4,7 @@ import { fetchWithProxy } from "../../utils/proxy-fetch.js";
 
 export interface VerifyResult {
   readonly recommendedTransport?: {
-    readonly apiFormat?: "chat" | "responses";
+    readonly apiFormat?: "chat" | "responses" | "anthropic";
     readonly stream?: boolean;
   };
   readonly probe: {

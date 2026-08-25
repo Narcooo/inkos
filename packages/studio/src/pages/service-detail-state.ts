@@ -24,7 +24,7 @@ export function mergeServiceDetailModels(
 }
 
 export interface ServiceDetailDetectedConfig {
-  readonly apiFormat?: "chat" | "responses";
+  readonly apiFormat?: "chat" | "responses" | "anthropic";
   readonly stream?: boolean;
   readonly baseUrl?: string;
   readonly modelsSource?: "api" | "fallback";
@@ -51,7 +51,7 @@ export interface ServiceProbeResponse {
 export interface ServiceDetailVerifiedProbe {
   readonly apiKey: string;
   readonly baseUrl: string;
-  readonly apiFormat: "chat" | "responses";
+  readonly apiFormat: "chat" | "responses" | "anthropic";
   readonly stream: boolean;
   readonly models: ServiceDetailModelInfo[];
   readonly selectedModel?: string;
@@ -62,7 +62,7 @@ export async function probeServiceForDetail(
   serviceId: string,
   body: {
     readonly apiKey: string;
-    readonly apiFormat: "chat" | "responses";
+    readonly apiFormat: "chat" | "responses" | "anthropic";
     readonly stream: boolean;
     readonly baseUrl?: string;
   },
@@ -84,7 +84,7 @@ export async function rehydrateServiceConnectionStatus(args: {
   readonly shouldVerify: boolean;
   readonly isCustom: boolean;
   readonly baseUrl: string;
-  readonly apiFormat: "chat" | "responses";
+  readonly apiFormat: "chat" | "responses" | "anthropic";
   readonly stream: boolean;
   readonly fetchJsonImpl?: JsonFetcher;
 }): Promise<{
@@ -129,7 +129,7 @@ export async function saveServiceConfig(args: {
   readonly resolvedCustomName: string;
   readonly apiKey: string;
   readonly baseUrl: string;
-  readonly apiFormat: "chat" | "responses";
+  readonly apiFormat: "chat" | "responses" | "anthropic";
   readonly stream: boolean;
   readonly temperature: string;
   readonly detectedModel: string;

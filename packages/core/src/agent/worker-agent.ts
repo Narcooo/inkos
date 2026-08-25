@@ -52,7 +52,11 @@ function workerModel(client: LLMClient, modelId: string, maxTokens?: number): Mo
   return {
     id: modelId,
     name: modelId,
-    api: (client.apiFormat === "responses" ? "openai-responses" : "openai-completions") as Api,
+    api: (client.apiFormat === "anthropic"
+      ? "anthropic-messages"
+      : client.apiFormat === "responses"
+        ? "openai-responses"
+        : "openai-completions") as Api,
     provider: client.provider as Provider,
     baseUrl: "",
     reasoning: false,

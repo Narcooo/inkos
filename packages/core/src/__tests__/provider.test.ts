@@ -1069,6 +1069,23 @@ describe("createLLMClient with providers lookup", () => {
     expect(client._piModel?.contextWindow).toBe(1_000_000);
   });
 
+  it("custom Anthropic Messages config selects the existing native transport", async () => {
+    const { createLLMClient } = await import("../llm/provider.js");
+    const { LLMConfigSchema } = await import("../models/project.js");
+    const client = createLLMClient(LLMConfigSchema.parse({
+      provider: "custom",
+      service: "custom",
+      model: "claude-compatible-model",
+      apiKey: "",
+      baseUrl: "https://gateway.example",
+      apiFormat: "anthropic",
+    }));
+
+    expect(client.provider).toBe("anthropic");
+    expect(client._piModel?.api).toBe("anthropic-messages");
+    expect(client._piModel?.provider).toBe("anthropic");
+  });
+
   it("custom service + gpt-4o 靠 Layer 2 全局扫命中 openai provider", async () => {
     const { createLLMClient } = await import("../llm/provider.js");
     const { LLMConfigSchema } = await import("../models/project.js");

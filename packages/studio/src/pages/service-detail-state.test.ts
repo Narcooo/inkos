@@ -186,6 +186,56 @@ describe("saveServiceConfig", () => {
     });
   });
 
+  it("persists Anthropic Messages after a verified custom connection", async () => {
+    const bodies: unknown[] = [];
+    const fetchJsonImpl = vi.fn(async (path: string, init?: { body?: string }) => {
+      if (init?.body) bodies.push(JSON.parse(init.body));
+      if (path === "/services/custom%3AAnthropic%20Gateway/secret") return { ok: true };
+      if (path === "/services/config") return { ok: true };
+      throw new Error(`unexpected path: ${path}`);
+    });
+
+    await saveServiceConfig({
+      effectiveServiceId: "custom:Anthropic Gateway",
+      serviceId: "custom",
+      isCustom: true,
+      resolvedCustomName: "Anthropic Gateway",
+      apiKey: "",
+      baseUrl: "https://gateway.example",
+      apiFormat: "anthropic",
+      stream: true,
+      temperature: "0.7",
+      detectedModel: "claude-compatible-model",
+      verifiedProbe: {
+        apiKey: "",
+        baseUrl: "https://gateway.example",
+        apiFormat: "anthropic",
+        stream: true,
+        models: [{ id: "claude-compatible-model" }],
+        selectedModel: "claude-compatible-model",
+        detected: { apiFormat: "anthropic", stream: true, baseUrl: "https://gateway.example" },
+      },
+      fetchJsonImpl: fetchJsonImpl as never,
+    });
+
+    expect(bodies).toEqual([
+      { apiKey: "" },
+      {
+        service: "custom:Anthropic Gateway",
+        defaultModel: "claude-compatible-model",
+        services: [{
+          service: "custom",
+          temperature: 0.7,
+          apiFormat: "anthropic",
+          stream: true,
+          models: ["claude-compatible-model"],
+          name: "Anthropic Gateway",
+          baseUrl: "https://gateway.example",
+        }],
+      },
+    ]);
+  });
+
   it("reuses a matching successful test result when saving", async () => {
     const calls: string[] = [];
     const bodies: unknown[] = [];

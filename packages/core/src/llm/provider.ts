@@ -275,7 +275,7 @@ export interface LLMClient {
   readonly provider: "openai" | "anthropic";
   readonly service?: string;
   readonly configSource?: LLMConfig["configSource"];
-  readonly apiFormat: "chat" | "responses";
+  readonly apiFormat: "chat" | "responses" | "anthropic";
   readonly stream: boolean;
   readonly proxyUrl?: string;
   readonly _piModel?: PiModel<PiApi>;
@@ -326,7 +326,7 @@ export function createLLMClient(config: LLMConfig): LLMClient {
     ? resolveProviderCompat(inkosProvider, baseUrl)
     : undefined;
 
-  const provider = config.provider === "anthropic" ? "anthropic" : "openai";
+  const provider = config.provider === "anthropic" || piApi === "anthropic-messages" ? "anthropic" : "openai";
   // pi-ai provider 字段：大多数情况 pi-ai 会按 baseUrl 自动嗅探（openrouter.ai / api.z.ai /
   // api.x.ai / deepseek.com / anthropic.com 等）。这里只列 pi-ai 嗅探不到、需要显式指定的少数情况。
   let piProvider: string;
@@ -376,6 +376,7 @@ function resolvePiApi(
   presetApi: PiApi | undefined,
 ): PiApi {
   if (serviceName === "custom") {
+    if (apiFormat === "anthropic") return "anthropic-messages";
     return apiFormat === "responses" ? "openai-responses" : "openai-completions";
   }
   return (presetApi ?? "openai-completions") as PiApi;

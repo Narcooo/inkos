@@ -53,7 +53,7 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
   const [customName, setCustomName] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [temperature, setTemperature] = useState("0.7");
-  const [apiFormat, setApiFormat] = useState<"chat" | "responses">("chat");
+  const [apiFormat, setApiFormat] = useState<"chat" | "responses" | "anthropic">("chat");
   const [stream, setStream] = useState(true);
   const [detectedModel, setDetectedModel] = useState<string>("");
   const [detectedConfig, setDetectedConfig] = useState<DetectedConfig | null>(null);
@@ -76,7 +76,7 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
           setBaseUrl(String(matched.baseUrl ?? ""));
         }
         if (typeof matched.temperature === "number") setTemperature(String(matched.temperature));
-        if (matched.apiFormat === "chat" || matched.apiFormat === "responses") setApiFormat(matched.apiFormat);
+        if (matched.apiFormat === "chat" || matched.apiFormat === "responses" || matched.apiFormat === "anthropic") setApiFormat(matched.apiFormat);
         if (typeof matched.stream === "boolean") setStream(matched.stream);
         if (Array.isArray(matched.models)) {
           setConfiguredModels(mergeServiceDetailModels(matched.models.filter((model): model is string => typeof model === "string")));
@@ -342,8 +342,8 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
               {tr(`连接成功，${models.length} 个模型`, `Connected, ${models.length} models`)}
               {detectedModel
                 ? tr(
-                    `，已自动匹配 ${detectedModel}${detectedConfig ? ` / ${detectedConfig.apiFormat === "responses" ? "Responses" : "Chat"} / ${detectedConfig.stream ? "流式" : "非流式"}` : ""}`,
-                    `, auto-matched ${detectedModel}${detectedConfig ? ` / ${detectedConfig.apiFormat === "responses" ? "Responses" : "Chat"} / ${detectedConfig.stream ? "streaming" : "non-streaming"}` : ""}`,
+                    `，已自动匹配 ${detectedModel}${detectedConfig ? ` / ${detectedConfig.apiFormat === "anthropic" ? "Anthropic Messages" : detectedConfig.apiFormat === "responses" ? "Responses" : "Chat / Completions"} / ${detectedConfig.stream ? "流式" : "非流式"}` : ""}`,
+                    `, auto-matched ${detectedModel}${detectedConfig ? ` / ${detectedConfig.apiFormat === "anthropic" ? "Anthropic Messages" : detectedConfig.apiFormat === "responses" ? "Responses" : "Chat / Completions"} / ${detectedConfig.stream ? "streaming" : "non-streaming"}` : ""}`,
                   )
                 : ""}
             </span>
@@ -360,11 +360,12 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
           <Field label={tr("协议类型", "Protocol")}>
             <select
               value={apiFormat}
-              onChange={(e) => setApiFormat(e.target.value as "chat" | "responses")}
+              onChange={(e) => setApiFormat(e.target.value as "chat" | "responses" | "anthropic")}
               className="w-full rounded-lg border border-border/60 bg-background px-3 py-2 text-sm"
             >
-              <option value="chat">Chat / Completions</option>
-              <option value="responses">Responses</option>
+              <option value="chat">OpenAI Chat Completions</option>
+              <option value="responses">OpenAI Responses</option>
+              <option value="anthropic">Anthropic Messages</option>
             </select>
           </Field>
 

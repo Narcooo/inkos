@@ -67,7 +67,7 @@ export function parseLLMOverridesFromArgv(argv: readonly string[]): LLMConfigCli
     model?: string;
     apiKeyEnv?: string;
     baseUrl?: string;
-    apiFormat?: "chat" | "responses";
+    apiFormat?: "chat" | "responses" | "anthropic";
     stream?: boolean;
   } = {};
 
@@ -92,7 +92,7 @@ export function parseLLMOverridesFromArgv(argv: readonly string[]): LLMConfigCli
       if (value) overrides.baseUrl = value;
     } else if (flag === "--api-format") {
       const value = nextValue();
-      if (value === "chat" || value === "responses") overrides.apiFormat = value;
+      if (value === "chat" || value === "responses" || value === "anthropic") overrides.apiFormat = value;
     } else if (flag === "--stream") {
       overrides.stream = true;
     } else if (flag === "--no-stream") {

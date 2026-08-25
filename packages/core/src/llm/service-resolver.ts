@@ -30,15 +30,19 @@ export async function resolveServiceModel(
   modelId: string,
   projectRoot: string,
   customBaseUrl?: string,
-  customApiFormat?: "chat" | "responses",
+  customApiFormat?: "chat" | "responses" | "anthropic",
 ): Promise<ResolvedModel> {
   // Determine pi-ai provider
   const baseService = service.startsWith("custom:") ? "custom" : service;
   const preset = resolveServicePreset(baseService);
   const endpoint = getEndpoint(baseService);
-  const piProvider = baseService === "ollama" ? "ollama" : resolveServicePiProvider(baseService) ?? "openai";
+  const piProvider = baseService === "ollama"
+    ? "ollama"
+    : service.startsWith("custom:") && customApiFormat === "anthropic"
+      ? "anthropic"
+      : resolveServicePiProvider(baseService) ?? "openai";
   const apiType = service.startsWith("custom:")
-    ? (customApiFormat === "responses" ? "openai-responses" : "openai-completions")
+    ? (customApiFormat === "anthropic" ? "anthropic-messages" : customApiFormat === "responses" ? "openai-responses" : "openai-completions")
     : (preset?.api ?? "openai-completions");
   const configuredBaseUrl = customBaseUrl ?? preset?.baseUrl ?? "";
   const endpointModel = baseService === "minimax"

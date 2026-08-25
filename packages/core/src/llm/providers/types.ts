@@ -60,7 +60,7 @@ export interface ProviderCompat {
 }
 
 export interface ProviderTransportDefaults {
-  readonly apiFormat?: "chat" | "responses";
+  readonly apiFormat?: "chat" | "responses" | "anthropic";
   readonly stream?: boolean;
 }
 
