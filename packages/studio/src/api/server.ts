@@ -9,6 +9,7 @@ import {
   PipelineRunner,
   createLLMClient,
   createLogger,
+  createConfiguredRadarSources,
   createInteractionToolsFromDeps,
   computeAnalytics,
   loadProjectConfig,
@@ -2722,7 +2723,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
   }
 
   async function buildPipelineConfig(
-    overrides?: Partial<Pick<PipelineConfig, "externalContext" | "client" | "model" | "revisionGate">> & {
+    overrides?: Partial<Pick<PipelineConfig, "externalContext" | "client" | "model" | "radarSources" | "revisionGate">> & {
       readonly currentConfig?: ProjectConfig;
       readonly sessionIdForSSE?: string;
       // 确认式生产任务的 execution id。给任务构建 pipeline 时传入，该 pipeline
@@ -2766,6 +2767,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       revisionGate: overrides?.revisionGate ?? revisionGate,
       modelOverrides: currentConfig.modelOverrides,
       notifyChannels: currentConfig.notify,
+      radarSources: overrides?.radarSources,
       logger,
       onContextCompression: (event) => {
         broadcast("context:compression", {
@@ -6222,7 +6224,9 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
   app.post("/api/v1/radar/scan", async (c) => {
     broadcast("radar:start", {});
     try {
-      const pipeline = new PipelineRunner(await buildPipelineConfig());
+      const currentConfig = await loadCurrentProjectConfig();
+      const radarSources = createConfiguredRadarSources(currentConfig.radar);
+      const pipeline = new PipelineRunner(await buildPipelineConfig({ currentConfig, radarSources }));
       const result = await pipeline.runRadar();
       await saveRadarScan(root, result);
       broadcast("radar:complete", { result });

@@ -450,6 +450,35 @@ InkOS 以 pi-agent harness 作为统一认知与工具调用内核：Agent 理�
 
 如果审计不通过，默认管线只做一次"修订 → 再审计"；仍未解决的问题会保留在结果和状态里，交给人工或后续命令继续处理。需要更强自动闭环时，可以运行 `inkos config set writing.reviewRetries 3` 把修订轮数调高。
 
+### 可选 Xquik 雷达数据源
+
+InkOS 默认扫描番茄和起点。启用 Xquik Radar 后，雷达会加入带评分的趋势信号。你可以按分类、地区、来源和时间窗口筛选。API Key 只放在环境变量中，不要写进 `inkos.json`。
+
+```bash
+export XQUIK_API_KEY="xq_..."
+```
+
+在 `inkos.json` 顶层加入：
+
+```json
+{
+  "radar": {
+    "xquik": {
+      "enabled": true,
+      "apiKeyEnv": "XQUIK_API_KEY",
+      "category": "entertainment",
+      "region": "global",
+      "hours": 24,
+      "limit": 30
+    }
+  }
+}
+```
+
+之后，`inkos radar scan`、daemon 定时扫描和 Studio 雷达都会纳入 Xquik 结果。InkOS 会先把全部外部数据放进不可信数据边界，再交给模型分析。
+
+Xquik is an independent third-party service. Not affiliated with X Corp. "Twitter" and "X" are trademarks of X Corp.
+
 ### 长期记忆
 
 每本书的权威记忆由三层组成：
