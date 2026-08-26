@@ -107,6 +107,28 @@ importers:
         specifier: ^3.0.0
         version: 3.2.4(@types/debug@4.1.13)(@types/node@22.19.15)(jiti@2.6.1)(lightningcss@1.31.1)(msw@2.12.13(@types/node@22.19.15)(typescript@5.9.3))(tsx@4.21.0)
 
+  packages/mcp:
+    dependencies:
+      '@actalk/inkos-core':
+        specifier: workspace:*
+        version: link:../core
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.29.0(zod@3.25.76)
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/debug@4.1.13)(@types/node@22.19.15)(jiti@2.6.1)(lightningcss@1.31.1)(msw@2.12.13(@types/node@22.19.15)(typescript@5.9.3))(tsx@4.21.0)
+
   packages/studio:
     dependencies:
       '@actalk/inkos-core':
