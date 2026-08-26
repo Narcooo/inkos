@@ -12,6 +12,7 @@ import {
   type LLMCallExecutionPolicy,
   type LLMResponse,
 } from "../llm/provider.js";
+import { classifyFinalAuditDecision } from "../pipeline/bounded-review.js";
 
 export type AutonomousRunStatus =
   | "RUNNING"
@@ -455,6 +456,7 @@ interface CorrectedProviderArtifactBinding {
   readonly source_logical_step_id: string;
   readonly source_artifact_sha256: string;
   readonly source_content_sha256: string;
+  readonly resume_evidence_sha256: string;
   readonly created_at: string;
 }
 
@@ -468,7 +470,7 @@ const FINAL_REVIEW_DIMENSIONS = [
   "narrative_clarity",
 ] as const;
 
-function isFinalReviewResponse(content: string): boolean {
+function parseAcceptedFinalReview(content: string): boolean {
   try {
     const parsed = JSON.parse(content) as {
       readonly passed?: unknown;
@@ -477,32 +479,161 @@ function isFinalReviewResponse(content: string): boolean {
       readonly issues?: unknown;
       readonly summary?: unknown;
     };
-    return typeof parsed.passed === "boolean"
+    if (!(typeof parsed.passed === "boolean"
       && typeof parsed.overall_score === "number" && Number.isFinite(parsed.overall_score)
       && parsed.dimension_scores !== undefined
       && FINAL_REVIEW_DIMENSIONS.every((dimension) => typeof parsed.dimension_scores?.[dimension] === "number"
         && Number.isFinite(parsed.dimension_scores[dimension]))
       && Array.isArray(parsed.issues)
-      && typeof parsed.summary === "string";
+      && typeof parsed.summary === "string")) return false;
+    const issues = parsed.issues as ReadonlyArray<{
+      readonly severity?: unknown; readonly category?: unknown; readonly description?: unknown;
+      readonly suggestion?: unknown; readonly repair_scope?: unknown; readonly blocking?: unknown;
+    }>;
+    if (!issues.every((issue) => typeof issue.category === "string" && typeof issue.description === "string"
+      && typeof issue.suggestion === "string" && ["critical", "major", "warning", "info"].includes(String(issue.severity)))) return false;
+    return ["APPROVED", "ACCEPTED_WITH_FINDINGS"].includes(classifyFinalAuditDecision({
+      passed: parsed.passed,
+      overallScore: parsed.overall_score,
+      dimensionScores: parsed.dimension_scores as Readonly<Record<string, number>>,
+      issues: issues.map((issue) => ({
+        severity: issue.severity === "major" ? "warning" as const : issue.severity as "critical" | "warning" | "info",
+        ...(issue.severity === "major" ? { explicitSeverity: "MAJOR" as const } : {}),
+        category: issue.category as string,
+        description: issue.description as string,
+        suggestion: issue.suggestion as string,
+        repairScope: issue.repair_scope as "local" | "structural" | "unknown" | undefined,
+        blocking: issue.blocking as boolean | undefined,
+      })),
+      summary: parsed.summary,
+    }));
   } catch {
     return false;
   }
 }
 
-function hasExpectedPendingArtifactSemantics(artifact: PersistedProviderResponseArtifact): boolean {
+function isRescueCandidateResponse(artifact: PersistedProviderResponseArtifact): boolean {
   const content = artifact.response?.content;
-  if (typeof content !== "string") return false;
-  if (artifact.role === "reviser" && artifact.stage === "RESCUE_REVISING_2") {
-    return /=== REVISED_CONTENT ===\s*[\s\S]+/u.test(content);
-  }
-  if (artifact.role === "logicAuditor" && artifact.stage === "LOGIC_REVIEW") {
-    return isFinalReviewResponse(content);
-  }
-  return false;
+  return typeof content === "string" && artifact.role === "reviser" && artifact.stage === "RESCUE_REVISING_2"
+    && /=== REVISED_CONTENT ===\s*[\s\S]+/u.test(content);
+}
+
+function isFinalReviewArtifact(artifact: PersistedProviderResponseArtifact): boolean {
+  const legacyIdentity = artifact.role === "reviser" && artifact.stage === "RESCUE_REVISING_2";
+  const normalizedIdentity = artifact.role === "logicAuditor" && artifact.stage === "LOGIC_REVIEW";
+  return (legacyIdentity || normalizedIdentity) && parseAcceptedFinalReview(artifact.response?.content ?? "");
 }
 
 function providerResponseArtifactDir(projectRoot: string, bookId: string): string {
   return join(projectRoot, "books", bookId, "story", "runtime", "bounded-autonomous", "provider-responses");
+}
+
+interface FormalRecoveryArtifact {
+  readonly artifact: PersistedProviderResponseArtifact;
+  readonly bytes: Buffer;
+  readonly targetRole: "reviser" | "logicAuditor";
+  readonly targetStage: "RESCUE_REVISING_2" | "LOGIC_REVIEW";
+}
+
+interface FormalPendingChapterRecoveryEvidence {
+  readonly evidenceSha256: string;
+  readonly artifacts: readonly [FormalRecoveryArtifact, FormalRecoveryArtifact];
+}
+
+async function resolveFormalPendingChapterRecoveryEvidence(params: {
+  readonly projectRoot: string;
+  readonly bookId: string;
+  readonly jobId: string;
+  readonly pendingChapterNumber: number;
+}): Promise<FormalPendingChapterRecoveryEvidence | null> {
+  const runtime = await loadAutonomousProductionState<AutonomousRunProgress>(params.projectRoot, params.bookId);
+  const sourceChapter = params.pendingChapterNumber + 1;
+  if (runtime?.jobId !== params.jobId || runtime.status !== "REVIEW_EXHAUSTED"
+    || runtime.nextChapter !== sourceChapter || runtime.chapterNumber !== sourceChapter
+    || runtime.responseArtifactStatus !== "COMPLETE") return null;
+  const dir = providerResponseArtifactDir(params.projectRoot, params.bookId);
+  const chapter = String(params.pendingChapterNumber).padStart(4, "0");
+  let evidenceBytes: Buffer;
+  let evidence: {
+    readonly chapter_number?: number;
+    readonly status?: string;
+    readonly modelOutcomes?: ReadonlyArray<{
+      readonly modelCallId?: string; readonly provider?: string; readonly model?: string; readonly returnedAt?: string;
+    }>;
+  };
+  try {
+    evidenceBytes = await readFile(join(dirname(dir), `chapter-${chapter}`, "resume-review.json"));
+    evidence = JSON.parse(evidenceBytes.toString("utf-8")) as typeof evidence;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw new Error("AUTONOMOUS_RESUME_REVIEW_EVIDENCE_INVALID", { cause: error });
+  }
+  if (evidence.chapter_number !== params.pendingChapterNumber || evidence.status !== "REVIEW_EXHAUSTED") return null;
+  const outcomes = evidence.modelOutcomes ?? [];
+  const ids = outcomes.map((outcome) => outcome.modelCallId);
+  if (ids.some((id) => !/^provider-step-[a-f0-9]{64}$/u.test(id ?? "")) || new Set(ids).size !== ids.length) {
+    throw new Error("AUTONOMOUS_RESUME_REVIEW_EVIDENCE_INVALID");
+  }
+  const ordered: Array<{ readonly artifact: PersistedProviderResponseArtifact; readonly bytes: Buffer }> = [];
+  for (const outcome of outcomes) {
+    const id = outcome.modelCallId!;
+    let bytes: Buffer;
+    let artifact: PersistedProviderResponseArtifact;
+    try {
+      bytes = await readFile(join(dir, `${id}.json`));
+      artifact = JSON.parse(bytes.toString("utf-8")) as PersistedProviderResponseArtifact;
+    } catch (error) {
+      throw new Error("AUTONOMOUS_PROVIDER_RESPONSE_ARTIFACT_INVALID", { cause: error });
+    }
+    const contentSha = createHash("sha256").update(artifact.response?.content ?? "", "utf-8").digest("hex");
+    if (artifact.schema_version !== "1.0" || artifact.job_id !== params.jobId
+      || artifact.chapter_number !== sourceChapter || artifact.response_artifact_status !== "COMPLETE"
+      || artifact.logical_step_id !== id || artifact.usage_identity !== id || artifact.content_sha256 !== contentSha
+      || (outcome.provider !== undefined && outcome.provider !== artifact.provider)
+      || (outcome.model !== undefined && outcome.model !== artifact.requested_model)) {
+      throw new Error("AUTONOMOUS_PROVIDER_RESPONSE_ARTIFACT_IDENTITY_MISMATCH");
+    }
+    ordered.push({ artifact, bytes });
+  }
+  const rescueIndexes = ordered.flatMap((entry, index) => isRescueCandidateResponse(entry.artifact) ? [index] : []);
+  const finalIndexes = ordered.flatMap((entry, index) => isFinalReviewArtifact(entry.artifact) ? [index] : []);
+  if (rescueIndexes.length !== 1 || finalIndexes.length !== 1 || finalIndexes[0]! <= rescueIndexes[0]!) {
+    throw new Error("AUTONOMOUS_PROVIDER_RESPONSE_ARTIFACT_SEMANTIC_MISMATCH");
+  }
+  for (const index of [rescueIndexes[0]!, finalIndexes[0]!]) {
+    const artifact = ordered[index]!.artifact;
+    const derivedSourceIdentity = logicalProviderStepId({
+      jobId: artifact.job_id,
+      chapterNumber: artifact.chapter_number,
+      stage: { stage: artifact.stage, role: artifact.role, provider: artifact.provider, model: artifact.requested_model },
+      provider: artifact.provider,
+      model: artifact.requested_model,
+      inputFingerprint: artifact.input_fingerprint,
+    });
+    if (artifact.logical_step_id !== derivedSourceIdentity) {
+      throw new Error("AUTONOMOUS_PROVIDER_RESPONSE_ARTIFACT_IDENTITY_MISMATCH");
+    }
+  }
+  return {
+    evidenceSha256: createHash("sha256").update(evidenceBytes).digest("hex"),
+    artifacts: [
+      { ...ordered[rescueIndexes[0]!]!, targetRole: "reviser", targetStage: "RESCUE_REVISING_2" },
+      { ...ordered[finalIndexes[0]!]!, targetRole: "logicAuditor", targetStage: "LOGIC_REVIEW" },
+    ],
+  };
+}
+
+export async function verifyFormalPendingChapterRecoveryEvidence(params: {
+  readonly projectRoot: string;
+  readonly bookId: string;
+  readonly jobId: string;
+  readonly pendingChapterNumber: number;
+}): Promise<boolean> {
+  try {
+    return await resolveFormalPendingChapterRecoveryEvidence(params) !== null;
+  } catch {
+    return false;
+  }
 }
 
 export async function correctLegacyPendingChapterArtifactBindings(params: {
@@ -511,49 +642,16 @@ export async function correctLegacyPendingChapterArtifactBindings(params: {
   readonly jobId: string;
   readonly pendingChapterNumber: number;
 }): Promise<ReadonlyArray<CorrectedProviderArtifactBinding>> {
-  const runtime = await loadAutonomousProductionState<AutonomousRunProgress>(params.projectRoot, params.bookId);
+  const resolved = await resolveFormalPendingChapterRecoveryEvidence(params);
+  if (!resolved) return [];
   const sourceChapter = params.pendingChapterNumber + 1;
-  if (runtime?.jobId !== params.jobId || runtime.status !== "REVIEW_EXHAUSTED"
-    || runtime.nextChapter !== sourceChapter || runtime.chapterNumber !== sourceChapter
-    || runtime.responseArtifactStatus !== "COMPLETE") return [];
   const dir = providerResponseArtifactDir(params.projectRoot, params.bookId);
-  const chapter = String(params.pendingChapterNumber).padStart(4, "0");
-  let evidence: { readonly chapter_number?: number; readonly status?: string; readonly modelOutcomes?: ReadonlyArray<{ readonly modelCallId?: string }> };
-  try {
-    evidence = JSON.parse(await readFile(join(dirname(dir), `chapter-${chapter}`, "resume-review.json"), "utf-8")) as typeof evidence;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-    throw new Error("AUTONOMOUS_RESUME_REVIEW_EVIDENCE_INVALID", { cause: error });
-  }
-  if (evidence.chapter_number !== params.pendingChapterNumber || evidence.status !== "REVIEW_EXHAUSTED") return [];
-  const referencedIds = [...new Set((evidence.modelOutcomes ?? [])
-    .map((outcome) => outcome.modelCallId)
-    .filter((value): value is string => /^provider-step-[a-f0-9]{64}$/u.test(value ?? "")))].sort();
   const bindings: CorrectedProviderArtifactBinding[] = [];
-  for (const id of referencedIds) {
-    const file = `${id}.json`;
-    const sourcePath = join(dir, file);
-    const bytes = await readFile(sourcePath);
-    let artifact: PersistedProviderResponseArtifact;
-    try {
-      artifact = JSON.parse(bytes.toString("utf-8")) as PersistedProviderResponseArtifact;
-    } catch (error) {
-      throw new Error("AUTONOMOUS_PROVIDER_RESPONSE_ARTIFACT_INVALID", { cause: error });
-    }
-    const contentSha = createHash("sha256").update(artifact.response?.content ?? "", "utf-8").digest("hex");
-    if (artifact.schema_version !== "1.0" || artifact.job_id !== params.jobId
-      || artifact.chapter_number !== sourceChapter || artifact.response_artifact_status !== "COMPLETE"
-      || artifact.logical_step_id !== file.replace(/\.json$/u, "") || artifact.usage_identity !== artifact.logical_step_id
-      || artifact.content_sha256 !== contentSha) {
-      throw new Error("AUTONOMOUS_PROVIDER_RESPONSE_ARTIFACT_IDENTITY_MISMATCH");
-    }
-    if (!hasExpectedPendingArtifactSemantics(artifact)) {
-      throw new Error("AUTONOMOUS_PROVIDER_RESPONSE_ARTIFACT_SEMANTIC_MISMATCH");
-    }
+  for (const { artifact, bytes, targetRole, targetStage } of resolved.artifacts) {
     const correctedLogicalStepId = logicalProviderStepId({
       jobId: params.jobId,
       chapterNumber: params.pendingChapterNumber,
-      stage: { stage: artifact.stage, role: artifact.role, provider: artifact.provider, model: artifact.requested_model },
+      stage: { stage: targetStage, role: targetRole, provider: artifact.provider, model: artifact.requested_model },
       provider: artifact.provider,
       model: artifact.requested_model,
       inputFingerprint: artifact.input_fingerprint,
@@ -568,6 +666,7 @@ export async function correctLegacyPendingChapterArtifactBindings(params: {
       source_logical_step_id: artifact.logical_step_id,
       source_artifact_sha256: createHash("sha256").update(bytes).digest("hex"),
       source_content_sha256: artifact.content_sha256,
+      resume_evidence_sha256: resolved.evidenceSha256,
       created_at: new Date().toISOString(),
     };
     const path = join(dir, `${correctedLogicalStepId}.binding.json`);
@@ -695,6 +794,7 @@ export function createAutonomousProviderExecution(params: {
     identity: LLMCallExecutionIdentity,
     expectedChapter: number,
     expectedLogicalStepId: string,
+    enforceTargetSemantics = true,
   ): Promise<{ readonly artifact: PersistedProviderResponseArtifact; readonly bytes: Buffer } | undefined> => {
     let bytes: Buffer;
     try {
@@ -716,8 +816,8 @@ export function createAutonomousProviderExecution(params: {
       || artifact.logical_step_id !== expectedLogicalStepId
       || artifact.usage_identity !== expectedLogicalStepId
       || artifact.chapter_number !== expectedChapter
-      || artifact.role !== identity.role
-      || artifact.stage !== identity.stage
+      || (enforceTargetSemantics && artifact.role !== identity.role)
+      || (enforceTargetSemantics && artifact.stage !== identity.stage)
       || artifact.provider !== identity.provider
       || artifact.requested_model !== identity.model
       || artifact.input_fingerprint !== identity.inputFingerprint
@@ -740,28 +840,34 @@ export function createAutonomousProviderExecution(params: {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new Error("AUTONOMOUS_PROVIDER_RESPONSE_BINDING_INVALID", { cause: error });
     }
-    const sourceChapter = activeChapter + 1;
-    const stage = params.getActiveStage();
-    const sourceLogicalStepId = logicalProviderStepId({
-      jobId: params.jobId,
-      chapterNumber: sourceChapter,
-      stage,
-      provider: identity.provider,
-      model: identity.model,
-      inputFingerprint: identity.inputFingerprint,
-    });
     if (!binding) return undefined;
+    const sourceChapter = activeChapter + 1;
     if (binding.schema_version !== "1.0" || binding.binding_type !== "CORRECTED_PENDING_CHAPTER_REFERENCE"
       || binding.job_id !== params.jobId || binding.logical_step_id !== identity.logicalStepId
       || binding.chapter_number !== activeChapter || binding.source_chapter_number !== sourceChapter
-      || binding.source_logical_step_id !== sourceLogicalStepId) {
+      || !/^provider-step-[a-f0-9]{64}$/u.test(binding.source_logical_step_id)
+      || !/^[a-f0-9]{64}$/u.test(binding.resume_evidence_sha256)) {
       throw new Error("AUTONOMOUS_PROVIDER_RESPONSE_BINDING_IDENTITY_MISMATCH");
+    }
+    const evidencePath = join(dirname(providerResponseArtifactDir(params.projectRoot, params.bookId)), `chapter-${String(activeChapter).padStart(4, "0")}`, "resume-review.json");
+    let evidenceBytes: Buffer;
+    let evidence: { readonly modelOutcomes?: ReadonlyArray<{ readonly modelCallId?: string }> };
+    try {
+      evidenceBytes = await readFile(evidencePath);
+      evidence = JSON.parse(evidenceBytes.toString("utf-8")) as typeof evidence;
+    } catch (error) {
+      throw new Error("AUTONOMOUS_PROVIDER_RESPONSE_BINDING_AUTHORITY_MISMATCH", { cause: error });
+    }
+    if (createHash("sha256").update(evidenceBytes).digest("hex") !== binding.resume_evidence_sha256
+      || !(evidence.modelOutcomes ?? []).some((outcome) => outcome.modelCallId === binding.source_logical_step_id)) {
+      throw new Error("AUTONOMOUS_PROVIDER_RESPONSE_BINDING_AUTHORITY_MISMATCH");
     }
     const source = await readArtifactFile(
       join(providerResponseArtifactDir(params.projectRoot, params.bookId), `${binding.source_logical_step_id}.json`),
       identity,
       binding.source_chapter_number,
       binding.source_logical_step_id,
+      false,
     );
     if (!source || createHash("sha256").update(source.bytes).digest("hex") !== binding.source_artifact_sha256
       || source.artifact.content_sha256 !== binding.source_content_sha256) {

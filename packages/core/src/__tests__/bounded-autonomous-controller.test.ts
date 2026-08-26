@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { claimAutonomousJob, correctLegacyPendingChapterArtifactBindings, createAutonomousPipelineActions, createAutonomousProviderExecution, deriveAutonomousJobIdentity, refreshAutonomousJobClaim, releaseAutonomousJob, runBoundedAutonomousScope } from "../production/bounded-autonomous-controller.js";
+import { claimAutonomousJob, correctLegacyPendingChapterArtifactBindings, createAutonomousPipelineActions, createAutonomousProviderExecution, deriveAutonomousJobIdentity, refreshAutonomousJobClaim, releaseAutonomousJob, runBoundedAutonomousScope, verifyFormalPendingChapterRecoveryEvidence } from "../production/bounded-autonomous-controller.js";
 import { LLMCallExecutionError } from "../llm/provider.js";
 import type { BookProductionMap } from "../production/book-production-map.js";
 import type { ChapterMeta } from "../models/chapter.js";
@@ -554,17 +554,13 @@ describe("bounded autonomous production controller", () => {
       const fingerprint = "c".repeat(64);
       const legacyPath = execution.responseArtifactPath(fingerprint, "openrouter", "provider/model", 5);
       const legacyLogicalStepId = legacyPath.split(/[\\/]/).at(-1)!.replace(/\.json$/, "");
+      const finalSourceStages = { stage: "RESCUE_REVISING_2", role: "reviser", provider: "openrouter", model: "provider/model", revisionRound: 2 } as const;
+      const finalSourceExecution = createAutonomousProviderExecution({ projectRoot: root, bookId: "book", jobId: "job", getActiveStage: () => finalSourceStages });
       const finalStages = { stage: "LOGIC_REVIEW", role: "logicAuditor", provider: "openrouter", model: "provider/model", reviewRound: 2 } as const;
       const finalExecution = createAutonomousProviderExecution({ projectRoot: root, bookId: "book", jobId: "job", getActiveStage: () => finalStages });
       const finalFingerprint = "f".repeat(64);
-      const finalLegacyPath = finalExecution.responseArtifactPath(finalFingerprint, "openrouter", "provider/model", 5);
+      const finalLegacyPath = finalSourceExecution.responseArtifactPath(finalFingerprint, "openrouter", "provider/model", 5);
       const finalLegacyLogicalStepId = finalLegacyPath.split(/[\\/]/).at(-1)!.replace(/\.json$/, "");
-      await writeFile(join(evidenceDir, "resume-review.json"), JSON.stringify({
-        schema_version: "1.0",
-        chapter_number: 4,
-        status: "REVIEW_EXHAUSTED",
-        modelOutcomes: [{ modelCallId: legacyLogicalStepId }, { modelCallId: finalLegacyLogicalStepId }],
-      }), "utf-8");
       const response = { content: "=== REVISED_CONTENT ===\nSynthetic Chapter 004 rescue.", usage: { promptTokens: 3, completionTokens: 2, totalTokens: 5 } };
       const finalResponse = { content: JSON.stringify({
         passed: true,
@@ -586,11 +582,39 @@ describe("bounded autonomous production controller", () => {
       }, null, 2)}\n`, "utf-8");
       await writeFile(finalLegacyPath, `${JSON.stringify({
         schema_version: "1.0", job_id: "job", logical_step_id: finalLegacyLogicalStepId,
-        usage_identity: finalLegacyLogicalStepId, chapter_number: 5, role: "logicAuditor", stage: "LOGIC_REVIEW",
+        usage_identity: finalLegacyLogicalStepId, chapter_number: 5, role: "reviser", stage: "RESCUE_REVISING_2",
         provider: "openrouter", requested_model: "provider/model", input_fingerprint: finalFingerprint,
         response_artifact_status: "COMPLETE", content_sha256: createHash("sha256").update(finalResponse.content).digest("hex"),
         response: finalResponse, completed_at: "2026-08-23T00:00:00.000Z",
       }, null, 2)}\n`, "utf-8");
+      const unrelatedIds: string[] = [];
+      for (let index = 0; index < 14; index += 1) {
+        const id = `provider-step-${(index + 1).toString(16).padStart(64, "0")}`;
+        const content = index === 3
+          ? "```json\n{\"passed\":true,\"overall_score\":95}\n```"
+          : `Synthetic historical outcome ${index + 1}.`;
+        const role = index === 3 ? "reviser" : "auditor";
+        const stage = index === 3 ? "REVISING_1" : "LOGIC_REVIEW";
+        await writeFile(join(responseDir, `${id}.json`), `${JSON.stringify({
+          schema_version: "1.0", job_id: "job", logical_step_id: id, usage_identity: id,
+          chapter_number: 5, role, stage, provider: "openrouter", requested_model: "provider/model",
+          input_fingerprint: (index + 1).toString(16).repeat(64).slice(0, 64),
+          response_artifact_status: "COMPLETE", content_sha256: createHash("sha256").update(content).digest("hex"),
+          response: { content }, completed_at: `2026-08-23T00:00:${String(index).padStart(2, "0")}.000Z`,
+        }, null, 2)}\n`, "utf-8");
+        unrelatedIds.push(id);
+      }
+      await writeFile(join(evidenceDir, "resume-review.json"), JSON.stringify({
+        schema_version: "1.0",
+        chapter_number: 4,
+        status: "REVIEW_EXHAUSTED",
+        modelOutcomes: [
+          ...unrelatedIds.slice(0, 7).map((modelCallId) => ({ modelCallId })),
+          { modelCallId: legacyLogicalStepId },
+          ...unrelatedIds.slice(7).map((modelCallId) => ({ modelCallId })),
+          { modelCallId: finalLegacyLogicalStepId },
+        ],
+      }), "utf-8");
       const unreferencedFingerprint = "d".repeat(64);
       const unreferencedPath = execution.responseArtifactPath(unreferencedFingerprint, "openrouter", "provider/model", 5);
       const unreferencedLogicalStepId = unreferencedPath.split(/[\\/]/).at(-1)!.replace(/\.json$/, "");
@@ -640,6 +664,61 @@ describe("bounded autonomous production controller", () => {
         source_artifact_sha256: createHash("sha256").update(original).digest("hex"),
       });
       expect(binding).not.toHaveProperty("response");
+      let chapterIndex: ChapterMeta[] = [{
+        number: 4, title: "Pending", status: "audit-failed", wordCount: 100,
+        createdAt: "2026-08-23T00:00:00.000Z", updatedAt: "2026-08-23T00:00:00.000Z",
+        auditIssues: [], lengthWarnings: [],
+      }];
+      let chapterFiveCalls = 0;
+      let stopAfterSettlement = false;
+      const actions = await createAutonomousPipelineActions({
+        bookId: "book",
+        state: {
+          loadChapterIndex: async () => chapterIndex,
+          saveChapterIndex: async (_bookId, chapters) => { chapterIndex = [...chapters]; },
+        },
+        pipeline: {
+          writeNextChapter: async () => { chapterFiveCalls += 1; return { chapterNumber: 5, status: "ready-for-review" }; },
+          resumeAuditFailedChapterBounded: async () => {
+            await execution.runProviderCall(4, async () => { throw new Error("transport must not run"); }, { provider: "openrouter", model: "provider/model", inputFingerprint: fingerprint });
+            await finalExecution.runProviderCall(4, async () => { throw new Error("transport must not run"); }, { provider: "openrouter", model: "provider/model", inputFingerprint: finalFingerprint });
+            chapterIndex = [{ ...chapterIndex[0]!, status: "accepted-with-findings" as const }];
+            stopAfterSettlement = true;
+            return { chapterNumber: 4, status: "accepted-with-findings" };
+          },
+        },
+      });
+      const settled = await runBoundedAutonomousScope({
+        map,
+        mode: "current-volume",
+        getNextChapter: async () => 5,
+        pendingChapterNumber: actions.pendingChapterNumber,
+        resumePendingChapter: actions.resumePendingChapter,
+        runChapter: () => actions.runChapter(),
+        shouldStop: () => stopAfterSettlement,
+        persistProgress: async () => undefined,
+      });
+      expect(settled).toMatchObject({ status: "PAUSED_BY_USER", nextChapter: 5 });
+      expect(chapterIndex[0]?.status).toBe("accepted-with-findings");
+      expect(chapterFiveCalls).toBe(0);
+      expect(transportCalls).toBe(0);
+      expect(modelCalls).toBe(0);
+      const bindingPath = execution.responseArtifactBindingPath(fingerprint, "openrouter", "provider/model", 4);
+      const bindingBytes = await readFile(bindingPath);
+      await writeFile(bindingPath, JSON.stringify({ ...binding, source_artifact_sha256: "0".repeat(64) }));
+      await expect(execution.runProviderCall(4, async () => {
+        throw new Error("transport must not run");
+      }, { provider: "openrouter", model: "provider/model", inputFingerprint: fingerprint }))
+        .rejects.toThrow("AUTONOMOUS_PROVIDER_RESPONSE_BINDING_SOURCE_MISMATCH");
+      await writeFile(bindingPath, bindingBytes);
+      await writeFile(legacyPath, Buffer.concat([original, Buffer.from("altered")]));
+      await expect(execution.runProviderCall(4, async () => {
+        throw new Error("transport must not run");
+      }, { provider: "openrouter", model: "provider/model", inputFingerprint: fingerprint }))
+        .rejects.toThrow("AUTONOMOUS_PROVIDER_RESPONSE_ARTIFACT_INVALID");
+      await writeFile(legacyPath, original);
+      expect(await readFile(legacyPath)).toEqual(original);
+      expect(await readFile(finalLegacyPath)).toEqual(finalOriginal);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -680,6 +759,77 @@ describe("bounded autonomous production controller", () => {
         await expect(correctLegacyPendingChapterArtifactBindings({
           projectRoot: root, bookId: "book", jobId: "job", pendingChapterNumber: 4,
         }), scenario.label).rejects.toThrow("expectedError" in scenario ? scenario.expectedError : "AUTONOMOUS_PROVIDER_RESPONSE_ARTIFACT_SEMANTIC_MISMATCH");
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it("fails closed across the formal historical-recovery authority matrix", async () => {
+    const cases = [
+      "no formal evidence", "REVIEW_EXHAUSTED only", "next cursor only", "wrong logical chapter",
+      "wrong source chapter", "wrong book", "wrong job", "wrong logical step", "wrong content SHA",
+      "wrong outcome provider", "unreferenced substitution", "out of order",
+    ] as const;
+    const { createHash } = await import("node:crypto");
+    for (const [caseIndex, scenario] of cases.entries()) {
+      const root = await mkdtemp(join(tmpdir(), `inkos-formal-recovery-negative-${caseIndex}-`));
+      try {
+        const runtimeDir = join(root, "books", "book", "story", "runtime", "bounded-autonomous");
+        const responseDir = join(runtimeDir, "provider-responses");
+        const evidenceDir = join(runtimeDir, "chapter-0004");
+        await mkdir(responseDir, { recursive: true });
+        await mkdir(evidenceDir, { recursive: true });
+        const rescueId = `provider-step-${"a".repeat(63)}${caseIndex.toString(16)}`;
+        const finalId = `provider-step-${"b".repeat(63)}${caseIndex.toString(16)}`;
+        const rescueContent = "=== REVISED_CONTENT ===\nFaithful historical rescue candidate.";
+        const finalContent = JSON.stringify({
+          passed: true, overall_score: 92,
+          dimension_scores: { blueprint_transition: 95, causal_logic: 90, canon_continuity: 92, character_motivation: 95, state_inheritance: 95, hooks_disclosure: 95, narrative_clarity: 93 },
+          issues: [{ severity: "warning", category: "causal_logic", description: "Synthetic.", suggestion: "Track.", repair_scope: "structural" }],
+          summary: "Passed with findings.",
+        });
+        const runtime = {
+          jobId: "job", status: scenario === "next cursor only" ? "RUNNING" : "REVIEW_EXHAUSTED",
+          nextChapter: 5, chapterNumber: 5, responseArtifactStatus: "COMPLETE",
+        };
+        await writeFile(join(runtimeDir, "production-state.json"), JSON.stringify(runtime));
+        const artifacts = [
+          { id: rescueId, content: rescueContent },
+          { id: finalId, content: finalContent },
+        ];
+        for (const [artifactIndex, artifact] of artifacts.entries()) {
+          await writeFile(join(responseDir, `${artifact.id}.json`), JSON.stringify({
+            schema_version: "1.0", job_id: scenario === "wrong job" ? "other-job" : "job",
+            logical_step_id: scenario === "wrong logical step" && artifactIndex === 0 ? finalId : artifact.id,
+            usage_identity: artifact.id,
+            chapter_number: scenario === "wrong source chapter" ? 4 : 5,
+            role: "reviser", stage: "RESCUE_REVISING_2", provider: "openrouter", requested_model: "provider/model",
+            input_fingerprint: String(artifactIndex + 1).repeat(64), response_artifact_status: "COMPLETE",
+            content_sha256: scenario === "wrong content SHA" && artifactIndex === 0
+              ? "0".repeat(64) : createHash("sha256").update(artifact.content).digest("hex"),
+            response: { content: artifact.content }, completed_at: "2026-08-23T00:00:00.000Z",
+          }));
+        }
+        if (scenario !== "no formal evidence" && scenario !== "REVIEW_EXHAUSTED only") {
+          const modelOutcomes = scenario === "unreferenced substitution"
+            ? [{ modelCallId: rescueId }, { modelCallId: `provider-step-${"c".repeat(64)}` }]
+            : (scenario === "out of order" ? [finalId, rescueId] : [rescueId, finalId]).map((modelCallId) => ({
+                modelCallId,
+                provider: scenario === "wrong outcome provider" ? "other-provider" : "openrouter",
+                model: "provider/model",
+              }));
+          await writeFile(join(evidenceDir, "resume-review.json"), JSON.stringify({
+            chapter_number: scenario === "wrong logical chapter" ? 3 : 4,
+            status: "REVIEW_EXHAUSTED", modelOutcomes,
+          }));
+        }
+        await expect(verifyFormalPendingChapterRecoveryEvidence({
+          projectRoot: root,
+          bookId: scenario === "wrong book" ? "other-book" : "book",
+          jobId: "job",
+          pendingChapterNumber: 4,
+        }), scenario).resolves.toBe(false);
       } finally {
         await rm(root, { recursive: true, force: true });
       }

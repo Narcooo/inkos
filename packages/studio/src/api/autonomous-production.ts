@@ -1,14 +1,13 @@
 import { readFile } from "node:fs/promises";
-import { createHash } from "node:crypto";
 import { join } from "node:path";
 import {
   autonomousProductionStatePath,
-  classifyFinalAuditDecision,
   loadBookProductionMap,
   loadAutonomousProductionState,
   projectAutonomousEconomics,
   resolveProductionScope,
   saveAutonomousProductionState,
+  verifyFormalPendingChapterRecoveryEvidence,
   type AutonomousRunProgress,
   type AutonomousUsageRecord,
   type BookProductionMap,
@@ -31,55 +30,12 @@ export async function verifyOfflineFinalizationEvidence(params: {
 }): Promise<boolean> {
   if (!params.runtime?.jobId || params.runtime.status !== "REVIEW_EXHAUSTED"
     || params.nextChapter !== params.pendingChapter + 1 || params.runtime.nextChapter !== params.nextChapter) return false;
-  const bookDir = join(params.projectRoot, "books", params.bookId);
-  const evidencePath = join(bookDir, "story", "runtime", "bounded-autonomous", `chapter-${String(params.pendingChapter).padStart(4, "0")}`, "resume-review.json");
-  try {
-    const evidence = JSON.parse(await readFile(evidencePath, "utf-8")) as {
-      chapter_number?: number;
-      status?: string;
-      modelOutcomes?: ReadonlyArray<{ readonly modelCallId?: string }>;
-    };
-    if (evidence.chapter_number !== params.pendingChapter || evidence.status !== "REVIEW_EXHAUSTED") return false;
-    let rescueFound = false;
-    let finalReviewFound = false;
-    for (const id of [...new Set((evidence.modelOutcomes ?? []).map((entry) => entry.modelCallId).filter((value): value is string => /^provider-step-[a-f0-9]{64}$/u.test(value ?? "")))]) {
-      const raw = await readFile(join(bookDir, "story", "runtime", "bounded-autonomous", "provider-responses", `${id}.json`));
-      const artifact = JSON.parse(raw.toString("utf-8")) as {
-        job_id?: string; logical_step_id?: string; usage_identity?: string; chapter_number?: number; role?: string; stage?: string; response_artifact_status?: string;
-        content_sha256?: string; response?: { readonly content?: string };
-      };
-      const content = artifact.response?.content;
-      if (artifact.job_id !== params.runtime.jobId || artifact.logical_step_id !== id || artifact.usage_identity !== id
-        || artifact.chapter_number !== params.nextChapter || artifact.response_artifact_status !== "COMPLETE"
-        || typeof content !== "string" || createHash("sha256").update(content, "utf-8").digest("hex") !== artifact.content_sha256) continue;
-      if (artifact.role === "reviser" && artifact.stage === "RESCUE_REVISING_2"
-        && /=== REVISED_CONTENT ===\s*[\s\S]+/u.test(content)) rescueFound = true;
-      if (artifact.role !== "logicAuditor" || artifact.stage !== "LOGIC_REVIEW") continue;
-      try {
-        const audit = JSON.parse(content) as {
-          passed: boolean; overall_score?: number; dimension_scores?: Readonly<Record<string, number>>;
-          issues?: ReadonlyArray<{ severity: "critical" | "major" | "warning" | "info"; category: string; description: string; suggestion: string; repair_scope?: "local" | "structural" | "unknown"; blocking?: boolean }>;
-        };
-        if (typeof audit.passed === "boolean" && classifyFinalAuditDecision({
-          passed: audit.passed,
-          overallScore: audit.overall_score,
-          dimensionScores: audit.dimension_scores,
-          issues: (audit.issues ?? []).map((issue) => ({
-            ...issue,
-            severity: issue.severity === "major" ? "warning" as const : issue.severity,
-            ...(issue.severity === "major" ? { explicitSeverity: "MAJOR" as const } : {}),
-            repairScope: issue.repair_scope,
-          })),
-          summary: "Persisted final review.",
-        }) === "ACCEPTED_WITH_FINDINGS") finalReviewFound = true;
-      } catch {
-        // A revision response is intentionally not JSON.
-      }
-    }
-    return rescueFound && finalReviewFound;
-  } catch {
-    return false;
-  }
+  return verifyFormalPendingChapterRecoveryEvidence({
+    projectRoot: params.projectRoot,
+    bookId: params.bookId,
+    jobId: params.runtime.jobId,
+    pendingChapterNumber: params.pendingChapter,
+  });
 }
 
 export interface AutonomousRuntimeProjection {
