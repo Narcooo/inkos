@@ -125,9 +125,18 @@ describe("providers structural integrity", () => {
     expect(getEndpoint("newapi")?.baseUrl).toBe("");
   });
 
-  it("B4：总 provider 数 = 31（不含 CodingPlan 分组）", () => {
+  it("Atlas Cloud 使用 OpenAI-compatible 端点和默认文本模型", () => {
+    const atlascloud = getEndpoint("atlascloud");
+    expect(atlascloud?.api).toBe("openai-completions");
+    expect(atlascloud?.baseUrl).toBe("https://api.atlascloud.ai/v1");
+    expect(atlascloud?.modelsBaseUrl).toBe("https://api.atlascloud.ai/v1");
+    expect(atlascloud?.checkModel).toBe("deepseek-ai/deepseek-v4-pro");
+    expect(atlascloud?.models.some((model) => model.id === atlascloud.checkModel)).toBe(true);
+  });
+
+  it("B4：总 provider 数 = 32（不含 CodingPlan 分组，新增 Atlas Cloud 聚合入口）", () => {
     const nonCoding = getAllEndpoints().filter((p) => p.group !== "codingPlan");
-    expect(nonCoding.length).toBe(31);
+    expect(nonCoding.length).toBe(32);
   });
 
   it("B6：CodingPlan 8 个 provider 全部收录", () => {
@@ -141,8 +150,8 @@ describe("providers structural integrity", () => {
     }
   });
 
-  it("B6：总 provider 数 = 39 (31 base + 8 CodingPlan)", () => {
-    expect(getAllEndpoints().length).toBe(39);
+  it("B6：总 provider 数 = 40 (32 base + 8 CodingPlan)", () => {
+    expect(getAllEndpoints().length).toBe(40);
   });
 
   it("B6：CodingPlan provider 都走 anthropic-messages", () => {
