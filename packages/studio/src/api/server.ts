@@ -383,7 +383,7 @@ const NON_TEXT_MODEL_ID_PARTS = [
   "moderation",
 ] as const;
 
-const SERVICE_MODELS_PROBE_TIMEOUT_MS = 4_000;
+const SERVICE_MODELS_PROBE_TIMEOUT_MS = 15_000;
 const SERVICE_CHAT_PROBE_TIMEOUT_MS = 8_000;
 // Hard ceiling for the whole /doctor connectivity probe (models + chat fallback
 // loop) so the diagnostics page never spins on a slow/rate-limited upstream.
@@ -1841,6 +1841,30 @@ function mergeServiceConfig(existing: ServiceConfigEntry[], updates: ServiceConf
     });
   }
   return [...merged.values()];
+}
+
+function appendModelToServiceCatalog(
+  llm: Record<string, unknown>,
+  serviceId: string | undefined,
+  modelId: string,
+): void {
+  const trimmedService = serviceId?.trim() ?? "";
+  const trimmedModel = modelId.trim();
+  if (!trimmedService || !trimmedModel || !isTextChatModelId(trimmedModel)) return;
+
+  const existing = normalizeServiceConfig(llm.services);
+  const previous = existing.find((entry) => serviceConfigKey(entry) === trimmedService);
+  const nextEntry: ServiceConfigEntry = previous
+    ? { ...previous, models: mergeServiceModelIds(previous.models, [trimmedModel]) }
+    : isCustomServiceId(trimmedService)
+      ? {
+          service: "custom",
+          name: decodeURIComponent(trimmedService.slice("custom:".length)),
+          models: [trimmedModel],
+        }
+      : { service: trimmedService, models: [trimmedModel] };
+
+  llm.services = mergeServiceConfig(existing, [nextEntry]);
 }
 
 function normalizeCoverConfig(raw: unknown): { service: string; model: string; baseUrl?: string } | undefined {
@@ -3879,12 +3903,17 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
         return Boolean(secrets.services[ep.id]?.apiKey) || (optional && configured);
       });
 
+    const llm = (config.llm as Record<string, unknown> | undefined) ?? {};
+    const defaultModel = typeof llm.defaultModel === "string" ? llm.defaultModel.trim() : "";
+    const defaultService = typeof llm.service === "string" ? llm.service.trim() : "";
+
     const groups = endpoints.map((ep) => {
       const staticModels = ep.models
         .filter((m) => m.enabled !== false)
         .filter((m) => isTextChatModelId(m.id));
       const configuredModels = configuredById.get(ep.id)?.models ?? [];
-      const models = mergeServiceModelIds(staticModels.map((model) => model.id), configuredModels)
+      const preferredModel = defaultService === ep.id && defaultModel ? [defaultModel] : [];
+      const models = mergeServiceModelIds(staticModels.map((model) => model.id), configuredModels, preferredModel)
         .map((id) => {
           const known = staticModels.find((model) => model.id.toLowerCase() === id.toLowerCase());
           return {
@@ -5524,6 +5553,11 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     if (typeof body.service === "string" && body.service.trim()) {
       llm.service = body.service.trim();
     }
+    appendModelToServiceCatalog(
+      llm,
+      typeof llm.service === "string" ? llm.service : undefined,
+      defaultModel,
+    );
     syncTopLevelLlmMirror(llm);
     await saveRawConfig(root, raw);
     return c.json({

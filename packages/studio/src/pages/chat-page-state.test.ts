@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  buildChatPageModelGroups,
   clearBookCreateSessionId,
   filterModelGroups,
   getBookCreateSessionId,
@@ -116,6 +117,72 @@ describe("filterModelGroups", () => {
         ],
       },
     ]);
+  });
+});
+
+describe("buildChatPageModelGroups", () => {
+  const services = [
+    { service: "openrouter", label: "OpenRouter", connected: true },
+    { service: "moonshot", label: "Moonshot", connected: true },
+    { service: "google", label: "Google", connected: false },
+  ];
+  const modelsByService = {
+    openrouter: [{ id: "openrouter/auto", name: "openrouter/auto" }],
+    moonshot: [{ id: "kimi-k2.5", name: "kimi-k2.5" }],
+  };
+
+  it("only includes connected services that have models", () => {
+    expect(buildChatPageModelGroups(services, modelsByService).map((group) => group.service))
+      .toEqual(["openrouter", "moonshot"]);
+  });
+
+  it("injects the configured default model into its service even when the bank lacks it", () => {
+    const groups = buildChatPageModelGroups(services, modelsByService, {
+      service: "openrouter",
+      model: "google/gemini-3.7-flash",
+    });
+    expect(groups.find((group) => group.service === "openrouter")?.models.map((model) => model.id))
+      .toEqual(["google/gemini-3.7-flash", "openrouter/auto"]);
+  });
+
+  it("still exposes a connected service that only has the configured default model", () => {
+    const groups = buildChatPageModelGroups(services, { moonshot: modelsByService.moonshot }, {
+      service: "openrouter",
+      model: "google/gemini-3.7-flash",
+    });
+    expect(groups.find((group) => group.service === "openrouter")?.models.map((model) => model.id))
+      .toEqual(["google/gemini-3.7-flash"]);
+  });
+
+  it("does not duplicate a default model already present in the catalog", () => {
+    const groups = buildChatPageModelGroups(services, {
+      openrouter: [
+        { id: "google/gemini-3.7-flash", name: "google/gemini-3.7-flash" },
+        { id: "openrouter/auto", name: "openrouter/auto" },
+      ],
+    }, {
+      service: "openrouter",
+      model: "Google/Gemini-3.7-Flash",
+    });
+    expect(groups.find((group) => group.service === "openrouter")?.models.map((model) => model.id))
+      .toEqual(["google/gemini-3.7-flash", "openrouter/auto"]);
+  });
+
+  it("injects a service-less default into the first connected group", () => {
+    const groups = buildChatPageModelGroups(services, modelsByService, {
+      model: "google/gemini-3.7-flash",
+    });
+    expect(groups[0]?.models.map((model) => model.id))
+      .toEqual(["google/gemini-3.7-flash", "openrouter/auto"]);
+  });
+
+  it("lets pickModelSelection keep a default that is missing from the static bank", () => {
+    const preference = { service: "openrouter", model: "google/gemini-3.7-flash" };
+    const groups = buildChatPageModelGroups(services, modelsByService, preference);
+    expect(pickModelSelection(groups, null, null, preference)).toEqual({
+      model: "google/gemini-3.7-flash",
+      service: "openrouter",
+    });
   });
 });
 
