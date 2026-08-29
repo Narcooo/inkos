@@ -667,9 +667,10 @@ export function ChatPage({ activeBookId, mode = activeBookId ? "book" : "book-cr
       });
       return;
     }
-    const targetSessionId = await createSession(null, details.targetSessionKind, targetPlayMode);
+    const targetSessionId = await createSession(activeBookId ?? null, details.targetSessionKind, targetPlayMode);
     autoScrollPinnedRef.current = true;
     await sendMessage(targetSessionId, details.instruction ?? "", {
+      activeBookId,
       sessionKind: details.targetSessionKind,
       playMode: targetPlayMode,
       actionSource: "button",
