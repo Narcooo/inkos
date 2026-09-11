@@ -40,7 +40,7 @@ InkOS は、物語創作と多言語翻訳のための AI Agent システムで�
 
 InkOS 1.8.0 は、Chat Agent と各作品パイプラインを一つの pi-agent 中心 harness に統合します。モデルは理解・提案・能力呼び出しを担当し、InkOS は確認、コンテキスト、状態、原子的な保存、成果物の真実性を管理します。長編、短編、脚本、絵コンテ、インタラクティブ影遊、Play、翻訳は、それぞれの専門手法を保ちながら、実行・検索・観測・復旧基盤を共有します。
 
-- **モデル設定**：Studio はサービス設定、モデルルーティング、表紙サービス、[kkaiapi](https://en.kkaiapi.com/) / OpenRouter などのモデル集約入口、カスタム OpenAI-compatible エンドポイントに対応します。
+- **モデル設定**：Studio はサービス設定、モデルルーティング、表紙サービス、[kkaiapi](https://en.kkaiapi.com/) / OpenRouter / [Requesty](https://requesty.ai/) などのモデル集約入口、カスタム OpenAI-compatible エンドポイントに対応します。
 - **単一の production harness**：Studio Chat、TUI、`inkos interact`、production worker が pi-agent のツールループと型付き action/result 境界を共有します。既存 pipeline は並行する自然言語判断エンジンではなく、決定論的で中断可能な能力になります。
 - **15 個の内蔵専門 Skills**：長編執筆 / レビュー、商業短編、Play、脚本、絵コンテ、インタラクティブ影遊、翻訳、分析、市場調査、取り込み、表紙、脱 AI 表現を専用 `SKILL.md` で提供します。
 - **統一本地検索**：物語メモリ、資料庫、Skill 参考資料を、再構築可能な SQLite FTS5 / BM25 投影で検索します。原本ファイルが正規データであり、検索結果には出典位置が残ります。
@@ -126,7 +126,7 @@ inkos
 
 Studio を開き、**モデル設定**へ進みます：
 
-1. Google Gemini、Moonshot、MiniMax、DeepSeek、kkaiapi、OpenRouter、またはカスタムエンドポイントを選択。
+1. Google Gemini、Moonshot、MiniMax、DeepSeek、kkaiapi、OpenRouter、Requesty、またはカスタムエンドポイントを選択。
 2. API Key を貼り付けて接続をテスト。
 3. 利用可能なモデルを選んで保存。
 4. Studio Chat または書籍ページに戻って創作を開始。
