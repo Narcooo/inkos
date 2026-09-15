@@ -4719,6 +4719,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
             root,
             await resolveConfiguredServiceBaseUrl(root, reqService),
             configuredEntry?.apiFormat,
+            config.llm.headers,
           );
           resolvedModel = resolved.model;
           resolvedApiKey = resolved.apiKey;
@@ -4752,6 +4753,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
               root,
               firstService.baseUrl,
               firstService.apiFormat,
+              config.llm.headers,
             );
             resolvedModel = resolved.model;
             resolvedApiKey = resolved.apiKey;
@@ -4775,6 +4777,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
                   root,
                   await resolveConfiguredServiceBaseUrl(root, svcName),
                   configuredEntry?.apiFormat,
+                  config.llm.headers,
                 );
                 resolvedModel = resolved.model;
                 resolvedApiKey = resolved.apiKey;
