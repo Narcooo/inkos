@@ -239,4 +239,59 @@ describe("resolveServiceModel", () => {
     expect(result.model.contextWindow).toBe(204800);
     expect(result.model.maxTokens).toBe(131072);
   });
+
+  it("leaves model headers unset when no extra headers are provided", async () => {
+    await mkdir(join(root, ".inkos"), { recursive: true });
+    await writeFile(
+      join(root, ".inkos", "secrets.json"),
+      JSON.stringify({ services: { "custom:HeaderSvc": { apiKey: "sk-hdr" } } }),
+    );
+
+    const result = await resolveServiceModel(
+      "custom:HeaderSvc",
+      "gpt-4o",
+      root,
+      "https://example.invalid/v1",
+    );
+
+    expect(result.model.headers).toBeUndefined();
+  });
+
+  it("attaches configured extra headers to the resolved model", async () => {
+    await mkdir(join(root, ".inkos"), { recursive: true });
+    await writeFile(
+      join(root, ".inkos", "secrets.json"),
+      JSON.stringify({ services: { "custom:HeaderSvc": { apiKey: "sk-hdr" } } }),
+    );
+
+    const result = await resolveServiceModel(
+      "custom:HeaderSvc",
+      "gpt-4o",
+      root,
+      "https://example.invalid/v1",
+      "chat",
+      { "x-opencode-session": "ses-test" },
+    );
+
+    expect(result.model.headers).toEqual({ "x-opencode-session": "ses-test" });
+  });
+
+  it("treats an empty header map as no headers", async () => {
+    await mkdir(join(root, ".inkos"), { recursive: true });
+    await writeFile(
+      join(root, ".inkos", "secrets.json"),
+      JSON.stringify({ services: { "custom:HeaderSvc": { apiKey: "sk-hdr" } } }),
+    );
+
+    const result = await resolveServiceModel(
+      "custom:HeaderSvc",
+      "gpt-4o",
+      root,
+      "https://example.invalid/v1",
+      "chat",
+      {},
+    );
+
+    expect(result.model.headers).toBeUndefined();
+  });
 });
