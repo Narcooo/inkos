@@ -31,6 +31,7 @@ export async function resolveServiceModel(
   projectRoot: string,
   customBaseUrl?: string,
   customApiFormat?: "chat" | "responses",
+  extraHeaders?: Record<string, string>,
 ): Promise<ResolvedModel> {
   // Determine pi-ai provider
   const baseService = service.startsWith("custom:") ? "custom" : service;
@@ -78,6 +79,7 @@ export async function resolveServiceModel(
     cost: piModel?.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: endpointModel?.contextWindowTokens ?? piModel?.contextWindow ?? 0,
     maxTokens: endpointModel?.maxOutput ?? piModel?.maxTokens ?? 16384,
+    ...(extraHeaders && Object.keys(extraHeaders).length > 0 ? { headers: extraHeaders } : {}),
     ...(compat ? { compat: compat as Model<Api>["compat"] } : {}),
   };
 
