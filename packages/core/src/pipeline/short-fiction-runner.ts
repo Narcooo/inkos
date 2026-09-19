@@ -729,6 +729,9 @@ export async function generateImageFromPrompt(
     const payload = await generateGeminiCover(request, prompt, signal);
     return { buffer: Buffer.from(payload.base64, "base64"), extension: payload.extension };
   }
+  if (request.api === "dashscope") {
+    return generateDashScopeCover(request, prompt, size);
+  }
   if (request.api === "images") {
     return generateImagesCover(request, prompt, size, signal);
   }
@@ -786,11 +789,12 @@ export async function resolveCoverGenerationRequest(input: {
     const baseUrl = input.coverBaseUrl || process.env.INKOS_COVER_BASE_URL || endpoint
       .replace(/\/responses\/?$/u, "")
       .replace(/\/images\/generations\/?$/u, "");
+    const isDashScope = baseUrl.includes("dashscope.aliyuncs.com");
     return {
-      api: endpoint.includes("/responses") ? "responses" : "images",
+      api: isDashScope ? "dashscope" : endpoint.includes("/responses") ? "responses" : "images",
       baseUrl,
       endpoint,
-      model: input.coverModel || process.env.INKOS_COVER_MODEL || "gpt-image-2",
+      model: input.coverModel || process.env.INKOS_COVER_MODEL || (isDashScope ? "wan2.6-t2i" : "gpt-image-2"),
       apiKey: resolveCoverApiKey(input.coverApiKeyEnv || "INKOS_COVER_API_KEY"),
     };
   }
@@ -914,6 +918,71 @@ export function extractImagesGenerationImage(payload: unknown): (
   }
 
   return undefined;
+}
+
+async function generateDashScopeCover(
+  request: ShortFictionCoverRequest,
+  prompt: string,
+  size: string,
+): Promise<{ readonly buffer: Buffer; readonly extension: "png" | "jpg" }> {
+  const baseUrl = request.baseUrl.replace(/\/+$/u, "").replace(/\/images\/generations\/?$/u, "");
+  const endpoint = `${baseUrl}/services/aigc/multimodal-generation/generation`;
+  const [width, height] = size.split("x").map(Number);
+  const dashSize = `${width ?? 1024}*${height ?? 1360}`;
+
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${request.apiKey}`,
+    },
+    body: JSON.stringify({
+      model: request.model,
+      input: {
+        messages: [
+          {
+            role: "user",
+            content: [{ text: prompt }],
+          },
+        ],
+      },
+      parameters: {
+        n: 1,
+        size: dashSize,
+        watermark: false,
+      },
+    }),
+  });
+
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(`DashScope image generation failed: HTTP ${response.status} ${text.slice(0, 500)}`);
+  }
+
+  let payload: unknown;
+  try {
+    payload = JSON.parse(text);
+  } catch (error) {
+    throw new Error(`DashScope image generation returned non-JSON: ${String(error)}`);
+  }
+
+  const output = (payload as { output?: { choices?: Array<{ message?: { content?: Array<{ image?: string; type?: string }> } }> } }).output;
+  const choices = output?.choices;
+  if (!choices?.length) {
+    throw new Error("DashScope image generation response did not include choices.");
+  }
+
+  const content = choices[0]?.message?.content;
+  if (!content?.length) {
+    throw new Error("DashScope image generation response did not include content.");
+  }
+
+  const imageUrl = content.find((c) => c.type === "image")?.image;
+  if (!imageUrl) {
+    throw new Error("DashScope image generation response did not include image URL.");
+  }
+
+  return downloadGeneratedCoverImage(imageUrl, request.apiKey);
 }
 
 async function downloadGeneratedCoverImage(
