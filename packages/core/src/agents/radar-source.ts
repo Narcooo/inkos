@@ -92,22 +92,21 @@ export class QidianRadarSource implements RadarSource {
     const entries: RankingEntry[] = [];
 
     try {
-      const url = "https://www.qidian.com/rank/";
+      // PC 端 www.qidian.com/rank/ 被瑞数 probe.js 行为验证拦死(202 + 209B
+      // 空壳挑战页),正则永远提不出书名;移动端 H5 同源榜单免验证。
+      const url = "https://m.qidian.com/rank/";
       const res = await globalThis.fetch(url, {
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        },
+        headers: { "User-Agent": "Mozilla/5.0 (compatible; InkOS/0.1)" },
       });
       if (!res.ok) return { platform: "起点中文网", entries };
       const html = await res.text();
 
-      const bookPattern =
-        /<a[^>]*href="\/\/book\.qidian\.com\/info\/(\d+)"[^>]*>([^<]+)<\/a>/g;
+      // 移动端书卡 title 属性带固定后缀:<a ... title="夜无疆最新章节在线阅读" ...>
+      const bookPattern = /title="([^"]+?)最新章节在线阅读"/g;
       let match: RegExpExecArray | null;
       const seen = new Set<string>();
       while ((match = bookPattern.exec(html)) !== null) {
-        const title = match[2].trim();
+        const title = match[1].trim();
         if (title && !seen.has(title) && title.length > 1 && title.length < 30) {
           seen.add(title);
           entries.push({ title, author: "", category: "", extra: "[起点热榜]" });
