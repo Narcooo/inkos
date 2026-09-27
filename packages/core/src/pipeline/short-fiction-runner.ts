@@ -1,5 +1,5 @@
 import { beginAgentModelCall, agentTrajectoryHeaders, type AgentModelCallTrace } from "../llm/agent-trajectory.js";
-import { recordExecutionEvidence, currentExecutionAuthorRequest } from "../harness/execution-evidence.js";
+import { recordExecutionEvidence, currentExecutionAuthorRequest, currentExecutionBaselineWork } from "../harness/execution-evidence.js";
 import { createBuiltInWorkProfileRegistry } from "../harness/builtin-profiles.js";
 import { withWorkMutationScope } from "../utils/work-mutation-scope.js";
 import { Buffer } from "node:buffer";
@@ -26,6 +26,7 @@ import {
   validateShortFictionDraftForFinal,
   type ShortFictionBatchDraft,
   type ShortFictionDraftReview,
+  type ShortFictionDraftReviewInput,
   type ShortFictionLanguage,
   type ShortFictionReference,
   type ShortFictionSalesPackage,
@@ -253,6 +254,11 @@ async function loadCompletedShortRun(
   if (state && (state.stages.review?.inputHash !== inputHash || state.stages.package?.inputHash !== inputHash)) return null;
   if (state?.stages.review?.status === "completed" && state.stages.review.requestHash !== shortReviewRequestHash({
     ...options,
+    storyId,
+    title: options.title ?? state.target?.title ?? draft.storyTitle,
+    minChapterLength: options.minChapterLength ?? state.target?.minChapterLength,
+    maxChapterLength: options.maxChapterLength ?? state.target?.maxChapterLength,
+    openingHookChars: options.openingHookChars ?? state.target?.openingHookChars,
     chapterCount: options.chapterCount ?? state.target?.chapterCount,
     charsPerChapter: options.charsPerChapter ?? state.target?.charsPerChapter,
     language: options.language ?? state.target?.language,
@@ -267,7 +273,13 @@ async function loadCompletedShortRun(
 
 /** Source identity alone cannot establish that a different review request ran. */
 function shortReviewRequestHash(options: ShortFictionRunOptions): string {
+  const baseline = currentExecutionBaselineWork();
+  const artifact = baseline && baseline.id === options.storyId ? baseline.artifacts.find(item => item.revisions.some(revision =>
+    revision.id === item.currentRevisionId && revision.path === "source/final/short-story.json")) : undefined;
   return shortInputHash({
+    evidenceVersion: 1,
+    constraints: shortDraftMinimum(options),
+    comparison: {scope:baseline === undefined ? "parent_revision" : "episode_start",artifactId:artifact?.id,revisionId:artifact?.currentRevisionId},
     authorRequest: currentExecutionAuthorRequest(),
     revisionRequest: options.revisionRequest,
     reviewScope: options.reviewScope ?? "whole-story",
@@ -483,8 +495,22 @@ async function produceShort(
     if (stopAfter !== "package") {
     options.onProgress?.("Reviewing completed short fiction...");
     const draftReviewer = new ShortFictionDraftReviewerAgent(options.runtimes.draftReview);
-    const requestHash = shortReviewRequestHash({...options, chapterCount, charsPerChapter, language});
+    const requestHash = shortReviewRequestHash({...options, ...minimum, storyId, chapterCount, charsPerChapter, language});
+    let reviewComparison: Omit<NonNullable<ShortFictionDraftReviewInput["comparison"]>, "draft"> | undefined;
     try {
+      const baseline = currentExecutionBaselineWork();
+      const baselineArtifact = baseline?.id === storyId ? baseline.artifacts.find(artifact => artifact.revisions.some(revision =>
+        revision.id === artifact.currentRevisionId && revision.path === "source/final/short-story.json")) : undefined;
+      const baselineId = baseline === undefined ? reviewedRevision.parentRevisionId : baselineArtifact?.currentRevisionId;
+      let comparison: ShortFictionDraftReviewInput["comparison"];
+      if (baselineId) {
+        const before = await readArtifactRevision({projectRoot:root,workId:storyId,artifactId:baselineArtifact?.id ?? reviewedArtifact.id,revisionId:baselineId});
+        comparison = {scope:baseline === undefined ? "parent_revision" : "episode_start",
+          before:{artifactId:before.artifact.id,revisionId:before.revision.id,checksum:before.revision.checksum},
+          after:{artifactId:reviewedArtifact.id,revisionId:reviewedRevision.id,checksum:reviewedRevision.checksum},
+          draft:ShortFictionBatchDraftSchema.parse(JSON.parse(before.bytes.toString("utf8")))};
+        reviewComparison = {scope:comparison.scope,before:comparison.before,after:comparison.after};
+      }
       const cachedReview = productionState.stages.review;
       const reuseReview = cachedReview?.status === "completed" && cachedReview.inputHash === inputHash
         && cachedReview.requestHash === requestHash && !options.retryStages?.includes("review");
@@ -492,12 +518,14 @@ async function produceShort(
         ? { summary: "", observations: cachedReview.observations }
         : await draftReviewer.reviewDraft({
         direction: productionState.intent,
-        revisionRequest: options.revisionRequest,
+        revisionRequest: currentExecutionAuthorRequest() ?? options.revisionRequest,
         reviewScope: productionState.reviewScope,
         outlineMarkdown,
         draft: draftV1,
         chapterCount,
         charsPerChapter,
+        ...minimum,
+        comparison,
         language,
       });
       draftReviewObservations = draftReview.observations.map(observation => ({ ...observation,
@@ -518,6 +546,7 @@ async function produceShort(
 
     productionState = { ...productionState, stages: { ...productionState.stages, review: {
       status: draftReviewWarning ? "failed" : "completed", inputHash, requestHash, updatedAt: new Date().toISOString(),
+      comparison: reviewComparison,
       error: draftReviewWarning,
       observations: draftReviewWarning ? [{ code: "draft-review", category: "execution", assessment: "unavailable",
         summary: draftReviewWarning, evidence: [projectPath(join(baseDir, "reviews", "draft-warning.md"))], scope: productionState.reviewScope, targetHash: inputHash }] : [...draftReviewObservations],

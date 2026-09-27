@@ -139,6 +139,12 @@ export interface ShortFictionDraftReviewInput extends ShortFictionDraftInput {
   readonly revisionRequest?: string;
   readonly reviewScope?: string;
   readonly draft: ShortFictionBatchDraft;
+  readonly comparison?: {
+    readonly scope: "episode_start" | "parent_revision";
+    readonly before: { readonly artifactId: string; readonly revisionId: string; readonly checksum: string };
+    readonly after: { readonly artifactId: string; readonly revisionId: string; readonly checksum: string };
+    readonly draft: ShortFictionBatchDraft;
+  };
 }
 
 export interface ShortFictionPackageInput {
@@ -463,10 +469,25 @@ export class ShortFictionDraftReviewerAgent extends BaseAgent {
 
   async reviewDraft(input: ShortFictionDraftReviewInput): Promise<ShortFictionDraftReview> {
     const sources = shortReviewSources(input);
+    const prior = input.comparison?.draft;
+    const beforeChapters = new Map(prior?.chapters.map(chapter => [chapter.number, chapter]) ?? []);
+    const afterChapters = new Map(input.draft.chapters.map(chapter => [chapter.number, chapter]));
+    const comparison = input.comparison ? {
+      scope: input.comparison.scope, before: input.comparison.before, after: input.comparison.after,
+      titleChanged: prior!.storyTitle !== input.draft.storyTitle,
+      openingChanged: (prior!.openingHook ?? "") !== (input.draft.openingHook ?? ""),
+      chapters: [...new Set([...beforeChapters.keys(), ...afterChapters.keys()])].sort((a,b) => a-b).map(number => {
+        const before = beforeChapters.get(number), after = afterChapters.get(number);
+        return { number, titleChanged: before?.title !== after?.title, contentChanged: before?.content !== after?.content,
+          beforeSourceId: sources.has(`baseline-manuscript-chapter-${number}`) ? `baseline-manuscript-chapter-${number}` : undefined,
+          afterSourceId: after ? `manuscript-chapter-${number}` : undefined };
+      }),
+    } : undefined;
     const response = await this.submitSourcedReview([
         { role: "system", content: buildShortFictionDraftReviewSystemPrompt(input.language) },
         { role: "user", content: buildShortFictionDraftReviewUserPrompt({
           ...input,
+          comparison,
           measurements: measureShortFictionDraft(input.draft,input.language),
           outlineMarkdown: numberReviewSource(input.outlineMarkdown),
           draftMarkdown: [...sources].filter(([id]) => id !== "outline").map(([id, text]) => `## Source: ${id}\n${numberReviewSource(text)}`).join("\n\n"),
@@ -715,9 +736,21 @@ function selectShortFictionChapters(
 }
 
 export function shortReviewSources(input: ShortFictionDraftReviewInput): Map<string, string> {
-  return new Map([["outline", input.outlineMarkdown], ["manuscript-title", input.draft.storyTitle],
+  const sources = new Map([["outline", input.outlineMarkdown], ["manuscript-title", input.draft.storyTitle],
     ...(input.draft.openingHook ? [["manuscript-opening", input.draft.openingHook] as [string, string]] : []),
     ...input.draft.chapters.map(chapter => [`manuscript-chapter-${chapter.number}`, chapter.title + "\n" + chapter.content] as [string, string]),
   ]);
+  if (input.comparison) {
+    const before = input.comparison.draft;
+    sources.set("baseline-manuscript-title", before.storyTitle);
+    if (before.openingHook) sources.set("baseline-manuscript-opening", before.openingHook);
+    for (const chapter of before.chapters) {
+      const current = input.draft.chapters.find(item => item.number === chapter.number);
+      if (chapter.title !== current?.title || chapter.content !== current?.content) {
+        sources.set(`baseline-manuscript-chapter-${chapter.number}`, chapter.title + "\n" + chapter.content);
+      }
+    }
+  }
+  return sources;
 }
 export { validateObservationSources as validateShortReviewSources } from "../models/observation.js";
