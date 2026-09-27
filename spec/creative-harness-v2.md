@@ -21,6 +21,10 @@ Skills; they do not replace the author's requested scope.
   successful execution are separate results.
 - Local revisions preserve content outside the author's permitted range. The
   request's original baseline remains available across retries for comparison.
+- Short-fiction reviews receive the persisted length requirements and a verified
+  request-baseline comparison. Changed chapters have citable earlier text;
+  unchanged chapters are compared in full without duplicating their text in the
+  model context. Review state records both artifact versions and checksums.
 - Atomic file sets journal multi-file writes. Interrupted operations can recover
   without treating an unfinished candidate as an accepted version.
 - Filesystem discovery, pending writes, acceptance scopes, and image receipts

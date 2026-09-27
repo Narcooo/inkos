@@ -22,7 +22,7 @@ export interface ShortFictionDraftPromptInput {
   readonly chapterNumbers?: readonly number[];
   readonly previousDraftMarkdown?: string;
 }
-export interface ShortFictionDraftReviewPromptInput extends ShortFictionDraftPromptInput { readonly draftMarkdown: string; readonly revisionRequest?: string; readonly reviewScope?: string; readonly measurements?: ShortFictionMeasurements; }
+export interface ShortFictionDraftReviewPromptInput extends ShortFictionDraftPromptInput { readonly draftMarkdown: string; readonly revisionRequest?: string; readonly reviewScope?: string; readonly measurements?: ShortFictionMeasurements; readonly comparison?: unknown; }
 export interface ShortFictionPackagePromptInput {
   readonly reviewContext?: string;
   readonly direction: string;
@@ -90,6 +90,12 @@ export function buildShortFictionDraftReviewUserPrompt(input: ShortFictionDraftR
     "", language === "en" ? "## Source: outline (plan, not manuscript)" : "## Source: outline（大纲）", input.outlineMarkdown,
     "", language === "en" ? "## Review scope" : "## 审查范围", input.reviewScope ?? "whole-story",
     ...(input.revisionRequest ? ["", language === "en" ? "## Latest revision request" : "## 最近修改请求", input.revisionRequest] : []),
+    "", language === "en" ? "## Requested manuscript constraints" : "## 成稿约束",
+    JSON.stringify({chapterCount:input.chapterCount,targetChapterLength:input.charsPerChapter,minChapterLength:input.minChapterLength,
+      maxChapterLength:input.maxChapterLength,openingHookTarget:input.openingHookChars,title:input.title,unit:input.measurements?.unit}),
+    ...(input.comparison ? ["", language === "en" ? "## Verified revision comparison" : "## 已核验的修订对照", JSON.stringify(input.comparison),
+      language === "en" ? "Compare the requested scope with these verified changes. Baseline sources supply the earlier text for changed chapters. Unchanged chapters were compared in full; do not infer a change from a missing duplicate baseline source. Cite both baseline and current sources for a claimed unauthorized change."
+        : "按请求范围核验这些已确认的变化。baseline 来源提供发生变化章节的旧文；标为未变的章节已经过全文比较，不要因未重复提供旧文而推断其发生变化。判断越界改动时同时引用旧版与当前来源。"] : []),
     ...(input.measurements ? ["", language==="en"?"## Host-verified manuscript measurements":"## 宿主核验的成稿计量",
       JSON.stringify({contentScope:"complete_manuscript",chapterLengthScope:"prose_excluding_chapter_headings",...input.measurements}),
       language==="en"?"Use these measured lengths. Numbered source lines below contain the complete supplied manuscript; line numbering does not mean an excerpt.":"篇幅判断采用以上实测值。以下编号来源包含所提供的完整正文；编号用于引用，不表示节选。"] : []),

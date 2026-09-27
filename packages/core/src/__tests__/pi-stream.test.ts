@@ -209,20 +209,23 @@ describe("guardedPiNonStreaming", () => {
     const source='Mara says "I signed it."\nThe receipt remains on the desk.';
     fetchWithProxyMock.mockImplementation(async(_url:string,init:RequestInit)=>{
       const body=JSON.parse(String(init.body)),name=body.tools[0].function.name;names.push(name);
-      const measurements=body.messages.flatMap((message:{content?:string})=>String(message.content??"").split("\n")).flatMap((line:string)=>{
-        try{const value=JSON.parse(line);return value.contentScope==="complete_manuscript"?[value]:[];}catch{return [];}
-      })[0];
+      const metadata=body.messages.flatMap((message:{content?:string})=>String(message.content??"").split("\n")).flatMap((line:string)=>{
+        try{return [JSON.parse(line)];}catch{return [];}
+      });
+      const measurements=metadata.find((value:any)=>value.contentScope==='complete_manuscript');
       expect(measurements).toMatchObject({chapterCount:1,chapterLengths:[{number:1,length:11}],chapterLengthScope:"prose_excluding_chapter_headings"});
+      expect(metadata.find((value:any)=>value.targetChapterLength===20)).toMatchObject({chapterCount:1,minChapterLength:10,maxChapterLength:25,unit:'words'});
+      expect(metadata.find((value:any)=>value.scope==='episode_start')).toMatchObject({titleChanged:false,openingChanged:false,chapters:[{number:1,titleChanged:false,contentChanged:true,beforeSourceId:'baseline-manuscript-chapter-1',afterSourceId:'manuscript-chapter-1'}]});
       const args={summary:"A signed receipt is present.",observations:[{
         code:"SIGNED_RECEIPT",assessment:"observation",summary:'Mara states "I signed it." The receipt provides a concrete object for the following handover.',
-        sourceRefs:[{sourceId:"manuscript-chapter-1",startLine:++indexCalls===1?999:2,endLine:indexCalls===1?999:2}],
+        sourceRefs:[{sourceId:"manuscript-chapter-1",startLine:++indexCalls===1?999:2,endLine:indexCalls===1?999:2},{sourceId:'baseline-manuscript-chapter-1',startLine:2,endLine:2}],
       }]};
       return new Response(JSON.stringify({choices:[{finish_reason:"tool_calls",message:{tool_calls:[{id:name+"-"+names.length,type:"function",function:{name,arguments:JSON.stringify(args)}}]}}]}));
     });
     const client=createLLMClient({provider:"openai",service:"custom",configSource:"studio",baseUrl:model.baseUrl,model:model.id,apiKey:"fixture",apiFormat:"chat",stream:false,temperature:0,thinkingBudget:0});
-    const result=await new ShortFictionDraftReviewerAgent({client,model:model.id,projectRoot:"/tmp"}).reviewDraft({direction:"Review the receipt scene",outlineMarkdown:"A receipt is handed over.",chapterCount:1,charsPerChapter:20,language:"en",draft:{storyTitle:"Receipt",rawContent:"",chapters:[{number:1,title:"Signature",content:source,charCount:15}]}});
+    const result=await new ShortFictionDraftReviewerAgent({client,model:model.id,projectRoot:"/tmp"}).reviewDraft({direction:"Review the receipt scene",outlineMarkdown:"A receipt is handed over.",chapterCount:1,charsPerChapter:20,minChapterLength:10,maxChapterLength:25,language:"en",draft:{storyTitle:"Receipt",rawContent:"",chapters:[{number:1,title:"Signature",content:source,charCount:15}]},comparison:{scope:'episode_start',before:{artifactId:'draft',revisionId:'before',checksum:'sha256:before'},after:{artifactId:'draft',revisionId:'after',checksum:'sha256:after'},draft:{storyTitle:'Receipt',rawContent:'',chapters:[{number:1,title:'Signature',content:'Mara examines the unsigned receipt.',charCount:5}]}}});
     expect(names).toEqual(["submit_short_fiction_review","submit_short_fiction_review"]);
-    expect(result.observations).toEqual([{code:"SIGNED_RECEIPT",assessment:"observation",summary:'Mara states "I signed it." The receipt provides a concrete object for the following handover.',evidence:[],sourceRefs:[{sourceId:"manuscript-chapter-1",quote:'Mara says "I signed it."'}]}]);
+    expect(result.observations).toEqual([{code:"SIGNED_RECEIPT",assessment:"observation",summary:'Mara states "I signed it." The receipt provides a concrete object for the following handover.',evidence:[],sourceRefs:[{sourceId:"manuscript-chapter-1",quote:'Mara says "I signed it."'},{sourceId:'baseline-manuscript-chapter-1',quote:'Mara examines the unsigned receipt.'}]}]);
   });
   it('reviews a chapter with governed evidence in one complete model result',async()=>{
     const names:string[]=[];

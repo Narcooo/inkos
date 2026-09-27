@@ -25,6 +25,7 @@ it("reuses completed production only for the same review request and preserves r
   const draft = {storyTitle:"Night light", rawContent:"", chapters:[{number:1, title:"Return", content:Array(40).fill("word").join(" "), charCount:40}]};
   vi.spyOn(ShortFictionOutlineAgent.prototype,"createOutline").mockResolvedValue({storyTitle:draft.storyTitle,rawContent:"A keeper repairs a lamp."});
   vi.spyOn(ShortFictionWriterAgent.prototype,"writeDraft").mockResolvedValue(draft);
+  const continueDraft = vi.spyOn(ShortFictionWriterAgent.prototype,"continueDraft");
   const reviewer = vi.spyOn(ShortFictionDraftReviewerAgent.prototype,"reviewDraft").mockResolvedValue({summary:"Reviewed",observations:[]});
   vi.spyOn(ShortFictionPackagingAgent.prototype,"generatePackage").mockResolvedValue({title:draft.storyTitle,intro:"A keeper repairs a lamp.",sellingPoints:["A choice"],coverPrompt:"A lamp",rawContent:""});
   const runtime = {projectRoot:root,model:"fixture",client:{defaults:{maxTokens:4096}}} as never;
@@ -35,6 +36,7 @@ it("reuses completed production only for the same review request and preserves r
   const manuscript = await readFile(join(root,"works/night-light/source/final/short-story.json"));
   await run("Review the keeper's motivation.", "motivation");
   expect(reviewer).toHaveBeenCalledTimes(1);
+  expect(continueDraft).toHaveBeenCalledTimes(1);
   await run("Review the keeper's motivation.", "chronology");
   expect(reviewer).toHaveBeenCalledTimes(2);
   await run("Review the apprentice's chronology.", "chronology");
@@ -107,6 +109,7 @@ it('reviews and packages an undersized persisted manuscript without rewriting it
   const runtime={client:{} as never,model:'fixture',projectRoot:root};
   const options={projectRoot:root,storyId:'short',direction:'',minChapterLengthRatio:0.9,runtimes:{planner:runtime,writer:runtime,draftReview:runtime,package:runtime}};
   const review=await runShortFictionStage({...options,stage:'review'});
+  expect(reviewSpy.mock.calls[0]![0]).toMatchObject({chapterCount:1,charsPerChapter:40,minChapterLength:36,language:'en'});
   expect(review.observations).toEqual(expect.arrayContaining([expect.objectContaining({code:'SHORT_CHAPTER_CONTRACT',assessment:'issue',scope:'chapter:1'})]));
   const packagingRequest="Emphasize the shared decision in the synopsis.";
   await runShortFictionStage({...options,stage:'package',direction:packagingRequest});
@@ -278,6 +281,12 @@ it.each(["resume", "restart", "finalize"] as const)("%s preserves revision owner
     expect(await readFile(join(archiveDir,archives[0]!))).toEqual(checkpointBytes);
   }
   expect(result.status).toBe("success");
+  const reviewInput=vi.mocked(ShortFictionDraftReviewerAgent.prototype.reviewDraft).mock.calls.at(-1)![0];
+  const baselineArtifact=before.artifacts.find(a=>a.revisions.some(r=>r.id===a.currentRevisionId&&r.path==='source/final/short-story.json'))!;
+  expect(reviewInput.comparison).toMatchObject({scope:'episode_start',before:{artifactId:baselineArtifact.id,revisionId:baselineArtifact.currentRevisionId},draft});
+  expect(reviewInput).toMatchObject({charsPerChapter:40,maxChapterLength:60});
+  const reviewState=JSON.parse(await readFile(join(root,'works/short/source/production-state.json'),'utf8')).stages.review;
+  expect(reviewState.comparison).toEqual({scope:reviewInput.comparison!.scope,before:reviewInput.comparison!.before,after:reviewInput.comparison!.after});
   expect((result.data as {kind:string}).kind).toBe("short_fiction_revised");
   expect(actionObservation(result).facts.revisionChanges).toEqual({chapterNumbers:[1,2],openingChanged:false,titleChanged:false,outlineChanged:true});
   expect(pack.mock.calls[0]?.[0].draft.chapters).toEqual(changed.chapters);
