@@ -22,6 +22,11 @@ afterEach(() => {
 });
 
 describe("MiniMax cover configuration", () => {
+  it("advertises only models supported by the text-to-image operation", () => {
+    expect(preset.models).toEqual(["image-01"]);
+    expect(preset.defaultModel).toBe("image-01");
+  });
+
   it.each(["https://api.minimax.io/v1", "https://api.minimaxi.com/v1"])(
     "resolves the regional base URL %s and its explicit endpoint",
     async (baseUrl) => {

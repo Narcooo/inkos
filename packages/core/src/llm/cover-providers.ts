@@ -40,7 +40,7 @@ export const COVER_PROVIDER_PRESETS: readonly CoverProviderPreset[] = [
     baseUrl: "https://api.minimax.io/v1",
     api: "minimax",
     defaultModel: "image-01",
-    models: ["image-01", "image-01-live"],
+    models: ["image-01"],
   },
 ];
 
