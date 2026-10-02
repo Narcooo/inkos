@@ -52,7 +52,7 @@ InkOS 2.0 converges the Chat Agent and every production workflow on one pi-agent
 
 - **Model setup**: Studio includes provider settings, model routing, cover-service settings, [kkaiapi](https://en.kkaiapi.com/) / OpenRouter aggregator entries, and custom OpenAI-compatible endpoints.
 - **One production harness**: Studio Chat, TUI, `inkos interact`, and production workers share the pi-agent tool loop and typed action/result boundary. Existing pipelines are deterministic, interruptible capabilities rather than parallel natural-language decision engines.
-- **19 built-in professional Skills**: dedicated `SKILL.md` packages cover long-form writing/review, commercial shorts, Play, scripts, storyboards, interactive film, translation, analysis, market research, import, covers, and semantic de-slopping. Each medium shares the Skill architecture, not long-form-specific prompts.
+- **20 built-in professional Skills**: dedicated `SKILL.md` packages cover long-form writing/review, commercial shorts, Play, scripts, storyboards, interactive film, translation, analysis, market research, import, covers, and semantic de-slopping. Each medium shares the Skill architecture, not long-form-specific prompts.
 - **Unified local retrieval**: story memory, archived materials, and Skill references use one rebuildable SQLite FTS5 / BM25 projection. Source files remain authoritative and retrieved evidence keeps source locations.
 - **Book-bound references**: imported material can be explicitly bound to a book with intended uses, then retrieved by task instead of injecting every file in full.
 - **Safe chapter workspaces**: prose, state, hooks, and run snapshots are validated in a chapter workspace and committed atomically, preventing state from advancing when prose persistence fails.
@@ -199,7 +199,7 @@ INKOS_LLM_BASE_URL=                               # API endpoint
 INKOS_LLM_API_KEY=                                 # API Key
 INKOS_LLM_MODEL=                                   # Model name
 
-# Language (defaults to global setting or genre default)
+# Language (per book; defaults to this global setting)
 # INKOS_DEFAULT_LANGUAGE=en                        # en or zh
 
 # Optional
@@ -259,17 +259,17 @@ If a service test fails, first check that the service, model, and protocol match
 
 ### Write Your First Book
 
-English is the default for English genre profiles. Pick a genre and go:
+Language is per book; it is not inferred from the genre label. Pass `--lang en` for an English book:
 
 ```bash
-inkos book create --title "The Last Delver" --genre litrpg     # LitRPG novel (English by default)
+inkos book create --title "The Last Delver" --genre litrpg --lang en  # LitRPG novel in English
 inkos write next my-book          # Write and persist the next chapter; review and revision remain explicit actions
 inkos status                      # Check status
 inkos review my-book              # Inspect persisted review observations
 inkos export my-book --format epub  # Export EPUB (read on phone/Kindle)
 ```
 
-Language is set per-genre by default. Override explicitly with `--lang en` or `--lang zh`. Use `inkos genre list` to see all available genres and their default languages.
+Language is a per-book setting. Pass `--lang en` or `--lang zh` to `inkos book create`, or change it later with `inkos book update --lang`. When omitted, the project's `language` setting applies (default `zh`).
 
 ### Write Complete Short Fiction
 
@@ -320,24 +320,11 @@ InkOS creates the world, characters, items, evidence, relationships, current sce
 
 ---
 
-## English Creation Metadata
+## Common Genre Labels
 
-InkOS ships with lightweight metadata for common English serial-fiction genres. Creative method comes from Skills and the user's Work constraints:
+`--genre` accepts any free-form label (it defaults to `xuanhuan`) and stores it on the book. In 2.0 a genre label no longer selects pacing rules, fatigue-word lists, or audit dimensions — creative method comes from Skills and the user's Work constraints.
 
-| Genre | Key Mechanics |
-|-------|--------------|
-| **LitRPG** | Numerical system, power scaling, stat progression |
-| **Progression Fantasy** | Power scaling, no numerical system required |
-| **Isekai** | Era research, world contrast, cultural fish-out-of-water |
-| **Cultivation** | Power scaling, realm progression |
-| **System Apocalypse** | Numerical system, survival mechanics |
-| **Dungeon Core** | Numerical system, power scaling, territory management |
-| **Romantasy** | Emotional arcs, dual POV pacing |
-| **Sci-Fi** | Era research, tech consistency |
-| **Tower Climber** | Numerical system, floor progression |
-| **Cozy Fantasy** | Low-stakes pacing, comfort-first tone |
-
-Also supports 5 Chinese web novel genres (xuanhuan, xianxia, urban, horror, other) for bilingual creators.
+Commonly used labels include: LitRPG, Progression Fantasy, Isekai, Cultivation, System Apocalypse, Dungeon Core, Romantasy, Sci-Fi, Tower Climber, Cozy Fantasy, plus the Chinese web novel labels xuanhuan, xianxia, urban, horror, and other.
 
 ---
 
@@ -537,7 +524,6 @@ The first image is a local Studio screenshot. The other images are real local ou
 | `inkos book update [id]` | Update book settings (`--chapter-words`, `--target-chapters`, `--status`, `--lang`) |
 | `inkos book list` | List all books |
 | `inkos book delete <id>` | Delete a book and all its data (`--force` to skip confirmation) |
-| `inkos genre list/show/copy/create` | View, copy, or create genres |
 | `inkos write next [id]` | Full pipeline: write next chapter (`--words` to override, `--count` for batch, `-q` quiet mode) |
 | `inkos write rewrite [id] <n>` | Rewrite chapter N (restores state snapshot, `--force` to skip confirmation) |
 | `inkos revise [id] [n]` | Revise a specific chapter |
