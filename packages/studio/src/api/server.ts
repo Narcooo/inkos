@@ -1962,7 +1962,12 @@ async function resolveConfiguredServiceBaseUrl(root: string, serviceId: string, 
   if (inlineBaseUrl?.trim()) return inlineBaseUrl.trim();
 
   if (!isCustomServiceId(serviceId)) {
-    return resolveServicePreset(serviceId)?.baseUrl;
+    const presetBaseUrl = resolveServicePreset(serviceId)?.baseUrl;
+    if (presetBaseUrl) return presetBaseUrl;
+    // 锚点预设（newapi/custom 等 baseUrl 留空、由用户在 Studio 配置）回退到已存服务条目，
+    // 否则返回 "" 会在下游 `??` 链中绕过空值合并，导致 "no baseUrl available"
+    const entry = await resolveConfiguredServiceEntry(root, serviceId);
+    return entry?.baseUrl || undefined;
   }
 
   try {
