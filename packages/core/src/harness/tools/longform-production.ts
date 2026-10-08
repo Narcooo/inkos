@@ -217,6 +217,7 @@ export function createWriteChaptersTool(
         }:undefined;
         return textResult(`Completed ${results.length} chapter(s) for "${bookId}".`, {
           kind: results.length === 1 ? "chapter_written" : "chapters_written",
+          workId: bookId,
           bookId,
           requestedCount: count,
           startChapterNumber: params.startChapterNumber,

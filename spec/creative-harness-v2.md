@@ -22,6 +22,12 @@ Skills; they do not replace the author's requested scope.
   attempts retain their review/export obligations through failure. Export alone
   cannot fulfill a failed review; completion requires each operation's current
   revision receipt. Explicit historical reviews remain snapshot evidence.
+- Chapter exports measure their actual source text in its native language unit,
+  independent of cached chapter counts. Export receipts bind the complete source
+  and its length contract. Draft export remains available; final delivery checks
+  explicit author bounds and rejects stale exports. Chapter-only production checks
+  the chapters it touched; exporting a book checks every exported chapter.
+  Approximate length targets alone never become hard acceptance bounds.
 - Reviewers submit individual findings with source addresses, then select the
   accepted finding codes for their final report. The host validates each finding
   and assembles the report. A final report cannot reference an unaccepted finding;

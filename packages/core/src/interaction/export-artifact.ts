@@ -1,12 +1,17 @@
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { createHash } from "node:crypto";
 import { EPub } from "epub-gen-memory";
 import {renderChapterDocument} from '../utils/chapter-document.js';
 import {readChapterHeading} from '../utils/chapter-splitter.js';
+import {buildLengthSpec, chapterLengthDelivery, countChapterLength, defaultChapterLength} from '../utils/length-metrics.js';
 
 export interface ExportStateLike {
   readonly bookDir: (bookId: string) => string;
-  readonly loadBookConfig: (bookId: string) => Promise<{ readonly title: string; readonly language?: string }>;
+  readonly loadBookConfig: (bookId: string) => Promise<{
+    readonly title: string; readonly language?: string; readonly chapterWordCount?: number;
+    readonly minChapterLength?: number; readonly maxChapterLength?: number;
+  }>;
   readonly loadChapterIndex: (bookId: string) => Promise<ReadonlyArray<{
     readonly number: number;
     readonly title?: string;
@@ -15,6 +20,10 @@ export interface ExportStateLike {
 }
 
 export interface ExportArtifact {
+  readonly kind: "book_exported";
+  readonly workId: string;
+  readonly sourceDigest: string;
+  readonly delivery: Awaited<ReturnType<typeof readBookExportSource>>["delivery"];
   readonly outputPath: string;
   readonly fileName: string;
   readonly chaptersExported: number;
@@ -22,6 +31,34 @@ export interface ExportArtifact {
   readonly format: "txt" | "md" | "epub";
   readonly contentType: string;
   readonly payload: string | Buffer;
+}
+
+/** Read once: measurements, exported text and the receipt describe the same source. */
+export async function readBookExportSource(state: ExportStateLike, bookId: string) {
+  const index = await state.loadChapterIndex(bookId);
+  const book = await state.loadBookConfig(bookId);
+  if (!index.length) throw new Error("No chapters to export.");
+  const chaptersDir = join(state.bookDir(bookId), "chapters");
+  const files = buildChapterFileLookup(await readdir(chaptersDir), index);
+  const chapters = await Promise.all(index.map(async chapter => {
+    const file = files.get(chapter.number)!;
+    const raw = await readFile(join(chaptersDir, file), "utf-8");
+    const heading = readChapterHeading(raw.trimStart().split(/\r?\n/u)[0] ?? "");
+    const language = book.language === "en" || book.language === undefined && heading?.language === "en" ? "en" : "zh";
+    const title = chapter.title ?? heading?.title ?? file.replace(/^\d+_/u, "").replace(/\.md$/u, "");
+    const markdown = renderChapterDocument(chapter.number, title, raw, language);
+    const spec = buildLengthSpec(book.chapterWordCount ?? defaultChapterLength(language), language, book);
+    const count = countChapterLength(markdown, spec.countingMode);
+    return {number: chapter.number, file, markdown, count, delivery: chapterLengthDelivery(count, spec)};
+  }));
+  const checks = chapters.flatMap(chapter => chapter.delivery ? [{chapterNumber: chapter.number, ...chapter.delivery}] : []);
+  const delivery = {
+    status: checks.some(check => check.status === "needs_revision") ? "needs_revision" as const
+      : checks.length ? "checks_passed" as const : "unverified" as const,
+    chapters: checks,
+  };
+  const sourceDigest = createHash("sha256").update(JSON.stringify({title: book.title, language: book.language, chapters})).digest("hex");
+  return {book, chapters, delivery, sourceDigest, totalWords: chapters.reduce((sum, chapter) => sum + chapter.count, 0)};
 }
 
 export class ChapterExportSourceError extends Error {
@@ -96,35 +133,16 @@ export async function buildExportArtifact(
   },
 ): Promise<ExportArtifact> {
   const format = options.format ?? "txt";
-  const index = await state.loadChapterIndex(bookId);
-  const book = await state.loadBookConfig(bookId);
-  const chapters = index;
-
-  if (chapters.length === 0) {
-    throw new Error("No chapters to export.");
-  }
+  const {book, chapters, delivery, sourceDigest, totalWords} = await readBookExportSource(state, bookId);
 
   const bookDir = state.bookDir(bookId);
-  const chaptersDir = join(bookDir, "chapters");
   const outputPath = options.outputPath ?? join(bookDir, "exports", `${bookId}.${format}`);
-  const chapterFiles = buildChapterFileLookup(await readdir(chaptersDir), chapters);
-  const totalWords = chapters.reduce((sum, chapter) => sum + chapter.wordCount, 0);
-  const readChapter = async (chapter: typeof chapters[number], file: string) => {
-    const raw = await readFile(join(chaptersDir, file), 'utf-8');
-    const heading = readChapterHeading(raw.trimStart().split(/\r?\n/u)[0] ?? '');
-    return renderChapterDocument(chapter.number, chapter.title ?? heading?.title ?? file.replace(/^\d+_/u,'').replace(/\.md$/u,''), raw,
-      book.language === 'en' || book.language === undefined && heading?.language === 'en' ? 'en' : 'zh');
-  };
+  const receipt = {kind: "book_exported" as const, workId: bookId, sourceDigest, delivery};
 
   if (format === "epub") {
     const epubChapters: Array<{ title: string; content: string }> = [];
     for (const chapter of chapters) {
-      const match = chapterFiles.get(chapter.number);
-      if (!match) {
-        continue;
-      }
-      const markdown = await readChapter(chapter, match);
-      const { title, html } = markdownToSimpleHtml(markdown);
+      const { title, html } = markdownToSimpleHtml(chapter.markdown);
       epubChapters.push({ title, content: html });
     }
     const epubInstance = new EPub(
@@ -132,6 +150,7 @@ export async function buildExportArtifact(
       epubChapters,
     );
     return {
+      ...receipt,
       outputPath,
       fileName: `${bookId}.epub`,
       chaptersExported: chapters.length,
@@ -145,14 +164,11 @@ export async function buildExportArtifact(
   const parts: string[] = [];
   parts.push(format === "md" ? `# ${book.title}` : book.title);
   for (const chapter of chapters) {
-    const match = chapterFiles.get(chapter.number);
-    if (!match) {
-      continue;
-    }
-    parts.push(await readChapter(chapter, match));
+    parts.push(chapter.markdown);
   }
 
   return {
+    ...receipt,
     outputPath,
     fileName: `${bookId}.${format}`,
     chaptersExported: chapters.length,
@@ -175,6 +191,10 @@ export async function writeExportArtifact(
   await mkdir(dirname(artifact.outputPath), { recursive: true });
   await writeFile(artifact.outputPath, artifact.payload);
   return {
+    kind: artifact.kind,
+    workId: artifact.workId,
+    sourceDigest: artifact.sourceDigest,
+    delivery: artifact.delivery,
     outputPath: artifact.outputPath,
     chaptersExported: artifact.chaptersExported,
     totalWords: artifact.totalWords,

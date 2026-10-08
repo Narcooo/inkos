@@ -4,6 +4,8 @@ import type { ActionResult } from "../harness/contracts.js";
 import { loadWorkManifest } from "../harness/work-store.js";
 import { readArtifactRevision } from "../harness/artifact-reader.js";
 import { posix } from "node:path";
+import { StateManager } from "../state/manager.js";
+import { readBookExportSource } from "../interaction/export-artifact.js";
 
 export const TURN_COMPLETION_TOOL = "finish_turn";
 export const TurnCompletionSchema = Type.Object({
@@ -25,10 +27,18 @@ export class TurnArtifactDeliveries {
   private readonly receipts = new Map<string, {workId: string; artifactId: string; revisionId: string; operation: string; scopeIssues?: ActionResult["observations"]}>();
   private readonly requiredOperations = new Map<string, {workId: string; artifactId: string; operation: string}>();
   private readonly requiredCovers = new Set<string>();
+  private readonly chaptersWithLengthChecks = new Map<string, Set<number>>();
+  private readonly requiredBookExports = new Set<string>();
+  private readonly bookExports = new Map<string, string>();
 
   /** Register valid delivery attempts before execution, so failure cannot erase
    * an obligation and an unrelated successful action cannot fulfill it. */
   async requireOperations(projectRoot: string, workId: string | null, capabilityId: string, actionId: string, parameters: unknown) {
+    if (capabilityId === "longform" && actionId === "export_book" && workId) {
+      this.requiredBookExports.add(workId);
+      this.bookExports.delete(workId);
+      return;
+    }
     if (capabilityId !== "workspace" || !workId || !parameters || typeof parameters !== "object") return;
     const params = parameters as {artifactId?: unknown; revisionId?: unknown};
     const operations = actionId === "review_and_export_work_artifact" ? ["review", "export"]
@@ -53,6 +63,16 @@ export class TurnArtifactDeliveries {
     if (!data || typeof data !== "object" || typeof data.workId !== "string") return;
     const delivery = data.delivery as {target?:{coverRequired?:boolean}} | undefined;
     if (delivery?.target?.coverRequired === true) this.requiredCovers.add(data.workId);
+    if (["chapter_written", "chapters_written", "chapter_revision"].includes(String(data.kind)) && delivery) {
+      const chapters = this.chaptersWithLengthChecks.get(data.workId) ?? new Set<number>();
+      const items = Array.isArray(data.chapters) ? data.chapters : [data];
+      for (const item of items) if (item && typeof item.chapterNumber === "number") chapters.add(item.chapterNumber);
+      this.chaptersWithLengthChecks.set(data.workId, chapters);
+    }
+    if (data.kind === "book_exported" && typeof data.sourceDigest === "string") {
+      this.requiredBookExports.add(data.workId);
+      this.bookExports.set(data.workId, data.sourceDigest);
+    }
     const historical = parameters && typeof parameters === "object" && "revisionId" in parameters;
     const chapterReview=data.kind==='chapter_review'&&data.reviewedArtifact&&typeof data.reviewedArtifact==='object'
       ? data.reviewedArtifact as {artifactId?:unknown;revisionId?:unknown}:undefined;
@@ -72,10 +92,28 @@ export class TurnArtifactDeliveries {
 
   async validate(projectRoot: string) {
     const missing = [...this.requiredOperations].filter(([key]) => !this.receipts.has(key)).map(([,operation]) => operation);
+    for (const workId of this.requiredBookExports) {
+      if (!this.bookExports.has(workId)) missing.push({workId, artifactId: "chapters", operation: "export"});
+    }
     if (missing.length) throw Object.assign(new Error(JSON.stringify({
       code: "TURN_REQUIRED_OPERATIONS_INCOMPLETE", missing,
       instruction: "These requested artifact operations have not succeeded. Complete them on the current revision or report the concrete blocker; another successful operation does not fulfill them.",
     })), {code: "TURN_REQUIRED_OPERATIONS_INCOMPLETE"});
+    const state = new StateManager(projectRoot);
+    for (const workId of new Set([...this.chaptersWithLengthChecks.keys(), ...this.requiredBookExports])) {
+      const source = await readBookExportSource(state, workId);
+      const failures = source.delivery.chapters.filter(chapter => chapter.status === "needs_revision"
+        && (this.requiredBookExports.has(workId) || this.chaptersWithLengthChecks.get(workId)?.has(chapter.chapterNumber)));
+      if (failures.length) throw Object.assign(new Error(JSON.stringify({
+        code: "TURN_DELIVERY_CHECKS_FAILED", workId, chapters: failures,
+        instruction: "Current chapter text fails explicit author length bounds. Repair within the authorized editing scope, or report the constraint conflict. Export success alone does not satisfy those bounds.",
+      })), {code: "TURN_DELIVERY_CHECKS_FAILED"});
+      const exportedDigest = this.bookExports.get(workId);
+      if (exportedDigest && exportedDigest !== source.sourceDigest) throw Object.assign(new Error(JSON.stringify({
+        code: "TURN_DELIVERY_STALE", workId, operation: "export",
+        instruction: "Chapter sources changed after export. Export the current sources before claiming delivery.",
+      })), {code: "TURN_DELIVERY_STALE"});
+    }
     const works = new Map<string, Awaited<ReturnType<typeof loadWorkManifest>>>();
     for (const workId of this.requiredCovers) {
       const work = await loadWorkManifest(projectRoot, workId);
