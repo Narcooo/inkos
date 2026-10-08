@@ -224,8 +224,8 @@ it('bounds invalid structured submissions and returns schema paths instead of ec
     },{maxTokens:128})).rejects.toMatchObject({code:'WORKER_RESULT_INVALID',attempts:3});
     expect(requests).toHaveLength(3);
     const feedback=JSON.parse(requests[1].messages.find(message=>message.role==='tool')!.content);
-    expect(feedback).toMatchObject({code:'WORKER_SCHEMA_INVALID',issues:[{path:'/chapters'},{path:'/state',allowedValues:['draft','ready']}]});
-    expect(Object.keys(feedback.issues[0]).sort()).toEqual(['message','path','type']);
+    expect(feedback).toMatchObject({code:'WORKER_SCHEMA_INVALID',issues:[{path:'/chapters',expectedType:'array',actualType:'string'},{path:'/state',actualType:'string',allowedValues:['draft','ready']}]});
+    expect(Object.keys(feedback.issues[0]).sort()).toEqual(['actualType','expectedType','instruction','message','path','type']);
   }finally{server.closeAllConnections();await new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve()));}
 },15000);
 

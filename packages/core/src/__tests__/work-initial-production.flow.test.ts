@@ -120,8 +120,12 @@ it('produces and edits a composed Work by its capabilities while protecting exis
     await bound.executeAction({handle:revisionEpisode,capabilityId:'workspace',actionId:'replace_work_artifact',source:'agent',parameters:{artifactId:artifact.id,content:manuscript+'\nA changed final shot.\n',expectedRevisionId:artifact.currentRevisionId}});
     await expect(finish.execute('finish-stale', {status:'delivered',message:'Reviewed and exported.'})).rejects.toMatchObject({code:'TURN_DELIVERY_STALE'});
     failReview = true;
+    await deliveries.requireOperations(root,'derived','workspace','review_and_export_work_artifact',deliveryParameters);
     await expect(bound.executeAction({handle:revisionEpisode,capabilityId:'workspace',actionId:'review_and_export_work_artifact',source:'agent',parameters:deliveryParameters})).rejects.toThrow();
     expect(await readFile(exportPath,'utf8')).toBe(manuscript);
+    const exportOnly=await bound.executeAction({handle:revisionEpisode,capabilityId:'workspace',actionId:'export_work',source:'agent',parameters:{artifactId:artifact.id}});
+    deliveries.observe(exportOnly);
+    await expect(finish.execute('finish-review-missing',{status:'delivered',message:'Export completed.'})).rejects.toMatchObject({code:'TURN_REQUIRED_OPERATIONS_INCOMPLETE'});
     const intermediate=await loadWorkManifest(root,'derived');
     const intermediateId=intermediate.artifacts.find(item=>item.id===artifact.id)!.currentRevisionId!;
     await bound.executeAction({handle:revisionEpisode,capabilityId:'workspace',actionId:'replace_work_artifact',source:'agent',parameters:{artifactId:artifact.id,content:manuscript+'\nThe final shot follows the hand.\n',expectedRevisionId:intermediateId}});

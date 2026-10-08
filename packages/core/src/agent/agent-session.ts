@@ -989,6 +989,9 @@ async function runAgentSessionUnlocked(
       registry: capabilities,
       profile,
       includeAction: (capabilityId, action) => {
+        // Author-driven changes use the scoped revision action. The raw commit
+        // primitive remains available to explicit callers and domain tools.
+        if (actionSource === "free-text" && capabilityId === "workspace" && action.id === "replace_work_artifact") return false;
         if (confirmedCapabilityAction) {
           return capabilityId === confirmedCapabilityAction.capabilityId && action.id === confirmedCapabilityAction.actionId;
         }
@@ -1007,6 +1010,7 @@ async function runAgentSessionUnlocked(
         });
         cached.activeActions++;
         try {
+          await cached.artifactDeliveries.requireOperations(projectRoot, cached.workId, capabilityId, actionId, parameters);
           const result = await cached.harnessRuntime.executeAction({
             handle,
             capabilityId,

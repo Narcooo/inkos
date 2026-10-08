@@ -13,16 +13,22 @@ it('keeps the original revision across a failed write, server recreation and nat
  const upstream=createServer(async(req,res)=>{
   const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));const body=JSON.parse(Buffer.concat(chunks).toString('utf8'));
   const send=(name:string,args:unknown)=>{res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{role:'assistant',tool_calls:[{id:'call-'+Date.now(),type:'function',function:{name,arguments:JSON.stringify(args)}}]}}]}));};
+  if(body.tools[0].function.name==='submit_author_edit_scope'){
+   send('submit_author_edit_scope',{wholeDocument:false,selections:[{startLine:3,endLine:3,text:'The visitor waits.'}],reason:'The author selected the final paragraph.'});return;
+  }
+  if(body.tools[0].function.name==='submit_artifact_revision'){
+   send('submit_artifact_revision',{selection_0_text:'The visitor waits by the door.'});return;
+  }
   if(body.tools[0].function.name==='submit_artifact_review'){
    const input=JSON.parse(body.messages.findLast((m:any)=>m.role==='user').content);reviews.push(input);
-   send('submit_artifact_review',{summary:'Recorded comparison.',observations:[{category:'scope',assessment:'issue',code:'FIXTURE_SCOPE',summary:'A protected first paragraph changed.',sourceRefs:[{sourceId:input.sources[0].sourceId,startLine:1,endLine:1},{sourceId:input.comparison.sourceId,startLine:1,endLine:1}]}]});return;
+   send('submit_artifact_review',{summary:'Recorded comparison.',observations:[{category:'quality',assessment:'observation',code:'FIXTURE_REVISION',summary:'The final paragraph changed.',sourceRefs:[{sourceId:input.sources[0].sourceId,startLine:3,endLine:3},{sourceId:input.comparison.sourceId,startLine:3,endLine:3}]}]});return;
   }
   if(phase==='first'){
-   if(mainCalls++===0)send('workspace__replace_work_artifact',{path:'source/script.md',content:'Eli closes the gallery.\n\nThe visitor waits by the door.\n',expectedRevisionId:initialRevision});
+   if(mainCalls++===0)send('workspace__revise_work_artifact',{artifactId,instruction:'Change only the final paragraph.'});
    else{res.writeHead(401,{'Content-Type':'application/json'});res.end(JSON.stringify({error:{message:'Fixture transport failure after persisted edit.'}}));}return;
   }
   if(phase==='retry'&&mainCalls++===0){send('workspace__review_work_artifact',{artifactId,instruction:'Review the current revision against the original request.'});return;}
-  send('finish_turn',{status:'blocked',message:'A protected passage still needs restoration.'});
+  send('finish_turn',{status:'blocked',message:'The fixture ends after recording the comparison.'});
  });upstream.listen(0,'127.0.0.1');await once(upstream,'listening');
  try{
   await mkdir(join(root,'.inkos'));const baseUrl=`http://127.0.0.1:${(upstream.address() as {port:number}).port}/v1`;

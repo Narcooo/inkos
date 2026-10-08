@@ -322,6 +322,7 @@ describe("guardedPiNonStreaming", () => {
       expect(calls).toHaveLength(2);
       expect(calls[0]!.tools.map(t=>t.function.name)).not.toContain('workspace__review_and_export_work_artifact');
       expect(calls[1]!.tools.map(t=>t.function.name)).toEqual(expect.arrayContaining(['workspace__review_and_export_work_artifact','workspace__revise_work_artifact']));
+      expect(calls[1]!.tools.map(t=>t.function.name)).not.toContain('workspace__replace_work_artifact');
       expect(calls[1]!.messages.at(-3)?.content).toBe(request);
       expect((await readTranscriptEvents(root,'create-fixture')).filter(e=>e.type==='request_committed')).toHaveLength(2);
     } finally {evictAgentCache('create-fixture');await rm(root,{recursive:true,force:true});}

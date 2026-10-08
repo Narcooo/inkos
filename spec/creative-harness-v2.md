@@ -18,9 +18,14 @@ Skills; they do not replace the author's requested scope.
 - Read, review, and export resolve registered artifact versions and verify their
   checksums. A missing artifact returns a recoverable, typed lookup error.
 - Review-and-export fixes one version for both operations. Content findings and
-  successful execution are separate results.
+  successful execution are separate results. Valid current-artifact delivery
+  attempts retain their review/export obligations through failure. Export alone
+  cannot fulfill a failed review; completion requires each operation's current
+  revision receipt. Explicit historical reviews remain snapshot evidence.
 - Local revisions preserve content outside the author's permitted range. The
   request's original baseline remains available across retries for comparison.
+  Conversational agents edit through the scoped revision action; raw artifact
+  replacement is an internal commit primitive or an explicit host operation.
 - Short-fiction reviews receive the persisted length requirements and a verified
   request-baseline comparison. Changed chapters have citable earlier text;
   unchanged chapters are compared in full without duplicating their text in the
@@ -73,6 +78,9 @@ on its bounded retry; another missing result fails with
 `MODEL_REQUIRED_TOOL_MISSING`. Models that prohibit sampling overrides receive
 their server defaults. Sonnet 5.5's documented limits and request constraints
 apply through both native Claude and OpenAI-compatible gateways.
+Malformed structured results receive bounded schema feedback with field paths,
+expected and received types, and native JSON container instructions when needed.
+The host does not rewrite malformed prose into a passing result.
 
 ## Verification recorded on 2026-09-25
 

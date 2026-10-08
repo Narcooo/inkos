@@ -23,7 +23,30 @@ Call finish_turn alone after other operations finish. Ground delivery claims in 
  */
 export class TurnArtifactDeliveries {
   private readonly receipts = new Map<string, {workId: string; artifactId: string; revisionId: string; operation: string; scopeIssues?: ActionResult["observations"]}>();
+  private readonly requiredOperations = new Map<string, {workId: string; artifactId: string; operation: string}>();
   private readonly requiredCovers = new Set<string>();
+
+  /** Register valid delivery attempts before execution, so failure cannot erase
+   * an obligation and an unrelated successful action cannot fulfill it. */
+  async requireOperations(projectRoot: string, workId: string | null, capabilityId: string, actionId: string, parameters: unknown) {
+    if (capabilityId !== "workspace" || !workId || !parameters || typeof parameters !== "object") return;
+    const params = parameters as {artifactId?: unknown; revisionId?: unknown};
+    const operations = actionId === "review_and_export_work_artifact" ? ["review", "export"]
+      : actionId === "review_work_artifact" && params.revisionId === undefined ? ["review"]
+      : actionId === "export_work" ? ["export"] : [];
+    if (!operations.length || typeof params.artifactId !== "string") return;
+    const work = await loadWorkManifest(projectRoot, workId);
+    const artifact = work.artifacts.find(item => item.id === params.artifactId);
+    const revision = artifact?.revisions.find(item => item.id === artifact.currentRevisionId);
+    if (!artifact || !revision || (params.revisionId !== undefined && params.revisionId !== revision.id)) return;
+    if (operations.includes("export") && (!revision.path.endsWith(".md") || revision.path.startsWith("source/exports/"))) return;
+    if (operations.includes("review") && !revision.contentType.startsWith("text/") && revision.contentType !== "application/json") return;
+    for (const operation of operations) {
+      const key = JSON.stringify([workId, artifact.id, operation]);
+      this.requiredOperations.set(key, {workId, artifactId: artifact.id, operation});
+      this.receipts.delete(key);
+    }
+  }
 
   observe(result: ActionResult, parameters: unknown = {}) {
     const data = result.data as Record<string, unknown> | undefined;
@@ -35,7 +58,7 @@ export class TurnArtifactDeliveries {
       ? data.reviewedArtifact as {artifactId?:unknown;revisionId?:unknown}:undefined;
     const operations = data.kind === "artifact_delivered" ? ["review", "export"]
       : data.kind === "work_exported" ? ["export"]
-      : chapterReview || data.kind === "artifact_reviewed" && !historical ? ["review"] : [];
+      : chapterReview || data.kind === "artifact_reviewed" && (!historical || this.requiredOperations.has(JSON.stringify([data.workId, data.artifactId, "review"]))) ? ["review"] : [];
     const artifactId = chapterReview?.artifactId ?? (data.kind === "work_exported" ? data.sourceArtifactId : data.artifactId);
     const revisionId = chapterReview?.revisionId ?? (data.kind === "work_exported" ? data.sourceRevisionId : data.revisionId);
     if (typeof artifactId !== "string" || typeof revisionId !== "string") return;
@@ -48,6 +71,11 @@ export class TurnArtifactDeliveries {
   }
 
   async validate(projectRoot: string) {
+    const missing = [...this.requiredOperations].filter(([key]) => !this.receipts.has(key)).map(([,operation]) => operation);
+    if (missing.length) throw Object.assign(new Error(JSON.stringify({
+      code: "TURN_REQUIRED_OPERATIONS_INCOMPLETE", missing,
+      instruction: "These requested artifact operations have not succeeded. Complete them on the current revision or report the concrete blocker; another successful operation does not fulfill them.",
+    })), {code: "TURN_REQUIRED_OPERATIONS_INCOMPLETE"});
     const works = new Map<string, Awaited<ReturnType<typeof loadWorkManifest>>>();
     for (const workId of this.requiredCovers) {
       const work = await loadWorkManifest(projectRoot, workId);
