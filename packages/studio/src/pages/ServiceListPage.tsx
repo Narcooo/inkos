@@ -422,7 +422,7 @@ export function ServiceListPage({ nav }: { nav: Nav }) {
       <div className="h-px bg-border/30" />
 
       {loading && (
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {Array.from({ length: 6 }, (_, i) => <SkeletonCard key={i} />)}
         </div>
       )}
@@ -442,7 +442,7 @@ export function ServiceListPage({ nav }: { nav: Nav }) {
                 </p>
               )}
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {list.map((svc) => (
                 <ServiceCard
                   key={svc.service}
@@ -460,7 +460,7 @@ export function ServiceListPage({ nav }: { nav: Nav }) {
           <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground/70">
             {tr("自定义服务", "Custom services")}
           </h2>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {filteredCustom.map((svc) => (
               <ServiceCard
                 key={svc.service}

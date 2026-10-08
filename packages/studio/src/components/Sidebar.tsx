@@ -48,8 +48,16 @@ import {
   Rows3,
   Film,
   Languages,
+  X,
 } from "lucide-react";
 import { InkosLogo } from "./InkosLogo";
+import { cn } from "../lib/utils";
+import {
+  deriveSidebarLayout,
+  revealOnCoarsePointer,
+  touchTargetClass,
+  SIDEBAR_SCRIM_TEST_ID,
+} from "../lib/mobile-layout";
 
 // 历史记录里的会话混装多种类型（chat / short / play / book-create），用图标区分。
 function SessionKindIcon({ kind, className }: { readonly kind?: string; readonly className?: string }) {
@@ -89,11 +97,14 @@ interface Nav {
   toFilmStudio: (id: string) => void;
 }
 
-export function Sidebar({ nav, activePage, sse, t }: {
+export function Sidebar({ nav, activePage, sse, t, open, onClose }: {
   nav: Nav;
   activePage: string;
   sse: { messages: ReadonlyArray<SSEMessage> };
   t: TFunction;
+  /** Phone-portrait drawer state; ignored from `md` up, where the column is static. */
+  open: boolean;
+  onClose: () => void;
 }) {
   const { data, refetch: refetchBooks, mutate: mutateBooks } = useApi<{ books: ReadonlyArray<BookSummary> }>("/books");
   const { data: filmsData, refetch: refetchFilms } = useApi<{ films: ReadonlyArray<{ projectId: string; title: string }> }>("/interactive-films");
@@ -285,19 +296,55 @@ export function Sidebar({ nav, activePage, sse, t }: {
     setDeleteTarget(null);
   };
 
+  const { aside: asideClass, scrim: scrimClass } = deriveSidebarLayout(open);
+
+  // Escape mirrors tapping the backdrop: both are the cheap dismiss paths a
+  // keyboard user (or a one-handed phone user) reaches for first.
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [open, onClose]);
+
+  // Every nav entry routes through activePage, so a route change is the signal
+  // that the user picked something and the drawer has served its purpose.
+  useEffect(() => {
+    onClose();
+  }, [activePage, onClose]);
+
   return (
-    <aside className="w-[260px] shrink-0 border-r border-border bg-background/80 backdrop-blur-md flex flex-col h-full overflow-hidden select-none">
+    <>
+    {scrimClass && (
+      <div
+        className={scrimClass}
+        data-testid={SIDEBAR_SCRIM_TEST_ID}
+        onClick={onClose}
+      />
+    )}
+    <aside className={asideClass} aria-label={t("nav.createSection")}>
       {/* Logo Area */}
-      <div className="px-6 py-8">
+      <div className="flex items-center justify-between gap-2 px-4 py-4 sm:px-6 sm:py-8">
         <button
           onClick={nav.toDashboard}
-          className="group flex items-center gap-3 hover:opacity-80 transition-all duration-300"
+          className="group flex min-w-0 items-center gap-3 hover:opacity-80 transition-all duration-300"
         >
-          <InkosLogo className="w-11 h-11 shrink-0 group-hover:scale-105 transition-transform" />
+          <InkosLogo className="w-9 h-9 sm:w-11 sm:h-11 shrink-0 group-hover:scale-105 transition-transform" />
           <div className="flex flex-col">
             <span className="font-serif text-[27px] leading-none italic font-medium">InkOS</span>
             <span className="text-[13px] uppercase tracking-[0.22em] text-muted-foreground font-bold mt-1.5">Studio</span>
           </div>
+        </button>
+        {/* Drawer-only close affordance; the desktop column has no dismissal. */}
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label={tr("关闭菜单", "Close menu")}
+          className="shrink-0 rounded-md p-2 text-muted-foreground hover:bg-secondary/40 hover:text-foreground md:hidden"
+        >
+          <X size={18} />
         </button>
       </div>
 
@@ -343,7 +390,7 @@ export function Sidebar({ nav, activePage, sse, t }: {
                       type="button"
                       aria-label={isExpanded ? tr(`折叠 ${book.title}`, `Collapse ${book.title}`) : tr(`展开 ${book.title}`, `Expand ${book.title}`)}
                       onClick={() => toggleBook(book.id)}
-                      className="flex h-8 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground/60 hover:bg-secondary/30 hover:text-foreground transition-colors"
+                      className="flex h-10 w-10 sm:h-8 sm:w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground/60 hover:bg-secondary/30 hover:text-foreground transition-colors"
                     >
                       <ChevronRight
                         size={12}
@@ -391,7 +438,7 @@ export function Sidebar({ nav, activePage, sse, t }: {
                             </button>
 
                             <DropdownMenu>
-                              <DropdownMenuTrigger className="flex h-6 w-6 shrink-0 items-center justify-center rounded opacity-0 group-hover/session:opacity-100 text-muted-foreground hover:text-foreground transition-opacity">
+                              <DropdownMenuTrigger className={cn(touchTargetClass("shrink-0 items-center justify-center rounded text-muted-foreground hover:text-foreground transition-opacity"), revealOnCoarsePointer("session"))}>
                                 <MoreHorizontal size={14} />
                               </DropdownMenuTrigger>
                               <DropdownMenuContent side="right" align="start" className="w-36">
@@ -516,7 +563,7 @@ export function Sidebar({ nav, activePage, sse, t }: {
                         </button>
 
                         <DropdownMenu>
-                          <DropdownMenuTrigger className="flex h-6 w-6 shrink-0 items-center justify-center rounded opacity-0 group-hover/session:opacity-100 text-muted-foreground hover:text-foreground transition-opacity">
+                          <DropdownMenuTrigger className={cn(touchTargetClass("shrink-0 items-center justify-center rounded text-muted-foreground hover:text-foreground transition-opacity"), revealOnCoarsePointer("session"))}>
                             <MoreHorizontal size={14} />
                           </DropdownMenuTrigger>
                           <DropdownMenuContent side="right" align="start" className="w-36">
@@ -714,6 +761,7 @@ export function Sidebar({ nav, activePage, sse, t }: {
         onCancel={() => setDeleteTarget(null)}
       />
     </aside>
+    </>
   );
 }
 

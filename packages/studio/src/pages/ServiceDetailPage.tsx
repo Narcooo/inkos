@@ -302,7 +302,7 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
       <div className="space-y-5">
         {/* Custom fields */}
         {isCustom && (
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Field label={tr("服务名称", "Service name")}>
               <input type="text" value={customName} onChange={(e) => setCustomName(e.target.value)}
                 placeholder={tr("例如：本地 Ollama", "e.g. local Ollama")} className="w-full rounded-lg border border-border/60 bg-background px-3 py-2 text-sm" />
@@ -372,7 +372,7 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
           )}
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <Field label={tr("协议类型", "Protocol")}>
             <select
               value={apiFormat}

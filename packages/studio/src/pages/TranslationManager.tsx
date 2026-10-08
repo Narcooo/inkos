@@ -317,7 +317,7 @@ export function TranslationManager({ nav, theme, t }: { nav: Nav; theme: Theme; 
             </button>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <label className="space-y-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               {t("translation.source")}
               <input
