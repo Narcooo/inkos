@@ -46,7 +46,7 @@ it("answers a question, rejects an unevidenced delivery, creates a Work and rest
     expect(delivery.errorMessage).toBeUndefined();
     expect(await listWorkManifests(root)).toHaveLength(1);
     expect(requests).toHaveLength(4);
-    expect(requests.every(request => request.tool_choice === "required")).toBe(true);
+    expect(requests.every(request => request.tool_choice === undefined)).toBe(true);
     const events = await readTranscriptEvents(root, config.sessionId);
     const rejected = events.filter(e => e.type === "message" && e.role === "toolResult").map(e => e.type === "message" ? e.message as any : null);
     expect(rejected.some(message => message.toolName === "finish_turn" && message.isError === true)).toBe(true);

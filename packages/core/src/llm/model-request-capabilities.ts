@@ -5,21 +5,19 @@ import { lookupModel } from "./providers/lookup.js";
 export function applyModelRequestCapabilities(payload: unknown, model: Model<Api>): unknown {
   if (!payload || typeof payload !== "object") return payload;
   const card = lookupModel(model.provider, model.id);
-  if (card?.supportsForcedToolChoice !== false && card?.supportsSampling !== false) return payload;
   const body = { ...payload } as Record<string, unknown>;
-  if (card.supportsSampling === false) {
+  if (card?.supportsSampling === false) {
     delete body.temperature;
     delete body.top_p;
     delete body.top_k;
   }
-  if (card.supportsForcedToolChoice === false && body.tool_choice !== undefined) {
+  if (body.tool_choice !== undefined) {
     const choice = body.tool_choice;
     const disabled = choice === "none" || (choice && typeof choice === "object" && "type" in choice && choice.type === "none");
-    // The caller retains the original required-result contract. This changes
-    // only the request parameter accepted by the provider.
-    body.tool_choice = model.api === "anthropic-messages"
-      ? { type: disabled ? "none" : "auto" }
-      : disabled ? "none" : "auto";
+    // Automatic selection is the protocol default. Required result selection
+    // is enforced by the host instead of a model-specific forcing parameter.
+    if (disabled) body.tool_choice = model.api === "anthropic-messages" ? {type:"none"} : "none";
+    else delete body.tool_choice;
   }
   return body;
 }

@@ -100,7 +100,7 @@ export class ReviserAgent extends BaseAgent {
       description:'Select the smallest non-overlapping inclusive source line ranges needed for the requested local changes. Do not submit prose or select unrelated passages.',
       parameters:Type.Object({ranges:Type.Array(TextEditRangeSchema,{minItems:1})},{additionalProperties:false}),
       validate:result=>{textRangeEditContract(originalChapter,result.ranges);return result;},
-    },{temperature:0.3,maxTokens:Math.min(maxTokens,4096)});
+    },{maxTokens:Math.min(maxTokens,4096)});
     planUsage=plan.usage;
     contract=textRangeEditContract(originalChapter,plan.result.ranges);
     }
@@ -129,7 +129,7 @@ export class ReviserAgent extends BaseAgent {
         }
         return result;
       },
-    }, { temperature: 0.3, maxTokens });
+    }, {  maxTokens });
     const revisedContent = contract.apply(result);
     return {
       revisedContent,
@@ -155,7 +155,7 @@ export class ReviserAgent extends BaseAgent {
         assertChapterLength(revisedContent,lengthSpec);
         return{...result,revisedContent};
       },
-    }, { temperature: 0.3, maxTokens });
+    }, {  maxTokens });
     return {
       revisedContent: result.revisedContent,
       wordCount: result.revisedContent.length,

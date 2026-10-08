@@ -335,6 +335,7 @@ export async function runWorkerAgentTool<TParameters extends TSchema>(
   let resultAttemptsExhausted = false;
   let lastValidationError: (Error & {code?:string}) | undefined;
   const maxResultTurns = 3;
+  const temperature = options.temperature ?? client.defaults.temperature;
   const { validate, ...toolDefinition } = resultTool;
   const tool: AgentTool<TParameters, Static<TParameters>> = {
     ...toolDefinition,
@@ -383,11 +384,11 @@ export async function runWorkerAgentTool<TParameters extends TSchema>(
       modelTurns++;
       const resultOptions = {
           ...streamOptions,
-          ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
+          ...(temperature !== undefined ? { temperature } : {}),
           ...(options.maxTokens !== undefined ? { maxTokens: options.maxTokens } : {}),
           signal: combineSignals(streamOptions?.signal, options.signal),
-          // There is exactly one result tool, so required selects it without a
-          // provider-specific named-function envelope.
+          // The host requires a typed result; transport uses default tool
+          // selection and gives bounded feedback when that result is missing.
           toolChoice: "required" as const,
           onPayload: (payload: unknown) => payload && typeof payload === "object" ? { ...client.defaults.extra, ...payload } : payload,
         };

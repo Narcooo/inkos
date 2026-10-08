@@ -2417,8 +2417,7 @@ async function probeServiceCapabilities(args: {
         baseUrl: args.baseUrl,
         apiKey: args.apiKey.trim(),
         model,
-        temperature: 0.7,
-        maxTokens: 16,
+
         thinkingBudget: 0,
         proxyUrl: args.proxyUrl,
         apiFormat: plan.apiFormat,
@@ -3117,7 +3116,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
             ].filter(Boolean).join("\n\n"),
           },
         ], inspirationSkills),
-        { temperature: 0.9, maxTokens: 600, signal: c.req.raw.signal },
+        {  maxTokens: 600, signal: c.req.raw.signal },
       );
       const card = response.content.trim();
       if (!card) {
@@ -3547,7 +3546,17 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     if (body.services !== undefined) {
       const existingServices = normalizeServiceConfig(llm.services);
       const incomingServices = normalizeServiceConfig(body.services);
-      llm.services = mergeServiceConfig(existingServices, incomingServices);
+      const resetsTemperature = (entry: unknown) => Boolean(entry && typeof entry === "object" && (entry as Record<string, unknown>).temperature === null);
+      const resetInput = Array.isArray(body.services)
+        ? body.services.filter(resetsTemperature)
+        : Object.fromEntries(Object.entries(body.services && typeof body.services === "object" ? body.services : {}).filter(([, entry]) => resetsTemperature(entry)));
+      const resetKeys = new Set(normalizeServiceConfig(resetInput).map(serviceConfigKey));
+      llm.services = mergeServiceConfig(existingServices, incomingServices).map((entry) => {
+        if (!resetKeys.has(serviceConfigKey(entry))) return entry;
+        const {temperature: _temperature, ...defaults} = entry;
+        return defaults;
+      });
+      if (resetKeys.has(String(body.service ?? llm.service))) delete llm.temperature;
     }
     if (body.defaultModel !== undefined) {
       llm.defaultModel = body.defaultModel;

@@ -198,7 +198,7 @@ export class PlayOpeningStateAgent extends BaseAgent {
     const { result } = await this.submitStructured([
       { role: "system", content: buildOpeningStateSystemPrompt(language) },
       { role: "user", content: buildOpeningStateUserPrompt(input, language) },
-    ], OPENING_STATE_TOOL, { temperature: 0.15, maxTokens: 4096 });
+    ], OPENING_STATE_TOOL, {  maxTokens: 4096 });
     const mutation = mutationFromStructuredResult(result, input.turn, "look");
     if (!hasMutationResult(mutation)) {
       throw new Error("Play opening state was empty; the world was not started.");
@@ -221,7 +221,7 @@ export class PlayTurnAgent extends BaseAgent {
     const { result } = await this.submitStructured([
       { role: "system", content: buildTurnSystemPrompt(input.mode, language) },
       { role: "user", content: buildTurnUserPrompt(input, language) },
-    ], playTurnTool(input.mode,input.choiceCount,input.validateMutation,input.turn), { temperature: 0.4, maxTokens: 8192 });
+    ], playTurnTool(input.mode,input.choiceCount,input.validateMutation,input.turn), {  maxTokens: 8192 });
     const action = PlayActionIntentSchema.parse(result.action);
     const mutation = mutationFromStructuredResult(result.mutation, input.turn, action.actionKind);
     if (!hasMutationResult(mutation)) {
@@ -250,7 +250,7 @@ export class PlayTurnAgent extends BaseAgent {
         suggestedActions: Type.Array(Type.String({ minLength: 1 }), input.mode === "open" ? { maxItems: 0 } : {uniqueItems:true,...(input.choiceCount!==undefined?{minItems:input.choiceCount,maxItems:input.choiceCount}:{})}),
       }),
       validate: (value) => preserveChoices ? value : PlaySceneRenderSchema.parse(value),
-    }, { temperature: 0.3, maxTokens: 4096 });
+    }, {  maxTokens: 4096 });
     return PlaySceneRenderSchema.parse({ sceneText: result.sceneText, suggestedActions: input.currentSuggestedActions ?? ("suggestedActions" in result ? result.suggestedActions : []) });
   }
 }

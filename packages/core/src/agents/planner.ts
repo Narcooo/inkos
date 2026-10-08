@@ -150,7 +150,7 @@ export class PlannerAgent extends BaseAgent {
         description: "Submit the complete semantic chapter plan for host persistence.",
         parameters: ChapterMemoToolSchema,
       },
-      { temperature: 0.7, maxTokens: Math.min(8192, this.ctx.client.defaults.maxTokens) },
+      {  maxTokens: Math.min(8192, this.ctx.client.defaults.maxTokens) },
     );
     return ChapterMemoSchema.parse({
       chapter: input.chapterNumber,

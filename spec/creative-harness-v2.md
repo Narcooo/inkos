@@ -60,9 +60,11 @@ and reports conflicts rather than overwriting them.
 Model cards declare request constraints independently of the gateway protocol.
 Text-producing workers and tool-producing workers share the final payload
 normalizer across the Pi SDK and custom HTTP transports.
-When a model requires automatic tool selection, streaming and non-streaming
-requests use that wire setting while the host still requires the originally
-selected tool result. Missing results exhaust the bounded retry and fail with
+Requests use the protocol default for tool selection, while the host requires
+the originally selected tool result. Sampling parameters are omitted by default;
+only explicit configuration or per-call user overrides supply a temperature.
+Creative agents do not inject stage-specific sampling presets. A missing result receives explicit tool-contract feedback
+on its bounded retry; another missing result fails with
 `MODEL_REQUIRED_TOOL_MISSING`. Models that prohibit sampling overrides receive
 their server defaults. Sonnet 5.5's documented limits and request constraints
 apply through both native Claude and OpenAI-compatible gateways.

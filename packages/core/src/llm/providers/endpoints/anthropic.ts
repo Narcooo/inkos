@@ -28,7 +28,6 @@ export const ANTHROPIC: InkosEndpoint = {
       contextWindowTokens: 1_000_000,
       enabled: true,
       releasedAt: "2026-09-28",
-      supportsForcedToolChoice: false,
       supportsSampling: false,
     },
     {

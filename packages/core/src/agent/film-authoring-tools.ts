@@ -196,7 +196,7 @@ function defaultSubmitNode(
       description: currentNode ? "Submit only the selected prose fields. The host preserves every other node field."
         : "Submit the complete scene, dialogue, choices, and image direction for the requested node. The host owns the node id.",
       parameters: currentNode ? Type.Pick(StoryNodeRevisionToolSchema, fields ?? ["sceneDesc", "dialogue"]) : StoryNodeContentToolSchema,
-    }, { temperature: 0.6, maxTokens: 4000, signal });
+    }, {  maxTokens: 4000, signal });
     return StoryNodeSchema.parse({ ...currentNode, ...submitted, id: nodeId });
   };
 }
@@ -215,7 +215,7 @@ function defaultSubmitStructure(
       label: "Submit Story Structure",
       description: "Submit the complete branching node skeleton. Node ids and choice targets must form one connected playable graph.",
       parameters: StoryStructureToolSchema,
-    }, { temperature: 0.6, maxTokens: 6000, signal });
+    }, {  maxTokens: 6000, signal });
     return submitted.nodes.map((node) => StoryNodeSchema.parse(node));
   };
 }

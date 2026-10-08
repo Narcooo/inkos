@@ -393,7 +393,7 @@ export class PipelineRunner {
         baseUrl: override.baseUrl,
         apiKey,
         model: override.model,
-        temperature: base?.temperature ?? 0.7,
+        temperature: base?.temperature,
         thinkingBudget: base?.thinkingBudget ?? 0,
         apiFormat,
         stream,
@@ -1048,7 +1048,7 @@ export class PipelineRunner {
         chapterNumber: targetChapter,
         language,
         auditOptions: {
-          temperature: 0,
+
           contextPackage: reviseControlInput.contextPackage,
         },
       });
@@ -1330,7 +1330,7 @@ export class PipelineRunner {
       ...writeInput,
       lengthSpec,
       ...(wordCount ? { wordCountOverride: wordCount } : {}),
-      ...(temperatureOverride ? { temperatureOverride } : {}),
+      ...(temperatureOverride !== undefined ? { temperatureOverride } : {}),
     });
     this.throwIfOperationAborted();
     const writerCount = countChapterLength(output.content, lengthSpec.countingMode);

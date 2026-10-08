@@ -83,7 +83,7 @@ ${chapterContent}`;
             return result;
           },
         },
-        { temperature: 0.1, maxTokens: Math.min(8192, this.ctx.client.defaults.maxTokens) },
+        {  maxTokens: Math.min(8192, this.ctx.client.defaults.maxTokens) },
       );
       return {
         observations: result.reportMarkdown.trim() ? [{code:result.reconciliationRequired ? "state-reconciliation" : "state-projection-review",summary:result.reportMarkdown.trim(),evidence:[]}] : [],

@@ -169,7 +169,7 @@ export class ShortFictionOutlineAgent extends BaseAgent {
         label: "Submit short-fiction outline",
         description: "Submit the story title and complete readable plan.",
         parameters: shortOutlineToolSchema(input.chapterCount,input.title),
-      }, { temperature: 0.55, maxTokens: Math.min(8192, safeShortFictionOutputBudget(this.ctx.client.defaults.maxTokens)) });
+      }, {  maxTokens: Math.min(8192, safeShortFictionOutputBudget(this.ctx.client.defaults.maxTokens)) });
 
     return {
       storyTitle: response.result.storyTitle.trim(),
@@ -215,7 +215,7 @@ export class ShortFictionWriterAgent extends BaseAgent {
       this.validateRevisionPlan(normalize(plan),input);
       return plan;
     }},
-    {temperature:0.3,maxTokens:Math.min(8192,this.ctx.client.defaults.maxTokens)});
+    {maxTokens:Math.min(8192,this.ctx.client.defaults.maxTokens)});
     return normalize(result);
   }
 
@@ -290,7 +290,7 @@ export class ShortFictionWriterAgent extends BaseAgent {
           validateRequestedShortChapter(bound,[chapter.number],{...input,openingHookChars:undefined},true);
           validateShortFictionDraftForFinal({storyTitle:bound.storyTitle,rawContent:"",chapters:[{number:bound.number,title:bound.title,content:bound.content,charCount:0}]},{expectedChapters:1,minChapterLength:input.minChapterLength,language:input.language});
           return result;
-        }}, {temperature:0.5,maxTokens:Math.min(8192,this.ctx.client.defaults.maxTokens)}).catch(async error=>{
+        }}, {maxTokens:Math.min(8192,this.ctx.client.defaults.maxTokens)}).catch(async error=>{
           const pending=draft.chapters.find(item=>item.number===chapter.number)!;
           if((error as {code?:string}).code!=="SHORT_CHAPTER_TOO_LONG" || input.maxChapterLength===undefined
             || countChapterLength(pending.content,resolveLengthCountingMode(input.language))<=input.maxChapterLength)throw error;
@@ -357,7 +357,7 @@ export class ShortFictionWriterAgent extends BaseAgent {
           // repair belong to the completion pass, before final acceptance.
           validate: result => validateRequestedShortChapter(result, chapterNumbers, {...input,openingHookChars:undefined}),
         }, {
-          temperature: 0.58,
+
           maxTokens: estimateShortFictionMaxTokens(
             chapterNumbers.length,
             input.charsPerChapter,
@@ -386,7 +386,7 @@ export class ShortFictionWriterAgent extends BaseAgent {
           {role:"system",content:"Write the requested independent opening scene before chapter one. Preserve the supplied title, story events and first chapter. Submit only the opening scene through the tool."},
           {role:"user",content:JSON.stringify({title:currentDraft.storyTitle,targetLength:input.openingHookChars,direction:input.direction,outline:input.outlineMarkdown,firstChapter:currentDraft.chapters.find(chapter=>chapter.number===1),currentOpeningHook:currentDraft.openingHook})},
         ],{name:"submit_short_opening_hook",label:"Complete opening scene",description:"Submit the requested independent opening scene.",parameters:Type.Object({openingHook:Type.String({minLength:1})}),validate:result=>{validateOpeningHook(result.openingHook,input.openingHookChars!,input.language);return result;}},
-        {temperature:0.5,maxTokens:Math.min(2048,this.ctx.client.defaults.maxTokens)});
+        {maxTokens:Math.min(2048,this.ctx.client.defaults.maxTokens)});
         currentDraft={...currentDraft,openingHook:result.openingHook.trim()};
         currentDraft={...currentDraft,rawContent:renderShortFictionDraftMarkdown(currentDraft,input.language)};
         await input.onBatchComplete?.(currentDraft,currentDraft.chapters.filter(chapter=>!findIncompleteShortFictionChapters(currentDraft,input).includes(chapter.number)).map(chapter=>chapter.number));
@@ -496,7 +496,7 @@ export class ShortFictionDraftReviewerAgent extends BaseAgent {
         name: "submit_short_fiction_review",
         label: "Submit short-fiction review",
         description: "Submit evidence-backed observations for the persisted short-fiction draft.",
-      }, { temperature: 0.3, maxTokens: Math.min(4096, safeShortFictionOutputBudget(this.ctx.client.defaults.maxTokens)) });
+      }, {  maxTokens: Math.min(4096, safeShortFictionOutputBudget(this.ctx.client.defaults.maxTokens)) });
     return response.result;
   }
 }
@@ -521,7 +521,7 @@ export class ShortFictionPackagingAgent extends BaseAgent {
         label: "Submit short-fiction package",
         description: "Submit title, synopsis, selling points, and cover prompt.",
         parameters: ShortPackageToolSchema,
-      }, { temperature: 0.45, maxTokens: Math.min(4096, safeShortFictionOutputBudget(this.ctx.client.defaults.maxTokens)) });
+      }, {  maxTokens: Math.min(4096, safeShortFictionOutputBudget(this.ctx.client.defaults.maxTokens)) });
 
     const result = response.result;
     const title = result.title.trim();

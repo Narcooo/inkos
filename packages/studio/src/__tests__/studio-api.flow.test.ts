@@ -29,6 +29,30 @@ describe("Studio API mini-flows", () => {
     await rm(root, { recursive: true, force: true });
   });
 
+  it("clears an explicit service temperature without changing another service or injecting a default", async () => {
+    const config = JSON.parse(await readFile(join(root, "inkos.json"), "utf8"));
+    config.llm = { ...config.llm, service: "kkaiapi", temperature: 0.8, services: [
+      { service: "kkaiapi", temperature: 0.8, models: ["test-model"] },
+      { service: "openai", temperature: 0.2 },
+    ] };
+    await writeFile(join(root, "inkos.json"), JSON.stringify(config));
+    const app = createStudioServer({} as never, root);
+    const save = (entry: Record<string, unknown>) => app.request("/api/v1/services/config", {
+      method: "PUT", headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ service:"kkaiapi", services:[{service:"kkaiapi",...entry}] }),
+    });
+    expect((await save({models:["test-model"]})).status).toBe(200);
+    expect(JSON.parse(await readFile(join(root,"inkos.json"),"utf8")).llm.temperature).toBe(0.8);
+    expect((await save({temperature:null})).status).toBe(200);
+    const persisted = JSON.parse(await readFile(join(root,"inkos.json"),"utf8")).llm;
+    expect(persisted.temperature).toBeUndefined();
+    expect(persisted.services).toEqual([
+      {service:"kkaiapi",models:["test-model"]}, {service:"openai",temperature:0.2},
+    ]);
+    expect((await save({temperature:0})).status).toBe(200);
+    expect(JSON.parse(await readFile(join(root,"inkos.json"),"utf8")).llm.temperature).toBe(0);
+  });
+
   it("protects local API reads and mutations from untrusted browser origins while preserving native and proxy requests", async () => {
     const app = createStudioServer({} as never, root);
     const origin = "https://untrusted.example";

@@ -86,7 +86,7 @@ export class ContinuityAuditor extends BaseAgent {
           ? "Submit evidence-backed observations only."
           : "只提交有证据的审稿观察。",
       },
-      { temperature: options.temperature ?? 0.3, maxTokens: Math.min(4096, this.ctx.client.defaults.maxTokens),categoryRequired:!!comparison,
+      { temperature: options.temperature, maxTokens: Math.min(4096, this.ctx.client.defaults.maxTokens),categoryRequired:!!comparison,
         validateObservations:observations=>{
           for(const observation of observations.filter(item=>item.category==='scope'&&item.assessment==='issue')){
             const ids=new Set(observation.sourceRefs.map(ref=>ref.sourceId));

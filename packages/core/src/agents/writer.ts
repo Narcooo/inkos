@@ -115,7 +115,7 @@ export class WriterAgent extends BaseAgent {
     if (!input.chapterIntent || !input.chapterMemo || !input.contextPackage) {
       throw new Error("Writer requires governed chapter intent, memo, and context package.");
     }
-    // ── Phase 1: Creative writing (temperature 0.7) ──
+    // ── Phase 1: Creative writing ──
     const creativeSystemPrompt = buildWriterSystemPrompt(
       book, bookRules, bookRulesBody, styleGuide,
       resolvedLanguage,
@@ -132,7 +132,7 @@ export class WriterAgent extends BaseAgent {
       language: book.language,
     });
 
-    const creativeTemperature = input.temperatureOverride ?? 0.7;
+    const creativeTemperature = input.temperatureOverride;
 
     this.logInfo(resolvedLanguage, {
       zh: `阶段 1：创作正文（第${chapterNumber}章）`,
@@ -160,7 +160,7 @@ export class WriterAgent extends BaseAgent {
       wordCount: countChapterLength(creativeSubmission.content, resolvedLengthSpec.countingMode),
     };
 
-    // ── Phase 2: State settlement (temperature 0.3) ──
+    // ── Phase 2: State settlement ──
     this.logInfo(resolvedLanguage, {
       zh: `阶段 2：状态结算（第${chapterNumber}章，${creative.wordCount}字）`,
       en: `Phase 2: state settlement for chapter ${chapterNumber} (${creative.wordCount} words)`,
@@ -324,7 +324,7 @@ export class WriterAgent extends BaseAgent {
         parameters: createSettlementToolSchema(params.allowNewHooks),
         validate: (value) => validateSettlementHookIds(value, knownHookIds),
       },
-      { temperature: 0.3, maxTokens: Math.min(16384, this.ctx.client.defaults.maxTokens) },
+      {  maxTokens: Math.min(16384, this.ctx.client.defaults.maxTokens) },
     );
     const runtimeStateDelta = RuntimeStateDeltaSchema.parse({
       chapter: params.chapterNumber,

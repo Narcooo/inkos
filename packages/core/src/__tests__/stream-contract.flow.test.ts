@@ -11,12 +11,12 @@ import { compileHarnessContextText } from "../agent/agent-session.js";
 import { runWorkerAgent, runWorkerAgentTool } from "../agent/worker-agent.js";
 
 it.each([
-  { streaming: true, modelId: 'fixture', wireChoice: 'required' },
-  { streaming: false, modelId: 'fixture', wireChoice: 'required' },
-  { streaming: true, modelId: 'claude-sonnet-5-5', wireChoice: 'auto' },
-  { streaming: false, modelId: 'claude-sonnet-5-5', wireChoice: 'auto' },
-])('enforces required tool selection without rejecting an ordinary answer ($modelId, stream=$streaming)', async ({ streaming, modelId, wireChoice }) => {
-  const received: Array<{ stream?: boolean; tool_choice?: unknown; temperature?: number; top_p?: number; top_k?: number }> = [];
+  { streaming: true, modelId: 'fixture', samplingAllowed: true },
+  { streaming: false, modelId: 'fixture', samplingAllowed: true },
+  { streaming: true, modelId: 'claude-sonnet-5-5', samplingAllowed: false },
+  { streaming: false, modelId: 'claude-sonnet-5-5', samplingAllowed: false },
+])('enforces required tool selection without rejecting an ordinary answer ($modelId, stream=$streaming)', async ({ streaming, modelId, samplingAllowed }) => {
+  const received: Array<{ messages: Array<{role:string}>; stream?: boolean; tool_choice?: unknown; temperature?: number; top_p?: number; top_k?: number }> = [];
   let completeTool = false;
   const server = createServer(async (request, response) => {
     const chunks = []; for await (const chunk of request) chunks.push(chunk);
@@ -37,7 +37,7 @@ it.each([
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
   try {
     const client = createLLMClient({ service: 'custom', provider: 'openai', configSource: 'studio', model: modelId, apiKey: 'fixture',
-      baseUrl: `http://127.0.0.1:${(server.address() as { port: number }).port}/v1`, apiFormat: 'chat', stream: streaming, temperature: 0, thinkingBudget: 0 });
+      baseUrl: `http://127.0.0.1:${(server.address() as { port: number }).port}/v1`, apiFormat: 'chat', stream: streaming, thinkingBudget: 0 });
     const context = { messages: [{ role: 'user' as const, content: 'Submit a value.', timestamp: 1 }],
       tools: [{ name: 'submit_value', description: 'Submit', parameters: Type.Object({ value: Type.Number() }) }] };
     const run = async (toolChoice?: unknown) => {
@@ -52,8 +52,11 @@ it.each([
     const completed = await run('required');
     expect(completed).toMatchObject({ stopReason: 'toolUse', content: [{ type: 'toolCall', name: 'submit_value', arguments: { value: 7 } }] });
     expect(received).toHaveLength(3);
-    expect(received.slice(1).map(request => request.tool_choice)).toEqual([wireChoice, wireChoice]);
-    if (wireChoice === 'auto') {
+    expect(received.slice(1).map(request => request.tool_choice)).toEqual([undefined, undefined]);
+    expect(received[2].messages.slice(0, -1)).toEqual(received[1].messages);
+    expect(received[2].messages.at(-1)?.role).toBe('user');
+    expect(context.messages).toHaveLength(1);
+    if (!samplingAllowed) {
       expect(received.every(request => request.temperature === undefined && request.top_p === undefined && request.top_k === undefined)).toBe(true);
     } else {
       expect(received[0]).toMatchObject({ temperature: 0.7, top_p: 0.8, top_k: 10 });
@@ -67,8 +70,12 @@ it.each([
     for (const textClient of [client, { ...client, service: 'openai' }]) {
       const result = await runWorkerAgent(textClient, modelId, [{ role: 'user', content: 'Reply briefly.' }], { temperature: 0.3, maxTokens: 128 });
       expect(result.content.length).toBeGreaterThan(0);
-      expect(received.at(-1)?.temperature).toBe(wireChoice === 'auto' ? undefined : 0.3);
+      expect(received.at(-1)?.temperature).toBe(!samplingAllowed ? undefined : 0.3);
     }
+    const defaultText = await runWorkerAgent(client, modelId, [{role:'user',content:'Reply briefly.'}], {maxTokens:128});
+    expect(defaultText.content.length).toBeGreaterThan(0);
+    expect(received.at(-1)?.temperature).toBeUndefined();
+    expect(received.at(-1)?.tool_choice).toBeUndefined();
   } finally { server.closeAllConnections(); await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
 }, 15000);
 
@@ -159,20 +166,20 @@ it.each(["chat", "responses", "anthropic"] as const)("carries the required resul
     expect(requests).toHaveLength(2);
     expect(requests[0]?.messages).toEqual(requests[1]?.messages);
     if (apiFormat === "anthropic") {
-      expect(requests[0]?.tool_choice).toEqual({ type: "auto" });
+      expect(requests[0]?.tool_choice).toBeUndefined();
       expect(requests[0]?.max_tokens).toBe(128);
       return;
     }
     if (apiFormat === "responses") {
       expect(requests[0]?.input).toEqual(requests[1]?.input);
       expect(requests[0]?.max_output_tokens).toBe(128);
-      expect(requests[0]?.tool_choice).toBe("required");
+      expect(requests[0]?.tool_choice).toBeUndefined();
       return;
     }
     expect(requests[0]?.max_tokens).toBe(128);
     expect(requests[0]?.max_completion_tokens).toBeUndefined();
     expect(requests[0]?.thinking).toEqual({ type: "disabled" });
-    expect(requests[0]?.tool_choice).toBe("required");
+    expect(requests[0]?.tool_choice).toBeUndefined();
   } finally { server.closeAllConnections(); await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
 }, 15000);
 

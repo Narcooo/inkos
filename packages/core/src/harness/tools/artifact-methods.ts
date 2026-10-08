@@ -89,7 +89,7 @@ class ArtifactWorker extends BaseAgent {
     ], {name:'submit_author_edit_scope',label:'Locate authorized text',description:'Identify editable source ranges from the original author request, without proposed prose.',
       parameters:Type.Object({wholeDocument:Type.Boolean(),selections:Type.Array(TextEditSelectionSchema),reason:Type.String({description:'Briefly identify the source unit and protected boundaries matched by these selections.'})},{additionalProperties:false}),
       validate:result=>{if(result.wholeDocument){if(result.selections.length)throw new Error('Whole-document scope must not also select partial text');}else textScopedSelectionEditContract(content,result.selections);return result;},
-    },{maxTokens:Math.min(8192,this.ctx.client.defaults.maxTokens),temperature:0.2,professionalGuidance:false});
+    },{maxTokens:Math.min(8192,this.ctx.client.defaults.maxTokens),professionalGuidance:false});
     return selected.result.wholeDocument ? textRangeEditContract(content,[{startLine:1,endLine:splitSourceLines(content).length}]) : textScopedSelectionEditContract(content,selected.result.selections);
   }
   async review(sources: ReadonlyMap<string, string>, instruction: string, criteria: string[], paths: ReadonlyMap<string,string>, versions:ReadonlyMap<string,{revisionId:string;checksum:string}>, comparison?: ReviewComparison, structure?: unknown) {

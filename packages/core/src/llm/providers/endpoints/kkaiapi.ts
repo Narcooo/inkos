@@ -23,7 +23,7 @@ export const KKAIAPI: InkosEndpoint = {
   defaultTemperature: 0.9,
   writingTemperature: 1.2,
   models: [
-    { id: "claude-sonnet-5-5", maxOutput: 128_000, contextWindowTokens: 1_000_000, enabled: true, releasedAt: "2026-09-28", supportsForcedToolChoice: false, supportsSampling: false },
+    { id: "claude-sonnet-5-5", maxOutput: 128_000, contextWindowTokens: 1_000_000, enabled: true, releasedAt: "2026-09-28", supportsSampling: false },
     { id: "deepseek-v4-flash", maxOutput: 393216, contextWindowTokens: 1_000_000, enabled: true, releasedAt: "2026-04-24" },
     { id: "deepseek-v4-pro", maxOutput: 393216, contextWindowTokens: 1_000_000, enabled: true, releasedAt: "2026-04-24" },
     { id: "gpt-5.5", maxOutput: 128000, contextWindowTokens: 1_050_000, enabled: true },

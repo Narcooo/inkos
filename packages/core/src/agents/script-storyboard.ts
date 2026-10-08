@@ -82,7 +82,7 @@ export class ScriptCreationAgent extends BaseAgent {
         ].join("\n"),
       },
     ], {
-      temperature: 0.1,
+
       maxTokens: 32_000,
     });
     return response.content.trim();
@@ -97,7 +97,7 @@ export class ScriptCreationAgent extends BaseAgent {
       messages,
       language,
       generate: (continuationMessages) => this.chat(continuationMessages, {
-        temperature: 0.55,
+
         maxTokens: this.ctx.client.defaults.maxTokens,
       }),
       onContinuation: (pass) => this.log?.warn(`[script] Output limit reached; continuing pass ${pass}.`),
@@ -127,7 +127,7 @@ export class StoryboardCreationAgent extends BaseAgent {
       description: "Submit the complete human-readable storyboard and its generation-ready image prompts in shot order.",
       parameters: StoryboardPackageToolSchema,
     }, {
-      temperature: 0.45,
+
       maxTokens: this.ctx.client.defaults.maxTokens,
     });
     return {
@@ -161,7 +161,7 @@ export class InteractiveFilmCreationAgent extends BaseAgent {
         return result;
       },
     }, {
-      temperature: 0.5,
+
       maxTokens: this.ctx.client.defaults.maxTokens,
     });
     return result;

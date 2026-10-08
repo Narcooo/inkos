@@ -73,7 +73,7 @@ export class ArchitectAgent extends BaseAgent {
       systemPrompt: langPrefix + systemPrompt + revisePrompt,
       userMessage,
       language: resolvedLanguage,
-      temperature: 0.8,
+
       onOutline: options?.onOutline,
     });
   }
@@ -224,7 +224,7 @@ ${reviseFrom.userFeedback || "（无）"}
       systemPrompt,
       userMessage,
       language: resolvedLanguage,
-      temperature: 0.5,
+
     });
   }
 
@@ -254,7 +254,7 @@ ${reviseFrom.userFeedback || "（无）"}
       systemPrompt,
       userMessage: `请为标题为"${book.title}"的${fanficMode}模式同人小说生成基础设定。目标${book.targetChapters}章，每章${book.chapterWordCount}字。`,
       language: resolvedLanguage,
-      temperature: 0.7,
+
       onOutline: options?.onOutline,
     });
   }
@@ -263,7 +263,6 @@ ${reviseFrom.userFeedback || "（无）"}
     readonly systemPrompt: string;
     readonly userMessage: string;
     readonly language: "zh" | "en";
-    readonly temperature: number;
     readonly onOutline?: (outline: { readonly storyFrame: string; readonly volumeMap: string }) => void | Promise<void>;
   }): Promise<ArchitectOutput> {
     const { result: outline } = await this.submitStructured(
@@ -279,7 +278,7 @@ ${reviseFrom.userFeedback || "（无）"}
           : "提交可读的故事框架与卷纲。",
         parameters: FoundationOutlineToolSchema,
       },
-      { temperature: input.temperature, maxTokens: Math.min(8192, this.ctx.client.defaults.maxTokens) },
+      { maxTokens: Math.min(8192, this.ctx.client.defaults.maxTokens) },
     );
     await input.onOutline?.({
       storyFrame: outline.storyFrame.trim(),
@@ -301,7 +300,7 @@ ${reviseFrom.userFeedback || "（无）"}
           : "提交本书规则与初始未解伏笔。数组和对象必须是工具参数的原生类型，不要放入字符串。",
         parameters: FoundationDetailsToolSchema,
       },
-      { temperature: input.temperature },
+      {},
     );
     const bookRulesData = BookRulesSchema.parse({ version: "2", ...details.bookRulesData });
     const initialHooks: HookRecord[] = details.pendingHooks.map((hook) => ({
@@ -322,14 +321,14 @@ ${reviseFrom.userFeedback || "（无）"}
         : "列出影响开篇冲突的具名人物，只提交姓名和主要/次要角色级别，不把无名岗位群体扩写成虚构人物。"},
       {role:"user",content:castContext},
     ],{name:"submit_foundation_cast_index",label:"Identify opening cast",description:"Submit the names and tiers of the opening cast.",parameters:FoundationCastIndexToolSchema},
-    {temperature:input.temperature,maxTokens:Math.min(2048,this.ctx.client.defaults.maxTokens)});
+    {maxTokens:Math.min(2048,this.ctx.client.defaults.maxTokens)});
     const {result:cards} = await this.submitStructured([
       {role:"system",content:input.language==="en"
         ? "Create concise character cards for the named people who shape the opening conflict. Ground each card in the supplied story. Give present motive, knowledge, relationship pressure and limits in about 80–120 words; avoid repeating the plot or expanding unnamed occupational groups into full biographies."
         : "为影响开篇冲突的具名人物写简明角色卡。每人约150—250字，写清当下动机、已知信息、关系压力与能力边界，依据已给定故事，不重复整篇情节，不把无名岗位群体扩写成完整传记。"},
       {role:"user",content:castContext},
     ],{name:"submit_foundation_cast_documents",label:"Submit opening character cards",description:"Submit each character card as text in its named field.",parameters:foundationCastDocumentsToolSchema(cast.roles)},
-    {temperature:input.temperature,maxTokens:Math.min(8192,this.ctx.client.defaults.maxTokens)});
+    {maxTokens:Math.min(8192,this.ctx.client.defaults.maxTokens)});
     const roles: ArchitectRole[] = cast.roles.map((role,index)=>({tier:role.tier,name:role.name.trim(),content:cards[`role_${index+1}_content`]!.trim()}));
 
     return {

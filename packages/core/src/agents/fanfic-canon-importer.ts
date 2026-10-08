@@ -37,7 +37,7 @@ export class FanficCanonImporter extends BaseAgent {
         description: "Submit the source-grounded canon sections for host persistence.",
         parameters: FanficCanonToolSchema,
       },
-      { temperature: 0.3 },
+      {  },
     );
 
     const canonMarkdown = result.canonMarkdown.trim();
@@ -90,7 +90,7 @@ export class FanficCanonImporter extends BaseAgent {
             ].join("\n"),
           },
         ],
-        { temperature: 0.2 },
+        {  },
       );
       const content = response.content.trim();
       if (!content) throw new Error(`Fanfic source compiler returned empty output for chunk ${index + 1}/${chunks.length}.`);

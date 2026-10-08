@@ -58,7 +58,7 @@ export async function reviewChapterDraft(params: {
       {
         language: params.lengthSpec.countingMode === "en_words" ? "en" : "zh",
         contextPackage: params.controlInput.contextPackage,
-        temperature: 0.3,
+
       },
     );
   } catch (error) {
