@@ -11,6 +11,7 @@ import {ContinuityAuditor} from '../agents/continuity.js';
 import {createLLMClient} from '../llm/provider.js';
 import {TurnArtifactDeliveries} from '../agent/turn-completion.js';
 import {ActionResultSchema} from '../harness/contracts.js';
+import {fixtureToolCalls} from './tool-call-fixtures.js';
 
 it('reviews a native chapter against its episode baseline and prevents delivery while its scope finding is unresolved',async()=>{
  const root=await mkdtemp(join(tmpdir(),'inkos-chapter-scope-'));const inputs:any[]=[];
@@ -18,7 +19,7 @@ it('reviews a native chapter against its episode baseline and prevents delivery 
   const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));const body=JSON.parse(Buffer.concat(chunks).toString('utf8'));
   const input=JSON.parse(body.messages.findLast((m:any)=>m.role==='user').content);inputs.push(input);
   const observation={code:'FIXTURE_EDIT_SCOPE',category:'scope',assessment:inputs.length===1?'issue':'resolved',summary:'Fixture scope assessment against before/current source.',sourceRefs:[{sourceId:'chapter-1',startLine:1,endLine:1},{sourceId:input.comparison.sourceId,startLine:1,endLine:1}]};
-  res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{tool_calls:[{id:'review-'+inputs.length,type:'function',function:{name:body.tools[0].function.name,arguments:JSON.stringify({summary:'Scoped chapter review.',observations:[observation]})}}]}}]}));
+  res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{tool_calls:fixtureToolCalls(body.tools[0].function.name,{summary:'Scoped chapter review.',observations:[observation]},'review-'+inputs.length)}}]}));
  });server.listen(0,'127.0.0.1');await once(server,'listening');
  try{
   await saveWorkManifest(root,createWorkManifest({id:'book',title:'Gallery',profileId:'longform-novel',language:'en'}));await mkdir(join(root,'works/book/source/chapters'),{recursive:true});

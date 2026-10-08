@@ -25,7 +25,7 @@ it('revises only an opening, then applies an author-requested chapter reduction 
       ? (++planNumber,stage==='opening'
         ? {revisionBrief:'Change the independent opening only.',openingHook:'A pair of cups waited by the door.',...(planNumber===1?{chapter_1_instruction:'Change the first scene too.'}:{})}
         :{revisionBrief:'Retain the first and last scenes.',outlineMarkdown:'The stall opens, then closes.',chapter_2_sourceNumber:3})
-      :name==='submit_short_fiction_review'?{summary:'Reviewed the supplied scope.',observations:[]}
+      :name==='submit_short_fiction_review'?{summary:'Reviewed the supplied scope.',observationCodes:[]}
         :name==='submit_short_package'?{title:'The Tea Stall',intro:'A day at the stall.',sellingPoints:['A small act of care'],coverPrompt:'Two cups at a neighborhood stall.'}:undefined;
     response.writeHead(result?200:400,{'Content-Type':'application/json'});
     response.end(JSON.stringify(result?{choices:[{finish_reason:'tool_calls',message:{tool_calls:[{id:name+calls.length,type:'function',function:{name,arguments:JSON.stringify(result)}}]}}]}:{error:{message:'Unexpected worker operation'}}));
