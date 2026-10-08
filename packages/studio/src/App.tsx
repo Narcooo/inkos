@@ -1,4 +1,4 @@
-import { useState, useEffect, lazy, Suspense } from "react";
+import { useState, useEffect, lazy, Suspense, useCallback } from "react";
 import { useHashRoute } from "./hooks/use-hash-route";
 import type { HashRoute } from "./hooks/use-hash-route";
 import { Sidebar } from "./components/Sidebar";
@@ -32,7 +32,8 @@ import { useI18n } from "./hooks/use-i18n";
 import { setAppLanguage, tr } from "./lib/app-language";
 import { postApi, putApi, useApi } from "./hooks/use-api";
 import { Sun, Moon } from "lucide-react";
-import { House } from "lucide-react";
+import { House, Menu } from "lucide-react";
+import { NAV_TOGGLE_TEST_ID } from "./lib/mobile-layout";
 
 export type { HashRoute as Route } from "./hooks/use-hash-route";
 
@@ -61,6 +62,10 @@ export function App() {
   const { data: project, error: projectError, refetch: refetchProject } = useApi<{ language: string; languageExplicit: boolean }>("/project");
   const [showLanguageSelector, setShowLanguageSelector] = useState(false);
   const [ready, setReady] = useState(false);
+  // Phone-portrait navigation drawer. It has no effect from `md` up, where the
+  // sidebar column is part of the flex row again, so no resize listener is needed.
+  const [navOpen, setNavOpen] = useState(false);
+  const closeNav = useCallback(() => setNavOpen(false), []);
 
   const isDark = theme === "dark";
 
@@ -177,25 +182,42 @@ export function App() {
   return (
     <div className="h-screen bg-background text-foreground flex overflow-hidden font-sans">
       {/* Left Sidebar */}
-      <Sidebar nav={nav} activePage={activePage} sse={sse} t={t} />
+      <Sidebar
+        nav={nav}
+        activePage={activePage}
+        sse={sse}
+        t={t}
+        open={navOpen}
+        onClose={closeNav}
+      />
 
       {/* Center Content */}
       <div className="flex-1 flex flex-col min-w-0 bg-background/30 backdrop-blur-sm">
         {/* Header Strip */}
-        <header className="h-14 shrink-0 flex items-center justify-between px-8 border-b border-border/40">
-          <div className="flex items-center gap-2">
-             <button
+        <header className="h-14 shrink-0 flex items-center justify-between gap-2 px-3 sm:px-4 lg:px-8 border-b border-border/40">
+          <div className="flex min-w-0 items-center gap-1 sm:gap-2">
+            <button
+              type="button"
+              onClick={() => setNavOpen(true)}
+              aria-label={tr("打开菜单", "Open menu")}
+              aria-expanded={navOpen}
+              data-testid={NAV_TOGGLE_TEST_ID}
+              className="md:hidden shrink-0 rounded-lg border border-border/50 bg-card/70 p-2 text-foreground hover:bg-secondary/50 transition-colors"
+            >
+              <Menu size={18} />
+            </button>
+            <button
                onClick={nav.toDashboard}
-               className="inline-flex items-center gap-2 rounded-lg border border-border/50 bg-card/70 px-3.5 py-2 text-[17px] font-semibold text-foreground hover:bg-secondary/50 transition-colors"
+               className="inline-flex min-w-0 items-center gap-2 rounded-lg border border-border/50 bg-card/70 px-2.5 sm:px-3.5 py-2 text-[17px] font-semibold text-foreground hover:bg-secondary/50 transition-colors"
              >
-               <House size={18} />
-               <span>{t("bread.home")}</span>
-               <span className="text-muted-foreground/70">/</span>
-               <span className="font-serif">InkOS Studio</span>
+               <House size={18} className="shrink-0" />
+               <span className="truncate">{t("bread.home")}</span>
+               <span className="hidden sm:inline text-muted-foreground/70">/</span>
+               <span className="hidden lg:inline font-serif">InkOS Studio</span>
              </button>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex shrink-0 items-center gap-2 sm:gap-3">
             <div className="flex gap-0.5 bg-muted/50 rounded-lg p-0.5">
               <button
                 onClick={async () => {
@@ -219,7 +241,8 @@ export function App() {
 
             <button
               onClick={() => setTheme(isDark ? "light" : "dark")}
-              className="text-muted-foreground hover:text-foreground transition-colors"
+              aria-label={isDark ? tr("切换到浅色主题", "Switch to light theme") : tr("切换到深色主题", "Switch to dark theme")}
+              className="-m-1 rounded-lg p-2 text-muted-foreground hover:text-foreground transition-colors"
             >
               {isDark ? <Sun size={18} /> : <Moon size={18} />}
             </button>
@@ -229,12 +252,12 @@ export function App() {
         {/* Main Content Area */}
         <main className="flex-1 relative overflow-y-auto scroll-smooth">
           {route.page === "dashboard" && (
-            <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
+            <div className="max-w-4xl mx-auto px-4 py-8 sm:px-6 md:py-12 md:px-12 lg:py-16 fade-in">
               <Dashboard nav={nav} sse={sse} theme={theme} t={t} />
             </div>
           )}
           {route.page === "work" && (
-            <div className="mx-auto w-full max-w-5xl px-6 py-12 md:px-12 lg:py-16 fade-in">
+            <div className="mx-auto w-full max-w-5xl px-4 py-8 sm:px-6 md:py-12 md:px-12 lg:py-16 fade-in">
               <WorkInspector workId={route.workId} onBack={nav.toDashboard} onChat={nav.toWorkChat} />
             </div>
           )}
@@ -288,82 +311,82 @@ export function App() {
             </div>
           )}
           {route.page === "book-settings" && (
-            <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
+            <div className="max-w-4xl mx-auto px-4 py-8 sm:px-6 md:py-12 md:px-12 lg:py-16 fade-in">
               <BookDetail bookId={route.bookId} nav={nav} theme={theme} t={t} sse={sse} />
             </div>
           )}
           {route.page === "chapter" && (
-            <div className="mx-auto w-full max-w-[1400px] px-4 py-12 sm:px-6 lg:px-10 lg:py-16 2xl:px-12 fade-in">
+            <div className="mx-auto w-full max-w-[1400px] px-4 py-8 sm:px-6 md:py-12 lg:px-10 lg:py-16 2xl:px-12 fade-in">
               <ChapterReader bookId={route.bookId} chapterNumber={route.chapterNumber} nav={nav} theme={theme} t={t} />
             </div>
           )}
           {route.page === "analytics" && (
-            <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
+            <div className="max-w-4xl mx-auto px-4 py-8 sm:px-6 md:py-12 md:px-12 lg:py-16 fade-in">
               <Analytics bookId={route.bookId} nav={nav} theme={theme} t={t} />
             </div>
           )}
           {route.page === "services" && (
-            <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
+            <div className="max-w-4xl mx-auto px-4 py-8 sm:px-6 md:py-12 md:px-12 lg:py-16 fade-in">
               <ServiceListPage nav={nav} />
             </div>
           )}
           {route.page === "project-settings" && (
-            <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
+            <div className="max-w-4xl mx-auto px-4 py-8 sm:px-6 md:py-12 md:px-12 lg:py-16 fade-in">
               <ProjectSettings nav={nav} theme={theme} t={t} />
             </div>
           )}
           {route.page === "service-detail" && (
-            <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
+            <div className="max-w-4xl mx-auto px-4 py-8 sm:px-6 md:py-12 md:px-12 lg:py-16 fade-in">
               <ServiceDetailPage serviceId={route.serviceId} nav={nav} />
             </div>
           )}
           {route.page === "truth" && (
-            <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
+            <div className="max-w-4xl mx-auto px-4 py-8 sm:px-6 md:py-12 md:px-12 lg:py-16 fade-in">
               <TruthFiles bookId={route.bookId} nav={nav} theme={theme} t={t} />
             </div>
           )}
           {route.page === "daemon" && (
-            <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
+            <div className="max-w-4xl mx-auto px-4 py-8 sm:px-6 md:py-12 md:px-12 lg:py-16 fade-in">
               <DaemonControl nav={nav} theme={theme} t={t} sse={sse} />
             </div>
           )}
           {route.page === "logs" && (
-            <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
+            <div className="max-w-4xl mx-auto px-4 py-8 sm:px-6 md:py-12 md:px-12 lg:py-16 fade-in">
               <LogViewer nav={nav} theme={theme} t={t} />
             </div>
           )}
           {route.page === "style" && (
-            <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
+            <div className="max-w-4xl mx-auto px-4 py-8 sm:px-6 md:py-12 md:px-12 lg:py-16 fade-in">
               <StyleManager nav={nav} theme={theme} t={t} />
             </div>
           )}
           {route.page === "translation" && (
-            <div className="max-w-6xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
+            <div className="max-w-6xl mx-auto px-4 py-8 sm:px-6 md:py-12 md:px-12 lg:py-16 fade-in">
               <TranslationManager nav={nav} theme={theme} t={t} />
             </div>
           )}
           {route.page === "import" && (
-            <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
+            <div className="max-w-4xl mx-auto px-4 py-8 sm:px-6 md:py-12 md:px-12 lg:py-16 fade-in">
               <ImportManager nav={nav} theme={theme} t={t} initialTab={route.tab} />
             </div>
           )}
           {route.page === "radar" && (
-            <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
+            <div className="max-w-4xl mx-auto px-4 py-8 sm:px-6 md:py-12 md:px-12 lg:py-16 fade-in">
               <RadarView nav={nav} theme={theme} t={t} />
             </div>
           )}
           {route.page === "doctor" && (
-            <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
+            <div className="max-w-4xl mx-auto px-4 py-8 sm:px-6 md:py-12 md:px-12 lg:py-16 fade-in">
               <DoctorView nav={nav} theme={theme} t={t} />
             </div>
           )}
           {route.page === "play" && (
-            <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
+            <div className="max-w-4xl mx-auto px-4 py-8 sm:px-6 md:py-12 md:px-12 lg:py-16 fade-in">
               <StoryPlayer projectId={route.projectId} nav={nav} theme={theme} t={t} />
             </div>
           )}
           {route.page === "film" && (
-            <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
+            <div className="max-w-4xl mx-auto px-4 py-8 sm:px-6 md:py-12 md:px-12 lg:py-16 fade-in">
               <StoryGraphTree projectId={route.projectId} nav={nav} theme={theme} t={t} />
             </div>
           )}

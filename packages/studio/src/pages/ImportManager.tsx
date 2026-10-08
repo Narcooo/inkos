@@ -198,13 +198,14 @@ export function ImportManager({ nav, theme, t, initialTab }: { nav: Nav; theme: 
         {t("import.title")}
       </h1>
 
-      {/* Tabs */}
-      <div className="flex gap-1 bg-secondary/30 rounded-lg p-1 w-fit">
+      {/* Tabs. Five Chinese labels cannot share a 375px row, so the strip wraps
+          instead of squeezing every label into one character per line. */}
+      <div className="flex flex-wrap gap-1 bg-secondary/30 rounded-lg p-1 w-full sm:w-fit">
         {tabs.map((tb) => (
           <button
             key={tb.id}
             onClick={() => { setTab(tb.id); setStatus(null); }}
-            className={`px-4 py-2 rounded-md text-sm font-medium flex items-center gap-2 transition-all ${
+            className={`px-4 py-2 rounded-md text-sm font-medium flex items-center gap-2 whitespace-nowrap transition-all ${
               tab === tb.id ? "bg-card shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"
             }`}
           >
@@ -293,7 +294,7 @@ export function ImportManager({ nav, theme, t, initialTab }: { nav: Nav; theme: 
               placeholder={t("import.fanficTitle")}
               className="w-full px-3 py-2 rounded-lg bg-secondary/30 border border-border text-sm"
             />
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <select value={ffMode} onChange={(e) => setFfMode(e.target.value)}
                 className="px-3 py-2 rounded-lg bg-secondary/30 border border-border text-sm">
                 <option value="canon">{tr("原著向", "Canon-compliant")}</option>
@@ -355,7 +356,7 @@ export function ImportManager({ nav, theme, t, initialTab }: { nav: Nav; theme: 
               placeholder={t("import.imitationTitle")}
               className="w-full px-3 py-2 rounded-lg bg-secondary/30 border border-border text-sm"
             />
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <select value={imGenre} onChange={(e) => setImGenre(e.target.value)}
                 className="px-3 py-2 rounded-lg bg-secondary/30 border border-border text-sm">
                 <option value="other">{tr("其他", "Other")}</option>

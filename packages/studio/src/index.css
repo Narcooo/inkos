@@ -338,3 +338,37 @@ h3 { font-size: 1.25rem; }
 [data-streamdown="table-wrapper"] > .flex.items-center.justify-end {
   display: none;
 }
+
+/* ── Phone-portrait adaptations ──
+   A few rules cannot live on a component class because they concern how the
+   browser itself treats the page on a phone. They are kept in one block so
+   the whole mobile contract stays reviewable in one place. */
+
+/* iOS Safari zooms the whole viewport when a focused field renders below
+   16px, which leaves the user reading a desktop layout at 2x. Below `sm`,
+   every editable control is held at 16px. */
+@media (max-width: 639px) {
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
+
+/* Respect notches and the home indicator. The viewport opts into
+   viewport-fit=cover, so the layout may reach under both. */
+body {
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+
+/* A long table inside a chat answer must scroll inside its own box instead of
+   dragging the whole page sideways. */
+@media (max-width: 639px) {
+  .streamdown table,
+  [data-streamdown] table {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+}

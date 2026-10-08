@@ -20,6 +20,8 @@ import {
   Trash2,
   Save,
 } from "lucide-react";
+import { cn } from "../lib/utils";
+import { revealOnCoarsePointer } from "../lib/mobile-layout";
 
 interface ChapterMeta {
   readonly number: number;
@@ -457,14 +459,14 @@ export function BookDetail({
       {/* Chapters Table */}
       <div className="paper-sheet rounded-2xl overflow-hidden border border-border/40 shadow-xl shadow-primary/5">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm border-collapse">
+          <table className="w-full min-w-[560px] text-sm border-collapse">
             <thead>
               <tr className="bg-muted/30 border-b border-border/50">
-                <th className="text-left px-6 py-4 font-bold text-[11px] uppercase tracking-widest text-muted-foreground w-16">#</th>
-                <th className="text-left px-6 py-4 font-bold text-[11px] uppercase tracking-widest text-muted-foreground">{t("book.manuscriptTitle")}</th>
-                <th className="text-left px-6 py-4 font-bold text-[11px] uppercase tracking-widest text-muted-foreground w-28">{t("book.words")}</th>
-                <th className="text-left px-6 py-4 font-bold text-[11px] uppercase tracking-widest text-muted-foreground w-36">{t("book.review")}</th>
-                <th className="text-right px-6 py-4 font-bold text-[11px] uppercase tracking-widest text-muted-foreground">{t("book.curate")}</th>
+                <th className="text-left px-3 sm:px-6 py-4 font-bold text-[11px] uppercase tracking-widest text-muted-foreground w-16">#</th>
+                <th className="text-left px-3 sm:px-6 py-4 font-bold text-[11px] uppercase tracking-widest text-muted-foreground">{t("book.manuscriptTitle")}</th>
+                <th className="text-left px-3 sm:px-6 py-4 font-bold text-[11px] uppercase tracking-widest text-muted-foreground w-28">{t("book.words")}</th>
+                <th className="text-left px-3 sm:px-6 py-4 font-bold text-[11px] uppercase tracking-widest text-muted-foreground w-36">{t("book.review")}</th>
+                <th className="text-right px-3 sm:px-6 py-4 font-bold text-[11px] uppercase tracking-widest text-muted-foreground">{t("book.curate")}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border/30">
@@ -472,8 +474,8 @@ export function BookDetail({
                 const staggerClass = `stagger-${Math.min(index + 1, 5)}`;
                 return (
                 <tr key={ch.number} className={`group hover:bg-primary/[0.02] transition-colors fade-in ${staggerClass}`}>
-                  <td className="px-6 py-4 text-muted-foreground/60 font-mono text-xs">{ch.number.toString().padStart(2, '0')}</td>
-                  <td className="px-6 py-4">
+                  <td className="px-3 sm:px-6 py-4 text-muted-foreground/60 font-mono text-xs">{ch.number.toString().padStart(2, '0')}</td>
+                  <td className="px-3 sm:px-6 py-4">
                     <button
                       onClick={() => nav.toChapter(bookId, ch.number)}
                       className="font-serif text-lg font-medium hover:text-primary transition-colors text-left"
@@ -481,16 +483,16 @@ export function BookDetail({
                       {ch.title || t("chapter.label").replace("{n}", String(ch.number))}
                     </button>
                   </td>
-                  <td className="px-6 py-4 text-muted-foreground font-medium tabular-nums text-xs">{(ch.wordCount ?? 0).toLocaleString()}</td>
-                  <td className="px-6 py-4">
+                  <td className="px-3 sm:px-6 py-4 text-muted-foreground font-medium tabular-nums text-xs">{(ch.wordCount ?? 0).toLocaleString()}</td>
+                  <td className="px-3 sm:px-6 py-4">
                     <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-tight ${ch.observations.length > 0 ? "text-amber-600 bg-amber-500/10" : "text-emerald-600 bg-emerald-500/10"}`}>
                       {ch.observations.length > 0
                         ? `${ch.observations.length} ${t("book.observations")}`
                         : t("book.currentRevision")}
                     </div>
                   </td>
-                  <td className="px-6 py-4 text-right">
-                    <div className="flex gap-1.5 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
+                  <td className="px-3 sm:px-6 py-4 text-right">
+                    <div className={cn("flex gap-1.5 justify-end transition-opacity", revealOnCoarsePointer())}>
                       <button
                         onClick={async () => {
                           try {
