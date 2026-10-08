@@ -282,11 +282,11 @@ export function createReviseChapterTool(
   return {
     name: "revise_chapter",
     label: "Revise chapter",
-    description: "Revise one persisted chapter. For localized edits, read and bind targetText to keep every surrounding paragraph unchanged. Check the returned changedRegion before claiming the requested change is complete.",
+    description: "Revise one persisted chapter using source-bound edits by default. For a precise local change, read and bind targetText to keep every surrounding paragraph unchanged. Request rewrite mode only for an author-authorized whole-chapter rewrite. Check the returned changedRegion before claiming the requested change is complete.",
     parameters: ReviseChapterParams,
     async execute(_toolCallId, params: Static<typeof ReviseChapterParams>, signal) {
         const bookId = resolveBookId("revise_chapter", params.bookId, activeBookId);
-        const mode = (params.mode ?? "rewrite") as ReviseMode;
+        const mode = (params.mode ?? "spot-fix") as ReviseMode;
         const skills = activatedSkills(options, "reviser");
         const result = await runPipeline(
           pipeline,

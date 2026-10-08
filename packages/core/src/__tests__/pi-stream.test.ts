@@ -130,7 +130,12 @@ describe("guardedPiNonStreaming", () => {
         else if(worker==='submit_foundation_cast_index'){name=worker;args={roles:[{tier:'major',name:'Mara'}]};}
         else if(worker==='submit_foundation_cast_documents'){name=worker;args={role_1_content:'Mara returns a borrowed receipt.'};}
         else{
-          mainCalls++;if(mainCalls===4)return finishResponse('delivered','Initialized');
+          mainCalls++;if(mainCalls===4){
+            const tools=body.tools.map((tool:any)=>tool.function.name);
+            expect(tools).toContain('longform__revise_chapter');
+            for(const raw of ['workspace__replace_work_artifact','longform__patch_chapter_text','longform__replace_chapter_text'])expect(tools).not.toContain(raw);
+            return finishResponse('delivered','Initialized');
+          }
           if(mainCalls>4)throw Error('Unexpected extra call');
           name=mainCalls===1?'workspace__create_work':'longform__create_book';
           args=mainCalls===1?{workId:'generic',profileId:'custom-long',title:'Receipt',intent:'Two short chapters about returning a receipt.',language:'en'}:{instruction:'Initialize the existing story.',targetChapters:2,chapterWordCount:50,minChapterLength:10,maxChapterLength:60,...(mainCalls===2?{bookId:'escaped'}:{})};

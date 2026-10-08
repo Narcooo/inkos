@@ -35,6 +35,9 @@ Skills; they do not replace the author's requested scope.
   request's original baseline remains available across retries for comparison.
   Conversational agents edit through the scoped revision action; raw artifact
   replacement is an internal commit primitive or an explicit host operation.
+  The same boundary covers raw chapter patches and replacements. Generated
+  chapter revisions default to source-bound edits with the persisted length
+  contract; a whole-chapter rewrite is an explicit authoring choice.
 - Short-fiction reviews receive the persisted length requirements and a verified
   request-baseline comparison. Changed chapters have citable earlier text;
   unchanged chapters are compared in full without duplicating their text in the

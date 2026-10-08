@@ -991,7 +991,9 @@ async function runAgentSessionUnlocked(
       includeAction: (capabilityId, action) => {
         // Author-driven changes use the scoped revision action. The raw commit
         // primitive remains available to explicit callers and domain tools.
-        if (actionSource === "free-text" && capabilityId === "workspace" && action.id === "replace_work_artifact") return false;
+        const rawCommit = capabilityId === "workspace" && action.id === "replace_work_artifact"
+          || capabilityId === "longform" && ["patch_chapter_text", "replace_chapter_text"].includes(action.id);
+        if (rawCommit && !(confirmedCapabilityAction?.capabilityId === capabilityId && confirmedCapabilityAction.actionId === action.id)) return false;
         if (confirmedCapabilityAction) {
           return capabilityId === confirmedCapabilityAction.capabilityId && action.id === confirmedCapabilityAction.actionId;
         }
