@@ -2,6 +2,8 @@ import { Type, type Static } from "@sinclair/typebox";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import type { ActionResult } from "../harness/contracts.js";
 import { loadWorkManifest } from "../harness/work-store.js";
+import { readArtifactRevision } from "../harness/artifact-reader.js";
+import { posix } from "node:path";
 
 export const TURN_COMPLETION_TOOL = "finish_turn";
 export const TurnCompletionSchema = Type.Object({
@@ -21,10 +23,13 @@ Call finish_turn alone after other operations finish. Ground delivery claims in 
  */
 export class TurnArtifactDeliveries {
   private readonly receipts = new Map<string, {workId: string; artifactId: string; revisionId: string; operation: string; scopeIssues?: ActionResult["observations"]}>();
+  private readonly requiredCovers = new Set<string>();
 
   observe(result: ActionResult, parameters: unknown = {}) {
     const data = result.data as Record<string, unknown> | undefined;
     if (!data || typeof data !== "object" || typeof data.workId !== "string") return;
+    const delivery = data.delivery as {target?:{coverRequired?:boolean}} | undefined;
+    if (delivery?.target?.coverRequired === true) this.requiredCovers.add(data.workId);
     const historical = parameters && typeof parameters === "object" && "revisionId" in parameters;
     const chapterReview=data.kind==='chapter_review'&&data.reviewedArtifact&&typeof data.reviewedArtifact==='object'
       ? data.reviewedArtifact as {artifactId?:unknown;revisionId?:unknown}:undefined;
@@ -44,6 +49,20 @@ export class TurnArtifactDeliveries {
 
   async validate(projectRoot: string) {
     const works = new Map<string, Awaited<ReturnType<typeof loadWorkManifest>>>();
+    for (const workId of this.requiredCovers) {
+      const work = await loadWorkManifest(projectRoot, workId);
+      works.set(workId, work);
+      const cover = work.artifacts.find(artifact => artifact.revisions.some(revision => {
+        const path = posix.parse(revision.path);
+        return revision.id === artifact.currentRevisionId && revision.contentType.startsWith("image/")
+          && path.name === "cover" && ["source", "source/final"].includes(path.dir);
+      }));
+      if (!cover) throw Object.assign(new Error("The saved production request requires a cover image. Generate the registered cover or report the concrete blocker before claiming delivery."), {
+        code: "TURN_REQUIRED_ARTIFACT_MISSING", workId, artifactRole: "cover",
+      });
+      const {bytes} = await readArtifactRevision({projectRoot,workId,artifactId:cover.id});
+      if (!bytes.length) throw Object.assign(new Error("The required cover image is empty."), {code:"TURN_REQUIRED_ARTIFACT_MISSING",workId,artifactRole:"cover"});
+    }
     const stale: Array<{workId: string; artifactId: string; revisionId: string; operation: string; currentRevisionId: string | null | undefined}> = [];
     for (const receipt of this.receipts.values()) {
       if (!works.has(receipt.workId)) works.set(receipt.workId, await loadWorkManifest(projectRoot, receipt.workId));

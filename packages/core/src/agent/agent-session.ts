@@ -1023,7 +1023,8 @@ async function runAgentSessionUnlocked(
           }
           cached.artifactDeliveries.observe(result, parameters);
           cached.completedPlayScene = completedInteractiveScene(capabilityId, result) ?? cached.completedPlayScene;
-          if (result.status === "success" && WORK_CREATION_ACTIONS.has(actionId)) {
+          const bindsRecoveredWork = !cached.workId && capabilities.resolve(capabilityId, actionId).action.risk !== "read";
+          if (result.status === "success" && (WORK_CREATION_ACTIONS.has(actionId) || bindsRecoveredWork)) {
             const ids = new Set(result.artifacts.map(artifact => artifact.workId));
             const data = result.data && typeof result.data === "object" ? result.data as Record<string, unknown> : undefined;
             const createdId = typeof data?.workId === "string" ? data.workId : ids.size === 1 ? [...ids][0] : undefined;

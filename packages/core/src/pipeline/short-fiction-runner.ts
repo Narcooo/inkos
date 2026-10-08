@@ -379,7 +379,9 @@ async function produceShort(
   options={...options,title:workTitle};
   minimum={...minimum,title:workTitle};
   let productionState: ShortProductionState = {
-    version: 2, target: { title:workTitle,chapterCount, charsPerChapter, minChapterLength:minimum.minChapterLength,maxChapterLength: options.maxChapterLength,openingHookChars:options.openingHookChars, language }, intent: previousState?.intent ?? (options.revisionRequest ? "" : options.direction),
+    version: 2, target: { title:workTitle,chapterCount, charsPerChapter, minChapterLength:minimum.minChapterLength,maxChapterLength: options.maxChapterLength,openingHookChars:options.openingHookChars, language,
+      coverRequired: !stopAfter && !options.revisionRequest ? options.cover !== false || undefined : previousState?.target?.coverRequired,
+    }, intent: previousState?.intent ?? (options.revisionRequest ? "" : options.direction),
     revisionRequest: stopAfter === "package" ? previousState?.revisionRequest : options.revisionRequest,
     reviewScope: stopAfter === "package" ? previousState?.reviewScope : options.reviewScope ?? "whole-story",
     stages: previousState?.stages ?? {},

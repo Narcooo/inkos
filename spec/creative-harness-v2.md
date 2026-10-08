@@ -33,6 +33,11 @@ Skills; they do not replace the author's requested scope.
 - Short-fiction revision checkpoints carry a stable operation identity and
   completed chapter progress. A changed instruction cannot silently reset that
   operation; source changes are detected before resuming.
+- Successful recovery writes bind an unbound session to their canonical Work
+  and refresh its tools. Reading another Work does not change the session target.
+- Short-fiction production retains a requested cover across draft checkpoints.
+  Delivery requires a readable, checksum-verified current cover artifact; a
+  cover prompt alone does not satisfy that requirement.
 - Derivative works retain registered source-version references. Source selection
   and confirmation preserve the requested output constraints.
 

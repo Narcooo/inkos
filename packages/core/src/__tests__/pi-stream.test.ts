@@ -25,6 +25,9 @@ import {loadWorkManifest, listWorkManifests, createWorkManifest, saveWorkManifes
 import {createBookFoundationTool} from '../harness/tools/longform-production.js';
 import {WriterAgent} from '../agents/writer.js';
 import {ContinuityAuditor} from '../agents/continuity.js';
+import {readShortProductionState} from '../pipeline/short-production-state.js';
+import {TurnArtifactDeliveries} from '../agent/turn-completion.js';
+import {syncWorkSourceArtifacts} from '../harness/source-sync.js';
 
 const fetchWithProxyMock = vi.hoisted(() => vi.fn());
 
@@ -52,6 +55,53 @@ function finishResponse(status: 'answered' | 'delivered' | 'needs_input' | 'bloc
 }
 
 describe("guardedPiNonStreaming", () => {
+  it('binds a recovered production Work, restores its visual tools and checks its persisted cover requirement',async()=>{
+    const root=await mkdtemp(join(tmpdir(),'inkos-recovered-work-'));
+    let recover=false,mainCalls=0;const transitions:string[]=[];
+    const client=createLLMClient({provider:'openai',service:'custom',configSource:'studio',baseUrl:model.baseUrl,model:model.id,apiKey:'fixture',apiFormat:'chat',stream:false,thinkingBudget:0});
+    const pipeline=new PipelineRunner({client,model:model.id,projectRoot:root});
+    const reply=(name:string,args:unknown)=>new Response(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{tool_calls:[{id:name+'-'+mainCalls,type:'function',function:{name,arguments:JSON.stringify(args)}}]}}]}));
+    fetchWithProxyMock.mockImplementation(async(_url:string,init:RequestInit)=>{
+      const body=JSON.parse(String(init.body));const names=body.tools.map((t:any)=>t.function.name);
+      if(names.includes('finish_turn')){
+        mainCalls++;
+        if(mainCalls===1)return reply('workspace__inspect_work',{workId:'recovery'});
+        if(mainCalls===2){expect(transitions).toEqual([]);return reply('short-fiction__draft_short_fiction',{workId:'recovery'});}
+        expect(names).toContain('visual__generate_cover');
+        return reply('finish_turn',{status:mainCalls===3?'delivered':'blocked',message:'The requested cover is still missing.'});
+      }
+      const name=names[0];
+      if(name==='submit_short_chapter'&&!recover)return new Response(JSON.stringify({error:{message:'Fixture interruption'}}),{status:403});
+      const args=name==='submit_short_outline'?{storyTitle:'Recovery',planMarkdown:'Return a receipt.',chapter_1_plan:'Return the receipt.'}
+        :name==='submit_short_draft_batch'?{storyTitle:'Recovery',chapter_1_title:'Return',chapter_1_content:Array(25).fill('word').join(' ')}
+        :name==='submit_short_chapter'?{storyTitle:'Recovery',number:1,title:'Return',content:Array(25).fill('word').join(' ')}
+        :name==='submit_short_opening_hook'?{openingHook:Array(10).fill('word').join(' ')}:undefined;
+      if(!args)throw Error('Unexpected fixture tool '+name);
+      return reply(name,args);
+    });
+    try{
+      const entry=createShortFictionRunTool(pipeline,root,{language:'en'});
+      await expect(entry.execute('initial',{storyId:'recovery',title:'Recovery',direction:'Return a receipt.',chapters:1,charsPerChapter:25,minChapterLength:20,maxChapterLength:30,openingHookChars:10,cover:true})).rejects.toMatchObject({code:'WORKER_MODEL_ERROR'});
+      expect((await readShortProductionState(root,'works/recovery/source'))?.target?.coverRequired).toBe(true);
+      recover=true;
+      const result=await runAgentSession({projectRoot:root,sessionId:'recovery-session',bookId:null,workId:null,profileId:'short-fiction',sessionKind:'short',language:'en',model,apiKey:'fixture',stream:false,pipeline,
+        onWorkTransition:session=>{transitions.push(session.workId!);},
+      },'Resume the saved draft and deliver its requested cover.');
+      expect(result.errorMessage).toBeUndefined();
+      expect(result).toMatchObject({workId:'recovery',profileId:'short-fiction',completion:{status:'blocked'}});
+      expect(transitions).toEqual(['recovery']);
+      expect((await loadBookSession(root,'recovery-session'))?.workId).toBe('recovery');
+      const state=(await readShortProductionState(root,'works/recovery/source'))!;
+      expect(state.target?.coverRequired).toBe(true);
+      const deliveries=new TurnArtifactDeliveries();
+      deliveries.observe({status:'success',summary:'Recovered',artifacts:[],observations:[],data:{workId:'recovery',delivery:state.delivery}});
+      await expect(deliveries.validate(root)).rejects.toMatchObject({code:'TURN_REQUIRED_ARTIFACT_MISSING',workId:'recovery',artifactRole:'cover'});
+      // A synthetic registered image tests the delivery receipt boundary, not image quality.
+      await writeFile(join(root,'works/recovery/source/final/cover.png'),Buffer.from('fixture-image'));
+      await syncWorkSourceArtifacts({projectRoot:root,workId:'recovery',accept:true});
+      await expect(deliveries.validate(root)).resolves.toBeUndefined();
+    }finally{evictAgentCache('recovery-session');await rm(root,{recursive:true,force:true});}
+  });
   it('keeps a native creation entry focused on its selected producer without executing it automatically',async()=>{
     const root=await mkdtemp(join(tmpdir(),'inkos-creation-entry-'));let tools:string[]=[];
     fetchWithProxyMock.mockImplementation(async(_url:string,init:RequestInit)=>{const body=JSON.parse(String(init.body));tools=body.tools.map((t:any)=>t.function.name);return finishResponse('needs_input','Select a source.');});
