@@ -40,6 +40,10 @@ export interface InkosModel {
    * 不是"推荐值"。普通模型不要设这个字段。
    */
   readonly temperature?: number;
+  /** False when the model accepts only auto/none tool selection. InkOS still validates required results. */
+  readonly supportsForcedToolChoice?: boolean;
+  /** False when sampling parameters must use the model's server defaults. */
+  readonly supportsSampling?: boolean;
   /** 生命周期状态；enabled=false 仍保留为兼容旧数据的硬下线标记。 */
   readonly status?: "active" | "deprecated" | "disabled" | "nonText";
   readonly replacement?: string;

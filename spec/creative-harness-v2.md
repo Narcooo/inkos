@@ -57,6 +57,14 @@ aligned at 2.0.0. Legacy migration is available through `inkos work migrate`;
 preview before applying with `--apply`. Migration preserves legacy source files
 and reports conflicts rather than overwriting them.
 
+Model cards declare request constraints independently of the gateway protocol.
+When a model requires automatic tool selection, streaming and non-streaming
+requests use that wire setting while the host still requires the originally
+selected tool result. Missing results exhaust the bounded retry and fail with
+`MODEL_REQUIRED_TOOL_MISSING`. Models that prohibit sampling overrides receive
+their server defaults. Sonnet 5.5's documented limits and request constraints
+apply through both native Claude and OpenAI-compatible gateways.
+
 ## Verification recorded on 2026-09-25
 
 The frozen `delivery-verification-2026-09-25` candidate has source digest

@@ -23,6 +23,7 @@ import {
   beginAgentModelCall,
 } from "../llm/agent-trajectory.js";
 import { fetchWithProxy } from "../utils/proxy-fetch.js";
+import { lookupModel } from "../llm/providers/lookup.js";
 
 /**
  * The single Pi transport boundary used by both conversational and worker
@@ -75,7 +76,7 @@ export function guardedPiStream<TApi extends Api>(
             configured = { ...configured as Record<string, unknown>, tool_choice: { type: choice === "none" ? "none" : "auto" } };
           }
         }
-        const prepared = await options?.onPayload?.(configured, activeModel) ?? configured;
+        const prepared = applyModelRequestCapabilities(await options?.onPayload?.(configured, activeModel) ?? configured, activeModel);
         recordExecutionEvidence("model-request-prepared", { modelCallId: modelCall?.modelCallId, model: activeModel.id,
           api: activeModel.api,
           parameters: prepared && typeof prepared === "object" ? Object.fromEntries(Object.entries(prepared).filter(([key]) => ["stream", "thinking", "max_tokens", "max_completion_tokens", "max_output_tokens", "tool_choice"].includes(key))) : {} });
@@ -140,6 +141,7 @@ export function guardedPiNonStreaming<TApi extends Api>(
       if (toolChoice !== undefined) payload.tool_choice = toolChoice;
       const configured = explicitDeepSeekThinkingMode(payload, model);
       const transformed = await options?.onPayload?.(configured, model);
+      const prepared = applyModelRequestCapabilities(transformed ?? configured, model);
       const json = await withTransientLLMRetry(async (attempt) => {
         const deadline = createRequestDeadline(options?.signal);
         const traceHeaders = agentTrajectoryHeaders(model.baseUrl, modelCall, attempt, {
@@ -155,7 +157,7 @@ export function guardedPiNonStreaming<TApi extends Api>(
               ...(options?.headers ?? {}),
               ...traceHeaders,
             },
-            body: JSON.stringify(transformed ?? configured),
+            body: JSON.stringify(prepared),
             signal: deadline.signal,
           }, proxyUrl);
           const raw = await response.text();
@@ -181,6 +183,28 @@ export function guardedPiNonStreaming<TApi extends Api>(
 }
 
 const discardedToolOutputs = new WeakSet<AssistantMessage>();
+
+function applyModelRequestCapabilities(payload: unknown, model: Model<Api>): unknown {
+  if (!payload || typeof payload !== "object") return payload;
+  const card = lookupModel(model.provider, model.id);
+  if (card?.supportsForcedToolChoice !== false && card?.supportsSampling !== false) return payload;
+  const body = { ...payload } as Record<string, unknown>;
+  if (card.supportsSampling === false) {
+    delete body.temperature;
+    delete body.top_p;
+    delete body.top_k;
+  }
+  if (card.supportsForcedToolChoice === false && body.tool_choice !== undefined) {
+    const choice = body.tool_choice;
+    const disabled = choice === "none" || (choice && typeof choice === "object" && "type" in choice && choice.type === "none");
+    // Only the wire parameter changes. observeModelStream receives the original
+    // requirement and rejects a missing or incorrectly named tool result.
+    body.tool_choice = model.api === "anthropic-messages"
+      ? { type: disabled ? "none" : "auto" }
+      : disabled ? "none" : "auto";
+  }
+  return body;
+}
 
 function missingRequiredTool(message: AssistantMessage, choice: unknown): boolean {
   const selected = choice && typeof choice === "object"

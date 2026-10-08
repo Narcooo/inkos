@@ -10,8 +10,13 @@ import { withExecutionEvidence } from "../harness/execution-evidence.js";
 import { compileHarnessContextText } from "../agent/agent-session.js";
 import { runWorkerAgentTool } from "../agent/worker-agent.js";
 
-it.each([true, false])('enforces required tool selection without rejecting an ordinary answer (stream=%s)', async (streaming) => {
-  const received: Array<{ tool_choice?: unknown }> = [];
+it.each([
+  { streaming: true, modelId: 'fixture', wireChoice: 'required' },
+  { streaming: false, modelId: 'fixture', wireChoice: 'required' },
+  { streaming: true, modelId: 'claude-sonnet-5-5', wireChoice: 'auto' },
+  { streaming: false, modelId: 'claude-sonnet-5-5', wireChoice: 'auto' },
+])('enforces required tool selection without rejecting an ordinary answer ($modelId, stream=$streaming)', async ({ streaming, modelId, wireChoice }) => {
+  const received: Array<{ tool_choice?: unknown; temperature?: number; top_p?: number; top_k?: number }> = [];
   let completeTool = false;
   const server = createServer(async (request, response) => {
     const chunks = []; for await (const chunk of request) chunks.push(chunk);
@@ -31,12 +36,13 @@ it.each([true, false])('enforces required tool selection without rejecting an or
   });
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
   try {
-    const client = createLLMClient({ service: 'custom', provider: 'openai', configSource: 'studio', model: 'fixture', apiKey: 'fixture',
+    const client = createLLMClient({ service: 'custom', provider: 'openai', configSource: 'studio', model: modelId, apiKey: 'fixture',
       baseUrl: `http://127.0.0.1:${(server.address() as { port: number }).port}/v1`, apiFormat: 'chat', stream: streaming, temperature: 0, thinkingBudget: 0 });
     const context = { messages: [{ role: 'user' as const, content: 'Submit a value.', timestamp: 1 }],
       tools: [{ name: 'submit_value', description: 'Submit', parameters: Type.Object({ value: Type.Number() }) }] };
     const run = async (toolChoice?: unknown) => {
-      const options = { apiKey: 'fixture', maxTokens: 128, toolChoice };
+      const options = { apiKey: 'fixture', maxTokens: 128, toolChoice, temperature: 0.7,
+        onPayload: (payload: unknown) => ({ ...(payload as Record<string, unknown>), top_p: 0.8, top_k: 10 }) };
       const events = streaming ? guardedPiStream(client._piModel!, context, options) : guardedPiNonStreaming(client._piModel!, context, options);
       for await (const _event of events) {}
       return events.result();
@@ -46,10 +52,17 @@ it.each([true, false])('enforces required tool selection without rejecting an or
     const completed = await run('required');
     expect(completed).toMatchObject({ stopReason: 'toolUse', content: [{ type: 'toolCall', name: 'submit_value', arguments: { value: 7 } }] });
     expect(received).toHaveLength(3);
-    expect(received.slice(1).map(request => request.tool_choice)).toEqual(['required', 'required']);
+    expect(received.slice(1).map(request => request.tool_choice)).toEqual([wireChoice, wireChoice]);
+    if (wireChoice === 'auto') {
+      expect(received.every(request => request.temperature === undefined && request.top_p === undefined && request.top_k === undefined)).toBe(true);
+    } else {
+      expect(received[0]).toMatchObject({ temperature: 0.7, top_p: 0.8, top_k: 10 });
+    }
     const failed = await run({ type: 'function', function: { name: 'submit_value' } });
     expect(failed).toMatchObject({ stopReason: 'error', errorCode: 'MODEL_REQUIRED_TOOL_MISSING' });
     expect(received).toHaveLength(5);
+    expect((await run('none')).stopReason).toBe('stop');
+    expect(received.at(-1)?.tool_choice).toBe('none');
   } finally { server.closeAllConnections(); await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
 }, 15000);
 

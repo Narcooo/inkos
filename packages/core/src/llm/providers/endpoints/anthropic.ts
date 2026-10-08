@@ -22,6 +22,16 @@ export const ANTHROPIC: InkosEndpoint = {
   temperatureHint: "不要同时改 temperature 和 top_p",
   models: [
     {
+      // https://platform.claude.com/docs/en/models/sonnet-5-5/overview
+      id: "claude-sonnet-5-5",
+      maxOutput: 128_000,
+      contextWindowTokens: 1_000_000,
+      enabled: true,
+      releasedAt: "2026-09-28",
+      supportsForcedToolChoice: false,
+      supportsSampling: false,
+    },
+    {
       id: "claude-opus-4-6",
       maxOutput: 128_000,
       contextWindowTokens: 1_000_000,
