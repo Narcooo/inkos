@@ -7,7 +7,7 @@ import { loadAvailableAgentSkills } from "../skills/builtin-loader.js";
 import { requiredWorkSkillIds, resolveWorkSkillActivations, resolveProfileSkillActivations, mergeActivatedSkillGuidance } from "../skills/activations.js";
 import type { LLMClient, LLMMessage, LLMResponse, OnStreamProgress } from "../llm/provider.js";
 import { runWorkerAgent, runWorkerAgentTool, type WorkerResultTool } from "../agent/worker-agent.js";
-import type { Static, TSchema } from "@sinclair/typebox";
+import { Type, type Static, type TSchema } from "@sinclair/typebox";
 import type { Logger } from "../utils/logger.js";
 import { SourcedReviewIndexToolSchema, ArtifactReviewIndexToolSchema } from "./review-tool.js";
 import { resolveObservationSources } from "../models/observation.js";
@@ -92,11 +92,37 @@ export abstract class BaseAgent {
       validateObservations?.(resolved);
       return resolved;
     };
-    const index = await this.submitStructured(messages, {
-      ...tool, parameters: categoryRequired ? ArtifactReviewIndexToolSchema : SourcedReviewIndexToolSchema,
-      validate: result => { resolve(result.observations); return result; },
+    type ReviewObservation = Static<typeof SourcedReviewIndexToolSchema>["observations"][number];
+    const recorded = new Map<string, ReviewObservation>();
+    const observationSchema = (categoryRequired ? ArtifactReviewIndexToolSchema : SourcedReviewIndexToolSchema).properties.observations.items;
+    const index = await this.submitStructured([
+      ...messages,
+      {role:'system',content:`Record each evidence-backed finding with record_review_observation. Independent findings may be submitted together in one response. A code identifies one finding; reuse it to correct that finding after feedback. After all selected findings are accepted, call ${tool.name} with the review summary and their codes in the desired order. Do not embed a list of findings in a string. Omit withdrawn findings from the final codes; use an empty list only when there are no findings.`},
+    ], {
+      ...tool,
+      parameters: Type.Object({summary:Type.String(),observationCodes:Type.Array(Type.String({minLength:1}))},{additionalProperties:false}),
+      maxTurns: 16,
+      supportingTools: [{
+        name:'record_review_observation', label:'Record review observation',
+        description:'Record one finding and its source line addresses. Each finding is checked before it can be included in the final review. Resubmitting the same code replaces that finding.',
+        parameters:observationSchema,
+        execute:async(_id,input)=>{
+          const observation=input as ReviewObservation;
+          resolve([observation]);
+          recorded.set(observation.code,observation);
+          return {content:[{type:'text',text:JSON.stringify({code:observation.code,status:'accepted'})}],details:{code:observation.code,status:'accepted'}};
+        },
+      }],
+      validate: result => {
+        const unknownCodes=result.observationCodes.filter(code=>!recorded.has(code));
+        if(unknownCodes.length || new Set(result.observationCodes).size!==result.observationCodes.length)throw Object.assign(new Error(JSON.stringify({
+          code:'REVIEW_OBSERVATIONS_UNRECORDED',unknownCodes,acceptedCodes:[...recorded.keys()],
+          instruction:'Submit and correct each selected finding through record_review_observation, then finish with its accepted code exactly once. Remove withdrawn findings from the final list.',
+        })),{code:'REVIEW_OBSERVATIONS_UNRECORDED'});
+        return result;
+      },
     }, {...generationOptions,maxTokens:Math.min(generationOptions.maxTokens*2,this.ctx.client.defaults.maxTokens)});
-    const observations = resolve(index.result.observations);
+    const observations = resolve(index.result.observationCodes.map(code=>recorded.get(code)!));
     return {
       result: { summary: index.result.summary, observations },
       usage: index.usage,

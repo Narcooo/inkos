@@ -22,6 +22,11 @@ Skills; they do not replace the author's requested scope.
   attempts retain their review/export obligations through failure. Export alone
   cannot fulfill a failed review; completion requires each operation's current
   revision receipt. Explicit historical reviews remain snapshot evidence.
+- Reviewers submit individual findings with source addresses, then select the
+  accepted finding codes for their final report. The host validates each finding
+  and assembles the report. A final report cannot reference an unaccepted finding;
+  corrections replace the same code. Independent findings may share one model
+  response. The review session has a bounded number of model turns.
 - Local revisions preserve content outside the author's permitted range. The
   request's original baseline remains available across retries for comparison.
   Conversational agents edit through the scoped revision action; raw artifact

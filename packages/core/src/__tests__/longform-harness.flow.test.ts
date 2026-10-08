@@ -93,7 +93,7 @@ describe("long-form harness mini-flow", () => {
       const name=body.tools[0].function.name;
       const delta=chapterOutput(1).runtimeStateDelta!;
       const {chapter:_chapter,...summary}=delta.chapterSummary!;
-      const result=name==='submit_chapter_review'?{summary:'Reviewed the chapter.',observations:[]}:{postSettlement:'The witness leaves.',factOps:delta.factOps,hookOps:delta.hookOps,newHookCandidates:[],chapterSummary:summary};
+      const result=name==='submit_chapter_review'?{summary:'Reviewed the chapter.',observationCodes:[]}:{postSettlement:'The witness leaves.',factOps:delta.factOps,hookOps:delta.hookOps,newHookCandidates:[],chapterSummary:summary};
       calls++;res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{tool_calls:[{id:'settle-'+calls,type:'function',function:{name,arguments:JSON.stringify(result)}}]}}]}));
     });
     server.listen(0,'127.0.0.1');await once(server,'listening');

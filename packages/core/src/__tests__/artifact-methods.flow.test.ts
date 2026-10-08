@@ -22,7 +22,7 @@ import {StoryGraphSchema} from '../interactive-film/graph-schema.js';
 
 it('reviews a pinned graph with deterministic structural facts and persists the same evidence',async()=>{
   const root=await mkdtemp(join(tmpdir(),'inkos-graph-review-'));const requests:any[]=[];
-  const server=createServer(async(req,res)=>{const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));const body=JSON.parse(Buffer.concat(chunks).toString('utf8'));requests.push(body);res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{tool_calls:[{id:'review',type:'function',function:{name:body.tools[0].function.name,arguments:JSON.stringify({summary:'Reviewed',observations:[]})}}]}}]}));});
+  const server=createServer(async(req,res)=>{const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));const body=JSON.parse(Buffer.concat(chunks).toString('utf8'));requests.push(body);res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{tool_calls:[{id:'review',type:'function',function:{name:body.tools[0].function.name,arguments:JSON.stringify({summary:'Reviewed',observationCodes:[]})}}]}}]}));});
   server.listen(0,'127.0.0.1');await once(server,'listening');
   try{
     await saveWorkManifest(root,createWorkManifest({id:'film',title:'Relay',profileId:'interactive-film',language:'en'}));
@@ -56,7 +56,7 @@ it('reviews an explicit candidate snapshot without adopting it or unrelated sour
   const server=createServer(async(req,res)=>{
     const chunks: Buffer[]=[]; for await(const chunk of req) chunks.push(Buffer.from(chunk));
     requests.push(JSON.parse(Buffer.concat(chunks).toString('utf8')));
-    const args={summary:'Candidate inspected',observations:[]};
+    const args={summary:'Candidate inspected',observationCodes:[]};
     res.writeHead(200,{'Content-Type':'text/event-stream'});
     res.write(`data: ${JSON.stringify({id:'review',object:'chat.completion.chunk',choices:[{index:0,delta:{role:'assistant',tool_calls:[{index:0,id:'review-call',type:'function',function:{name:'submit_artifact_review',arguments:JSON.stringify(args)}}]},finish_reason:null}]})}\n\n`);
     res.end(`data: ${JSON.stringify({id:'review',object:'chat.completion.chunk',choices:[{index:0,delta:{},finish_reason:'tool_calls'}]})}\n\ndata: [DONE]\n\n`);
@@ -113,7 +113,7 @@ it('reviews a sales package with the manuscript and outline versions used to cre
     const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));
     requests.push(JSON.parse(Buffer.concat(chunks).toString('utf8')));
     res.writeHead(200,{'Content-Type':'text/event-stream'});
-    res.write(`data: ${JSON.stringify({id:'review',choices:[{index:0,delta:{role:'assistant',tool_calls:[{index:0,id:'review',type:'function',function:{name:'submit_artifact_review',arguments:JSON.stringify({summary:'Compared production sources',observations:[]})}}]},finish_reason:null}]})}\n\n`);
+    res.write(`data: ${JSON.stringify({id:'review',choices:[{index:0,delta:{role:'assistant',tool_calls:[{index:0,id:'review',type:'function',function:{name:'submit_artifact_review',arguments:JSON.stringify({summary:'Compared production sources',observationCodes:[]})}}]},finish_reason:null}]})}\n\n`);
     res.end(`data: ${JSON.stringify({id:'review',choices:[{index:0,delta:{},finish_reason:'tool_calls'}]})}\n\ndata: [DONE]\n\n`);
   });
   server.listen(0,'127.0.0.1');await once(server,'listening');

@@ -1,3 +1,4 @@
+import {fixtureToolCalls} from './tool-call-fixtures.js';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
@@ -38,7 +39,7 @@ it('produces and edits a composed Work by its capabilities while protecting exis
         ? {code:'EXPORT_RECEIPT_NOT_SUPPLIED',category:'execution',assessment:'unavailable',summary:'No completed export receipt is supplied to this review.',sourceRefs:[]}
         : {code:'EXTERNAL_HISTORY_UNAVAILABLE',category:'quality',assessment:'unavailable',summary:'External comparison requires its source.',sourceRefs:[]}]};
     response.writeHead(200, {'Content-Type':'text/event-stream'});
-    response.write(`data: ${JSON.stringify({id:'production',object:'chat.completion.chunk',choices:[{index:0,delta:{role:'assistant',tool_calls:[{index:0,id:'production-call',type:'function',function:{name:toolName,arguments:JSON.stringify(args)}}]},finish_reason:null}]})}\n\n`);
+    response.write(`data: ${JSON.stringify({id:'production',object:'chat.completion.chunk',choices:[{index:0,delta:{role:'assistant',tool_calls:fixtureToolCalls(toolName,args,'production-call')},finish_reason:null}]})}\n\n`);
     response.end(`data: ${JSON.stringify({id:'production',object:'chat.completion.chunk',choices:[{index:0,delta:{},finish_reason:'tool_calls'}]})}\n\ndata: [DONE]\n\n`);
   });
   server.listen(0,'127.0.0.1'); await once(server,'listening');

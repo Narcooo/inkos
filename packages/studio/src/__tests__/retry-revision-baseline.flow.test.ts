@@ -12,7 +12,7 @@ it('keeps the original revision across a failed write, server recreation and nat
  let sessionId:string|undefined;
  const upstream=createServer(async(req,res)=>{
   const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));const body=JSON.parse(Buffer.concat(chunks).toString('utf8'));
-  const send=(name:string,args:unknown)=>{res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{role:'assistant',tool_calls:[{id:'call-'+Date.now(),type:'function',function:{name,arguments:JSON.stringify(args)}}]}}]}));};
+  const send=(name:string,args:unknown,observations:unknown[]=[])=>{res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{role:'assistant',tool_calls:[...observations.map((observation,index)=>({id:'observation-'+index,type:'function',function:{name:'record_review_observation',arguments:JSON.stringify(observation)}})),{id:'call-'+Date.now(),type:'function',function:{name,arguments:JSON.stringify(args)}}]}}]}));};
   if(body.tools[0].function.name==='submit_author_edit_scope'){
    send('submit_author_edit_scope',{wholeDocument:false,selections:[{startLine:3,endLine:3,text:'The visitor waits.'}],reason:'The author selected the final paragraph.'});return;
   }
@@ -21,7 +21,7 @@ it('keeps the original revision across a failed write, server recreation and nat
   }
   if(body.tools[0].function.name==='submit_artifact_review'){
    const input=JSON.parse(body.messages.findLast((m:any)=>m.role==='user').content);reviews.push(input);
-   send('submit_artifact_review',{summary:'Recorded comparison.',observations:[{category:'quality',assessment:'observation',code:'FIXTURE_REVISION',summary:'The final paragraph changed.',sourceRefs:[{sourceId:input.sources[0].sourceId,startLine:3,endLine:3},{sourceId:input.comparison.sourceId,startLine:3,endLine:3}]}]});return;
+   send('submit_artifact_review',{summary:'Recorded comparison.',observationCodes:['FIXTURE_REVISION']},[{category:'quality',assessment:'observation',code:'FIXTURE_REVISION',summary:'The final paragraph changed.',sourceRefs:[{sourceId:input.sources[0].sourceId,startLine:3,endLine:3},{sourceId:input.comparison.sourceId,startLine:3,endLine:3}]}]);return;
   }
   if(phase==='first'){
    if(mainCalls++===0)send('workspace__revise_work_artifact',{artifactId,instruction:'Change only the final paragraph.'});

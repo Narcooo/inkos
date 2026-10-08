@@ -1,3 +1,4 @@
+import {fixtureToolCalls} from './tool-call-fixtures.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Context, Model } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
@@ -210,7 +211,7 @@ describe("guardedPiNonStreaming", () => {
       if(name==='submit_chapter_edit_ranges')return new Response(JSON.stringify({error:{message:'Fixture compression service unavailable'}}),{status:403});
       if(!args)throw Error("Unexpected tool: "+name);
       if(name==="submit_short_revision_plan")revisionInputs.push(JSON.parse(body.messages.filter((m:any)=>m.role==="user").at(-1).content));
-      return new Response(JSON.stringify({choices:[{finish_reason:"tool_calls",message:{tool_calls:[{id:name+"-"+attempt,type:"function",function:{name,arguments:JSON.stringify(args)}}]}}]}));
+      return new Response(JSON.stringify({choices:[{finish_reason:"tool_calls",message:{tool_calls:fixtureToolCalls(name,args,name+'-'+attempt)}}]}));
     });
     const client=createLLMClient({provider:"openai",service:"custom",configSource:"studio",baseUrl:model.baseUrl,model:model.id,apiKey:"fixture",apiFormat:"chat",stream:false,temperature:0,thinkingBudget:0});
     const pipeline=new PipelineRunner({client,model:model.id,projectRoot:root});
@@ -259,6 +260,10 @@ describe("guardedPiNonStreaming", () => {
     const source='Mara says "I signed it."\nThe receipt remains on the desk.';
     fetchWithProxyMock.mockImplementation(async(_url:string,init:RequestInit)=>{
       const body=JSON.parse(String(init.body)),name=body.tools[0].function.name;names.push(name);
+      if(names.length===2){
+        const feedback=body.messages.filter((message:{role:string})=>message.role==='tool').flatMap((message:{content:string})=>{try{return [JSON.parse(message.content)];}catch{return [];}});
+        expect(feedback).toEqual(expect.arrayContaining([expect.objectContaining({code:'REVIEW_OBSERVATIONS_UNRECORDED',unknownCodes:['SIGNED_RECEIPT'],acceptedCodes:[]})]));
+      }
       const metadata=body.messages.flatMap((message:{content?:string})=>String(message.content??"").split("\n")).flatMap((line:string)=>{
         try{return [JSON.parse(line)];}catch{return [];}
       });
@@ -270,7 +275,7 @@ describe("guardedPiNonStreaming", () => {
         code:"SIGNED_RECEIPT",assessment:"observation",summary:'Mara states "I signed it." The receipt provides a concrete object for the following handover.',
         sourceRefs:[{sourceId:"manuscript-chapter-1",startLine:++indexCalls===1?999:2,endLine:indexCalls===1?999:2},{sourceId:'baseline-manuscript-chapter-1',startLine:2,endLine:2}],
       }]};
-      return new Response(JSON.stringify({choices:[{finish_reason:"tool_calls",message:{tool_calls:[{id:name+"-"+names.length,type:"function",function:{name,arguments:JSON.stringify(args)}}]}}]}));
+      return new Response(JSON.stringify({usage:{prompt_tokens:10,completion_tokens:5,total_tokens:15},choices:[{finish_reason:"tool_calls",message:{tool_calls:fixtureToolCalls(name,args,name+'-'+names.length)}}]}));
     });
     const client=createLLMClient({provider:"openai",service:"custom",configSource:"studio",baseUrl:model.baseUrl,model:model.id,apiKey:"fixture",apiFormat:"chat",stream:false,temperature:0,thinkingBudget:0});
     const result=await new ShortFictionDraftReviewerAgent({client,model:model.id,projectRoot:"/tmp"}).reviewDraft({direction:"Review the receipt scene",outlineMarkdown:"A receipt is handed over.",chapterCount:1,charsPerChapter:20,minChapterLength:10,maxChapterLength:25,language:"en",draft:{storyTitle:"Receipt",rawContent:"",chapters:[{number:1,title:"Signature",content:source,charCount:15}]},comparison:{scope:'episode_start',before:{artifactId:'draft',revisionId:'before',checksum:'sha256:before'},after:{artifactId:'draft',revisionId:'after',checksum:'sha256:after'},draft:{storyTitle:'Receipt',rawContent:'',chapters:[{number:1,title:'Signature',content:'Mara examines the unsigned receipt.',charCount:5}]}}});
@@ -295,7 +300,7 @@ describe("guardedPiNonStreaming", () => {
       }else{
         throw new Error('Unexpected additional review call');
       }
-      return new Response(JSON.stringify({usage:{prompt_tokens:10,completion_tokens:5,total_tokens:15},choices:[{finish_reason:'tool_calls',message:{tool_calls:[{id:name,type:'function',function:{name,arguments:JSON.stringify(args)}}]}}]}));
+      return new Response(JSON.stringify({usage:{prompt_tokens:10,completion_tokens:5,total_tokens:15},choices:[{finish_reason:'tool_calls',message:{tool_calls:fixtureToolCalls(name,args,name)}}]}));
     });
     const client=createLLMClient({provider:'openai',service:'custom',configSource:'studio',baseUrl:model.baseUrl,model:model.id,apiKey:'fixture',apiFormat:'chat',stream:false,temperature:0,thinkingBudget:0});
     const review=await new ContinuityAuditor({client,model:model.id,projectRoot:'/tmp'}).auditChapter('/tmp',chapter,3,undefined,{language:'en',contextPackage:{chapter:3,selectedContext:[{source:'story/current_state.md',reason:'Current ownership',excerpt:canon,protection:'protected'}]}});
@@ -396,7 +401,7 @@ describe("guardedPiNonStreaming", () => {
         name==='submit_foundation_details'?{bookRules:'Keep the receipt',bookRulesData:{prohibitions:[],enableFullCastTracking:false,allowedDeviations:[]},pendingHooks:[]}:
         name==='submit_foundation_cast_index'?{roles:[{tier:'major',name:'Mara'},{tier:'minor',name:'Witness'}]}:
         {role_1_content:card,role_2_content:'Knows who signed the receipt.'};
-      return new Response(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{tool_calls:[{id:name,type:'function',function:{name,arguments:JSON.stringify(args)}}]}}]}));
+      return new Response(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{tool_calls:fixtureToolCalls(name,args,name)}}]}));
     });
     const client=createLLMClient({provider:'openai',service:'custom',configSource:'studio',baseUrl:model.baseUrl,model:model.id,apiKey:'fixture',apiFormat:'chat',stream:false,temperature:0,thinkingBudget:0});
     const result=await new ArchitectAgent({client,model:model.id,projectRoot:'/tmp'}).generateFoundation({id:'fixture',title:'Receipt',genre:'other',platform:'other',language:'en',status:'outlining',targetChapters:1,chapterWordCount:300,createdAt:'2026-01-01',updatedAt:'2026-01-01'});
