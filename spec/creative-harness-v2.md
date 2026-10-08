@@ -58,6 +58,8 @@ preview before applying with `--apply`. Migration preserves legacy source files
 and reports conflicts rather than overwriting them.
 
 Model cards declare request constraints independently of the gateway protocol.
+Text-producing workers and tool-producing workers share the final payload
+normalizer across the Pi SDK and custom HTTP transports.
 When a model requires automatic tool selection, streaming and non-streaming
 requests use that wire setting while the host still requires the originally
 selected tool result. Missing results exhaust the bounded retry and fail with

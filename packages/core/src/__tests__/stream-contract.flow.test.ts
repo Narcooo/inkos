@@ -8,7 +8,7 @@ import type { StreamProgress } from "../llm/provider.js";
 import { guardedPiStream, guardedPiNonStreaming } from "../agent/pi-stream.js";
 import { withExecutionEvidence } from "../harness/execution-evidence.js";
 import { compileHarnessContextText } from "../agent/agent-session.js";
-import { runWorkerAgentTool } from "../agent/worker-agent.js";
+import { runWorkerAgent, runWorkerAgentTool } from "../agent/worker-agent.js";
 
 it.each([
   { streaming: true, modelId: 'fixture', wireChoice: 'required' },
@@ -16,14 +16,14 @@ it.each([
   { streaming: true, modelId: 'claude-sonnet-5-5', wireChoice: 'auto' },
   { streaming: false, modelId: 'claude-sonnet-5-5', wireChoice: 'auto' },
 ])('enforces required tool selection without rejecting an ordinary answer ($modelId, stream=$streaming)', async ({ streaming, modelId, wireChoice }) => {
-  const received: Array<{ tool_choice?: unknown; temperature?: number; top_p?: number; top_k?: number }> = [];
+  const received: Array<{ stream?: boolean; tool_choice?: unknown; temperature?: number; top_p?: number; top_k?: number }> = [];
   let completeTool = false;
   const server = createServer(async (request, response) => {
     const chunks = []; for await (const chunk of request) chunks.push(chunk);
     received.push(JSON.parse(Buffer.concat(chunks).toString('utf8')));
     const call = completeTool && received.length === 3
       ? { id: 'result-1', type: 'function', function: { name: 'submit_value', arguments: '{"value":7}' } } : undefined;
-    if (streaming) {
+    if (received.at(-1)?.stream) {
       response.writeHead(200, { 'Content-Type': 'text/event-stream' });
       response.write(`data: ${JSON.stringify({ id: 'selection', object: 'chat.completion.chunk', choices: [{ index: 0,
         delta: call ? { role: 'assistant', tool_calls: [{ ...call, index: 0 }] } : { role: 'assistant', content: 'A response.' },
@@ -63,6 +63,12 @@ it.each([
     expect(received).toHaveLength(5);
     expect((await run('none')).stopReason).toBe('stop');
     expect(received.at(-1)?.tool_choice).toBe('none');
+    // Text-producing workers exercise both the custom HTTP and Pi SDK paths.
+    for (const textClient of [client, { ...client, service: 'openai' }]) {
+      const result = await runWorkerAgent(textClient, modelId, [{ role: 'user', content: 'Reply briefly.' }], { temperature: 0.3, maxTokens: 128 });
+      expect(result.content.length).toBeGreaterThan(0);
+      expect(received.at(-1)?.temperature).toBe(wireChoice === 'auto' ? undefined : 0.3);
+    }
   } finally { server.closeAllConnections(); await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
 }, 15000);
 

@@ -23,7 +23,7 @@ import {
   beginAgentModelCall,
 } from "../llm/agent-trajectory.js";
 import { fetchWithProxy } from "../utils/proxy-fetch.js";
-import { lookupModel } from "../llm/providers/lookup.js";
+import { applyModelRequestCapabilities } from "../llm/model-request-capabilities.js";
 
 /**
  * The single Pi transport boundary used by both conversational and worker
@@ -183,28 +183,6 @@ export function guardedPiNonStreaming<TApi extends Api>(
 }
 
 const discardedToolOutputs = new WeakSet<AssistantMessage>();
-
-function applyModelRequestCapabilities(payload: unknown, model: Model<Api>): unknown {
-  if (!payload || typeof payload !== "object") return payload;
-  const card = lookupModel(model.provider, model.id);
-  if (card?.supportsForcedToolChoice !== false && card?.supportsSampling !== false) return payload;
-  const body = { ...payload } as Record<string, unknown>;
-  if (card.supportsSampling === false) {
-    delete body.temperature;
-    delete body.top_p;
-    delete body.top_k;
-  }
-  if (card.supportsForcedToolChoice === false && body.tool_choice !== undefined) {
-    const choice = body.tool_choice;
-    const disabled = choice === "none" || (choice && typeof choice === "object" && "type" in choice && choice.type === "none");
-    // Only the wire parameter changes. observeModelStream receives the original
-    // requirement and rejects a missing or incorrectly named tool result.
-    body.tool_choice = model.api === "anthropic-messages"
-      ? { type: disabled ? "none" : "auto" }
-      : disabled ? "none" : "auto";
-  }
-  return body;
-}
 
 function missingRequiredTool(message: AssistantMessage, choice: unknown): boolean {
   const selected = choice && typeof choice === "object"

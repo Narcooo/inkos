@@ -15,6 +15,7 @@ import type {
 import { resolveServicePreset } from "./service-presets.js";
 import { getEndpoint } from "./providers/index.js";
 import { lookupModel } from "./providers/lookup.js";
+import { applyModelRequestCapabilities } from "./model-request-capabilities.js";
 import { fetchWithProxy } from "../utils/proxy-fetch.js";
 import { isApiKeyOptionalForEndpoint } from "../utils/llm-endpoint-auth.js";
 import { createLeadingThinkTagStripper, stripLeadingThinkBlock } from "./think-tag-stripper.js";
@@ -1103,7 +1104,7 @@ async function chatCompletionViaCustomAnthropicCompatible(
       ...(client._piModel?.headers ?? {}),
       ...traceHeaders,
     }) ?? { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(applyModelRequestCapabilities(payload, resolvePiModel(client, model))),
     signal,
   }, client.proxyUrl);
 
@@ -1227,7 +1228,7 @@ async function chatCompletionViaCustomOpenAICompatible(
     const response = await fetchWithProxy(`${baseUrl.replace(/\/$/, "")}/responses`, {
       method: "POST",
       headers,
-      body: JSON.stringify(payload),
+      body: JSON.stringify(applyModelRequestCapabilities(payload, resolvePiModel(client, model))),
       signal,
     }, client.proxyUrl);
     if (!response.ok) {
@@ -1328,7 +1329,7 @@ async function chatCompletionViaCustomOpenAICompatible(
   const response = await fetchWithProxy(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
     method: "POST",
     headers,
-    body: JSON.stringify(payload),
+    body: JSON.stringify(applyModelRequestCapabilities(payload, resolvePiModel(client, model))),
     signal,
   }, client.proxyUrl);
   if (!response.ok) {
@@ -1631,6 +1632,7 @@ async function chatCompletionViaPiAi(
     apiKey: client._apiKey,
     headers: mergeUserAgent({ ...(piModel.headers ?? {}), ...traceHeaders }),
     signal,
+    onPayload: (payload: unknown) => applyModelRequestCapabilities(payload, piModel),
   };
 
   if (!client.stream) {
