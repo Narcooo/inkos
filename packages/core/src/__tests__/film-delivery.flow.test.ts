@@ -6,7 +6,7 @@ import {Value} from '@sinclair/typebox/value';
 import {createWorkManifest,saveWorkManifest,loadWorkManifest} from '../harness/work-store.js';
 import {applyGraphDelta} from '../interactive-film/authoring-store.js';
 import {loadStoryGraph} from '../interactive-film/graph-store.js';
-import {createConnectChoiceTool,createFillNodeTool,createReviseNodeTool,createDraftStructureTool} from '../agent/film-authoring-tools.js';
+import {createConnectChoiceTool,createFillNodeTool,createReviseNodeTool,createDraftStructureTool,createDefineEndingTool} from '../agent/film-authoring-tools.js';
 import {createInspectFilmTool,createExportFilmTool,createSetFilmRequirementsTool} from '../harness/tools/film-delivery.js';
 import {StoryGraphSchema} from '../interactive-film/graph-schema.js';
 import {findSimpleRuntimeRoute,enumerateRuntimePaths,exploreRuntimeStates} from '../interactive-film/paths.js';
@@ -42,6 +42,14 @@ it('persists conditional dialogue and presents only the lines supported by the e
     const before=await readFile(join(root,'works/dialogue/source/story-graph.json'));
     await expect(applyGraphDelta({projectRoot:root,projectId:'dialogue',delta:{nodes:{upsert:[{...merged,dialogue:[{...merged.dialogue[0]!,condition:{var:'recording',op:'==',value:true}}]}],remove:[]},notes:[]}})).rejects.toMatchObject({code:'VARIABLE_TYPE_MISMATCH'});
     expect(await readFile(join(root,'works/dialogue/source/story-graph.json'))).toEqual(before);
+    const endingTool=createDefineEndingTool(root,'dialogue');
+    const ending={id:'outcome',nodeId:'e',title:String.raw`\u5b8c\u6210`,type:'complete'};
+    await expect(endingTool.execute('encoded',ending)).rejects.toMatchObject({code:'ENCODED_DISPLAY_TEXT',issues:[{path:'/endings/0/title'}]});
+    expect(await readFile(join(root,'works/dialogue/source/story-graph.json'))).toEqual(before);
+    const legacy=StoryGraphSchema.parse({...saved,endings:[ending]});
+    expect(checkFilmRequirements(legacy,{nodeCount:3}).issues).toContainEqual({code:'FILM_STRUCTURE_INVALID',actual:'ENCODED_DISPLAY_TEXT',nodeIds:['e']});
+    await endingTool.execute('readable',{...ending,title:'完成',description:String.raw`A code example: \u5b8c`});
+    expect((await loadStoryGraph(root,'dialogue'))!.endings[0].title).toBe('完成');
   }finally{await rm(root,{recursive:true,force:true});}
 });
 

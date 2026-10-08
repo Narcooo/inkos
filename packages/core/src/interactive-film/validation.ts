@@ -2,10 +2,11 @@ import type { StoryGraph, StoryNode } from "./graph-schema.js";
 import { enumerateRuntimePaths } from "./paths.js";
 
 export interface ValidationIssue {
-  readonly code: "DEAD_END" | "BROKEN_LINK" | "UNREACHABLE" | "NO_PATH_TO_ENDING" | "VARIABLE_UNWRITTEN" | "VARIABLE_UNUSED" | "VARIABLE_TYPE_MISMATCH" | "IMAGE_MISSING" | "GATED_UNREACHABLE" | "ENDING_UNREACHABLE" | "ILLUSORY_BRANCH" | "ISOLATED_NODE";
+  readonly code: "DEAD_END" | "BROKEN_LINK" | "UNREACHABLE" | "NO_PATH_TO_ENDING" | "VARIABLE_UNWRITTEN" | "VARIABLE_UNUSED" | "VARIABLE_TYPE_MISMATCH" | "IMAGE_MISSING" | "GATED_UNREACHABLE" | "ENDING_UNREACHABLE" | "ILLUSORY_BRANCH" | "ISOLATED_NODE" | "ENCODED_DISPLAY_TEXT";
   readonly level: "error" | "warning" | "info";
   readonly message: string;
   readonly nodeIds: readonly string[];
+  readonly path?: string;
 }
 
 export interface ValidationReport {
@@ -18,7 +19,7 @@ function label(node: StoryNode): string {
 }
 
 export function validateStoryGraph(graph: StoryGraph): ValidationReport {
-  const issues: ValidationIssue[] = validateVariableTypes(graph);
+  const issues: ValidationIssue[] = [...validateVariableTypes(graph), ...validateDisplayText(graph)];
   const ids = new Set(graph.nodes.map((n) => n.id));
   const nodeMap = new Map(graph.nodes.map((n) => [n.id, n]));
 
@@ -127,6 +128,35 @@ export function assertVariableTypes(graph: StoryGraph): void {
   if (issues.length) throw Object.assign(new Error(issues.map(issue => issue.message).join('; ')), {
     code: 'VARIABLE_TYPE_MISMATCH', issues,
   });
+}
+
+/** Display fields must contain text rather than an entirely JSON-escaped copy.
+ * Mixed prose/code and opaque variable values are left unchanged. */
+export function validateDisplayText(graph: StoryGraph): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  const check = (path: string, value: string, nodeIds: string[] = []) => {
+    if (/^(?:\\u[0-9a-f]{4})+$/i.test(value.trim())) issues.push({
+      code:'ENCODED_DISPLAY_TEXT',level:'error',path,nodeIds,
+      message:`${path} contains literal Unicode escapes instead of display text. Resubmit the actual characters in this field.`,
+    });
+  };
+  check('/title',graph.title);
+  graph.characters.forEach((character,index)=>check(`/characters/${index}/name`,character.name));
+  graph.nodes.forEach((node,index)=>{
+    check(`/nodes/${index}/title`,node.title,[node.id]);
+    check(`/nodes/${index}/sceneDesc`,node.sceneDesc,[node.id]);
+    node.dialogue.forEach((line,lineIndex)=>check(`/nodes/${index}/dialogue/${lineIndex}/text`,line.text,[node.id]));
+    node.choices.forEach((choice,choiceIndex)=>check(`/nodes/${index}/choices/${choiceIndex}/text`,choice.text,[node.id]));
+  });
+  graph.endings.forEach((ending,index)=>{
+    for(const field of ['title','type','description'] as const)check(`/endings/${index}/${field}`,ending[field],[ending.nodeId]);
+  });
+  return issues;
+}
+
+export function assertDisplayText(graph: StoryGraph): void {
+  const issues=validateDisplayText(graph);
+  if(issues.length)throw Object.assign(new Error(JSON.stringify({code:'ENCODED_DISPLAY_TEXT',issues})),{code:'ENCODED_DISPLAY_TEXT',issues});
 }
 
 export function reviewStoryGraph(graph: StoryGraph): ValidationReport {

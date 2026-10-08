@@ -58,6 +58,10 @@ their domain boundaries. Prose-only scene revisions preserve world state and
 choices. Player actions retain the actual player input; bounded context includes
 earlier narrative evidence as well as the current state. Interactive-film edits
 receive the complete graph's authoring context while keeping write scope bounded.
+New graph display text is checked before persistence; wholly Unicode-escaped
+labels receive a field-addressed error for model correction. Opaque state values
+and mixed prose/code are preserved. Full-graph validation also protects exports.
+Players and the graph editor resolve registered speaker IDs to character names.
 
 Image revisions can send the previous image as a provider reference. Image
 generation waits outside the Work mutation lock, then commits against its

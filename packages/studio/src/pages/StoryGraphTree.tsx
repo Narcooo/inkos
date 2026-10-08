@@ -136,6 +136,7 @@ export function StoryGraphTree({
           <NodeEditor
             key={node.id}
             node={node}
+            characters={graph.characters}
             saving={savingId === node.id}
             onSave={saveNode}
             generating={generatingId === node.id}
@@ -150,6 +151,7 @@ export function StoryGraphTree({
 
 function NodeEditor({
   node,
+  characters,
   saving,
   onSave,
   generating,
@@ -157,6 +159,7 @@ function NodeEditor({
   colors,
 }: {
   node: StoryNode;
+  characters: StoryGraph['characters'];
   saving: boolean;
   onSave: (n: StoryNode) => void;
   generating: boolean;
@@ -191,7 +194,7 @@ function NodeEditor({
         <div className="mt-2 space-y-1">
           {node.dialogue.map((l, i) => (
             <div key={i} className="text-xs">
-              <span className={colors.accent}>{l.speaker}{tr("：", ": ")}</span>
+              <span className={colors.accent}>{characters.find(character=>character.id===l.speaker)?.name || l.speaker}{tr("：", ": ")}</span>
               {l.text}
             </div>
           ))}

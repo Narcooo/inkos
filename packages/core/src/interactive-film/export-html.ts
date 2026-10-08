@@ -7,6 +7,7 @@ const PLAYER_JS = String.raw`
   (GRAPH.variables||[]).forEach(function(v){ vars[v.name] = v.default; });
   var nodeById = {}; (GRAPH.nodes||[]).forEach(function(n){ nodeById[n.id] = n; });
   var endingByNode = {}; (GRAPH.endings||[]).forEach(function(e){ endingByNode[e.nodeId] = e; });
+  var speakerNames = Object.create(null); (GRAPH.characters||[]).forEach(function(c){ speakerNames[c.id] = c.name; });
   function evalCond(c){ if(!c) return true; var v = vars[c.var];
     switch(c.op){ case ">=": return Number(v)>=Number(c.value); case "<=": return Number(v)<=Number(c.value); case ">": return Number(v)>Number(c.value); case "<": return Number(v)<Number(c.value); case "==": return v===c.value; case "!=": return v!==c.value; } return true; }
   function applyEffects(effects){ (effects||[]).forEach(function(e){
@@ -20,7 +21,7 @@ const PLAYER_JS = String.raw`
     if(node.imageSlot && node.imageSlot.assetRef && ASSETS[node.imageSlot.assetRef]) html += '<img class="scene" src="'+ASSETS[node.imageSlot.assetRef]+'" alt=""/>';
     if(node.title) html += '<h2>'+h(node.title)+'</h2>';
     if(node.sceneDesc) html += '<p class="scene-desc">'+h(node.sceneDesc)+'</p>';
-    (node.dialogue||[]).filter(function(d){ return evalCond(d.condition); }).forEach(function(d){ html += '<p class="line"><b>'+h(d.speaker)+'：</b>'+h(d.text)+'</p>'; });
+    (node.dialogue||[]).filter(function(d){ return evalCond(d.condition); }).forEach(function(d){ html += '<p class="line"><b>'+h(speakerNames[d.speaker] || d.speaker)+'：</b>'+h(d.text)+'</p>'; });
     var end = endingByNode[node.id] || node.type==="ending";
     if(end){ var e = endingByNode[node.id];
       html += '<div class="ending"><div class="ending-type">'+h(e?e.type:"ending")+'</div><div class="ending-title">'+h(e?e.title:(node.title||"结局"))+'</div></div>';
