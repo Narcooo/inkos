@@ -52,7 +52,7 @@ const PlayEntityResultSchema = Type.Object({
   ]),
   label: Type.String(),
   summary: Type.String(),
-  status: Type.Optional(Type.String()),
+  status: Type.Optional(Type.String({description:"Current entity status. Update it explicitly when an entity is consumed, disappears, or otherwise intentionally ceases to have a tracked physical placement."})),
 });
 
 const PlayEdgeResultSchema = Type.Object({
@@ -60,7 +60,7 @@ const PlayEdgeResultSchema = Type.Object({
   fromId: Type.String(),
   type: Type.String(),
   toId: Type.String(),
-  value: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+  value: Type.Optional(Type.Record(Type.String(), Type.Unknown(), {description:"For a physical entity -> current location/container relationship, set role=placement. For holder -> held object, set role=holding. These stable roles identify physical placement independently of the free-form type label."})),
   visibility: Type.Optional(Type.Record(Type.String(), Type.String())),
   strength: Type.Optional(Type.Number()),
 });
@@ -85,11 +85,11 @@ const PlayMutationResultSchema = Type.Object({
     synchronized: Type.Array(Type.String()),
   })),
   entities: Type.Array(PlayEntityResultSchema),
-  edges: Type.Array(PlayEdgeResultSchema),
+  edges: Type.Array(PlayEdgeResultSchema, {description:"Upsert every new or changed current relationship. Include resulting locations and holders after movement, release or return, even when the same relationship existed earlier. Historical existence does not make an expired edge current."}),
   expiredEdges: Type.Array(Type.Object({
     edgeId: Type.String(),
     reason: Type.String(),
-  })),
+  }), {description:"End relationships that no longer hold. Expiring the old location or holder does not establish the new one; include that resulting relationship in edges."}),
   stateSlots: Type.Array(PlayStateSlotResultSchema),
   evidenceTransitions: Type.Array(Type.Object({
     entityId: Type.String(),
@@ -316,13 +316,13 @@ function buildOpeningStateSystemPrompt(language: "zh" | "en"): string {
     ? [
         "Extract the authoritative world state already established by the supplied opening scene and world contract.",
         "Do not rewrite the scene or add facts. Always create actor_player and the concrete people, places, objects, clues, and relationships needed to make the opening playable.",
-        "Reuse stable readable ids. Physical holdings use an actor_player edge with value.role=holding; knowledge is observed rather than held.",
+        "Reuse stable readable ids. Physical placement points from entity to location/container with value.role=placement. Physical holdings point from holder to object with value.role=holding; knowledge is observed rather than held.",
         "Submit only the opening mutation. The host owns eventId, turn, and actionKind.",
       ].join("\n")
     : [
         "从给定开场正文和世界契约中提取已经成立的权威世界状态。",
         "不要改写开场，也不要添加正文没有的事实。必须建立 actor_player，以及让开场可玩的具体人物、地点、物件、线索和关系。",
-        "使用稳定可读的 id。实际持有使用 actor_player 指向实体且 value.role=holding；知道的信息属于 observed，不是 holding。",
+        "使用稳定可读的 id。物理位置使用实体指向地点/容器且 value.role=placement；实际持有使用持有人指向物件且 value.role=holding。知道的信息属于 observed，不是 holding。",
         "只提交开场 mutation；eventId、turn、actionKind 由宿主负责。",
       ].join("\n");
 }
@@ -366,7 +366,7 @@ function buildTurnSystemPrompt(mode: "open" | "guided", language: "zh" | "en"): 
         "In one submission, normalize the player's literal action, project the authoritative world mutation, and render the resulting scene. The prose and mutation must describe the same facts.",
         "Current active relationships and state slots take precedence over the opening premise and older entity descriptions. Check the actual holder, location and completed obligations before writing dialogue or choices. Do not restore a completed handover or payment merely because the opening described it as pending; another transfer requires a new supported action. Update an entity description when this turn makes its mutable facts obsolete.",
         "Reuse exact roster ids. The player id is always actor_player. Every concrete named person, place, object, clue, evidence item, organization, or relationship introduced in sceneText must exist in mutation or the supplied context.",
-        "Physical holdings use an actor_player edge with value.role=holding; when the held target is evidence, clue, claim, or proof_chain, also set value.physical=true. Knowledge is observed rather than held. Use stateSlots only when the world contract authorizes that tracking.",
+        "Physical placements point from entity to location/container with value.role=placement. Physical holdings point from holder to object with value.role=holding; when the held target is evidence, clue, claim, or proof_chain, also set value.physical=true. Knowledge is observed rather than held. Use stateSlots only when the world contract authorizes that tracking.",
         "Only evidence, clue, claim, and proof_chain entities may appear in evidenceTransitions. A tangible object that participates in an evidence lifecycle must use an evidentiary entity type rather than item.",
         "Record elapsed duration, resulting time anchor, rationale, and synchronized off-screen changes in timeAdvance. If the action cannot proceed, set blocked and render the grounded consequence.",
         choiceRule,
@@ -377,7 +377,7 @@ function buildTurnSystemPrompt(mode: "open" | "guided", language: "zh" | "en"): 
         "一次提交中同时归一玩家原话、投影权威世界变化并写出结果场景；正文与 mutation 必须描述同一组事实。",
         "当前有效关系和状态槽优先于开场前提及较早的实体描述。写对白和选项前核对实际持有人、位置和已完成事项；不能因为开场曾要求归还或付款，就把已完成交接或付款重新当作待办。再次转移必须有新的实际动作支持。本回合让实体描述中的可变事实过时时，同时更新该实体描述。",
         "复用名册精确 id，玩家 id 永远是 actor_player。sceneText 中新增的具体具名人物、地点、物件、线索、证据、组织或关系，必须已经存在于 mutation 或给定上下文。",
-        "实际持有使用 actor_player 指向实体且 value.role=holding；持有的目标若是 evidence、clue、claim、proof_chain，还必须设置 value.physical=true。知道的信息属于 observed，不是 holding。只有世界契约允许时才使用 stateSlots。",
+        "物理位置使用实体指向地点/容器且 value.role=placement；实际持有使用持有人指向物件且 value.role=holding。持有的目标若是 evidence、clue、claim、proof_chain，还必须设置 value.physical=true。知道的信息属于 observed，不是 holding。只有世界契约允许时才使用 stateSlots。",
         "只有 evidence、clue、claim、proof_chain 实体可以进入 evidenceTransitions；需要证据生命周期的实物必须使用证据类实体类型，不能同时标成普通 item。",
         "在 timeAdvance 中记录经过时长、结束时间锚、理由和同期世界变化。动作无法执行时设置 blocked，并写出符合当前状态的结果。",
         choiceRule,

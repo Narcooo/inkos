@@ -71,6 +71,16 @@ their domain boundaries. Prose-only scene revisions preserve world state and
 choices. Player actions retain the actual player input; bounded context includes
 earlier narrative evidence as well as the current state. Interactive-film edits
 receive the complete graph's authoring context while keeping write scope bounded.
+Physical placement is identified by `value.role=placement` (entity to destination)
+or `value.role=holding` (holder to object), independently of free-form edge labels.
+Legacy `at`, `within`, `holding` and `holds` representations remain readable.
+Ending a tracked physical location, containment or holding relation must retain
+a resulting placement, or an explicit entity-status change recording intentional
+disappearance/consumption. The host rejects silent placement loss before commit
+and returns the affected identities for correction of the same turn. This checks
+that a disposition is recorded; it does not infer its meaning from action prose
+or certify the model's semantic interpretation. Relationship upserts include
+returns to locations/holders that appeared earlier in history.
 New graph display text is checked before persistence; wholly Unicode-escaped
 labels receive a field-addressed error for model correction. Opaque state values
 and mixed prose/code are preserved. Full-graph validation also protects exports.
