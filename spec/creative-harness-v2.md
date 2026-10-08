@@ -68,6 +68,9 @@ generation waits outside the Work mutation lock, then commits against its
 captured moment. A failed replacement retains the previous successful image.
 Provider credentials are only retried for image downloads on that provider's
 own origin.
+Background illustration progress and failures remain visible beside the chat
+input when the world inspector is collapsed. The inspector offers a retry for
+the enabled missing illustrations and suppresses duplicate in-flight requests.
 
 ## Compatibility
 
