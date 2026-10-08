@@ -26,7 +26,11 @@ Skills; they do not replace the author's requested scope.
   accepted finding codes for their final report. The host validates each finding
   and assembles the report. A final report cannot reference an unaccepted finding;
   corrections replace the same code. Independent findings may share one model
-  response. The review session has a bounded number of model turns.
+  response. The host returns the actual selected excerpts, and finalization must
+  occur in a later response after that readback. Resolving a source address does
+  not prove a finding. Prior critique and delegated suggestions are rechecked
+  against current text and author constraints, not promoted to new requirements.
+  The review session has a bounded number of model turns.
 - Local revisions preserve content outside the author's permitted range. The
   request's original baseline remains available across retries for comparison.
   Conversational agents edit through the scoped revision action; raw artifact

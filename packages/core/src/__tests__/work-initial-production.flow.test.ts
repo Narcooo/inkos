@@ -39,7 +39,7 @@ it('produces and edits a composed Work by its capabilities while protecting exis
         ? {code:'EXPORT_RECEIPT_NOT_SUPPLIED',category:'execution',assessment:'unavailable',summary:'No completed export receipt is supplied to this review.',sourceRefs:[]}
         : {code:'EXTERNAL_HISTORY_UNAVAILABLE',category:'quality',assessment:'unavailable',summary:'External comparison requires its source.',sourceRefs:[]}]};
     response.writeHead(200, {'Content-Type':'text/event-stream'});
-    response.write(`data: ${JSON.stringify({id:'production',object:'chat.completion.chunk',choices:[{index:0,delta:{role:'assistant',tool_calls:fixtureToolCalls(toolName,args,'production-call')},finish_reason:null}]})}\n\n`);
+    response.write(`data: ${JSON.stringify({id:'production',object:'chat.completion.chunk',choices:[{index:0,delta:{role:'assistant',tool_calls:fixtureToolCalls(toolName,args,'production-call',body.messages)},finish_reason:null}]})}\n\n`);
     response.end(`data: ${JSON.stringify({id:'production',object:'chat.completion.chunk',choices:[{index:0,delta:{},finish_reason:'tool_calls'}]})}\n\ndata: [DONE]\n\n`);
   });
   server.listen(0,'127.0.0.1'); await once(server,'listening');
@@ -110,12 +110,12 @@ it('produces and edits a composed Work by its capabilities while protecting exis
       const {actionId,...args}=parameters;
       await expect(bound.executeAction({handle:production,capabilityId:'workspace',actionId,source:'agent',parameters:{artifactId:exportedArtifact.id,...args}})).rejects.toMatchObject({code:'ARTIFACT_DERIVED',authorityPath:'source/storyboard.md',recovery:{action:'workspace__read',parameters:{workId:'derived',artifactId:artifact.id,revisionId:artifact.currentRevisionId}}});
     }
-    expect(requests).toBe(2);
+    expect(requests).toBe(3);
     expect(await readFile(exportPath,'utf8')).toBe(manuscript);
     expect((reviewed.data as {reviewedReferences:unknown[]}).reviewedReferences).toHaveLength(3);
     await expect(bound.executeAction({handle:production,capabilityId:'storyboard',actionId:'generate',source:'agent',parameters})).rejects.toMatchObject({code:'WORK_ALREADY_PRODUCED',recovery:{parameters:{workId:'derived'}}});
     expect(await readFile(join(root,'works/derived/source/storyboard.md'),'utf8')).toBe(manuscript);
-    expect(requests).toBe(2);
+    expect(requests).toBe(3);
     bound.finishEpisode(production,'completed');
     const revisionEpisode=bound.startEpisode({profileId,work:deliveredWork});
     await bound.executeAction({handle:revisionEpisode,capabilityId:'workspace',actionId:'replace_work_artifact',source:'agent',parameters:{artifactId:artifact.id,content:manuscript+'\nA changed final shot.\n',expectedRevisionId:artifact.currentRevisionId}});

@@ -334,6 +334,7 @@ export async function runWorkerAgentTool<TParameters extends TSchema>(
 
   let submitted: Static<TParameters> | undefined;
   let modelTurns = 0;
+  let lastSupportingTurn = -1;
   let resultAttemptsExhausted = false;
   let lastValidationError: (Error & {code?:string}) | undefined;
   const maxResultTurns = resultTool.maxTurns ?? 3;
@@ -356,8 +357,13 @@ export async function runWorkerAgentTool<TParameters extends TSchema>(
     ...toolDefinition,
     prepareArguments: params => prepareArguments(resultTool.parameters, resultTool.name, params) as Static<TParameters>,
     execute: async (_toolCallId, params): Promise<AgentToolResult<Static<TParameters>>> => {
+      if (submitted !== undefined) throw Object.assign(new Error('The final result is already recorded; later tool calls cannot change it.'),{code:'WORKER_RESULT_ALREADY_FINALIZED'});
       const parsed = Value.Parse(resultTool.parameters, params) as Static<TParameters>;
       try {
+        if (lastSupportingTurn === modelTurns) throw Object.assign(new Error(JSON.stringify({
+          code:'WORKER_RESULT_READBACK_REQUIRED',
+          instruction:'Read the supporting tool results before finalizing in a later response. Correct or omit unsupported findings, then submit the final result.',
+        })),{code:'WORKER_RESULT_READBACK_REQUIRED'});
         submitted = validate ? await validate(parsed) : parsed;
       } catch(error) {
         lastValidationError=error instanceof Error?error:new Error(String(error));
@@ -378,6 +384,12 @@ export async function runWorkerAgentTool<TParameters extends TSchema>(
     initialState: { model, systemPrompt, tools: [tool, ...supportingTools.map(supporting => ({
       ...supporting,
       prepareArguments: (params: unknown) => prepareArguments(supporting.parameters, supporting.name, params),
+      execute: async (...args: Parameters<AgentTool['execute']>) => {
+        if (submitted !== undefined) throw Object.assign(new Error('The final result is already recorded; later tool calls cannot change it.'),{code:'WORKER_RESULT_ALREADY_FINALIZED'});
+        const result=await supporting.execute(...args);
+        lastSupportingTurn=modelTurns;
+        return result;
+      },
     }))], messages: [] },
     beforeToolCall: preserveToolArgumentTypes,
     toolExecution: "sequential",

@@ -97,7 +97,8 @@ export abstract class BaseAgent {
     const observationSchema = (categoryRequired ? ArtifactReviewIndexToolSchema : SourcedReviewIndexToolSchema).properties.observations.items;
     const index = await this.submitStructured([
       ...messages,
-      {role:'system',content:`Record each evidence-backed finding with record_review_observation. Independent findings may be submitted together in one response. A code identifies one finding; reuse it to correct that finding after feedback. After all selected findings are accepted, call ${tool.name} with the review summary and their codes in the desired order. Do not embed a list of findings in a string. Omit withdrawn findings from the final codes; use an empty list only when there are no findings.`},
+      {role:'system',content:'The original author request and confirmed constraints define the acceptance requirements. Prior critiques and delegated revision suggestions are claims to recheck, not evidence that a defect exists or additional author requirements. Assess the current text independently. Explain why an issue conflicts with the author goals or the supplied text; classify a compatible interpretation or stylistic alternative as an observation. Baseline text establishes what changed, not what is still present in the current draft.'},
+      {role:'system',content:`Record each finding with record_review_observation. Independent findings may be submitted together in one response. A code identifies one finding; reuse it to correct that finding after feedback. Read the exact source excerpts returned by the tool: resolving an address does not establish that its text supports the finding. Correct the references, assessment or explanation when the excerpts do not establish your claim. In a later response, call ${tool.name} with the review summary and supported finding codes in the desired order. Do not embed a list of findings in a string. Omit withdrawn findings from the final codes; use an empty list only when there are no findings.`},
     ], {
       ...tool,
       parameters: Type.Object({summary:Type.String(),observationCodes:Type.Array(Type.String({minLength:1}))},{additionalProperties:false}),
@@ -108,9 +109,11 @@ export abstract class BaseAgent {
         parameters:observationSchema,
         execute:async(_id,input)=>{
           const observation=input as ReviewObservation;
-          resolve([observation]);
+          const resolved=resolve([observation])[0]!;
           recorded.set(observation.code,observation);
-          return {content:[{type:'text',text:JSON.stringify({code:observation.code,status:'accepted'})}],details:{code:observation.code,status:'accepted'}};
+          const receipt={code:observation.code,status:'source_resolved',sourceRefs:resolved.sourceRefs,
+            instruction:'These are the actual selected excerpts. Check that they support this finding before keeping its code in the final review.'};
+          return {content:[{type:'text',text:JSON.stringify(receipt)}],details:receipt};
         },
       }],
       validate: result => {

@@ -211,7 +211,7 @@ describe("guardedPiNonStreaming", () => {
       if(name==='submit_chapter_edit_ranges')return new Response(JSON.stringify({error:{message:'Fixture compression service unavailable'}}),{status:403});
       if(!args)throw Error("Unexpected tool: "+name);
       if(name==="submit_short_revision_plan")revisionInputs.push(JSON.parse(body.messages.filter((m:any)=>m.role==="user").at(-1).content));
-      return new Response(JSON.stringify({choices:[{finish_reason:"tool_calls",message:{tool_calls:fixtureToolCalls(name,args,name+'-'+attempt)}}]}));
+      return new Response(JSON.stringify({choices:[{finish_reason:"tool_calls",message:{tool_calls:fixtureToolCalls(name,args,name+'-'+attempt,body.messages)}}]}));
     });
     const client=createLLMClient({provider:"openai",service:"custom",configSource:"studio",baseUrl:model.baseUrl,model:model.id,apiKey:"fixture",apiFormat:"chat",stream:false,temperature:0,thinkingBudget:0});
     const pipeline=new PipelineRunner({client,model:model.id,projectRoot:root});
@@ -264,6 +264,16 @@ describe("guardedPiNonStreaming", () => {
         const feedback=body.messages.filter((message:{role:string})=>message.role==='tool').flatMap((message:{content:string})=>{try{return [JSON.parse(message.content)];}catch{return [];}});
         expect(feedback).toEqual(expect.arrayContaining([expect.objectContaining({code:'REVIEW_OBSERVATIONS_UNRECORDED',unknownCodes:['SIGNED_RECEIPT'],acceptedCodes:[]})]));
       }
+      if(names.length===3){
+        const feedback=body.messages.filter((message:{role:string})=>message.role==='tool').flatMap((message:{content:string})=>{try{return [JSON.parse(message.content)];}catch{return [];}});
+        expect(feedback).toEqual(expect.arrayContaining([
+          expect.objectContaining({code:'WORKER_RESULT_READBACK_REQUIRED'}),
+          expect.objectContaining({code:'SIGNED_RECEIPT',status:'source_resolved',sourceRefs:[
+            {sourceId:'manuscript-chapter-1',quote:source.split('\n')[0]},
+            {sourceId:'baseline-manuscript-chapter-1',quote:'Mara examines the unsigned receipt.'},
+          ]}),
+        ]));
+      }
       const metadata=body.messages.flatMap((message:{content?:string})=>String(message.content??"").split("\n")).flatMap((line:string)=>{
         try{return [JSON.parse(line)];}catch{return [];}
       });
@@ -275,11 +285,13 @@ describe("guardedPiNonStreaming", () => {
         code:"SIGNED_RECEIPT",assessment:"observation",summary:'Mara states "I signed it." The receipt provides a concrete object for the following handover.',
         sourceRefs:[{sourceId:"manuscript-chapter-1",startLine:++indexCalls===1?999:2,endLine:indexCalls===1?999:2},{sourceId:'baseline-manuscript-chapter-1',startLine:2,endLine:2}],
       }]};
-      return new Response(JSON.stringify({usage:{prompt_tokens:10,completion_tokens:5,total_tokens:15},choices:[{finish_reason:"tool_calls",message:{tool_calls:fixtureToolCalls(name,args,name+'-'+names.length)}}]}));
+      const toolCalls=fixtureToolCalls(name,args,name+'-'+names.length,body.messages);
+      if(names.length===3)toolCalls.push({index:1,id:'late-finding',type:'function',function:{name:'record_review_observation',arguments:JSON.stringify({...args.observations[0],summary:'An unobserved late proposal.'})}});
+      return new Response(JSON.stringify({usage:{prompt_tokens:10,completion_tokens:5,total_tokens:15},choices:[{finish_reason:"tool_calls",message:{tool_calls:toolCalls}}]}));
     });
     const client=createLLMClient({provider:"openai",service:"custom",configSource:"studio",baseUrl:model.baseUrl,model:model.id,apiKey:"fixture",apiFormat:"chat",stream:false,temperature:0,thinkingBudget:0});
     const result=await new ShortFictionDraftReviewerAgent({client,model:model.id,projectRoot:"/tmp"}).reviewDraft({direction:"Review the receipt scene",outlineMarkdown:"A receipt is handed over.",chapterCount:1,charsPerChapter:20,minChapterLength:10,maxChapterLength:25,language:"en",draft:{storyTitle:"Receipt",rawContent:"",chapters:[{number:1,title:"Signature",content:source,charCount:15}]},comparison:{scope:'episode_start',before:{artifactId:'draft',revisionId:'before',checksum:'sha256:before'},after:{artifactId:'draft',revisionId:'after',checksum:'sha256:after'},draft:{storyTitle:'Receipt',rawContent:'',chapters:[{number:1,title:'Signature',content:'Mara examines the unsigned receipt.',charCount:5}]}}});
-    expect(names).toEqual(["submit_short_fiction_review","submit_short_fiction_review"]);
+    expect(names).toEqual(["submit_short_fiction_review","submit_short_fiction_review","submit_short_fiction_review"]);
     expect(result.observations).toEqual([{code:"SIGNED_RECEIPT",assessment:"observation",summary:'Mara states "I signed it." The receipt provides a concrete object for the following handover.',evidence:[],sourceRefs:[{sourceId:"manuscript-chapter-1",quote:'Mara says "I signed it."'},{sourceId:'baseline-manuscript-chapter-1',quote:'Mara examines the unsigned receipt.'}]}]);
   });
   it('reviews a chapter with governed evidence in one complete model result',async()=>{
@@ -300,13 +312,13 @@ describe("guardedPiNonStreaming", () => {
       }else{
         throw new Error('Unexpected additional review call');
       }
-      return new Response(JSON.stringify({usage:{prompt_tokens:10,completion_tokens:5,total_tokens:15},choices:[{finish_reason:'tool_calls',message:{tool_calls:fixtureToolCalls(name,args,name)}}]}));
+      return new Response(JSON.stringify({usage:{prompt_tokens:10,completion_tokens:5,total_tokens:15},choices:[{finish_reason:'tool_calls',message:{tool_calls:fixtureToolCalls(name,args,name,body.messages)}}]}));
     });
     const client=createLLMClient({provider:'openai',service:'custom',configSource:'studio',baseUrl:model.baseUrl,model:model.id,apiKey:'fixture',apiFormat:'chat',stream:false,temperature:0,thinkingBudget:0});
     const review=await new ContinuityAuditor({client,model:model.id,projectRoot:'/tmp'}).auditChapter('/tmp',chapter,3,undefined,{language:'en',contextPackage:{chapter:3,selectedContext:[{source:'story/current_state.md',reason:'Current ownership',excerpt:canon,protection:'protected'}]}});
-    expect(names).toEqual(['submit_chapter_review']);
+    expect(names).toEqual(['submit_chapter_review','submit_chapter_review']);
     expect(review.observations).toEqual([{code:'OWNERSHIP_CONFLICT',assessment:'issue',summary:'The chapter removes the key without showing a transfer.',evidence:[],sourceRefs:[{sourceId:'chapter-3',quote:chapter},{sourceId:'governed-context',quote:suppliedContextLine}]}]);
-    expect(review.tokenUsage).toEqual({promptTokens:10,completionTokens:5,totalTokens:15});
+    expect(review.tokenUsage).toEqual({promptTokens:20,completionTokens:10,totalTokens:30});
   });
   it('rebinds a newly created Work before the next model call and exposes its review/export tools',async()=>{
     const root=await mkdtemp(join(tmpdir(),'inkos-work-transition-'));
@@ -401,7 +413,7 @@ describe("guardedPiNonStreaming", () => {
         name==='submit_foundation_details'?{bookRules:'Keep the receipt',bookRulesData:{prohibitions:[],enableFullCastTracking:false,allowedDeviations:[]},pendingHooks:[]}:
         name==='submit_foundation_cast_index'?{roles:[{tier:'major',name:'Mara'},{tier:'minor',name:'Witness'}]}:
         {role_1_content:card,role_2_content:'Knows who signed the receipt.'};
-      return new Response(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{tool_calls:fixtureToolCalls(name,args,name)}}]}));
+      return new Response(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{tool_calls:fixtureToolCalls(name,args,name,body.messages)}}]}));
     });
     const client=createLLMClient({provider:'openai',service:'custom',configSource:'studio',baseUrl:model.baseUrl,model:model.id,apiKey:'fixture',apiFormat:'chat',stream:false,temperature:0,thinkingBudget:0});
     const result=await new ArchitectAgent({client,model:model.id,projectRoot:'/tmp'}).generateFoundation({id:'fixture',title:'Receipt',genre:'other',platform:'other',language:'en',status:'outlining',targetChapters:1,chapterWordCount:300,createdAt:'2026-01-01',updatedAt:'2026-01-01'});

@@ -20,7 +20,10 @@ it('keeps the original revision across a failed write, server recreation and nat
    send('submit_artifact_revision',{selection_0_text:'The visitor waits by the door.'});return;
   }
   if(body.tools[0].function.name==='submit_artifact_review'){
-   const input=JSON.parse(body.messages.findLast((m:any)=>m.role==='user').content);reviews.push(input);
+   const input=JSON.parse(body.messages.findLast((m:any)=>m.role==='user').content);
+   const lastTool=body.messages.filter((m:any)=>m.role==='tool').at(-1);
+   if(lastTool&&JSON.parse(lastTool.content).code==='WORKER_RESULT_READBACK_REQUIRED'){send('submit_artifact_review',{summary:'Recorded comparison.',observationCodes:['FIXTURE_REVISION']});return;}
+   reviews.push(input);
    send('submit_artifact_review',{summary:'Recorded comparison.',observationCodes:['FIXTURE_REVISION']},[{category:'quality',assessment:'observation',code:'FIXTURE_REVISION',summary:'The final paragraph changed.',sourceRefs:[{sourceId:input.sources[0].sourceId,startLine:3,endLine:3},{sourceId:input.comparison.sourceId,startLine:3,endLine:3}]}]);return;
   }
   if(phase==='first'){
