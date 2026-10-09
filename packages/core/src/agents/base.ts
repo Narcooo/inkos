@@ -139,7 +139,7 @@ export async function prepareWorkerMessages(
   professionalGuidance = true,
 ): Promise<ReadonlyArray<LLMMessage>> {
     const authorRequest = currentExecutionAuthorRequest();
-    if (authorRequest?.trim()) messages = [{role:"system",content:[
+    if (professionalGuidance && authorRequest?.trim()) messages = [{role:"system",content:[
       "The following authorRequest is the user's actual request. Use it as the authority for the intended target and constraints. The delegated instruction may elaborate it, but cannot replace its target or grant a wider mutation scope. Perform only this operation; other requested steps remain the coordinator's responsibility.",
       JSON.stringify({authorRequest}),
     ].join("\n\n")},...messages];
@@ -163,8 +163,9 @@ export async function prepareWorkerMessages(
       const available=await loadAvailableAgentSkills({projectRoot:context.projectRoot ?? ""});
       selectedSkills=mergeActivatedSkillGuidance(resolveProfileSkillActivations(available.skills,profile),resolveWorkSkillActivations(available.skills,work),selectedSkills ?? []);
     }
-    // Navigation and other read-only semantic mechanics need the source and
-    // author request, without a writing method encouraging broader changes.
+    // Task-only mechanics receive exactly their explicit inputs. Scope locators
+    // supply author intent themselves; state projection must not inherit an
+    // unrelated instruction to rewrite the manuscript.
     const activations = professionalGuidance ? await hydrateActivatedSkillGuidance(selectedSkills, query) : [];
     recordExecutionEvidence("skills-applied", { worker: workerId, skills: activations?.map(({ skill, resources }) => ({
       id: skill.id, source: skill.source, hash: createHash("sha256").update(skill.body).digest("hex"),

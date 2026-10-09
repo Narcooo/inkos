@@ -366,7 +366,7 @@ export class WriterAgent extends BaseAgent {
         parameters: createSettlementToolSchema(params.allowNewHooks),
         validate: (value) => validateSettlementHookIds(value, knownHookIds),
       },
-      {  maxTokens: Math.min(16384, this.ctx.client.defaults.maxTokens) },
+      {maxTokens: Math.min(16384, this.ctx.client.defaults.maxTokens),professionalGuidance:false},
     );
     const runtimeStateDelta = RuntimeStateDeltaSchema.parse({
       chapter: params.chapterNumber,

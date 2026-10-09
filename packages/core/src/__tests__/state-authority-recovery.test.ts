@@ -7,6 +7,9 @@ import {createLLMClient} from '../llm/provider.js';
 import {createServer} from 'node:http';
 import {once} from 'node:events';
 import {createHash} from 'node:crypto';
+import {withExecutionEvidence} from '../harness/execution-evidence.js';
+import {createWorkManifest} from '../harness/work-store.js';
+import {prepareWorkerMessages} from '../agents/base.js';
 
 it('retains the same authority context through initial validation and settlement reconciliation',async()=>{
   const authority={storyFrame:'Current author-approved setting',bookRules:'Current professional boundary',chapterSummaries:'Earlier chapters only'};
@@ -38,8 +41,14 @@ it('requires a concrete report for reconciliation and preserves it through a fla
   server.listen(0,'127.0.0.1');await once(server,'listening');
   try{
     const client=createLLMClient({service:'custom',provider:'openai',configSource:'studio',model:'fixture',apiKey:'fixture',baseUrl:`http://127.0.0.1:${(server.address() as {port:number}).port}/v1`,apiFormat:'chat',stream:true,temperature:0,thinkingBudget:0});
-    const result=await new StateValidatorAgent({client,model:'fixture',projectRoot:'/tmp'}).validate('Current chapter',1,'Prior state','Proposed state','Prior hooks','Proposed hooks','en',{storyFrame:'Current authority'});
-    expect(result).toMatchObject({consistent:false,reconciliationRequired:true,observations:[{code:'state-reconciliation'}]});
+    const methods:unknown[]=[];
+    const work=createWorkManifest({id:'work',title:'Work',profileId:'longform-novel',language:'en'});
+    const inputs=[{role:'user' as const,content:JSON.stringify({previous:{location:'hall'},proposed:{location:'gallery'}})}];
+    const prepared=await withExecutionEvidence(()=>{},()=>prepareWorkerMessages({client,projectRoot:'/tmp'},inputs,8192,'state-validator',false),undefined,work,'Revise the chapter ending.');
+    expect(prepared).toEqual(inputs);
+    const result=await withExecutionEvidence((type,payload)=>{if(type==='skills-applied')methods.push(payload.skills);},()=>new StateValidatorAgent({client,model:'fixture',projectRoot:'/tmp'}).validate('Current chapter',1,'Prior state','Proposed state','Prior hooks','Proposed hooks','en',{storyFrame:'Current authority'}),undefined,work);
+    expect(result).toMatchObject({consistent:false,reconciliationRequired:true,observations:[{code:'state-reconciliation',category:'execution',assessment:'issue'}]});
+    expect(methods).toEqual([[]]);
     const sha=(value:string)=>createHash('sha256').update(value).digest('hex');
     expect(sha(result.observations[0].summary)).toBe(sha(report));
     expect(requests).toHaveLength(2);

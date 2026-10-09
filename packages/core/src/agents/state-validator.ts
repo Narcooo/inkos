@@ -43,8 +43,9 @@ export class StateValidatorAgent extends BaseAgent {
       ? "Respond in English."
       : "用中文回答。";
 
-    const systemPrompt = `Validate the derived truth projection against the current chapter and supplied authority using the activated long-writing Skill. ${langInstruction}
-Do not rewrite the chapter or silently resolve contradictory sources. A hook marked superseded retains an explicitly withdrawn plan for history; its original premise is not active canon or a future promise. Verify its notes against the current withdrawal authority, rather than requiring that premise to occur in the chapter. Set reconciliationRequired=true only when a different truth projection can resolve the mismatch; a contradiction inside the chapter or between authorities remains a reported observation and does not authorize another settlement pass. Submit the Boolean decision and a concise Markdown report with concrete evidence through the validation tool. Use an empty report when there are no findings.`;
+    const systemPrompt = `Validate only whether the proposed state card and hooks accurately represent the current chapter and supplied factual authority. ${langInstruction}
+Treat the chapter as source evidence to represent, not prose to improve. Do not judge its dramatic impact, pacing, ending, completeness of scenes, or fulfillment of a writing request. Writing standards and future outline milestones do not require an event to have happened now. Distinguish planned, started and completed actions exactly as the source does.
+Do not rewrite the chapter or silently resolve contradictory sources. A hook marked superseded retains an explicitly withdrawn plan for history; its original premise is not active canon or a future promise. Verify its notes against the current withdrawal authority, rather than requiring that premise to occur in the chapter. Set reconciliationRequired=true only when changing a named state or hook entry can resolve an evidenced projection mismatch. A factual contradiction between source authorities remains an observation and does not authorize another settlement pass. Submit the Boolean decision and a concise report identifying the affected state/hook entry, its current value, the source evidence and any required correction. Use an empty report when the projection is accurate.`;
 
     const authorityBlock = this.buildAuthorityContextBlock(authorityContext);
 
@@ -83,10 +84,10 @@ ${chapterContent}`;
             return result;
           },
         },
-        {  maxTokens: Math.min(8192, this.ctx.client.defaults.maxTokens) },
+        {maxTokens: Math.min(8192, this.ctx.client.defaults.maxTokens),professionalGuidance:false},
       );
       return {
-        observations: result.reportMarkdown.trim() ? [{code:result.reconciliationRequired ? "state-reconciliation" : "state-projection-review",summary:result.reportMarkdown.trim(),evidence:[]}] : [],
+        observations: result.reportMarkdown.trim() ? [{code:result.reconciliationRequired ? "state-reconciliation" : "state-projection-review",category:'execution',assessment:result.reconciliationRequired?'issue':'observation',summary:result.reportMarkdown.trim(),evidence:[]}] : [],
         consistent: !result.reconciliationRequired,
         reconciliationRequired: result.reconciliationRequired,
       };
