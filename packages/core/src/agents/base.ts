@@ -11,6 +11,7 @@ import { Type, type Static, type TSchema } from "@sinclair/typebox";
 import type { Logger } from "../utils/logger.js";
 import { SourcedReviewIndexToolSchema, ArtifactReviewIndexToolSchema } from "./review-tool.js";
 import { resolveObservationSources } from "../models/observation.js";
+import { createReviewCalculationTool } from './review-calculation.js';
 import {
   hydrateActivatedSkillGuidance,
   type ActivatedSkillGuidance,
@@ -98,6 +99,7 @@ export abstract class BaseAgent {
     const index = await this.submitStructured([
       ...messages,
       {role:'system',content:'The original author request and confirmed constraints define the acceptance requirements. Prior critiques and delegated revision suggestions are claims to recheck, not evidence that a defect exists or additional author requirements. Assess the current text independently. Explain why an issue conflicts with the author goals or the supplied text; classify a compatible interpretation or stylistic alternative as an observation. Baseline text establishes what changed, not what is still present in the current draft.'},
+      {role:'system',content:'Use calculate_review_values for arithmetic claims instead of mental calculation. Verify the source values, units and time periods first; a correct calculation does not establish that unlike quantities should be compared.'},
       {role:'system',content:`Record each finding with record_review_observation. Independent findings may be submitted together in one response. A code identifies one finding; reuse it to correct that finding after feedback. Read the exact source excerpts returned by the tool: resolving an address does not establish that its text supports the finding. Correct the references, assessment or explanation when the excerpts do not establish your claim. In a later response, call ${tool.name} with the review summary and supported finding codes in the desired order. Do not embed a list of findings in a string. Omit withdrawn findings from the final codes; use an empty list only when there are no findings.`},
     ], {
       ...tool,
@@ -115,7 +117,7 @@ export abstract class BaseAgent {
             instruction:'These are the actual selected excerpts. Check that they support this finding before keeping its code in the final review.'};
           return {content:[{type:'text',text:JSON.stringify(receipt)}],details:receipt};
         },
-      }],
+      },createReviewCalculationTool()],
       validate: result => {
         const unknownCodes=result.observationCodes.filter(code=>!recorded.has(code));
         if(unknownCodes.length || new Set(result.observationCodes).size!==result.observationCodes.length)throw Object.assign(new Error(JSON.stringify({
