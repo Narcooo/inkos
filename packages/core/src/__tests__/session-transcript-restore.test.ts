@@ -31,7 +31,7 @@ describe("session transcript restore", () => {
     await rm(projectRoot, { recursive: true, force: true });
   });
 
-  it("只恢复已 committed request 内的 message", async () => {
+  it("未执行工具的未提交请求不进入恢复历史", async () => {
     await appendTranscriptEvent(projectRoot, {
       type: "request_started",
       version: 1,
@@ -94,6 +94,25 @@ describe("session transcript restore", () => {
     expect(visible?.messages.map((message)=>({role:message.role,timestamp:message.timestamp})))
       .toEqual([{role:"user",timestamp:2},{role:"user",timestamp:5},{role:"system",timestamp:6}]);
     expect(await restoreAgentMessagesFromTranscript(projectRoot,"s1")).toHaveLength(1);
+  });
+
+  it('retains completed tool pairs but excludes a pending sibling after interruption',async()=>{
+    await appendTranscriptEvent(projectRoot,{type:'request_started',version:1,sessionId:'s1',requestId:'partial',seq:1,timestamp:1,input:'Export the scene.',sessionKind:'work'});
+    const base={type:'message' as const,version:1 as const,sessionId:'s1',requestId:'partial',parentUuid:null};
+    await appendTranscriptEvent(projectRoot,{...base,uuid:'user',seq:2,timestamp:2,role:'user',message:{role:'user',content:'Export the scene.',timestamp:2}});
+    await appendTranscriptEvent(projectRoot,{...base,uuid:'calls',seq:3,timestamp:3,role:'assistant',message:{role:'assistant',api:'openai-completions',provider:'openai',model:'test',stopReason:'toolUse',usage,timestamp:3,content:[
+      {type:'toolCall',id:'finished',name:'workspace__export_work',arguments:{artifactId:'scene'}},
+      {type:'toolCall',id:'pending',name:'workspace__read',arguments:{artifactId:'other'}},
+    ]}});
+    await appendTranscriptEvent(projectRoot,{...base,uuid:'result',seq:4,timestamp:4,role:'toolResult',toolCallId:'finished',message:{role:'toolResult',toolCallId:'finished',toolName:'workspace__export_work',content:[{type:'text',text:'{}'}],isError:false,timestamp:4}});
+    const restored=await restoreAgentMessagesFromTranscript(projectRoot,'s1','work');
+    expect(restored.map(message=>message.role)).toEqual(['user','assistant','toolResult','system']);
+    expect((restored[1] as any).content.map((part:any)=>part.id)).toEqual(['finished']);
+    expect(restored[2]).toMatchObject({toolCallId:'finished',isError:false});
+    await appendTranscriptEvent(projectRoot,{type:'request_failed',version:1,sessionId:'s1',requestId:'partial',seq:5,timestamp:5,error:'CONNECTION_ERROR'});
+    const failed = await restoreAgentMessagesFromTranscript(projectRoot, 's1', 'work');
+    expect(failed.slice(0, 3)).toEqual(restored.slice(0, 3));
+    expect(failed.at(-1)).toMatchObject({ role: 'system', timestamp: 5 });
   });
 
   it("恢复 committed 工具轮次的原生 pi 消息", async () => {

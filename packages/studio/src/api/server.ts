@@ -4636,6 +4636,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       activeBookId,
       sessionId: reqSessionId,
       clientRequestId: reqClientRequestId,
+      retryOfRequestId: reqRetryOfRequestId,
       sessionKind: reqSessionKind,
       profileId: reqProfileId,
       workId: reqWorkId,
@@ -4653,6 +4654,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       activeBookId?: string;
       sessionId?: string;
       clientRequestId?: unknown;
+      retryOfRequestId?: unknown;
       sessionKind?: string;
       profileId?: string;
       workId?: string | null;
@@ -5284,6 +5286,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
           actionSource,
           requestedIntent,
           proposalAction: normalizeStudioProposalAction(bookSession.proposalAction),
+          recoverIncompleteRequest: typeof reqRetryOfRequestId === 'string',
           actionPayload,
           requestedSkills,
           disabledSkills,

@@ -72,6 +72,7 @@ import { opaqueConversationId, runWithAgentTrajectory } from "../llm/agent-traje
 import { guardedPiNonStreaming, guardedPiStream } from "./pi-stream.js";
 import { splitTextByEstimatedTokens } from "../llm/semantic-input.js";
 import { estimateTextTokens } from "../llm/provider.js";
+import { recoverInterruptedActionResults } from "./interrupted-request.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -90,6 +91,8 @@ export interface AgentSessionConfig {
   workId?: string | null;
   /** Original request's Work revision inventory, retained by a trusted retry host. */
   baselineWork?: WorkManifest | null;
+  /** Set by a trusted host for an explicit retry of an interrupted submission. */
+  recoverIncompleteRequest?: boolean;
   /** Host-owned state from this exact failed request, never client-supplied scope. */
   deliveryState?: RequestDeliveryState;
   onDeliveryStateChange?: (state:RequestDeliveryState)=>Promise<void>;
@@ -761,21 +764,43 @@ export async function runAgentSession(
   userMessage: string,
 ): Promise<AgentSessionResult> {
   return runInAgentSessionQueue(config.projectRoot, config.sessionId, async () => {
+    const attachmentBlock = buildAttachmentUserBlock(config.attachments, config.language);
+    const transcriptInput = attachmentBlock ? `${userMessage}${attachmentBlock}` : userMessage;
     let savedDelivery=config.deliveryState;
     if(!savedDelivery){
       const history=await readTranscriptEvents(config.projectRoot,config.sessionId);
       const latest=[...history].reverse().find(event=>event.type==='request_started');
-      if(latest?.type==='request_started'&&latest.input===userMessage
-        &&!history.some(event=>event.type==='request_committed'&&event.requestId===latest.requestId)){
+      if(latest?.type==='request_started'&&latest.input===transcriptInput
+        &&(config.recoverIncompleteRequest||!history.some(event=>event.type==='request_committed'&&event.requestId===latest.requestId))){
         const recorded=[...history].reverse().find(event=>event.type==='request_delivery'&&event.requestId===latest.requestId);
         if(recorded?.type==='request_delivery')savedDelivery=recorded.state;
       }
     }
     const delivery=new RequestDeliveryLedger(config.resumeAction&&savedDelivery?savedDelivery.authorRequest:userMessage,savedDelivery);
     const artifacts=new TurnArtifactDeliveries();
-    let currentConfig = config;
+    const recovered = config.recoverIncompleteRequest
+      ? await recoverInterruptedActionResults(config.projectRoot, config.sessionId, transcriptInput, config.sessionKind) : [];
+    for (const action of recovered) {
+      artifacts.observe(action.result, action.parameters);
+      await delivery.record(config.projectRoot, action.result.operationReceipts ?? []);
+    }
+    const latestRecovered = recovered.at(-1);
+    let currentConfig = latestRecovered ? {
+      ...config,
+      resumeAction: config.resumeAction ?? {
+        replayOnly: true,
+        toolCallId: `recovered-operation-${randomUUID()}`,
+        capabilityId: latestRecovered.toolName.split('__')[0]!,
+        actionId: latestRecovered.toolName.split('__')[1]!,
+        parameters: latestRecovered.parameters as Record<string, unknown>,
+        result: latestRecovered.result,
+      },
+      backgroundTaskContext: [config.backgroundTaskContext,
+        `This submission continues an interrupted request. The host verified these completed operations against their persisted current artifact versions: ${JSON.stringify(recovered.map(action => ({tool: action.toolName, artifacts: action.result.artifacts})))}. A later failed attempt did not undo those saved results. Continue only unfinished requested work.`,
+      ].filter(Boolean).join('\n\n'),
+    } : config;
     const visited = new Set<string>();
-    let result = await runAgentSessionUnlocked(currentConfig, userMessage,delivery,artifacts);
+    let result = await runAgentSessionUnlocked(currentConfig, userMessage, delivery, artifacts);
     while (result.workTransition && !result.errorMessage) {
       const transition = result.workTransition;
       const scene = completedInteractiveScene(transition.action.capabilityId, transition.action.result);
@@ -1104,7 +1129,7 @@ async function runAgentSessionUnlocked(
       ...(config.resumeAction ? { resumeAfterAction: true } : {}),
     });
     const restoredContextBlock = restoredSystemContext.length > 0
-      ? `\n\n## Restored committed context\n${restoredSystemContext.join("\n\n")}`
+      ? `\n\n## Restored execution context\n${restoredSystemContext.join("\n\n")}`
       : "";
     const agent = new Agent({
       beforeToolCall: preserveToolArgumentTypes,
