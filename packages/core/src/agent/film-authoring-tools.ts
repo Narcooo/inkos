@@ -476,12 +476,13 @@ export function createRemoveNodeTool(
 ): AgentTool<typeof RemoveNodeParams> {
   return {
     name: "remove_node",
-    description: "Remove a node and its incident choices from the current graph as a versioned edit. Earlier graph revisions remain available. Use to remove an unwanted or unreachable node, then inspect the resulting graph.",
+    description: "Remove a node, choices leading to it and ending registrations pointing to it as one versioned edit. Earlier graph revisions remain available. Use to remove an unwanted or unreachable node, then inspect the resulting graph.",
     label: "Remove Node",
     parameters: RemoveNodeParams,
     async execute(_id, params: Static<typeof RemoveNodeParams>) {
-      const { rev } = await applyGraphDelta({ projectRoot, projectId, delta: buildRemoveNodeDelta(params.nodeId) });
-      return textResult(`Node ${params.nodeId} removed (rev ${rev}).`, { kind: "graph_updated", rev });
+      const { graph, rev } = await applyGraphDelta({ projectRoot, projectId, delta: buildRemoveNodeDelta(params.nodeId) });
+      const details={kind:'graph_updated' as const,rev,removedNodeId:params.nodeId,remainingEndingIds:graph.endings.map(ending=>ending.id)};
+      return textResult(JSON.stringify(details), details);
     },
   };
 }

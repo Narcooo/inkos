@@ -157,7 +157,11 @@ it('rewires without losing authored content, inspects real paths and versions a 
     expect((await readFile(join(root,details.path))).length).toBeGreaterThan(0);
     const work=await loadWorkManifest(root,'film');
     expect(work.artifacts.flatMap(a=>a.revisions.filter(r=>r.id===a.currentRevisionId)).find(r=>r.path==='source/exports/playable.html')?.contentType).toBe('text/html');
-    await applyGraphDelta({projectRoot:root,projectId:'film',delta:{nodes:{upsert:[{id:'unused',title:'Unused',type:'normal',sceneDesc:'Preserved in history',dialogue:[],choices:[],act:''}],remove:[]},notes:[]}});
+    const stableGraph=(await loadStoryGraph(root,'film'))!;
+    await applyGraphDelta({projectRoot:root,projectId:'film',delta:{nodes:{upsert:[
+      {...stableGraph.nodes[0]!,choices:[...stableGraph.nodes[0]!.choices,{id:'unused-route',text:'Unused route',targetNodeId:'unused',effects:[]}]},
+      {id:'unused',title:'Unused',type:'ending',sceneDesc:'Preserved in history',dialogue:[],choices:[],act:''},
+    ],remove:[]},endings:{upsert:[{id:'retired-ending',nodeId:'unused',title:'Unused',type:'end',description:''}],remove:[]},notes:[]}});
     const withUnused=await loadWorkManifest(root,'film');
     const graphArtifact=withUnused.artifacts.find(a=>a.revisions.some(r=>r.id===a.currentRevisionId&&r.path==='source/story-graph.json'))!;
     const previous=await readArtifactRevision({projectRoot:root,workId:'film',artifactId:graphArtifact.id});
@@ -172,7 +176,11 @@ it('rewires without losing authored content, inspects real paths and versions a 
       const handle=runtime.startEpisode({profileId:'interactive-film',work:withUnused});
       const removed=await runtime.executeAction({handle,capabilityId:'interactive-film',actionId:'remove_node',source:'agent',parameters:{nodeId:'unused'}});
       expect(removed.status).toBe('success');
-      expect((await loadStoryGraph(root,'film'))!.nodes.map(node=>node.id)).toEqual(['s','e']);
+      const current=(await loadStoryGraph(root,'film'))!;
+      expect(current).toEqual(stableGraph);
+      expect(removed.data).toMatchObject({removedNodeId:'unused',remainingEndingIds:['ending']});
+      await expect(applyGraphDelta({projectRoot:root,projectId:'film',delta:{endings:{upsert:[{id:'dangling',nodeId:'unused',title:'Invalid',type:'end',description:''}],remove:[]},notes:[]}})).rejects.toMatchObject({code:'ENDING_NODE_NOT_FOUND',endingId:'dangling',nodeId:'unused'});
+      expect(await loadStoryGraph(root,'film')).toEqual(stableGraph);
       expect((await readArtifactRevision({projectRoot:root,workId:'film',artifactId:graphArtifact.id,revisionId:previous.revision.id})).bytes).toEqual(previous.bytes);
       expect(JSON.parse(previous.bytes.toString('utf8')).nodes.some((node:{id:string})=>node.id==='unused')).toBe(true);
       runtime.finishEpisode(handle,'completed');
