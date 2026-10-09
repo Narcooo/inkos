@@ -321,6 +321,10 @@ describe("guardedPiNonStreaming", () => {
         const input=JSON.parse(body.messages.findLast((message:{role:string})=>message.role==='user').content);
         expect(input.chapterNumber).toBe(3);
         const context=input.sources.find((source:{sourceId:string})=>source.sourceId==='governed-context');
+        const origins=context.numberedLines.split('\n').flatMap((line:string)=>{
+          try{const value=JSON.parse(line.slice(line.indexOf('\t')+1));return value.source?[value]:[];}catch{return[];}
+        });
+        expect(origins).toEqual([{source:'story/current_state.md',protection:'protected'}]);
         const numberedLine=context.numberedLines.split('\n').find((line:string)=>line.endsWith(canon));
         const line=Number(numberedLine.split('\t')[0]);
         suppliedContextLine=numberedLine.slice(numberedLine.indexOf('\t')+1);
