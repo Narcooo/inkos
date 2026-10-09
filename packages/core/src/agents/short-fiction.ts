@@ -1,5 +1,6 @@
 import { BaseAgent } from "./base.js";
 import { ReviserAgent } from "./reviser.js";
+import {shortAuthorScopeRequest, type ShortAuthorScope} from './short-revision-scope.js';
 import { z } from "zod";
 import { Type, type Static } from "@sinclair/typebox";
 import {
@@ -129,6 +130,7 @@ export interface ShortFictionDraftInput {
   readonly maxChaptersPerCall?: number;
   readonly language?: ShortFictionLanguage;
   readonly chapterNumbers?: readonly number[];
+  readonly authorScope?: ShortAuthorScope;
   readonly onBatchComplete?: (
     draft: ShortFictionBatchDraft,
     completedChapterNumbers: ReadonlyArray<number>,
@@ -185,13 +187,18 @@ export class ShortFictionWriterAgent extends BaseAgent {
     return "short-fiction-writer";
   }
 
+  async selectAuthorScope(draft:ShortFictionBatchDraft, authorRequest:string):Promise<ShortAuthorScope> {
+    const request=shortAuthorScopeRequest(draft,authorRequest);
+    return (await this.submitStructured(request.messages,request.tool,{professionalGuidance:false})).result;
+  }
+
   async reviseDraft(input: ShortFictionDraftInput & {
     readonly draft: ShortFictionBatchDraft;
     readonly review: string;
     readonly resume?: ShortRevisionProgress;
     readonly onRevisionProgress?: (progress: ShortRevisionProgress) => Promise<void>;
   }): Promise<{draft:ShortFictionBatchDraft;outlineMarkdown:string}> {
-    const submittedPlan: Static<typeof ShortRevisionPlanSchema> = input.resume?.plan ?? (input.chapterNumbers?.length === 1 ? {
+    const submittedPlan: Static<typeof ShortRevisionPlanSchema> = input.resume?.plan ?? (input.chapterNumbers?.length === 1 && !input.authorScope?.opening && !input.authorScope?.outline ? {
       revisionBrief:input.direction,chapters:input.chapterNumbers.map(number=>({number,instruction:input.direction})),
     } : await this.planRevision(input));
     const plan={...submittedPlan,outlineMarkdown:submittedPlan.outlineMarkdown??input.outlineMarkdown};
@@ -222,7 +229,7 @@ export class ShortFictionWriterAgent extends BaseAgent {
   private validateRevisionPlan(plan:Static<typeof ShortRevisionPlanSchema>,input:ShortFictionDraftInput & {draft:ShortFictionBatchDraft}):void {
     const sourceCount=input.draft.chapters.length;
     if(input.chapterNumbers&&plan.chapters.some(chapter=>!input.chapterNumbers!.includes(chapter.number)))throw Object.assign(new Error("The plan changes a chapter outside the author's selected scope."),{code:"SHORT_REVISION_OUT_OF_SCOPE"});
-    if(input.chapterNumbers?.length&&plan.openingHook!==undefined&&plan.openingHook.trim()!==(input.draft.openingHook??""))throw Object.assign(new Error("The opening is outside the selected chapter scope."),{code:"SHORT_REVISION_OUT_OF_SCOPE"});
+    if(input.chapterNumbers?.length&&!input.authorScope?.opening&&plan.openingHook!==undefined&&plan.openingHook.trim()!==(input.draft.openingHook??""))throw Object.assign(new Error("The opening is outside the selected chapter scope."),{code:"SHORT_REVISION_OUT_OF_SCOPE"});
     if(input.openingHookChars&&plan.openingHook!==undefined&&plan.openingHook.trim()!==(input.draft.openingHook??""))validateOpeningHook(plan.openingHook,input.openingHookChars,input.language);
     if(!plan.chapters.length&&input.chapterCount===sourceCount
       &&(plan.openingHook===undefined||plan.openingHook.trim()===(input.draft.openingHook??""))

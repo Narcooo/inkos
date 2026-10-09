@@ -11,11 +11,12 @@ import {syncWorkSourceArtifacts} from '../harness/source-sync.js';
 import {createBuiltInWorkProfileRegistry} from '../harness/builtin-profiles.js';
 import {createReplaceWorkArtifactTool,createExportWorkTool,createAdoptWorkRevisionTool} from '../harness/tools/work-artifacts.js';
 import {reviseShortFictionProduction} from '../pipeline/short-fiction-runner.js';
+import {withExecutionEvidence} from '../harness/execution-evidence.js';
 
-it('revises only an opening, then applies an author-requested chapter reduction while retaining historical prose',async()=>{
+it('revises an opening and selected chapter, then applies an author-requested chapter reduction while retaining historical prose',async()=>{
   const root=await mkdtemp(join(tmpdir(),'inkos-author-contract-'));
   let planNumber=0;
-  let stage:'opening'|'structure'='opening';
+  let stage:'opening'|'mixed'|'structure'='opening';
   const calls:string[]=[];
   const server=createServer(async(request,response)=>{
     const chunks:Buffer[]=[];for await(const chunk of request)chunks.push(Buffer.from(chunk));
@@ -24,7 +25,10 @@ it('revises only an opening, then applies an author-requested chapter reduction 
     const result=name==='submit_short_revision_plan'
       ? (++planNumber,stage==='opening'
         ? {revisionBrief:'Change the independent opening only.',openingHook:'A pair of cups waited by the door.',...(planNumber===1?{chapter_1_instruction:'Change the first scene too.'}:{})}
+        :stage==='mixed'?{revisionBrief:'Change the opening and second scene.',openingHook:'Two cups stood beside a folded letter.',chapter_2_instruction:'Let the customer leave the letter.'}
         :{revisionBrief:'Retain the first and last scenes.',outlineMarkdown:'The stall opens, then closes.',chapter_2_sourceNumber:3})
+      :name==='submit_short_author_scope'?{wholeManuscript:false,chapterNumbers:[2],opening:true,outline:false}
+      :name==='submit_short_revision_chapter'?{title:'Scene 2',content:Array(34).fill('revised').join(' ')}
       :name==='submit_short_fiction_review'?{summary:'Reviewed the supplied scope.',observationCodes:[]}
         :name==='submit_short_package'?{title:'The Tea Stall',intro:'A day at the stall.',sellingPoints:['A small act of care'],coverPrompt:'Two cups at a neighborhood stall.'}:undefined;
     response.writeHead(result?200:400,{'Content-Type':'application/json'});
@@ -51,11 +55,18 @@ it('revises only an opening, then applies an author-requested chapter reduction 
     expect(openingRevision.openingHook).not.toBe(draft.openingHook);
     expect(first.delivery?.status).toBe('checks_passed');
     expect(createBuiltInWorkProfileRegistry().require('short-fiction').production.minChapterLengthRatio).toBeUndefined();
+    stage='mixed';
+    const mixedRequest='Revise only the independent opening and chapter 2. Preserve all other chapters and the outline.';
+    await withExecutionEvidence(()=>{},()=>reviseShortFictionProduction({...options,revisionChapterNumbers:undefined,direction:mixedRequest}),undefined,await loadWorkManifest(root,'tea'),mixedRequest);
+    const mixed=JSON.parse(await readFile(join(base,'final/short-story.json'),'utf8'));
+    expect(mixed.openingHook).not.toBe(openingRevision.openingHook);
+    expect(mixed.chapters[1]).not.toEqual(draft.chapters[1]);
+    expect([mixed.chapters[0],mixed.chapters[2]]).toEqual([draft.chapters[0],draft.chapters[2]]);
     stage='structure';
     await reviseShortFictionProduction({...options,revisionChapterNumbers:undefined,chapterCount:2,direction:'Remove the middle scene. Keep original scenes one and three unchanged.'});
     const reduced=JSON.parse(await readFile(join(base,'final/short-story.json'),'utf8'));
     expect(reduced.chapters).toEqual([draft.chapters[0],{...draft.chapters[2],number:2}]);
-    expect(reduced.openingHook).toBe(openingRevision.openingHook);
+    expect(reduced.openingHook).toBe(mixed.openingHook);
     expect(await readdir(join(base,'final/chapters'))).toEqual(['0001.md','0002.md']);
     expect(JSON.parse(await readFile(join(base,'production-state.json'),'utf8')).target.chapterCount).toBe(2);
     const after=await loadWorkManifest(root,'tea');
@@ -64,8 +75,8 @@ it('revises only an opening, then applies an author-requested chapter reduction 
     const originalManuscript=original.artifacts.find(a=>a.revisions.some(r=>r.path==='source/final/short-story.json'))!;
     const previous=after.artifacts.find(a=>a.id===originalManuscript.id)!.revisions.find(r=>r.id===originalManuscript.currentRevisionId)!;
     expect(createHash('sha256').update(await readFile(join(root,'works/tea',previous.snapshotPath!))).digest('hex')).toBe(previous.checksum.slice(7));
-    expect(calls.filter(name=>name==='submit_short_revision_chapter')).toHaveLength(0);
-    expect(planNumber).toBe(3);
+    expect(calls.filter(name=>name==='submit_short_revision_chapter')).toHaveLength(1);
+    expect(planNumber).toBe(4);
   }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));await rm(root,{recursive:true,force:true});}
 },20000);
 

@@ -20,6 +20,45 @@ import { withExecutionEvidence } from "../harness/execution-evidence.js";
 const roots:string[]=[];
 afterEach(async()=>{vi.restoreAllMocks();await Promise.all(roots.splice(0).map(root=>rm(root,{recursive:true,force:true})));});
 
+it('keeps original author chapter permission across completed edits and rejects protected writes before committing',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'inkos-short-permission-'));roots.push(root);
+  const draft={storyTitle:'Night light',openingHook:'A lamp fails.',rawContent:'',chapters:[1,2].map(number=>({number,title:`Scene ${number}`,content:Array(40).fill(`scene${number}`).join(' '),charCount:40}))};
+  const writes=[
+    {relativePath:'works/short/source/outline/v001.md',content:'Original outline'},
+    {relativePath:'works/short/source/final/short-story.json',content:JSON.stringify(draft)},
+    {relativePath:'works/short/source/final/full.md',content:renderShortFictionDraftMarkdown(draft,'en')},
+    {relativePath:'works/short/source/production-state.json',content:JSON.stringify({version:2,intent:'Original intent',target:{chapterCount:2,charsPerChapter:40,language:'en'},stages:{}})},
+  ];
+  const initial=createInitialWorkManifestWrite({workId:'short',title:draft.storyTitle,profileId:'short-fiction',language:'en',writes});
+  await commitAtomicFileSet({rootDir:root,writes:[...writes,initial.write]});
+  const baseline=await syncWorkSourceArtifacts({projectRoot:root,workId:'short',accept:true});
+  const scope=vi.spyOn(ShortFictionWriterAgent.prototype,'selectAuthorScope').mockResolvedValue({wholeManuscript:false,chapterNumbers:[2],opening:false,outline:false});
+  const writer=vi.spyOn(ShortFictionWriterAgent.prototype,'reviseDraft').mockImplementation(async(input)=>({draft:{...input.draft,chapters:input.draft.chapters.map(chapter=>chapter.number===2?{...chapter,content:Array(40).fill('revised').join(' ')}:chapter)},outlineMarkdown:input.outlineMarkdown}));
+  vi.spyOn(ShortFictionDraftReviewerAgent.prototype,'reviewDraft').mockResolvedValue({summary:'Reviewed',observations:[]});
+  vi.spyOn(ShortFictionPackagingAgent.prototype,'generatePackage').mockResolvedValue({title:draft.storyTitle,intro:'A shared decision.',sellingPoints:['A lamp'],coverPrompt:'A lamp',rawContent:''});
+  const runtime={projectRoot:root,model:'fixture',client:{defaults:{maxTokens:4096}}} as never;
+  const authorRequest='Change only chapter 2. Preserve chapter 1, the opening and title; review the whole story.';
+  const execute=(revisionChapterNumbers?:number[])=>withExecutionEvidence(()=>{},()=>reviseShortFictionProduction({projectRoot:root,storyId:'short',direction:'Apply the latest review findings.',revisionChapterNumbers,cover:false,runtimes:{planner:runtime,writer:runtime,draftReview:runtime,package:runtime}}),undefined,baseline,authorRequest,baseline);
+  await execute();
+  expect(writer.mock.calls[0]![0].chapterNumbers).toEqual([2]);
+  const manuscriptPath=join(root,'works/short/source/final/short-story.json');
+  const accepted=await readFile(manuscriptPath);
+  expect(JSON.parse(accepted.toString()).chapters[0]).toEqual(draft.chapters[0]);
+  await expect(execute([1])).rejects.toMatchObject({code:'SHORT_REVISION_OUT_OF_SCOPE',allowedChapterNumbers:[2]});
+  expect(writer).toHaveBeenCalledTimes(1);
+  expect(scope).toHaveBeenCalledTimes(1);
+  expect(scope.mock.calls[0]).toEqual([draft,authorRequest]);
+  expect(await readFile(manuscriptPath)).toEqual(accepted);
+  writer.mockImplementationOnce(async(input)=>({draft:{...input.draft,openingHook:'An unauthorized new opening.'},outlineMarkdown:input.outlineMarkdown}));
+  await expect(execute([2])).rejects.toMatchObject({code:'SHORT_REVISION_OUT_OF_SCOPE',changedParts:['opening']});
+  expect(await readFile(manuscriptPath)).toEqual(accepted);
+  const checkpoint=JSON.parse(await readFile(join(root,'.inkos/short-revisions/short.json'),'utf8'));
+  await withExecutionEvidence(()=>{},()=>reviseShortFictionProduction({projectRoot:root,storyId:'short',direction:'',resumeOperationId:checkpoint.operationId,cover:false,runtimes:{planner:runtime,writer:runtime,draftReview:runtime,package:runtime}}),undefined,await loadWorkManifest(root,'short'),'Continue the saved revision.');
+  expect(scope).toHaveBeenCalledTimes(1);
+  expect(JSON.parse(writer.mock.calls.at(-1)![0].direction).authorRequest).toBe(authorRequest);
+  expect(JSON.parse(await readFile(manuscriptPath,'utf8')).chapters[0]).toEqual(draft.chapters[0]);
+});
+
 it("reuses completed production only for the same review request and preserves review provenance during packaging", async () => {
   const root = await mkdtemp(join(tmpdir(), "inkos-review-request-")); roots.push(root);
   const draft = {storyTitle:"Night light", rawContent:"", chapters:[{number:1, title:"Return", content:Array(40).fill("word").join(" "), charCount:40}]};
