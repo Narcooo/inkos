@@ -581,23 +581,27 @@ describe("guardedPiNonStreaming", () => {
     expect(result.outlineMarkdown).toBe("The parcel stays with the porter until its return.");
   });
 
-  it("preserves the final chapter-contract error when bounded corrections are exhausted",async()=>{
-    fetchWithProxyMock.mockImplementation(async()=>{
-      const args={title:"Return",content:Array(50).fill("word").join(" ")};
-      return new Response(JSON.stringify({choices:[{finish_reason:"tool_calls",message:{tool_calls:[{id:"too-long",type:"function",function:{name:"submit_short_revision_chapter",arguments:JSON.stringify(args)}}]}}]}));
+  it("preserves the final length error when bounded compression is exhausted",async()=>{
+    fetchWithProxyMock.mockImplementation(async(_url:string,init:RequestInit)=>{
+      const name=JSON.parse(String(init.body)).tools[0].function.name;
+      const args=name==='submit_short_revision_chapter'?{title:"Return",content:Array(50).fill("word").join(" ")}:name==='submit_chapter_edit_ranges'?{ranges:[{startLine:1,endLine:1}]}:{range_0_content:Array(40).fill("word").join(" ")};
+      return new Response(JSON.stringify({choices:[{finish_reason:"tool_calls",message:{tool_calls:[{id:"too-long",type:"function",function:{name,arguments:JSON.stringify(args)}}]}}]}));
     });
     const client=createLLMClient({provider:"openai",service:"custom",configSource:"studio",baseUrl:model.baseUrl,model:model.id,apiKey:"fixture",apiFormat:"chat",stream:false,temperature:0,thinkingBudget:0});
     const checkpoint=vi.fn();
-    await expect(new ShortFictionWriterAgent({client,model:model.id,projectRoot:"/tmp"}).continueDraft({direction:"Return a receipt",chapterCount:1,charsPerChapter:25,minChapterLength:20,maxChapterLength:30,language:"en",draft:{storyTitle:"Receipt",rawContent:"",chapters:[{number:1,title:"Return",content:"word",charCount:1}]},outlineMarkdown:"Return a receipt.",onBatchComplete:checkpoint})).rejects.toMatchObject({code:"SHORT_CHAPTER_TOO_LONG",attempts:3});
-    expect(fetchWithProxyMock).toHaveBeenCalledTimes(3);
-    expect(checkpoint).not.toHaveBeenCalled();
+    await expect(new ShortFictionWriterAgent({client,model:model.id,projectRoot:"/tmp"}).continueDraft({direction:"Return a receipt",chapterCount:1,charsPerChapter:25,minChapterLength:20,maxChapterLength:30,language:"en",draft:{storyTitle:"Receipt",rawContent:"",chapters:[{number:1,title:"Return",content:"word",charCount:1}]},outlineMarkdown:"Return a receipt.",onBatchComplete:checkpoint})).rejects.toMatchObject({code:"CHAPTER_LENGTH_OUT_OF_RANGE",attempts:3});
+    expect(fetchWithProxyMock).toHaveBeenCalledTimes(7);
+    expect(checkpoint.mock.calls.at(-1)?.[1]).toEqual([]);
+    expect(checkpoint.mock.calls.at(-1)?.[0].chapters[0].charCount).toBe(40);
   });
 
   it("resumes an unfinished content revision from its closest candidate without replacing the accepted source", async () => {
-    const lengths=[6,5,7,4], inputs: any[]=[];
+    const lengths=[6,5,7], inputs: any[]=[], compressionInputs:any[]=[];let resuming=false;
     fetchWithProxyMock.mockImplementation(async(_url:string,init:RequestInit)=>{
       const body=JSON.parse(String(init.body));
-      if(body.tools[0].function.name==='submit_chapter_edit_ranges')return new Response(JSON.stringify({error:{message:'Fixture compression service unavailable'}}),{status:403});
+      const name=body.tools[0].function.name;
+      if(name==='submit_chapter_edit_ranges'){if(!resuming)return new Response(JSON.stringify({error:{message:'Fixture compression service unavailable'}}),{status:403});return new Response(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{tool_calls:[{id:'range',type:'function',function:{name,arguments:JSON.stringify({ranges:[{startLine:1,endLine:1}]})}}]}}]}));}
+      if(name==='submit_chapter_range_replacements'){compressionInputs.push(JSON.parse(body.messages.findLast((m:any)=>m.role==='user').content));return new Response(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{tool_calls:[{id:'replace',type:'function',function:{name,arguments:JSON.stringify({range_0_content:'revised revised revised revised'})}}]}}]}));}
       inputs.push(JSON.parse(body.messages.findLast((m:{role:string})=>m.role==='user').content));
       const args={title:'Revised',content:Array(lengths[inputs.length-1]).fill('revised').join(' ')};
       return new Response(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{tool_calls:[{id:'revision-'+inputs.length,type:'function',function:{name:'submit_short_revision_chapter',arguments:JSON.stringify(args)}}]}}]}));
@@ -612,14 +616,14 @@ describe("guardedPiNonStreaming", () => {
     expect(checkpoint?.completed).toEqual([]);
     expect(checkpoint?.draft.chapters[0]!.content.split(' ')).toHaveLength(5);
     const retained=structuredClone(checkpoint!.draft.chapters[0]);
-    const result=await writer.reviseDraft({...input,resume:checkpoint});
-    expect(inputs[3].currentChapter).toEqual(retained);
+    resuming=true;const result=await writer.reviseDraft({...input,resume:checkpoint});
+    expect(inputs).toHaveLength(3);expect(compressionInputs[0].editableRanges[0].content).toBe(retained.content);
     expect(result.draft.chapters[0]!.content.split(' ')).toHaveLength(4);
     expect(checkpoint?.completed).toEqual([1]);
     expect(draft).toEqual(before);
   });
 
-  it('compresses a developed revision with source-bound edits after full replacements remain over the limit',async()=>{
+  it('preserves and compresses a new replacement scene after full replacements remain over the limit',async()=>{
     const original='Nora enters.\nShe closes it.\nThe room quiets.';
     const candidate='Nora enters.\nShe closes the window slowly and carefully.\nThe room quiets.';
     const calls:string[]=[];
@@ -632,7 +636,7 @@ describe("guardedPiNonStreaming", () => {
     });
     const client=createLLMClient({provider:'openai',service:'custom',configSource:'studio',baseUrl:model.baseUrl,model:model.id,apiKey:'fixture',apiFormat:'chat',stream:false,temperature:0,thinkingBudget:0});
     const draft={storyTitle:'Window',rawContent:'',chapters:[{number:1,title:'Entry',content:original,charCount:8}]};
-    const result=await new ShortFictionWriterAgent({client,model:model.id,projectRoot:'/tmp'}).reviseDraft({direction:'Clarify what Nora closes.',chapterCount:1,chapterNumbers:[1],charsPerChapter:9,minChapterLength:8,maxChapterLength:10,language:'en',draft,outlineMarkdown:'One complete scene.',review:'Clarify the object.'});
+    const result=await new ShortFictionWriterAgent({client,model:model.id,projectRoot:'/tmp'}).reviseDraft({direction:'Clarify what Nora closes.',chapterCount:1,chapterNumbers:[1],charsPerChapter:9,minChapterLength:8,maxChapterLength:10,language:'en',draft,outlineMarkdown:'One complete scene.',review:'Clarify the object.',resume:{plan:{revisionBrief:'Replace the scene with a clear window closing.',outlineMarkdown:'Nora closes the window.',chapters:[{number:1,sourceNumber:0,instruction:'Write the replacement scene.'}]},draft,completed:[]}});
     expect(calls).toEqual(['submit_short_revision_chapter','submit_short_revision_chapter','submit_short_revision_chapter','submit_chapter_edit_ranges','submit_chapter_range_replacements']);
     expect(result.draft.chapters[0]!.content.split('\n')).toEqual([candidate.split('\n')[0],'She closes the window.',candidate.split('\n')[2]]);
     expect(result.draft.chapters[0]!.charCount).toBe(9);
@@ -646,10 +650,10 @@ describe("guardedPiNonStreaming", () => {
     let resumed=false,wholeCalls=0;const resumedInputs:any[]=[];
     fetchWithProxyMock.mockImplementation(async(_url:string,init:RequestInit)=>{
       const body=JSON.parse(String(init.body)),name=body.tools[0].function.name;
-      if(name==='submit_short_revision_chapter'&&resumed)resumedInputs.push(JSON.parse(body.messages.findLast((m:{role:string})=>m.role==='user').content));
+      if(name==='submit_chapter_range_replacements'&&resumed)resumedInputs.push(JSON.parse(body.messages.findLast((m:{role:string})=>m.role==='user').content));
       const args=name==='submit_short_revision_chapter'?{title:'Entry',content:resumed?'Nora enters.\nShe closes the window.\nThe room quiets.':full}
         :name==='submit_chapter_edit_ranges'?{ranges:[{startLine:2,endLine:2}]}
-        :{range_0_content:'She closes the window slowly and gently.\n'};
+        :{range_0_content:resumed?'She closes the window.\n':'She closes the window slowly and gently.\n'};
       return new Response(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{tool_calls:[{id:'retain-'+(++wholeCalls),type:'function',function:{name,arguments:JSON.stringify(args)}}]}}]}));
     });
     const client=createLLMClient({provider:'openai',service:'custom',configSource:'studio',baseUrl:model.baseUrl,model:model.id,apiKey:'fixture',apiFormat:'chat',stream:false,temperature:0,thinkingBudget:0});
@@ -659,7 +663,7 @@ describe("guardedPiNonStreaming", () => {
     await expect(writer.reviseDraft(input)).rejects.toMatchObject({code:'CHAPTER_LENGTH_OUT_OF_RANGE'});
     expect(checkpoint?.completed).toEqual([]);expect(checkpoint?.draft.chapters[0]!.content).toBe(compressed);expect(draft.chapters[0]!.content).toBe(original);
     resumed=true;const result=await writer.reviseDraft({...input,resume:checkpoint});
-    expect(resumedInputs[0].currentChapter.content).toBe(compressed);expect(result.draft.chapters[0]!.charCount).toBe(9);expect(checkpoint?.completed).toEqual([1]);expect(draft.chapters[0]!.content).toBe(original);
+    expect(resumedInputs[0].editableRanges[0].content).toBe(compressed.split('\n')[1]+'\n');expect(result.draft.chapters[0]!.charCount).toBe(9);expect(checkpoint?.completed).toEqual([1]);expect(draft.chapters[0]!.content).toBe(original);
   });
 
   it("retries an HTTP gateway failure before emitting a buffered result", async () => {

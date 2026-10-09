@@ -261,11 +261,40 @@ export class ShortFictionWriterAgent extends BaseAgent {
         continue;
       }
       const otherChapters=draft.chapters.filter(item=>item.number!==chapter.number);
-      const revised=await this.submitStructured([
+      const compressCandidate=async()=>{
+        const pending=draft.chapters.find(item=>item.number===chapter.number)!;
+        // Preserve the developed candidate. Mechanical compression uses the
+        // same bounded, source-bound edits as other local chapter revisions.
+        const repaired=await new ReviserAgent(this.ctx).reviseChapter("",pending.content,chapter.number,[{
+          code:"CHAPTER_LENGTH_OUT_OF_RANGE",assessment:"issue",category:"quality",evidence:[],
+          summary:"Compress this existing candidate to the supplied length range. Remove repeated explanation or redundant phrasing while preserving its events, facts, knowledge, chronology, decisions and complete scenes. Do not repeat the semantic rewrite or change its title.",
+        }],"spot-fix",undefined,{language:input.language??"zh",contextPackage:{chapter:chapter.number,selectedContext:[{
+          source:"revision-scope",reason:"Keep this revision's scope while fitting its candidate to the length contract.",excerpt:input.direction,protection:"protected",
+        }]},
+          onCandidate:async content=>{
+            const mode=resolveLengthCountingMode(input.language),count=countChapterLength(content,mode);
+            const best=draft.chapters.find(item=>item.number===chapter.number)!;
+            if(count>input.maxChapterLength!&&count<countChapterLength(best.content,mode)){
+              const candidate=mergeShortFictionBatch(draft,asShortDraftBatch({storyTitle:input.draft.storyTitle,number:chapter.number,title:pending.title,content}),input.chapterCount,input.language);
+              validateShortFictionDraftForFinal({...candidate,chapters:[candidate.chapters.find(item=>item.number===chapter.number)!]},{expectedChapters:1,minChapterLength:1,language:input.language});
+              draft=candidate;
+              await input.onRevisionProgress?.({plan,draft,completed});
+            }
+          },
+          lengthSpec:buildLengthSpec(input.charsPerChapter,input.language,{minChapterLength:input.minChapterLength??1,maxChapterLength:input.maxChapterLength})});
+        const result={title:pending.title,content:repaired.revisedContent};
+        validateRequestedShortChapter({...result,storyTitle:input.draft.storyTitle,number:chapter.number},[chapter.number],{...input,openingHookChars:undefined},true);
+        return {result};
+      };
+      const originalDestination=input.draft.chapters.find(item=>item.number===chapter.number);
+      const retainedCandidate=Boolean(input.resume&&chapter.content.trim()&&chapter.content!==originalDestination?.content);
+      const resumeCompression=retainedCandidate&&input.maxChapterLength!==undefined
+        &&countChapterLength(chapter.content,resolveLengthCountingMode(input.language))>input.maxChapterLength;
+      const revised=resumeCompression?await compressCandidate():await this.submitStructured([
         {role:"system",content: input.language==="en"
           ? "Use the activated Skill, user request and revision plan to revise the specified chapter. Submit its title and complete prose within the supplied length range. Express the revision as in-world actions and dialogue; keep editorial chapter references and review instructions in the plan, outside the story prose."
           : "按已激活的 Skill、用户修改要求与修订方案修改指定章节，提交本章标题和完整正文，并满足给定篇幅范围。把修改落实为故事中的行动与对白；章号引用、审稿意见和修改说明留在方案中，不写进故事正文。"},
-        {role:"user",content:JSON.stringify({storyTitle:input.draft.storyTitle,userRequest:input.direction,chapterNumber:chapter.number,currentLength:countChapterLength(chapterPlan.sourceNumber===0?"":chapter.content,resolveLengthCountingMode(input.language)),targetLength:input.charsPerChapter,minLength:input.minChapterLength,maxLength:input.maxChapterLength,lengthUnit:input.language==="en"?"words":"non-whitespace characters including punctuation",corrections:plan.revisionBrief,outline:plan.outlineMarkdown,instruction:chapterPlan.instruction,...(chapterPlan.sourceNumber!==undefined&&chapterPlan.sourceNumber!==chapter.number?{originalChapter}:{}),currentChapter:chapterPlan.sourceNumber===0?undefined:chapter,otherChapters})},
+        {role:"user",content:JSON.stringify({storyTitle:input.draft.storyTitle,userRequest:input.direction,chapterNumber:chapter.number,currentLength:countChapterLength(chapterPlan.sourceNumber===0&&!retainedCandidate?"":chapter.content,resolveLengthCountingMode(input.language)),targetLength:input.charsPerChapter,minLength:input.minChapterLength,maxLength:input.maxChapterLength,lengthUnit:input.language==="en"?"words":"non-whitespace characters including punctuation",corrections:plan.revisionBrief,outline:plan.outlineMarkdown,instruction:chapterPlan.instruction,...(chapterPlan.sourceNumber!==undefined&&chapterPlan.sourceNumber!==chapter.number?{originalChapter}:{}),currentChapter:chapterPlan.sourceNumber===0&&!retainedCandidate?undefined:chapter,otherChapters})},
       ],{name:"submit_short_revision_chapter",label:"Revise one chapter",description:`Submit the title and prose for chapter ${chapter.number}.`,parameters:ShortRevisionChapterToolSchema,
         validate:async(result)=>{
           const bound = {...result,storyTitle:input.draft.storyTitle,number:chapter.number};
@@ -278,12 +307,12 @@ export class ShortFictionWriterAgent extends BaseAgent {
             return Math.max(0,(input.minChapterLength??1)-length,length-(input.maxChapterLength??Infinity));
           };
           const current=draft.chapters.find(item=>item.number===chapter.number)!;
-          const replacingValidSource = distance(current.content) === 0 && current.content === originalChapter?.content;
-          if(distance(changed.content)>0&&(replacingValidSource||distance(changed.content)<distance(current.content))){
+          const firstReplacement=!current.content.trim()||current.content===originalDestination?.content;
+          if(distance(changed.content)>0&&(firstReplacement||distance(changed.content)<distance(current.content))){
             // Keep improving candidates across interrupted corrections without
             // marking the destination complete or replacing the final manuscript.
-            // An in-range source may still require a content revision: its zero
-            // length error must not discard every unfinished replacement.
+            // The destination's old prose is not a replacement candidate, even
+            // when the plan creates a new scene or maps a different source.
             draft=candidate;
             await input.onRevisionProgress?.({plan,draft,completed});
           }
@@ -294,28 +323,7 @@ export class ShortFictionWriterAgent extends BaseAgent {
           const pending=draft.chapters.find(item=>item.number===chapter.number)!;
           if((error as {code?:string}).code!=="SHORT_CHAPTER_TOO_LONG" || input.maxChapterLength===undefined
             || countChapterLength(pending.content,resolveLengthCountingMode(input.language))<=input.maxChapterLength)throw error;
-          // Preserve the developed candidate. Mechanical compression uses the
-          // same bounded, source-bound edits as other local chapter revisions.
-          const repaired=await new ReviserAgent(this.ctx).reviseChapter("",pending.content,chapter.number,[{
-            code:"CHAPTER_LENGTH_OUT_OF_RANGE",assessment:"issue",category:"quality",evidence:[],
-            summary:"Compress this existing candidate to the supplied length range. Remove repeated explanation or redundant phrasing while preserving its events, facts, knowledge, chronology, decisions and complete scenes. Do not repeat the semantic rewrite or change its title.",
-          }],"spot-fix",undefined,{language:input.language??"zh",contextPackage:{chapter:chapter.number,selectedContext:[{
-            source:"revision-scope",reason:"Keep this revision's scope while fitting its candidate to the length contract.",excerpt:input.direction,protection:"protected",
-          }]},
-            onCandidate:async content=>{
-              const mode=resolveLengthCountingMode(input.language),count=countChapterLength(content,mode);
-              const best=draft.chapters.find(item=>item.number===chapter.number)!;
-              if(count>input.maxChapterLength!&&count<countChapterLength(best.content,mode)){
-                const candidate=mergeShortFictionBatch(draft,asShortDraftBatch({storyTitle:input.draft.storyTitle,number:chapter.number,title:pending.title,content}),input.chapterCount,input.language);
-                validateShortFictionDraftForFinal({...candidate,chapters:[candidate.chapters.find(item=>item.number===chapter.number)!]},{expectedChapters:1,minChapterLength:1,language:input.language});
-                draft=candidate;
-                await input.onRevisionProgress?.({plan,draft,completed});
-              }
-            },
-            lengthSpec:buildLengthSpec(input.charsPerChapter,input.language,{minChapterLength:input.minChapterLength??1,maxChapterLength:input.maxChapterLength})});
-          const result={title:pending.title,content:repaired.revisedContent};
-          validateRequestedShortChapter({...result,storyTitle:input.draft.storyTitle,number:chapter.number},[chapter.number],{...input,openingHookChars:undefined},true);
-          return {result};
+          return compressCandidate();
         });
       draft=mergeShortFictionBatch(draft,asShortDraftBatch({...revised.result,storyTitle:input.draft.storyTitle,number:chapter.number}),input.chapterCount,input.language);
       completed.push(chapter.number);

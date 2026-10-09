@@ -1,4 +1,5 @@
 import { BaseAgent } from "./base.js";
+import { ReviserAgent } from "./reviser.js";
 import {renderChapterDocument} from '../utils/chapter-document.js';
 import type { BookConfig } from "../models/book.js";
 import type { BookRules } from "../models/book-rules.js";
@@ -11,7 +12,7 @@ import type { ChapterIntent, ChapterMemo, ContextPackage } from "../models/input
 import type { LengthSpec } from "../models/length-governance.js";
 import type { ChapterMeta } from "../models/chapter.js";
 import { RuntimeStateDeltaSchema, type RuntimeStateDelta } from "../models/runtime-state.js";
-import { buildLengthSpec, countChapterLength, assertChapterLength } from "../utils/length-metrics.js";
+import { buildLengthSpec, countChapterLength, assertChapterLength, chapterLengthDelivery } from "../utils/length-metrics.js";
 import {
   buildRuntimeStateArtifacts,
   buildRuntimeStateArtifactsFromSnapshot,
@@ -141,30 +142,60 @@ export class WriterAgent extends BaseAgent {
       en: `Phase 1: creative writing for chapter ${chapterNumber}`,
     });
 
-    const creativeMessages = [
-        { role: "system", content: creativeSystemPrompt },
-        { role: "user", content: creativeUserPrompt },
-      ] as Array<{role:'system'|'user';content:string}>;
-    if(input.candidateDraft)creativeMessages.push({role:'user',content:JSON.stringify({unfinishedDraft:{title:input.candidateDraft.title,content:input.candidateDraft.content},instruction:'Continue this unfinished draft toward the requested chapter. Preserve established facts from the supplied context and meet the explicit length contract. Submit a complete title and chapter, retaining useful progress instead of starting over.'})});
-    const { result: creativeSubmission, usage: creativeUsage } = await this.submitStructured(
-      creativeMessages,
-      {
-        name: "submit_chapter_draft",
-        label: resolvedLanguage === "en" ? "Submit chapter draft" : "提交章节初稿",
-        description: resolvedLanguage === "en"
-          ? "Submit the complete chapter title and prose."
-          : "提交完整的章节标题和正文。",
-        parameters: ChapterDraftToolSchema,
-        validate:async draft=>{
-          const candidate={title:draft.title.trim(),content:draft.content.trim()};
-          if(!candidate.title||!candidate.content)throw Object.assign(new Error('A chapter needs a title and non-empty prose.'),{code:'CHAPTER_DRAFT_EMPTY'});
-          await input.onCandidate?.(candidate);
-          assertChapterLength(candidate.content,resolvedLengthSpec);
-          return candidate;
+    let creativeSubmission: {title:string;content:string};
+    let creativeUsage = {promptTokens:0,completionTokens:0,totalTokens:0};
+    const saved = input.candidateDraft;
+    if (saved?.title?.trim() && saved.content.trim()) {
+      creativeSubmission = {title:saved.title.trim(),content:saved.content.trim()};
+    } else {
+      const creativeMessages = [
+        { role: "system" as const, content: creativeSystemPrompt },
+        { role: "user" as const, content: creativeUserPrompt },
+      ];
+      ({result:creativeSubmission,usage:creativeUsage} = await this.submitStructured(
+        creativeMessages,
+        {
+          name: "submit_chapter_draft",
+          label: resolvedLanguage === "en" ? "Submit chapter draft" : "提交章节初稿",
+          description: resolvedLanguage === "en"
+            ? "Submit the complete chapter title and prose."
+            : "提交完整的章节标题和正文。",
+          parameters: ChapterDraftToolSchema,
+          validate:async draft=>{
+            const candidate={title:draft.title.trim(),content:draft.content.trim()};
+            if(!candidate.title||!candidate.content)throw Object.assign(new Error('A chapter needs a title and non-empty prose.'),{code:'CHAPTER_DRAFT_EMPTY'});
+            await input.onCandidate?.(candidate);
+            return candidate;
+          },
         },
-      },
-      { temperature: creativeTemperature },
-    );
+        { temperature: creativeTemperature },
+      ));
+    }
+    const length = chapterLengthDelivery(countChapterLength(creativeSubmission.content,resolvedLengthSpec.countingMode),resolvedLengthSpec);
+    if (length?.status === "needs_revision") {
+      // This is unfinished prose, not a new chapter request. Reuse the
+      // revision operation before settling any story state.
+      const repaired = await new ReviserAgent(this.ctx).reviseChapter(
+        bookDir, creativeSubmission.content, chapterNumber, [], "rewrite", book.genre, {
+          language:resolvedLanguage,
+          chapterTitle:creativeSubmission.title,
+          lengthSpec:resolvedLengthSpec,
+          contextPackage:{chapter:chapterNumber,selectedContext:[{
+            source:"length-check",protection:"protected",
+            reason:"The saved chapter does not meet the original explicit length bounds.",
+            excerpt:"Revise this existing chapter to satisfy its length contract. Preserve its core events, causal connections, character motives and ending. Do not add new scenes or expand the chapter task.",
+          }]},
+          onCandidate:async content=>input.onCandidate?.({title:creativeSubmission.title,content}),
+        },
+      );
+      creativeSubmission = {...creativeSubmission,content:repaired.revisedContent};
+      if (repaired.tokenUsage) creativeUsage = {
+        promptTokens:creativeUsage.promptTokens+repaired.tokenUsage.promptTokens,
+        completionTokens:creativeUsage.completionTokens+repaired.tokenUsage.completionTokens,
+        totalTokens:creativeUsage.totalTokens+repaired.tokenUsage.totalTokens,
+      };
+    }
+    assertChapterLength(creativeSubmission.content,resolvedLengthSpec);
     const creative = {
       title: creativeSubmission.title.trim(),
       content: creativeSubmission.content.trim(),
