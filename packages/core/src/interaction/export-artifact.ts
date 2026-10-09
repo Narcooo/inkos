@@ -1,3 +1,4 @@
+import type {LengthSpec} from '../models/length-governance.js';
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { createHash } from "node:crypto";
@@ -16,6 +17,7 @@ export interface ExportStateLike {
     readonly number: number;
     readonly title?: string;
     readonly wordCount: number;
+    readonly lengthSpec?: LengthSpec;
   }>>;
 }
 
@@ -48,7 +50,7 @@ export async function readBookExportSource(state: ExportStateLike, bookId: strin
     const language = book.language === "en" || book.language === undefined && heading?.language === "en" ? "en" : "zh";
     const title = chapter.title ?? heading?.title ?? file.replace(/^\d+_/u, "").replace(/\.md$/u, "");
     const markdown = renderChapterDocument(chapter.number, title, raw, language);
-    const spec = buildLengthSpec(book.chapterWordCount ?? defaultChapterLength(language), language, book);
+    const spec = chapter.lengthSpec ?? buildLengthSpec(book.chapterWordCount ?? defaultChapterLength(language), language, book);
     const count = countChapterLength(markdown, spec.countingMode);
     return {number: chapter.number, file, markdown, count, delivery: chapterLengthDelivery(count, spec)};
   }));

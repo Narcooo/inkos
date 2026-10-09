@@ -11,7 +11,7 @@ import type { ChapterIntent, ChapterMemo, ContextPackage } from "../models/input
 import type { LengthSpec } from "../models/length-governance.js";
 import type { ChapterMeta } from "../models/chapter.js";
 import { RuntimeStateDeltaSchema, type RuntimeStateDelta } from "../models/runtime-state.js";
-import { buildLengthSpec, countChapterLength } from "../utils/length-metrics.js";
+import { buildLengthSpec, countChapterLength, assertChapterLength } from "../utils/length-metrics.js";
 import {
   buildRuntimeStateArtifacts,
   buildRuntimeStateArtifactsFromSnapshot,
@@ -43,6 +43,8 @@ export interface WriteChapterInput {
   readonly lengthSpec?: LengthSpec;
   readonly wordCountOverride?: number;
   readonly temperatureOverride?: number;
+  readonly candidateDraft?: {readonly title?:string;readonly content:string};
+  readonly onCandidate?: (draft:{title:string;content:string})=>Promise<void>;
 }
 
 export interface SettleChapterStateInput {
@@ -139,11 +141,13 @@ export class WriterAgent extends BaseAgent {
       en: `Phase 1: creative writing for chapter ${chapterNumber}`,
     });
 
-    const { result: creativeSubmission, usage: creativeUsage } = await this.submitStructured(
-      [
+    const creativeMessages = [
         { role: "system", content: creativeSystemPrompt },
         { role: "user", content: creativeUserPrompt },
-      ],
+      ] as Array<{role:'system'|'user';content:string}>;
+    if(input.candidateDraft)creativeMessages.push({role:'user',content:JSON.stringify({unfinishedDraft:{title:input.candidateDraft.title,content:input.candidateDraft.content},instruction:'Continue this unfinished draft toward the requested chapter. Preserve established facts from the supplied context and meet the explicit length contract. Submit a complete title and chapter, retaining useful progress instead of starting over.'})});
+    const { result: creativeSubmission, usage: creativeUsage } = await this.submitStructured(
+      creativeMessages,
       {
         name: "submit_chapter_draft",
         label: resolvedLanguage === "en" ? "Submit chapter draft" : "提交章节初稿",
@@ -151,6 +155,13 @@ export class WriterAgent extends BaseAgent {
           ? "Submit the complete chapter title and prose."
           : "提交完整的章节标题和正文。",
         parameters: ChapterDraftToolSchema,
+        validate:async draft=>{
+          const candidate={title:draft.title.trim(),content:draft.content.trim()};
+          if(!candidate.title||!candidate.content)throw Object.assign(new Error('A chapter needs a title and non-empty prose.'),{code:'CHAPTER_DRAFT_EMPTY'});
+          await input.onCandidate?.(candidate);
+          assertChapterLength(candidate.content,resolvedLengthSpec);
+          return candidate;
+        },
       },
       { temperature: creativeTemperature },
     );

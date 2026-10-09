@@ -42,6 +42,7 @@ export class ReviserAgent extends BaseAgent {
       readonly language: "zh" | "en";
       readonly chapterTitle?:string;
       readonly targetText?:string;
+      readonly candidateText?:string;
       readonly contextPackage: ContextPackage;
       readonly lengthSpec?: LengthSpec;
       /** Observe a complete source-bound candidate without adopting it. */
@@ -86,10 +87,11 @@ export class ReviserAgent extends BaseAgent {
       { role: "system" as const, content: systemPrompt },
       { role: "user" as const, content: userPrompt },
     ];
+    if(options.candidateText)messages.push({role:'user',content:JSON.stringify({unfinishedCandidate:body(options.candidateText),instruction:'Continue improving this unfinished candidate toward the original request. The original chapter remains authoritative for facts and protected text. Return only the requested replacement fields or complete revision; do not restart from the original when this candidate already addresses part of the task.'})});
     const outputBudget = Math.min(this.ctx.client.defaults.maxTokens, Math.max(8192, Math.ceil((options.lengthSpec?.target ?? chapterContent.length) * 4) + 8192));
     const output = authorized || mode === "spot-fix" || options.targetText!==undefined
       ? await this.submitSpotFix(messages, chapterContent, outputBudget, options.lengthSpec,options.targetText,options.onCandidate,authorized)
-      : await this.submitRewrite(messages, outputBudget, options.lengthSpec,body);
+      : await this.submitRewrite(messages, outputBudget, options.lengthSpec,body,options.onCandidate);
     const wordCount = options.lengthSpec
       ? countChapterLength(output.revisedContent, options.lengthSpec.countingMode)
       : output.wordCount;
@@ -158,15 +160,17 @@ export class ReviserAgent extends BaseAgent {
     maxTokens: number,
     lengthSpec?: LengthSpec,
     normalizeContent:(content:string)=>string=content=>content,
+    onCandidate?:(content:string)=>Promise<void>,
   ): Promise<ReviseOutput> {
     const { result, usage } = await this.submitStructured(messages, {
       name: "submit_revised_chapter",
       label: "Submit revised chapter",
       description: "Submit the complete revised chapter and addressed observations.",
       parameters: ChapterRewriteToolSchema,
-      validate: result => {
+      validate: async result => {
         const revisedContent=normalizeContent(result.revisedContent);
         if(!revisedContent.trim())throw Object.assign(new Error('Submit chapter prose in addition to its title'),{code:'CHAPTER_BODY_EMPTY'});
+        await onCandidate?.(revisedContent);
         assertChapterLength(revisedContent,lengthSpec);
         return{...result,revisedContent};
       },

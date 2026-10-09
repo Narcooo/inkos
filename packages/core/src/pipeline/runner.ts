@@ -1,3 +1,6 @@
+import {resolveChapterLengthRequest} from '../agents/chapter-length-request.js';
+import {currentExecutionAuthorRequest} from '../harness/execution-evidence.js';
+import {chapterRevisionCandidate} from './chapter-revision-candidate.js';
 import { AsyncLocalStorage } from "node:async_hooks";
 import {readPinnedParentCanon} from "../harness/parent-canon.js";
 import {renderChapterDocument,chapterDocumentBody} from '../utils/chapter-document.js';
@@ -198,6 +201,7 @@ export class PipelineRunner {
   private readonly state: StateManager;
   private readonly config: PipelineConfig;
   private readonly agentClients = new Map<string, LLMClient>();
+  private readonly chapterLengthRequests = new Map<string, Promise<LengthSpec>>();
   private readonly operationContext = new AsyncLocalStorage<{
     readonly signal?: AbortSignal;
     readonly activatedSkills?: ReadonlyArray<ActivatedSkillGuidance>;
@@ -268,6 +272,19 @@ export class PipelineRunner {
   private async resolveBookLanguageById(bookId: string): Promise<LengthLanguage> {
     const book = await this.state.loadBookConfig(bookId);
     return this.resolveBookLanguage(book);
+  }
+
+  private async chapterLengthSpec(book:BookConfig,chapterNumber:number,fallback:LengthSpec):Promise<LengthSpec>{
+    const authorRequest=currentExecutionAuthorRequest();
+    if(!authorRequest?.trim())return fallback;
+    const key=JSON.stringify([book.id,chapterNumber,authorRequest,fallback]);
+    let pending=this.chapterLengthRequests.get(key);
+    if(!pending){
+      pending=resolveChapterLengthRequest(this.agentCtxFor('writer',book.id),{authorRequest,workTitle:book.title,chapterNumber,fallback});
+      this.chapterLengthRequests.set(key,pending);
+      pending.catch(()=>this.chapterLengthRequests.delete(key));
+    }
+    return pending;
   }
 
   private languageFromLengthSpec(lengthSpec: Pick<LengthSpec, "countingMode">): LengthLanguage {
@@ -866,7 +883,7 @@ export class PipelineRunner {
     });
 
     await syncWorkSourceArtifacts({ projectRoot: this.config.projectRoot, workId: bookId, accept: true, acceptPaths: ["source/chapters/index.json"] });
-    const spec=buildLengthSpec(book.chapterWordCount,book.language,book);
+    const spec=index.find(ch=>ch.number===targetChapter)?.lengthSpec??buildLengthSpec(book.chapterWordCount,book.language,book);
     const delivery=chapterLengthDelivery(countChapterLength(content,spec.countingMode),spec);
     return { ...result, chapterNumber: targetChapter,...(delivery?{delivery}:{}) };
   }
@@ -931,7 +948,7 @@ export class PipelineRunner {
           });
       if (!explicitRevisionRequested && preRevision.observations.length === 0) {
         const delivery=chapterLengthDelivery(countChapterLength(content,countingMode),
-          buildLengthSpec(book.chapterWordCount,language,book));
+          chapterMeta.lengthSpec??buildLengthSpec(book.chapterWordCount,language,book));
         return {
           chapterNumber: targetChapter,
           wordCount: countChapterLength(content, countingMode),
@@ -946,11 +963,11 @@ export class PipelineRunner {
       const lengthLanguage = chapterMeta.lengthTelemetry?.countingMode === "en_words"
         ? "en"
         : language;
-      const lengthSpec = buildLengthSpec(
+      const lengthSpec = await this.chapterLengthSpec(book,targetChapter,chapterMeta.lengthSpec??buildLengthSpec(
         chapterLengthTarget,
         lengthLanguage,
         book,
-      );
+      ));
       const baselineChapter = targetChapter - 1;
       const baselineSnapshot = await loadRuntimeStateSnapshotAtChapter({
         bookDir,
@@ -970,6 +987,8 @@ export class PipelineRunner {
         chapterSummaries:renderChapterSummariesProjection(baselineSnapshot.chapterSummaries,language)};
 
       const reviser = new ReviserAgent(this.agentCtxFor("reviser", bookId));
+      const revisionCandidate=await chapterRevisionCandidate({projectRoot:this.config.projectRoot,bookId,chapterNumber:targetChapter,
+        source:content,authorRequest:currentExecutionAuthorRequest()??revisionIntent,lengthSpec});
       this.logStage(stageLanguage, {
         zh: `修订第${targetChapter}章`,
         en: `revising chapter ${targetChapter}`,
@@ -985,10 +1004,18 @@ export class PipelineRunner {
           language,
           chapterTitle:chapterMeta.title,
           targetText:editScope?.targetText,
+          candidateText:revisionCandidate.current()?.content,
+          onCandidate:async candidate=>revisionCandidate.record(candidate),
           contextPackage: reviseControlInput.contextPackage,
           lengthSpec,
         },
-      );
+      ).catch(error=>{
+        const candidate=revisionCandidate.current();
+        if(candidate)Object.assign(error,{candidatePreserved:true,candidateLength:candidate.count,recovery:{action:'longform__revise_chapter',workId:bookId,
+          parameters:{bookId,chapterNumber:targetChapter,mode,...(externalContext?{instruction:externalContext}:{}),...(editScope?.targetText?{targetText:editScope.targetText}:{})},
+          reason:'The accepted source is unchanged. Retry resumes the closest saved candidate under the same original author request and source; it is still subject to scope, length, review and state checks.'}});
+        throw error;
+      });
 
       if (reviseOutput.revisedContent.length === 0) {
         throw new Error("Reviser returned empty content");
@@ -1100,6 +1127,7 @@ export class PipelineRunner {
             observations: [...postRevisionObservations],
             provenance: "edited" as const,
             lengthTelemetry,
+            lengthSpec,
           };
         }
         if (ch.number > targetChapter) {
@@ -1151,6 +1179,7 @@ export class PipelineRunner {
       });
 
       await syncWorkSourceArtifacts({ projectRoot: this.config.projectRoot, workId: bookId, accept: true , acceptPaths: await changedWorkSourcePaths(this.config.projectRoot, bookId, sourceBefore) });
+      await revisionCandidate.complete();
       return {
         chapterNumber: targetChapter,
         wordCount: revisedCount,
@@ -1228,7 +1257,12 @@ export class PipelineRunner {
           options.wordCount,
           options.temperatureOverride,
           options.externalContext ?? this.config.externalContext,
-        );
+        ).catch(async error=>{
+          if(error.candidatePreserved){const next=await this.state.getNextChapterNumber(bookId);Object.assign(error,{recovery:{action:'longform__write_chapters',workId:bookId,
+            parameters:{bookId,startChapterNumber:next,chapterCount:chapterCount-index,...(options.wordCount?{chapterWordCount:options.wordCount}:{}),...(options.externalContext?{instruction:options.externalContext}:{})},
+            reason:'Completed chapters remain saved. Retry only this remaining range; the unfinished chapter resumes its closest candidate before story-state settlement.'}});}
+          throw error;
+        });
         results.push(result);
         options.onChapterComplete?.(result, results.length, chapterCount);
       }
@@ -1318,11 +1352,19 @@ export class PipelineRunner {
       contextPackage: writeInput.contextPackage,
     };
     const pipelineLang = book.language;
-    const lengthSpec = buildLengthSpec(
+    const lengthSpec = await this.chapterLengthSpec(book,chapterNumber,buildLengthSpec(
       wordCount ?? book.chapterWordCount,
       pipelineLang,
       book,
-    );
+    ));
+    const storyDir = join(bookDir, "story");
+    const [runtimeSnapshot, authorityStoryFrame, authorityBookRules, styleGuide] = await Promise.all([
+      loadRuntimeStateSnapshot(bookDir),readStoryFrame(bookDir),readFile(join(storyDir,"book_rules.md"),"utf-8"),
+      readFile(join(storyDir,"style_guide.md"),"utf-8").catch(error=>{if(error.code==='ENOENT')return '';throw error;}),
+    ]);
+    const draftCandidate=await chapterRevisionCandidate({projectRoot:this.config.projectRoot,bookId,chapterNumber,
+      source:JSON.stringify({runtimeSnapshot,authorityStoryFrame,authorityBookRules,styleGuide,genre:book.genre,language:book.language}),
+      authorRequest:currentExecutionAuthorRequest()??externalContext??writeInput.chapterIntent,lengthSpec});
     // 1. Write chapter
     const writer = new WriterAgent(this.agentCtxFor("writer", bookId));
     this.logStage(stageLanguage, { zh: "撰写章节草稿", en: "writing chapter draft" });
@@ -1332,9 +1374,11 @@ export class PipelineRunner {
       chapterNumber,
       ...writeInput,
       lengthSpec,
-      ...(wordCount ? { wordCountOverride: wordCount } : {}),
+      candidateDraft:draftCandidate.current(),
+      onCandidate:async draft=>draftCandidate.record(draft.content,draft.title),
+      ...(wordCount ? { wordCountOverride: lengthSpec.target } : {}),
       ...(temperatureOverride !== undefined ? { temperatureOverride } : {}),
-    });
+    }).catch(error=>{const candidate=draftCandidate.current();if(candidate)Object.assign(error,{candidatePreserved:true,candidateLength:candidate.count});throw error;});
     this.throwIfOperationAborted();
     const writerCount = countChapterLength(output.content, lengthSpec.countingMode);
 
@@ -1384,12 +1428,6 @@ export class PipelineRunner {
 
     // 4.1 Validate settler output before writing
     this.logStage(stageLanguage, { zh: "校验真相文件变更", en: "validating truth file updates" });
-    const storyDir = join(bookDir, "story");
-    const [runtimeSnapshot, authorityStoryFrame, authorityBookRules] = await Promise.all([
-      loadRuntimeStateSnapshot(bookDir),
-      readStoryFrame(bookDir),
-      readFile(join(storyDir, "book_rules.md"), "utf-8"),
-    ]);
     const oldState = renderCurrentStateProjection(runtimeSnapshot.currentState, pipelineLang);
     const oldHooks = renderHooksProjection(runtimeSnapshot.hooks, pipelineLang);
     const authorityChapterSummaries = renderChapterSummariesProjection(runtimeSnapshot.chapterSummaries, pipelineLang);
@@ -1436,11 +1474,13 @@ export class PipelineRunner {
       auditResult,
       finalWordCount,
       lengthTelemetry,
+      lengthSpec,
       tokenUsage: totalUsage,
       loadChapterIndex: () => this.state.loadChapterIndex(bookId),
       saveChapter: (index) => writer.saveChapter(bookDir, persistenceOutput, pipelineLang, index),
       markBookActiveIfNeeded: () => this.markBookActiveIfNeeded(bookId),
     });
+    await draftCandidate.complete();
 
     // 6. Send notification
     if (this.config.notifyChannels && this.config.notifyChannels.length > 0) {
@@ -1802,6 +1842,8 @@ export class PipelineRunner {
           updatedAt: now,
           observations: [],
           provenance: "imported",
+          // The author's new-chapter limits do not rewrite preserved source.
+          lengthSpec:buildLengthSpec(Math.max(1,chapterWordCount),book.language),
         };
         // Replace if exists (resume case), otherwise append
         const existingIdx = existingIndex.findIndex((e) => e.number === chapterNumber);
