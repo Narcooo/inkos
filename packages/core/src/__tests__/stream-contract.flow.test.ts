@@ -72,10 +72,13 @@ it.each([
       expect(result.content.length).toBeGreaterThan(0);
       expect(received.at(-1)?.temperature).toBe(!samplingAllowed ? undefined : 0.3);
     }
-    const defaultText = await runWorkerAgent(client, modelId, [{role:'user',content:'Reply briefly.'}], {maxTokens:128});
-    expect(defaultText.content.length).toBeGreaterThan(0);
-    expect(received.at(-1)?.temperature).toBeUndefined();
-    expect(received.at(-1)?.tool_choice).toBeUndefined();
+    for (const textClient of [client, { ...client, service: 'openai' }]) {
+      const defaultText = await runWorkerAgent(textClient, modelId, [{role:'user',content:'Reply briefly.'}], {maxTokens:128});
+      expect(defaultText.content.length).toBeGreaterThan(0);
+      for (const option of ['temperature', 'top_p', 'top_k', 'seed', 'reasoning_effort', 'thinking', 'response_format', 'tool_choice', 'professionalGuidance']) {
+        expect(received.at(-1)).not.toHaveProperty(option);
+      }
+    }
   } finally { server.closeAllConnections(); await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
 }, 15000);
 
