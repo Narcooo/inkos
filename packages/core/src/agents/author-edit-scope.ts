@@ -12,9 +12,11 @@ export const AuthorTextScopeSchema=Type.Object({
 },{additionalProperties:false});
 export type AuthorTextScope=Static<typeof AuthorTextScopeSchema>;
 
+export const AUTHOR_TARGET_AUTHORITY='Treat the requested identity and position as hard boundaries, even when another character or passage better fits the requested emotional effect. Never substitute a different target based on your interpretation of the plot.';
+
 /** Present source text once, with stable paragraph and line addresses. The
  * model selects addresses instead of reproducing whole paragraphs and bounds. */
-function sourceUnits(content:string){
+export function sourceUnits(content:string){
   const paragraphs:Array<{id:string;lines:Array<{id:string;text:string}>}>=[];
   const byId=new Map<string,{startLine:number;endLine:number;text:string}>();
   let paragraph:typeof paragraphs[number]|undefined;
@@ -38,7 +40,7 @@ function sourceUnits(content:string){
 export function authorTextScopeRequest(content:string,authorRequest:string){
   return{
     messages:[
-      {role:'system' as const,content:'Locate the smallest exact source units authorized by the author; do not rewrite them. The numbered paragraphs contain individual lines, each with a supplied ID. Select paragraph IDs for entire paragraphs, line IDs for entire lines, and an exact substring within a selected line only for inline edits. An empty selection text means the complete selected unit. Preserve labels, stage directions and surrounding text when only dialogue is requested. The desired creative effect does not authorize selecting extra units. Use wholeDocument=true with no selections only when the author permits rewriting everything.'},
+      {role:'system' as const,content:`Locate the smallest exact source units authorized by the author; do not rewrite them. ${AUTHOR_TARGET_AUTHORITY} The numbered paragraphs contain individual lines, each with a supplied ID. Select paragraph IDs for entire paragraphs, line IDs for entire lines, and an exact substring within a selected line only for inline edits. An empty selection text means the complete selected unit. Preserve labels, stage directions and surrounding text when only dialogue is requested. The desired creative effect does not authorize selecting extra units. Use wholeDocument=true with no selections only when the author permits rewriting everything.`},
       {role:'user' as const,content:JSON.stringify({authorRequest,document:sourceUnits(content).paragraphs})},
     ],
     tool:{name:'submit_author_edit_scope',label:'Locate authorized source units',description:'Select existing source IDs, with an exact substring only for a partial-line edit.',parameters:AuthorTextScopeSchema,
