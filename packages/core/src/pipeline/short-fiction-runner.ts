@@ -537,7 +537,7 @@ async function produceShort(
         language,
       });
       draftReviewObservations = draftReview.observations.map(observation => ({ ...observation,
-        category: "quality", assessment: observation.assessment ?? "observation", scope: productionState.reviewScope, targetHash: reviewedHash, target: { workId: storyId, artifactId: reviewedArtifact.id, revisionId: reviewedRevision.id } }));
+        category: observation.category ?? "quality", assessment: observation.assessment ?? "observation", scope: productionState.reviewScope, targetHash: reviewedHash, target: { workId: storyId, artifactId: reviewedArtifact.id, revisionId: reviewedRevision.id } }));
       if (!reuseReview) await writeText(
         root,
         join(baseDir, "reviews", "draft-v001.md"),

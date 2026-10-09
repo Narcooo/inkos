@@ -65,7 +65,7 @@ it("reuses completed production only for the same review request and preserves r
   vi.spyOn(ShortFictionOutlineAgent.prototype,"createOutline").mockResolvedValue({storyTitle:draft.storyTitle,rawContent:"A keeper repairs a lamp."});
   vi.spyOn(ShortFictionWriterAgent.prototype,"writeDraft").mockResolvedValue(draft);
   const continueDraft = vi.spyOn(ShortFictionWriterAgent.prototype,"continueDraft");
-  const reviewer = vi.spyOn(ShortFictionDraftReviewerAgent.prototype,"reviewDraft").mockResolvedValue({summary:"Reviewed",observations:[]});
+  const reviewer = vi.spyOn(ShortFictionDraftReviewerAgent.prototype,"reviewDraft").mockResolvedValue({summary:"Reviewed",observations:[{code:'SCOPE_CHECK',category:'scope',assessment:'observation',summary:'Scope checked.',evidence:[]}]});
   vi.spyOn(ShortFictionPackagingAgent.prototype,"generatePackage").mockResolvedValue({title:draft.storyTitle,intro:"A keeper repairs a lamp.",sellingPoints:["A choice"],coverPrompt:"A lamp",rawContent:""});
   const runtime = {projectRoot:root,model:"fixture",client:{defaults:{maxTokens:4096}}} as never;
   const options = {projectRoot:root,storyId:"night-light",direction:"A keeper repairs a lamp.",language:"en" as const,chapterCount:1,charsPerChapter:40,cover:false,
@@ -82,6 +82,7 @@ it("reuses completed production only for the same review request and preserves r
   expect(reviewer).toHaveBeenCalledTimes(3);
   const statePath = join(root,"works/night-light/source/production-state.json");
   const reviewed = JSON.parse(await readFile(statePath,"utf8"));
+  expect(reviewed.stages.review.observations[0]).toMatchObject({code:'SCOPE_CHECK',category:'scope'});
   await runShortFictionStage({...options,stage:"package"});
   const packaged = JSON.parse(await readFile(statePath,"utf8"));
   expect(packaged.reviewScope).toBe("chronology");
