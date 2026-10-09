@@ -4,7 +4,8 @@ import { readFile } from "node:fs/promises";
 import { extname } from "node:path";
 import { loadStoryGraph } from "../../interactive-film/graph-store.js";
 import { validateStoryGraph } from "../../interactive-film/validation.js";
-import { enumerateRuntimePaths } from "../../interactive-film/paths.js";
+import { enumerateRuntimePaths, exploreRuntimeStates } from "../../interactive-film/paths.js";
+import { visibleDialogue } from "../../interactive-film/evaluator.js";
 import { buildPlayableHtml } from "../../interactive-film/export-html.js";
 import { exportInk } from "../../interactive-film/export-ink.js";
 import { safeChildPath } from "../../utils/path-safety.js";
@@ -17,7 +18,20 @@ export function inspectFilmGraph(graph: StoryGraph, requirements?: FilmRequireme
   const report=validateStoryGraph(graph),enumeration=enumerateRuntimePaths(graph);
   const paths=enumeration.paths.filter(path=>path.endingId!==null).sort((a,b)=>b.length-a.length);
   const simple=paths.find(path=>new Set(path.nodeIds).size===path.nodeIds.length);
+  const runtime=exploreRuntimeStates(graph);
+  const dialogueVisibility={exhaustive:!runtime.truncated,lines:graph.nodes.flatMap(node=>node.dialogue.flatMap((line,dialogueIndex)=>{
+    if(!line.condition)return[];
+    const witnessed=new Set<boolean>(),witnesses:Array<{state:Record<string,string|number|boolean>;visible:boolean}>=[];
+    for(const entry of runtime.states){
+      if(entry.nodeId!==node.id)continue;
+      const visible=visibleDialogue(node,entry.state).includes(line);
+      if(!witnessed.has(visible)){witnessed.add(visible);witnesses.push({state:entry.state,visible});}
+      if(witnessed.size===2)break;
+    }
+    return[{nodeId:node.id,dialogueIndex,condition:line.condition,witnesses}];
+  }))};
   return {delivery:checkFilmRequirements(graph,requirements),nodeCount:graph.nodes.length,
+    dialogueVisibility,
     endingNodeCount:graph.nodes.filter(node=>node.type==='ending').length,registeredEndingCount:graph.endings.length,
     report,pathsTruncated:enumeration.truncated,longestObservedSimpleRoute:simple?{...simple,choices:simple.length-1}:null,
     nodes:graph.nodes.map(node=>({id:node.id,type:node.type,choiceCount:node.choices.length,hasScene:!!node.sceneDesc.trim()}))};

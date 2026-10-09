@@ -39,6 +39,11 @@ it('persists conditional dialogue and presents only the lines supported by the e
     const start=saved.nodes.find(n=>n.id==='s')!,merged=saved.nodes.find(n=>n.id==='m')!;
     const states=start.choices.map(choice=>applyEffects(initVarState(saved.variables),choice.effects));
     expect(states.map(state=>visibleDialogue(merged,state))).toEqual([[merged.dialogue[0]],[merged.dialogue[1]]]);
+    const inspection=await createInspectFilmTool(root,'dialogue').execute('visibility',{}) as any;
+    expect(inspection.details.dialogueVisibility).toEqual({exhaustive:true,lines:[
+      {nodeId:'m',dialogueIndex:0,condition:{var:'recording',op:'==',value:1},witnesses:[{state:{recording:1},visible:true},{state:{recording:0},visible:false}]},
+      {nodeId:'m',dialogueIndex:1,condition:{var:'recording',op:'==',value:0},witnesses:[{state:{recording:1},visible:false},{state:{recording:0},visible:true}]},
+    ]});
     const before=await readFile(join(root,'works/dialogue/source/story-graph.json'));
     await expect(applyGraphDelta({projectRoot:root,projectId:'dialogue',delta:{nodes:{upsert:[{...merged,dialogue:[{...merged.dialogue[0]!,condition:{var:'recording',op:'==',value:true}}]}],remove:[]},notes:[]}})).rejects.toMatchObject({code:'VARIABLE_TYPE_MISMATCH'});
     expect(await readFile(join(root,'works/dialogue/source/story-graph.json'))).toEqual(before);
