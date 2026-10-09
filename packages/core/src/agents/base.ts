@@ -99,7 +99,7 @@ export abstract class BaseAgent {
     const index = await this.submitStructured([
       ...messages,
       {role:'system',content:'The original author request and confirmed constraints define the acceptance requirements. Prior critiques and delegated revision suggestions are claims to recheck, not evidence that a defect exists or additional author requirements. Assess the current text independently. Explain why an issue conflicts with the author goals or the supplied text; classify a compatible interpretation or stylistic alternative as an observation. Baseline text establishes what changed, not what is still present in the current draft.'},
-      {role:'system',content:'Use calculate_review_values for arithmetic claims instead of mental calculation. Verify the source values, units and time periods first; a correct calculation does not establish that unlike quantities should be compared.'},
+      {role:'system',content:'Before recording an arithmetic finding, use calculate_review_values and read its result. Submit independent calculations together. Verify the source values, units and time periods first; a correct calculation does not establish that unlike quantities should be compared.'},
       {role:'system',content:`Record each finding with record_review_observation. Independent findings may be submitted together in one response. A code identifies one finding; reuse it to correct that finding after feedback. Read the exact source excerpts returned by the tool: resolving an address does not establish that its text supports the finding. Correct the references, assessment or explanation when the excerpts do not establish your claim. In a later response, call ${tool.name} with the review summary and supported finding codes in the desired order. Do not embed a list of findings in a string. Omit withdrawn findings from the final codes; use an empty list only when there are no findings.`},
     ], {
       ...tool,
@@ -107,7 +107,7 @@ export abstract class BaseAgent {
       maxTurns: 16,
       supportingTools: [{
         name:'record_review_observation', label:'Record review observation',
-        description:'Record one finding and its source line addresses. Each finding is checked before it can be included in the final review. Resubmitting the same code replaces that finding.',
+        description:'Record an assessed finding after checking its reasoning and any arithmetic. This tool validates source addresses and returns their excerpts; it does not verify whether the claim is true. Resubmitting the same code replaces that finding.',
         parameters:observationSchema,
         execute:async(_id,input)=>{
           const observation=input as ReviewObservation;

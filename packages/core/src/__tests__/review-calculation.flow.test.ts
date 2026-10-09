@@ -37,6 +37,8 @@ it('returns computed quantities to a sourced reviewer before recording its findi
     }
     const review=await new Reviewer({client,model:'fixture',projectRoot:'/tmp'}).review();
     expect(requests).toHaveLength(3);
+    const budgets=requests.map(request=>request.messages.flatMap((message:any)=>String(message.content??'').split('\n')).flatMap((line:string)=>{try{const value=JSON.parse(line);return value.workerBudget?[value.workerBudget]:[];}catch{return[];}}));
+    expect(budgets).toEqual([1,2,3].map(response=>[{response,maxResponses:16,remainingResponses:16-response,finalTool:'submit_calculated_review'}]));
     expect(review.result.observations).toMatchObject([{code:'BALANCE',assessment:'issue',sourceRefs:[{sourceId:'ledger',quote:source}]}]);
     await expect(createReviewCalculationTool().execute('undefined',{operation:'divide',values:[1,0]})).rejects.toMatchObject({code:'REVIEW_CALCULATION_UNDEFINED'});
   }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));}

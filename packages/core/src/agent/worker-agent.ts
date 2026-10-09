@@ -400,6 +400,13 @@ export async function runWorkerAgentTool<TParameters extends TSchema>(
         return localStopStream(streamModel);
       }
       modelTurns++;
+      const boundedContext=supportingTools.length?{
+        ...context,
+        systemPrompt:[context.systemPrompt,
+          'Complete the task within the response budget below. Batch independent supporting calls and leave a later response to read their results and submit the final tool. Do not claim incomplete work is complete.',
+          JSON.stringify({workerBudget:{response:modelTurns,maxResponses:maxResultTurns,remainingResponses:maxResultTurns-modelTurns,finalTool:resultTool.name}}),
+        ].join('\n\n'),
+      }:context;
       const resultOptions = {
           ...streamOptions,
           ...(temperature !== undefined ? { temperature } : {}),
@@ -411,8 +418,8 @@ export async function runWorkerAgentTool<TParameters extends TSchema>(
           onPayload: (payload: unknown) => payload && typeof payload === "object" ? { ...client.defaults.extra, ...payload } : payload,
         };
       return client.stream === false
-        ? guardedPiNonStreaming(streamModel, context, resultOptions, client.proxyUrl)
-        : guardedPiStream(streamModel, context, resultOptions, 1, {firstEventTimeoutMs:300_000,idleTimeoutMs:300_000});
+        ? guardedPiNonStreaming(streamModel, boundedContext, resultOptions, client.proxyUrl)
+        : guardedPiStream(streamModel, boundedContext, resultOptions, 1, {firstEventTimeoutMs:300_000,idleTimeoutMs:300_000});
     },
     getApiKey: () => client._apiKey,
   });
