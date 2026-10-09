@@ -356,7 +356,7 @@ export function createLLMClient(config: LLMConfig): LLMClient {
   const baseUrl = config.baseUrl || inkosProvider?.baseUrl || preset?.baseUrl || "";
   const extraHeaders = sanitizeHttpHeaders(config.headers ?? parseEnvHeaders());
   const compat = piApi === "openai-completions"
-    ? resolveProviderCompat(inkosProvider, baseUrl)
+    ? resolveProviderCompat(inkosProvider)
     : undefined;
 
   const provider = config.provider === "anthropic" || piApi === "anthropic-messages" ? "anthropic" : "openai";
@@ -417,13 +417,13 @@ function resolvePiApi(
 
 function resolveProviderCompat(
   provider: ReturnType<typeof getEndpoint>,
-  baseUrl: string,
-): Record<string, unknown> | undefined {
-  const compat = {
+): Record<string, unknown> {
+  return {
+    // Chat storage is not used by InkOS. Do not assume that every compatible
+    // endpoint accepts the SDK's optional store field.
+    supportsStore: false,
     ...(provider?.compat ?? {}),
-    ...(baseUrl.includes("generativelanguage.googleapis.com") ? { supportsStore: false } : {}),
   };
-  return Object.keys(compat).length > 0 ? compat : undefined;
 }
 
 function parseEnvHeaders(): Record<string, string> | undefined {

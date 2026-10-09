@@ -49,6 +49,7 @@ it.each([
       return events.result();
     });
     expect((await run()).stopReason).toBe('stop');
+    expect(received[0]).not.toHaveProperty('store');
     if(streaming)expect(preparedKeys[0]).toEqual(Object.keys(received[0]!).sort());
     completeTool = true;
     const completed = await run('required');
@@ -77,7 +78,7 @@ it.each([
     for (const textClient of [client, { ...client, service: 'openai' }]) {
       const defaultText = await runWorkerAgent(textClient, modelId, [{role:'user',content:'Reply briefly.'}], {maxTokens:128});
       expect(defaultText.content.length).toBeGreaterThan(0);
-      for (const option of ['temperature', 'top_p', 'top_k', 'seed', 'reasoning_effort', 'thinking', 'response_format', 'tool_choice', 'professionalGuidance']) {
+      for (const option of ['temperature', 'top_p', 'top_k', 'seed', 'reasoning_effort', 'thinking', 'response_format', 'tool_choice', 'store', 'professionalGuidance']) {
         expect(received.at(-1)).not.toHaveProperty(option);
       }
     }
