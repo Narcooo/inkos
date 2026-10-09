@@ -74,7 +74,7 @@ it('reviews an explicit candidate snapshot without adopting it or unrelated sour
     const tool=createArtifactMethodTools(pipeline,root,'candidate')[0];
     await expect(tool.execute('missing',{artifactId:target.id,instruction:'Review candidate'})).rejects.toMatchObject({code:'ARTIFACT_REVISION_REQUIRED'});
     const authorRequest='Review this candidate scene and preserve the separate notes.';
-    const delegatedInstruction='Review candidate';
+    const delegatedInstruction='Check the scene entry and exit states against the supplied source.';
     const result=await executeExplicitCapabilityTool({projectRoot:root,workId:'candidate',authorRequest,
       binding:{capabilityId:'workspace',actionId:tool.name,profileId:'short-fiction',risk:'recoverable-write'},tool,
       parameters:{artifactId:target.id,revisionId:target.revisions[0].id,instruction:delegatedInstruction},
@@ -84,8 +84,7 @@ it('reviews an explicit candidate snapshot without adopting it or unrelated sour
     const report=JSON.parse(await readFile(join(root,'works/candidate',(result.data as {path:string}).path),'utf8'));
     expect(report).toMatchObject({artifactId:target.id,revisionId:target.revisions[0].id,targetHash:target.revisions[0].checksum,scope:authorRequest,coordinatorInstruction:delegatedInstruction,reviewBasis:'author_request'});
     const request = JSON.parse([...requests[0]!.messages].reverse().find(message => message.role === 'user')!.content);
-    expect(request).toMatchObject({instruction:authorRequest});
-    expect(request).not.toHaveProperty('reviewFocus');
+    expect(request).toMatchObject({instruction:authorRequest,reviewFocus:delegatedInstruction});
     const authorContexts=requests[0]!.messages.flatMap(message=>message.content.split('\n\n')).flatMap(block=>{try{const value=JSON.parse(block);return value.authorRequest?[value.authorRequest]:[];}catch{return[];}});
     expect(authorContexts).toEqual([authorRequest]);
     expect(currentExecutionAuthorRequest()).toBeUndefined();
