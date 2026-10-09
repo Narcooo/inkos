@@ -274,15 +274,17 @@ export function createFillNodeTool(
       const node = await deps.submitNode(systemPrompt, userPrompt, params.nodeId, signal);
       const existing=graph?.nodes.find(n=>n.id===params.nodeId);
       const filled=existing?{...node,id:existing.id,type:existing.type,choices:existing.choices}:node;
-      const { rev } = await applyGraphDelta({
+      const { graph: persisted, rev } = await applyGraphDelta({
         projectRoot,
         projectId,
         delta: { nodes: { upsert: [filled], remove: [] }, notes: [] },
         phase: "workshop",
       });
-      return textResult(`Node ${params.nodeId} filled (rev ${rev}).`, graphUpdatedDetails(rev, {
+      const details = graphUpdatedDetails(rev, {
+        node: persisted.nodes.find(node => node.id === params.nodeId),
         skillIds: deps.skillIds?.() ?? [],
-      }));
+      });
+      return textResult(JSON.stringify(details), details);
     },
   };
 }
@@ -311,15 +313,17 @@ export function createReviseNodeTool(
         ...(params.fields.includes("sceneDesc") ? {sceneDesc:generated.sceneDesc} : {}),
         ...(params.fields.includes("dialogue") ? {dialogue:generated.dialogue} : {}),
       };
-      const { rev } = await applyGraphDelta({
+      const { graph: persisted, rev } = await applyGraphDelta({
         projectRoot,
         projectId,
         delta: { nodes: { upsert: [node], remove: [] }, notes: [] },
         phase: "workshop",
       });
-      return textResult(`Node ${params.nodeId} revised (rev ${rev}).`, graphUpdatedDetails(rev, {
+      const details = graphUpdatedDetails(rev, {
+        node: persisted.nodes.find(node => node.id === params.nodeId),
         skillIds: deps.skillIds?.() ?? [],
-      }));
+      });
+      return textResult(JSON.stringify(details), details);
     },
   };
 }

@@ -111,7 +111,13 @@ it('checks exact delivery requirements, corrects a draft and preserves topology 
     await createDraftStructureTool(root,'film',deps).execute('structure',{instruction:'Two nodes'},undefined);
     expect(structure).toHaveBeenCalledTimes(2);
     expect((await loadStoryGraph(root,'film'))?.nodes.map(n=>n.id)).toEqual(['s','e']);
-    for(const tool of [createFillNodeTool(root,'film',deps),createReviseNodeTool(root,'film',deps)])await tool.execute('edit',{nodeId:'s',instruction:'Edit prose',fields:['sceneDesc','dialogue']},undefined);
+    for(const tool of [createFillNodeTool(root,'film',deps),createReviseNodeTool(root,'film',deps)]) {
+      const receipt=await tool.execute('edit',{nodeId:'s',instruction:'Edit prose',fields:['sceneDesc','dialogue']},undefined);
+      const persisted=(await loadStoryGraph(root,'film'))!.nodes.find(node=>node.id==='s');
+      expect(receipt.details).toMatchObject({kind:'graph_updated',node:persisted});
+      const visible=JSON.parse(receipt.content.find(item=>item.type==='text')!.text!);
+      expect(visible.node).toEqual(persisted);
+    }
     expect((await loadStoryGraph(root,'film'))?.nodes[0]).toMatchObject({id:'s',type:'start',sceneDesc:'Edited',choices:start.choices});
     const beforeProseRevision=(await loadStoryGraph(root,'film'))!.nodes[0]!;
     await createReviseNodeTool(root,'film',{...deps,submitNode:async()=>({...beforeProseRevision,title:'Unrequested rename',act:'Unrequested act',position:{x:10,y:20},imageSlot:{prompt:'Unrequested image'},sceneDesc:'Scoped scene',dialogue:[{speaker:'Player',text:'Ready',emotion:''}]})}).execute('scoped-edit',{nodeId:'s',fields:['sceneDesc','dialogue'],instruction:'Revise prose only'},undefined);
