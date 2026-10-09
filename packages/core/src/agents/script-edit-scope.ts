@@ -11,15 +11,44 @@ const ScriptScope=Type.Object({
 export function scriptDialogueIndex(content:string){
   const {paragraphs}=sourceUnits(content);
   const cast:Array<{id:string;name:string;description:string;sourceUnitId?:string}>=[];
+  const castParagraphIds=new Set<string>();
   const sameName=(left:string,right:string|undefined)=>left.toLocaleLowerCase()===right?.toLocaleLowerCase();
+  let castSectionDepth:number|undefined;
+  let currentCharacter:typeof cast[number]|undefined;
   for(const paragraph of paragraphs){
     const line=paragraph.lines[0]!;
-    if(cast.length&&/^\*\*[^*]+\*\*\s*$/u.test(line.text.trim()))break;
-    const definition=line.text.trim().match(/^\*\*([^*]+)\*\*\s+(.+)$/u);
-    if(definition&&!cast.some(character=>sameName(character.name,definition[1])))cast.push({id:`speaker-${cast.length+1}`,name:definition[1]!,description:definition[2]!,sourceUnitId:line.id});
+    const heading=line.text.trim().match(/^(#{1,6})\s+(.+?)(?:\s+#+)?$/u);
+    if(heading){
+      if(castSectionDepth!==undefined&&heading[1]!.length<=castSectionDepth)castSectionDepth=undefined;
+      if(/^(?:人物|人物表|人物介绍|角色|角色表|角色介绍|cast|characters)$/iu.test(heading[2]!))castSectionDepth=heading[1]!.length;
+      currentCharacter=undefined;
+      if(castSectionDepth!==undefined)castParagraphIds.add(paragraph.id);
+      continue;
+    }
+    const definition=line.text.trim().match(/^\*\*([^*]+)\*\*(?:\s+(.+))?$/u);
+    if(castSectionDepth!==undefined){
+      castParagraphIds.add(paragraph.id);
+      if(definition){
+        currentCharacter=cast.find(character=>sameName(character.name,definition[1]));
+        if(!currentCharacter){
+          currentCharacter={id:`speaker-${cast.length+1}`,name:definition[1]!,description:[definition[2],...paragraph.lines.slice(1).map(item=>item.text.trim())].filter(Boolean).join('\n'),sourceUnitId:line.id};
+          cast.push(currentCharacter);
+        }
+      }else if(currentCharacter){
+        currentCharacter.description=[currentCharacter.description,...paragraph.lines.map(item=>item.text.trim())].filter(Boolean).join('\n');
+      }
+      continue;
+    }
+    // Legacy scripts put inline cast definitions before the first scene.
+    if(definition&&!definition[2])break;
+    if(definition&&!cast.some(character=>sameName(character.name,definition[1]))){
+      cast.push({id:`speaker-${cast.length+1}`,name:definition[1]!,description:definition[2]!,sourceUnitId:line.id});
+      castParagraphIds.add(paragraph.id);
+    }
   }
   const labels=new Map<string,number>();
   for(const paragraph of paragraphs){
+    if(castParagraphIds.has(paragraph.id))continue;
     const label=paragraph.lines[0]!.text.trim().match(/^\*\*([^*]+)\*\*$/u)?.[1];
     if(label)labels.set(label,(labels.get(label)??0)+1);
   }
@@ -29,6 +58,7 @@ export function scriptDialogueIndex(content:string){
   const dialogue:Array<{id:string;speakerId:string;scene:string;speechBlock:number;precedingDirection:string;text:string}>=[];
   let scene='',precedingDirection='',speechBlock=0,inDialogue=false;
   for(const paragraph of paragraphs){
+    if(castParagraphIds.has(paragraph.id))continue;
     const label=paragraph.lines[0]!.text.trim().match(/^\*\*([^*]+)\*\*$/u)?.[1];
     const speaker=cast.find(character=>sameName(character.name,label));
     if(label&&!speaker){scene=label;inDialogue=false;precedingDirection='';continue;}
@@ -41,7 +71,7 @@ export function scriptDialogueIndex(content:string){
       dialogue.push({id:line.id,speakerId:speaker.id,scene,speechBlock,precedingDirection,text:line.text});
     }
   }
-  return {cast,dialogue};
+  return {cast,dialogue,castParagraphIds};
 }
 
 export function scriptDialogueScopeRequest(content:string,authorRequest:string){
@@ -55,8 +85,7 @@ export function scriptDialogueScopeRequest(content:string,authorRequest:string){
       const speech=speechById.get(line.id);
       return {id:line.id,kind:speech?'dialogue':line===paragraph.lines[0]?'speaker_label':'stage_direction',...speech,text:line.text};
     });
-    const character=catalog.cast.find(item=>item.sourceUnitId===paragraph.lines[0]!.id);
-    return [{id:paragraph.id,kind:character?'cast_definition':'stage_or_heading',text:paragraph.lines.map(line=>line.text).join('')}];
+    return [{id:paragraph.id,kind:catalog.castParagraphIds.has(paragraph.id)?'cast_definition':'stage_or_heading',text:paragraph.lines.map(line=>line.text).join('')}];
   });
   const byId=new Map(units.map(unit=>[unit.id,unit]));
   const validate=(result:Static<typeof ScriptScope>)=>{
