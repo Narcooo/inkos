@@ -18,7 +18,7 @@ export function createProfileWorkTools(root: string, capabilities: CapabilityReg
     { name: "list_work_profiles", label: "List creative profiles", description: "List installed creative profiles and the methods and actions they compose.", parameters: Type.Object({}),
       execute: async () => ({ content: [{ type: "text", text: JSON.stringify(createBuiltInWorkProfileRegistry(root).list()) }], details: { kind: "work_profiles" } }),
     },
-    { name: "create_work", label: "Create work from profile", description: "Create and bind a Work using an installed Profile, persist the user's brief, and activate the Profile's production actions for the next step. For derivation, supply source or ordered sources covering all author-requested material.", parameters: CreateParameters,
+    { name: "create_work", label: "Create work from profile", description: "Create and bind a Work using an installed Profile, persist the user's brief, and activate the Profile's production actions for the next step. For derivation, supply source or ordered sources covering all author-requested material. inspect_work returns sourceSets for complete manuscripts; use their source references when the author requests written content, rather than a brief or plan.", parameters: CreateParameters,
       execute: async (_id, params) => {
         const profile = createBuiltInWorkProfileRegistry(root).require(params.profileId);
         capabilities.forProfile(profile);

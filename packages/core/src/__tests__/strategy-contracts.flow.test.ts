@@ -25,11 +25,31 @@ import { prepareWorkerMessages } from "../agents/base.js";
 import { createLLMClient } from "../llm/provider.js";
 import { withExecutionEvidence } from "../harness/execution-evidence.js";
 import { buildShortFictionChapterBatches, validateShortReviewSources } from "../agents/short-fiction.js";
-import{createReadTool,createLsTool}from'../agent/agent-tools.js';
+import{createReadTool,createLsTool,createInspectWorkTool}from'../agent/agent-tools.js';
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
 const draft = { storyTitle: "Fixture", rawContent: "", chapters: [1, 2].map(number => ({ number, title: `Part ${number}`, content: "one two three", charCount: 3 })) };
+
+it('binds the inspected manuscript collection in reading order and pins its revisions independently of the brief',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'inkos-manuscript-sources-'));roots.push(root);
+  const content=['Mara opens the gallery.','Mara returns the borrowed key.'];
+  const writes=[{relativePath:'works/parent/source/brief.md',content:'A proposed story about a gallery.'},
+    {relativePath:'works/parent/source/chapters/0002.md',content:content[1]!},
+    {relativePath:'works/parent/source/chapters/0001.md',content:content[0]!}];
+  const initial=createInitialWorkManifestWrite({workId:'parent',profileId:'longform-novel',title:'Gallery',language:'en',writes});
+  await commitAtomicFileSet({rootDir:root,writes:[initial.write,...writes]});
+  const inspected=await createInspectWorkTool(root).execute('inspect',{workId:'parent'},undefined as never,undefined);
+  const sources=(inspected.details as {sourceSets:Array<{id:string;sources:Array<{workId:string;artifactId:string;revisionId:string}>}>}).sourceSets.find(set=>set.id==='novel-manuscript')!.sources;
+  expect(sources.map(ref=>initial.manifest.artifacts.find(a=>a.id===ref.artifactId)!.revisions.find(r=>r.id===ref.revisionId)!.path)).toEqual(['source/chapters/0001.md','source/chapters/0002.md']);
+  await syncWorkSourceArtifacts({projectRoot:root,workId:'parent',accept:true,writes:[{relativePath:writes[1]!.relativePath,content:'A later chapter revision.'}]});
+  const pipeline=new PipelineRunner({client:{} as never,model:'unused',projectRoot:root});
+  const registry=createProductionCapabilityRegistry({pipeline,projectRoot:root,sessionId:'sources',profileId:'workspace-default',work:null,language:'en',playWorldExists:false,sameSessionProposal:false,allowSystemFileRead:false});
+  const create=createProfileWorkTools(root,registry).find(tool=>tool.name==='create_work')!;
+  await executeExplicitCapabilityTool({projectRoot:root,tool:create,binding:{capabilityId:'workspace',actionId:create.name,profileId:'workspace-default',risk:'recoverable-write'},parameters:{workId:'cover',profileId:'visual-asset',title:'Gallery cover',intent:'Use the selected manuscript.',language:'en',sources}});
+  expect(await readFile(join(root,'works/cover/source/source-material.md'),'utf8')).toBe(content.join('\n\n'));
+  expect((await loadWorkManifest(root,'cover')).lineage).toEqual(sources.map(ref=>({relation:'derived-from',sourceWorkId:ref.workId,sourceArtifactId:ref.artifactId,sourceRevisionId:ref.revisionId})));
+});
 
 it('assigns the same artifact roles at creation and later registration using storage namespaces',async()=>{
   const root=await mkdtemp(join(tmpdir(),'inkos-artifact-roles-'));roots.push(root);

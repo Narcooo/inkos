@@ -10,6 +10,7 @@ import { deleteLatestChapter } from "../state/chapter-delete.js";
 import { assertSafeBookId, deriveBookIdFromTitle } from "../utils/book-id.js";
 import { safeChildPath } from "../utils/path-safety.js";
 import { readArtifactRevision } from "../harness/artifact-reader.js";
+import {currentWorkSourceSets} from '../harness/source-sets.js';
 import { currentExecutionAuthorRequest } from "../harness/execution-evidence.js";
 import { createPlayPresentation } from "../play/play-presentation.js";
 import { toPosixPath } from "../utils/posix-path.js";
@@ -3173,7 +3174,7 @@ export function createInspectWorkTool(projectRoot: string): AgentTool<typeof Ins
     name: "inspect_work",
     description:
       "Inspect one Work manifest and return canonical current and pending candidate artifact paths with revision status. " +
-      "Read with workspace__read using artifactId, workId and optionally revisionId; paths are display references, not identifiers to reconstruct.",
+      "Use sourceSets for complete manuscript inputs when deriving another Work; a brief describes intent and is not the written manuscript. Read with workspace__read using artifactId, workId and optionally revisionId; paths are display references, not identifiers to reconstruct.",
     label: "Inspect Work",
     parameters: InspectWorkParams,
     async execute(
@@ -3181,6 +3182,7 @@ export function createInspectWorkTool(projectRoot: string): AgentTool<typeof Ins
       params: Static<typeof InspectWorkParams>,
     ) {
       const work = await loadWorkManifest(projectRoot, params.workId);
+      const sourceSets=currentWorkSourceSets(work);
       const artifacts = work.artifacts.flatMap((artifact) => {
         const current = artifact.revisions.find((revision) => revision.id === artifact.currentRevisionId);
         const pending = artifact.revisions.filter((revision) => revision.status === "candidate").at(-1);
@@ -3201,12 +3203,14 @@ export function createInspectWorkTool(projectRoot: string): AgentTool<typeof Ins
         `language=${work.language}`,
         `status=${work.status}`,
         `lineage=${JSON.stringify(work.lineage)}`,
+        `sourceSets=${JSON.stringify(sourceSets)}`,
+        "For a manuscript-based derivation, pass the relevant source set's sources unchanged to create_work or the domain creation action. Select a subset only when the author requests that subset.",
         "Artifacts:",
         ...(artifacts.length > 0 ? artifacts.map((artifact) => (
           `- artifact=${JSON.stringify(artifact.artifactId)} | kind=${artifact.kind} | status=${artifact.status} | path=${JSON.stringify(artifact.path)}`
         )) : ["- none"]),
       ].join("\n"), { kind: "work_inspected", workId: work.id, title: work.title,
-        profileId: work.profileId, language: work.language, status: work.status, lineage: work.lineage, artifacts });
+        profileId: work.profileId, language: work.language, status: work.status, lineage: work.lineage, sourceSets, artifacts });
     },
   };
 }
