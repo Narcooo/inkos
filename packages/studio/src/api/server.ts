@@ -1317,7 +1317,7 @@ async function executeConfirmedProductionAction(args: {
   } else if (args.requestedIntent === "fanfic_init") {
     const payload = actionPayload?.fanficCreate;
     const title = requirePayloadText(payload?.title, pick(lang, "确认创建同人缺少书名，请补充后重新确认。", "The fanfiction confirmation is missing a title."));
-    if (!payload?.source && !payload?.sourceText?.trim() && !payload?.sourcePath?.trim()) {
+    if (!payload?.source && !payload?.sources?.length && !payload?.sourceText?.trim() && !payload?.sourcePath?.trim()) {
       throw new ApiError(400, "CONFIRMED_ACTION_PAYLOAD_INCOMPLETE", pick(lang, "创建同人需要原作资料或上传文件。", "Fanfiction creation requires source material or an uploaded file."));
     }
     tool = createFanficBookTool(args.pipeline, args.root, {
@@ -1391,7 +1391,7 @@ async function executeConfirmedProductionAction(args: {
     const payload = actionPayload?.imitationCreate;
     const title = requirePayloadText(payload?.title, pick(lang, "确认创建仿写缺少书名。", "The imitation confirmation is missing a title."));
     const storyIdea = requirePayloadText(payload?.storyIdea, pick(lang, "仿写需要一个原创故事方向。", "Style imitation requires an original story idea."));
-    if (!payload?.source && !payload?.referenceText?.trim() && !payload?.referencePath?.trim()) {
+    if (!payload?.source && !payload?.sources?.length && !payload?.referenceText?.trim() && !payload?.referencePath?.trim()) {
       throw new ApiError(400, "CONFIRMED_ACTION_PAYLOAD_INCOMPLETE", pick(lang, "仿写需要参考文本或上传文件。", "Style imitation requires reference text or an uploaded file."));
     }
     tool = createImitationBookTool(args.pipeline, args.root, {

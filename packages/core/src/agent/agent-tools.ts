@@ -52,7 +52,7 @@ import {
 import { listWorkManifests, loadWorkManifest, mergeWorkMetadata,saveWorkManifest } from "../harness/work-store.js";
 import { syncWorkSourceArtifacts } from "../harness/source-sync.js";
 import { StoryNodeToolSchema } from "../interactive-film/tool-schemas.js";
-import {CreationSourceReference,loadCreationSource,bindCreationSource} from './creation-source.js';
+import {CreationSourceReference,CreationSourceReferences,loadCreationSource,bindCreationSource} from './creation-source.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -333,6 +333,7 @@ const ProposeActionParams = Type.Object({
   }, { description: "Structured execution args for action=translation_create." })),
   fanficCreate: Type.Optional(Type.Object({
     source: Type.Optional(CreationSourceReference),
+    sources: Type.Optional(CreationSourceReferences),
     title: Type.String({ description: "Confirmed fanfiction book title." }),
     sourceText: Type.Optional(Type.String({ description: "Provided canon/source text. Prefer sourcePath for uploaded or long files." })),
     sourcePath: Type.Optional(Type.String({ description: "Project-relative uploaded canon/source file path." })),
@@ -363,6 +364,7 @@ const ProposeActionParams = Type.Object({
   }, { description: "Structured execution args for action=continuation_import. This imports and rebuilds state directly after confirmation." })),
   spinoffCreate: Type.Optional(Type.Object({
     source: Type.Optional(CreationSourceReference),
+    sources: Type.Optional(CreationSourceReferences),
     title: Type.String({ description: "Confirmed side-story title." }),
     parentBookId: Type.String({ description: "Existing InkOS parent book id whose canon is inherited." }),
     direction: Type.Optional(Type.String({ description: "Confirmed standalone side-story direction." })),
@@ -376,6 +378,7 @@ const ProposeActionParams = Type.Object({
   }, { description: "Structured execution args for action=spinoff_create. This creates the side-story directly after confirmation." })),
   imitationCreate: Type.Optional(Type.Object({
     source: Type.Optional(CreationSourceReference),
+    sources: Type.Optional(CreationSourceReferences),
     title: Type.String({ description: "Confirmed original imitation-project title." }),
     referenceText: Type.Optional(Type.String({ description: "Reference prose. Prefer referencePath for uploaded or long files." })),
     referencePath: Type.Optional(Type.String({ description: "Project-relative uploaded reference-work path." })),
@@ -522,6 +525,8 @@ function withSingleAttachmentFallback(
   if (
     params.action === "fanfic_init"
     && payload.fanficCreate
+    && !payload.fanficCreate.source
+    && !payload.fanficCreate.sources?.length
     && !payload.fanficCreate.sourceText?.trim()
     && useHostAttachment(payload.fanficCreate.sourcePath)
   ) {
@@ -537,6 +542,8 @@ function withSingleAttachmentFallback(
   if (
     params.action === "style_imitation"
     && payload.imitationCreate
+    && !payload.imitationCreate.source
+    && !payload.imitationCreate.sources?.length
     && !payload.imitationCreate.referenceText?.trim()
     && useHostAttachment(payload.imitationCreate.referencePath)
   ) {
@@ -592,7 +599,7 @@ function assertExecutableProposedAction(params: ProposeActionParamsType, payload
   }
   if (params.action === "fanfic_init") {
     requireProposedText(payload?.fanficCreate?.title, "fanficCreate.title");
-    if (!payload?.fanficCreate?.source && !payload?.fanficCreate?.sourceText?.trim() && !payload?.fanficCreate?.sourcePath?.trim()) {
+    if (!payload?.fanficCreate?.source && !payload?.fanficCreate?.sources?.length && !payload?.fanficCreate?.sourceText?.trim() && !payload?.fanficCreate?.sourcePath?.trim()) {
       throw new Error("propose_action is missing fanficCreate.sourceText/sourcePath; ask for or use the attached source before proposing production.");
     }
     return;
@@ -612,7 +619,7 @@ function assertExecutableProposedAction(params: ProposeActionParamsType, payload
   if (params.action === "style_imitation") {
     requireProposedText(payload?.imitationCreate?.title, "imitationCreate.title");
     requireProposedText(payload?.imitationCreate?.storyIdea, "imitationCreate.storyIdea");
-    if (!payload?.imitationCreate?.source && !payload?.imitationCreate?.referenceText?.trim() && !payload?.imitationCreate?.referencePath?.trim()) {
+    if (!payload?.imitationCreate?.source && !payload?.imitationCreate?.sources?.length && !payload?.imitationCreate?.referenceText?.trim() && !payload?.imitationCreate?.referencePath?.trim()) {
       throw new Error("propose_action is missing imitationCreate.referenceText/referencePath; ask for or use the attached reference before proposing production.");
     }
     return;
@@ -1293,6 +1300,7 @@ export function createRefreshFanficCanonTool(
 const FanficCreateParams = Type.Object({
   title: Type.String({ description: "Fanfiction book title." }),
   source: Type.Optional(CreationSourceReference),
+  sources: Type.Optional(CreationSourceReferences),
   sourceText: Type.Optional(Type.String({ description: "Verbatim source supplied by the author. For existing Works use source, never a summary." })),
   sourcePath: Type.Optional(Type.String({ description: "Project-relative uploaded canon/source path." })),
   sourceName: Type.Optional(Type.String({ description: "Human-readable source work name." })),
@@ -1315,7 +1323,7 @@ export function createFanficBookTool(
 ): AgentTool<typeof FanficCreateParams> {
   return {
     name: "fanfic_create",
-    description: "Create a fanfiction Work from an exact registered source or author-supplied material. Use source for existing Works; do not summarize them into sourceText.",
+    description: "Create a fanfiction Work from exact registered sources or author-supplied material. When the requested material spans multiple artifacts, pass all of them in sources in reading order. Do not summarize them into sourceText.",
     label: "Create Fanfiction",
     parameters: FanficCreateParams,
     async execute(_toolCallId, params: FanficCreateParamsType, signal, onUpdate) {
@@ -1323,6 +1331,7 @@ export function createFanficBookTool(
         projectRoot,
         targetWorkId: deriveBookIdFromTitle(params.title),
         source: params.source,
+        sources: params.sources,
         sourceText: params.sourceText,
         sourcePath: params.sourcePath,
         sourceName: params.sourceName,
@@ -1364,6 +1373,7 @@ const SpinoffCreateParams = Type.Object({
   title: Type.String({ description: "Standalone side-story title." }),
   parentBookId: Type.String({ description: "Existing InkOS parent book id." }),
   source: Type.Optional(CreationSourceReference),
+  sources: Type.Optional(CreationSourceReferences),
   direction: Type.Optional(Type.String({ description: "Side-story direction that must not advance the parent mainline." })),
   genre: Type.Optional(Type.String()),
   platform: Type.Optional(Type.String({ minLength: 1 })),
@@ -1401,9 +1411,9 @@ export function createSpinoffBookTool(
         minChapterLength:params.minChapterLength??parent.minChapterLength,maxChapterLength:params.maxChapterLength??parent.maxChapterLength,
       });
       await assertBookCreatable(projectRoot, book.id);
-      if(params.source){
-        if(params.source.workId!==parentBookId)throw Object.assign(new Error('The selected source must belong to the parent Work.'),{code:'CREATION_SOURCE_CONFLICT'});
-        const source=await loadCreationSource({projectRoot,targetWorkId:book.id,source:params.source,purpose:'reference'});
+      if(params.source||params.sources){
+        if([...(params.sources??[]),...(params.source?[params.source]:[])].some(source=>source.workId!==parentBookId))throw Object.assign(new Error('The selected source must belong to the parent Work.'),{code:'CREATION_SOURCE_CONFLICT'});
+        const source=await loadCreationSource({projectRoot,targetWorkId:book.id,source:params.source,sources:params.sources,purpose:'reference'});
         await pipeline.prepareDraftBook(book);
         await bindCreationSource(projectRoot,book.id,source);
       }
@@ -1432,6 +1442,7 @@ export function createSpinoffBookTool(
 const ImitationCreateParams = Type.Object({
   title: Type.String({ description: "Original imitation-project title." }),
   source: Type.Optional(CreationSourceReference),
+  sources: Type.Optional(CreationSourceReferences),
   referenceText: Type.Optional(Type.String({ description: "Verbatim reference supplied by the author. For existing Works use source, never a summary." })),
   referencePath: Type.Optional(Type.String({ description: "Project-relative uploaded reference-work path." })),
   storyIdea: Type.String({ description: "Original story idea. The reference contributes prose style, not plot or characters." }),
@@ -1462,6 +1473,7 @@ export function createImitationBookTool(
         projectRoot,
         targetWorkId: deriveBookIdFromTitle(params.title),
         source: params.source,
+        sources: params.sources,
         sourceText: params.referenceText,
         sourcePath: params.referencePath,
         sourceName: params.sourceName,

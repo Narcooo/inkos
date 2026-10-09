@@ -137,6 +137,7 @@ const CreationSourceReferenceSchema = z.object({workId:z.string().min(1),artifac
 
 export const FanficCreateActionPayloadSchema = z.object({
   source: CreationSourceReferenceSchema.optional(),
+  sources: z.array(CreationSourceReferenceSchema).min(1).optional(),
   title: z.string().min(1).optional(),
   sourceText: z.string().min(1).optional(),
   sourcePath: z.string().min(1).optional(),
@@ -150,8 +151,8 @@ export const FanficCreateActionPayloadSchema = z.object({
   minChapterLength:z.number().int().min(1).optional(),
   maxChapterLength:z.number().int().min(1).optional(),
 }).strict().refine(
-  (payload) => Boolean(payload.source || payload.sourceText?.trim() || payload.sourcePath?.trim()),
-  { message: "fanficCreate requires source, sourceText or sourcePath" },
+  (payload) => Boolean(payload.source || payload.sources?.length || payload.sourceText?.trim() || payload.sourcePath?.trim()),
+  { message: "fanficCreate requires source, sources, sourceText or sourcePath" },
 );
 
 export const ContinuationImportActionPayloadSchema = z.object({
@@ -172,6 +173,7 @@ export const ContinuationImportActionPayloadSchema = z.object({
 
 export const SpinoffCreateActionPayloadSchema = z.object({
   source: CreationSourceReferenceSchema.optional(),
+  sources: z.array(CreationSourceReferenceSchema).min(1).optional(),
   title: z.string().min(1).optional(),
   parentBookId: z.string().min(1).optional(),
   direction: z.string().min(1).optional(),
@@ -186,6 +188,7 @@ export const SpinoffCreateActionPayloadSchema = z.object({
 
 export const ImitationCreateActionPayloadSchema = z.object({
   source: CreationSourceReferenceSchema.optional(),
+  sources: z.array(CreationSourceReferenceSchema).min(1).optional(),
   title: z.string().min(1).optional(),
   referenceText: z.string().min(1).optional(),
   referencePath: z.string().min(1).optional(),
@@ -199,8 +202,8 @@ export const ImitationCreateActionPayloadSchema = z.object({
   minChapterLength:z.number().int().min(1).optional(),
   maxChapterLength:z.number().int().min(1).optional(),
 }).strict().refine(
-  (payload) => Boolean(payload.source || payload.referenceText?.trim() || payload.referencePath?.trim()),
-  { message: "imitationCreate requires source, referenceText or referencePath" },
+  (payload) => Boolean(payload.source || payload.sources?.length || payload.referenceText?.trim() || payload.referencePath?.trim()),
+  { message: "imitationCreate requires source, sources, referenceText or referencePath" },
 );
 
 export const ActionPayloadSchema = z.object({
