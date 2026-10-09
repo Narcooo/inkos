@@ -697,7 +697,7 @@ async function reviseShortFictionWithLock(options: ShortFictionRunOptions & { re
   const scopeAuthorRequest=authorScope?saved?.authorRequest:authorRequest;
   if(!authorScope&&authorRequest?.trim()&&originalArtifact?.currentRevisionId){
     const original=await readArtifactRevision({projectRoot:options.projectRoot,workId:work.id,artifactId:originalArtifact.id,revisionId:originalArtifact.currentRevisionId});
-    const scopeKey=shortInputHash({version:1,authorRequest,baseline:original.revision.checksum});
+    const scopeKey=shortInputHash({version:1,authorRequest,baseline:original.revision.checksum}).slice('sha256:'.length);
     const scopePath=join('.inkos','short-author-scopes',work.id,`${scopeKey}.json`);
     const savedScope=await tryReadProjectText(options.projectRoot,scopePath);
     authorScope=savedScope?Value.Parse(ShortAuthorScopeSchema,JSON.parse(savedScope)):
