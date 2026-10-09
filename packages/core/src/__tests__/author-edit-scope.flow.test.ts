@@ -48,6 +48,30 @@ it('locates author-authorized text before rewriting and preserves surrounding by
  }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));await rm(root,{recursive:true,force:true});}
 },20000);
 
+it('retains review guidance for an authorized whole-document rewrite',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'inkos-whole-revision-')),requests:any[]=[];
+ const original='Mara waits in the gallery.\n',revised='Mara locks the gallery and leaves.\n';
+ const authorRequest='Revise the complete script using the professional review. Preserve Mara as the sole character.';
+ const instruction='Replace the passive ending with Mara locking the gallery before leaving.';
+ const server=createServer(async(req,res)=>{
+  const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));
+  const body=JSON.parse(Buffer.concat(chunks).toString());requests.push(body);const name=body.tools[0].function.name;
+  const args=name==='submit_author_edit_scope'?{wholeDocument:true,selections:[],reason:'Whole script revision authorized.'}:{range_0_content:revised};
+  res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{tool_calls:[{id:'whole-'+requests.length,type:'function',function:{name,arguments:JSON.stringify(args)}}]}}]}));
+ });server.listen(0,'127.0.0.1');await once(server,'listening');
+ try{
+  await saveWorkManifest(root,createWorkManifest({id:'gallery',profileId:'script',title:'Gallery',language:'en'}));await mkdir(join(root,'works/gallery/source'),{recursive:true});
+  const work=await syncWorkSourceArtifacts({projectRoot:root,workId:'gallery',accept:true,writes:[{relativePath:'works/gallery/source/script.md',content:original}]});
+  const llm={service:'custom',provider:'openai' as const,configSource:'studio' as const,model:'fixture',apiKey:'fixture',baseUrl:`http://127.0.0.1:${(server.address() as {port:number}).port}/v1`,apiFormat:'chat' as const,stream:false,thinkingBudget:0,maxTokens:8192};
+  const pipeline=new PipelineRunner({projectRoot:root,client:createLLMClient(llm),model:'fixture',defaultLLMConfig:llm});
+  await executeExplicitCapabilityTool({projectRoot:root,workId:'gallery',authorRequest,binding:{capabilityId:'workspace',actionId:'revise_work_artifact',profileId:'script',risk:'recoverable-write'},tool:createArtifactMethodTools(pipeline,root,'gallery')[1]!,parameters:{artifactId:work.artifacts[0]!.id,instruction}});
+  expect(JSON.parse(requests[1].messages.findLast((m:any)=>m.role==='user').content)).toMatchObject({instruction,editableRanges:[{startLine:1,endLine:1}]});
+  const authorContexts=requests[1].messages.flatMap((m:any)=>m.content.split('\n\n')).flatMap((block:string)=>{try{return [JSON.parse(block).authorRequest].filter(Boolean);}catch{return[];}});
+  expect(authorContexts).toEqual([authorRequest]);
+  expect(await readFile(join(root,'works/gallery/source/script.md'),'utf8')).toBe(revised);
+ }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));await rm(root,{recursive:true,force:true});}
+},15000);
+
 it('retains the original final paragraph permission after committed prose expands into multiple paragraphs',async()=>{
  const {ReviserAgent}=await import('../agents/reviser.js');
  const {withExecutionEvidence}=await import('../harness/execution-evidence.js');
