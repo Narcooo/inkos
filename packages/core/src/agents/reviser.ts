@@ -1,5 +1,7 @@
 import {authorTextScopeRequest,authorTextScopeContract} from './author-edit-scope.js';
 import {currentExecutionAuthorRequest,currentExecutionBaselineWork,currentExecutionWork} from '../harness/execution-evidence.js';
+import {resolveAuthorTextPermission} from '../harness/author-text-permission.js';
+import {readArtifactRevision} from '../harness/artifact-reader.js';
 import { BaseAgent } from "./base.js";
 import type { LengthSpec } from "../models/length-governance.js";
 import type { Observation } from "../models/observation.js";
@@ -72,12 +74,20 @@ export class ReviserAgent extends BaseAgent {
     const baseline=currentExecutionBaselineWork();
     const work=currentExecutionWork();
     const prefix=`source/chapters/${String(chapterNumber).padStart(4,'0')}_`;
-    const predatesRequest=baseline===undefined||Boolean(baseline&&baseline.id===work?.id&&baseline.artifacts.some(artifact=>artifact.revisions.some(revision=>revision.id===artifact.currentRevisionId&&revision.path.startsWith(prefix)&&revision.path.endsWith('.md'))));
+    const originalArtifact=baseline&&baseline.id===work?.id?baseline.artifacts.find(artifact=>artifact.revisions.some(revision=>revision.id===artifact.currentRevisionId&&revision.path.startsWith(prefix)&&revision.path.endsWith('.md'))):undefined;
+    const predatesRequest=baseline===undefined||Boolean(originalArtifact);
     let authorized:ReturnType<typeof authorTextScopeContract>|undefined;
+    let scopeSource=chapterContent;
     if(authorRequest&&predatesRequest){
-      const scope=authorTextScopeRequest(chapterContent,authorRequest);
-      const selected=await this.submitStructured(scope.messages,scope.tool,{maxTokens:Math.min(8192,this.ctx.client.defaults.maxTokens),professionalGuidance:false});
-      authorized=authorTextScopeContract(chapterContent,selected.result);
+      const select=async(source:string,request:string)=>{
+        const scope=authorTextScopeRequest(source,request);
+        return (await this.submitStructured(scope.messages,scope.tool,{maxTokens:Math.min(8192,this.ctx.client.defaults.maxTokens),professionalGuidance:false})).result;
+      };
+      if(originalArtifact?.currentRevisionId&&baseline){
+        const original=await readArtifactRevision({projectRoot:this.ctx.projectRoot,workId:baseline.id,artifactId:originalArtifact.id,revisionId:originalArtifact.currentRevisionId});
+        scopeSource=body(original.bytes.toString('utf8'));
+        authorized=await resolveAuthorTextPermission({projectRoot:this.ctx.projectRoot,workId:baseline.id,artifactId:originalArtifact.id,revisionId:original.revision.id,originalContent:scopeSource,currentContent:chapterContent,authorRequest,select});
+      }else authorized=authorTextScopeContract(chapterContent,await select(chapterContent,authorRequest));
     }
     const source=mode==='spot-fix'||authorized?numberReviewSource(chapterContent):chapterContent;
     const userPrompt = isEnglish
@@ -90,7 +100,7 @@ export class ReviserAgent extends BaseAgent {
     if(options.candidateText)messages.push({role:'user',content:JSON.stringify({unfinishedCandidate:body(options.candidateText),instruction:'Continue improving this unfinished candidate toward the original request. The original chapter remains authoritative for facts and protected text. Return only the requested replacement fields or complete revision; do not restart from the original when this candidate already addresses part of the task.'})});
     const outputBudget = Math.min(this.ctx.client.defaults.maxTokens, Math.max(8192, Math.ceil((options.lengthSpec?.target ?? chapterContent.length) * 4) + 8192));
     const output = authorized || mode === "spot-fix" || options.targetText!==undefined
-      ? await this.submitSpotFix(messages, chapterContent, outputBudget, options.lengthSpec,options.targetText,options.onCandidate,authorized)
+      ? await this.submitSpotFix(messages, scopeSource, outputBudget, options.lengthSpec,options.targetText,options.onCandidate,authorized)
       : await this.submitRewrite(messages, outputBudget, options.lengthSpec,body,options.onCandidate);
     const wordCount = options.lengthSpec
       ? countChapterLength(output.revisedContent, options.lengthSpec.countingMode)
@@ -129,7 +139,7 @@ export class ReviserAgent extends BaseAgent {
       ...(lengthSpec.maxChapterLength===undefined?{}:{maximum:lengthSpec.maxChapterLength-fixedLength}),
     }:undefined;
     if(replacementBudget?.maximum!==undefined&&replacementBudget.maximum<0)throw Object.assign(new Error('The protected text alone exceeds the chapter maximum. These edit ranges cannot satisfy both scope and length constraints.'),{code:'CHAPTER_EDIT_SCOPE_CONFLICT',replacementBudget});
-    const { result, usage } = await this.submitStructured([...messages,{role:'user',content:JSON.stringify({editableRanges:contract.ranges,replacementBudget,instruction:'Submit only replacement text in each named field. The replacement budget is shared by all fields, not per field. Keep the original trailing newline when present. The host preserves all source bytes outside the selected ranges.'})}], {
+    const { result, usage } = await this.submitStructured([...messages,{role:'user',content:JSON.stringify({editableRanges:contract.ranges,replacementBudget,instruction:'Submit only replacement text in each named field. These selections identify the original authorized source, even if the current revision split a selection into multiple paragraphs. Continue improving the current prose within that same permission. The replacement budget is shared by all fields, not per field. Keep the original trailing newline when present. Preserve all source bytes outside the selected ranges.'})}], {
       name: "submit_chapter_range_replacements",
       label: "Submit chapter range replacements",
       description: "Submit replacement prose only within the author-authorized source selections, using their named fields.",

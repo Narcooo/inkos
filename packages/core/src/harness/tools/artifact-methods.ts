@@ -1,4 +1,5 @@
 import {authorTextScopeRequest,authorTextScopeContract} from '../../agents/author-edit-scope.js';
+import {resolveAuthorTextPermission} from '../author-text-permission.js';
 import { numberReviewSource } from "../../models/observation.js";
 import { Type } from "@sinclair/typebox";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
@@ -16,7 +17,7 @@ import { validatedArtifactWrites } from "../artifact-validation.js";
 import { changedSourceRegion, measureSourceText, splitSourceLines } from "../../utils/source-text.js";
 import {textRangeEditContract,textScopedSelectionEditContract,TextEditRangeSchema,type TextEditRange} from '../../utils/text-range-edits.js';
 import { readArtifactRevision } from "../artifact-reader.js";
-import { currentExecutionBaselineWork, currentExecutionAuthorRequest, updateExecutionWork, recordExecutionEvidence } from "../execution-evidence.js";
+import { currentExecutionBaselineWork, currentExecutionAuthorRequest, updateExecutionWork } from "../execution-evidence.js";
 import {inspectFilmGraph} from './film-delivery.js';
 import {StoryGraphSchema} from '../../interactive-film/graph-schema.js';
 import {FilmRequirementsSchema,type FilmRequirements} from '../../interactive-film/delivery-requirements.js';
@@ -86,7 +87,7 @@ class ArtifactWorker extends BaseAgent {
   async selectAuthorScope(content: string, authorRequest: string) {
     const request=authorTextScopeRequest(content,authorRequest);
     const selected=await this.submitStructured(request.messages,request.tool,{maxTokens:Math.min(8192,this.ctx.client.defaults.maxTokens),professionalGuidance:false});
-    return authorTextScopeContract(content,selected.result);
+    return selected.result;
   }
 
   async review(sources: ReadonlyMap<string, string>, instruction: string, criteria: string[], paths: ReadonlyMap<string,string>, versions:ReadonlyMap<string,{revisionId:string;checksum:string}>, comparison?: ReviewComparison, structure?: unknown) {
@@ -108,16 +109,18 @@ class ArtifactWorker extends BaseAgent {
     });
     return response.result;
   }
-  async revise(content: string, instruction: string, references: ReadonlyMap<string, string>, ranges?:EditRange[],authorScope?:ReturnType<typeof textScopedSelectionEditContract>|ReturnType<typeof textRangeEditContract>) {
+  async revise(content: string, instruction: string, references: ReadonlyMap<string, string>, ranges?:EditRange[],authorScope?:ReturnType<typeof textScopedSelectionEditContract>|ReturnType<typeof textRangeEditContract>,authorRequest?:string) {
     if(authorScope||ranges){
       const contract=authorScope??textRangeEditContract(content,ranges!);
       const textSelections='startOffset' in contract.ranges[0]!;
       const response=await this.submitStructured([
+        ...(authorRequest?[{role:'system' as const,content:'The author request defines the goal and permission. The delegated instruction gives concrete editing guidance within that permission; apply it where compatible with the author request and the selected text. The selections refer to the original authorized source even when the current revision changed paragraph lengths. Improve the current prose within those same selections.'}]:[]),
         {role:"system",content:textSelections
           ? 'Revise only each exact selected text fragment. A selection may be part of a source line. The full document and protectedPrefix/protectedSuffix are read-only context and will remain around your replacement. Return only replacement characters for each content value in its named selection_N_text field. Do not repeat the protected prefix/suffix or add surrounding labels, annotations, formatting or line breaks that are outside the selection.'
           : "Revise only the numbered editable ranges using the user's instruction and professional methods. The full document is context. Return each range's replacement in its named range_N_content field, retaining the original trailing newline when present. Do not repeat or modify surrounding text."},
-        {role:"user",content:JSON.stringify({instruction,measurements:measureSourceText(content),document:numberReviewSource(content),...(textSelections?{editableSelections:contract.ranges}:{editableRanges:contract.ranges}),references:[...references].map(([sourceId,content])=>({sourceId,content}))})},
-      ],{name:"submit_artifact_revision",label:"Submit scoped artifact revision",description:"Submit only replacement text for each authorized range.",parameters:contract.parameters},{maxTokens:this.ctx.client.defaults.maxTokens});
+        {role:"user",content:JSON.stringify({instruction,...(authorRequest?{authorRequest}:{}),measurements:measureSourceText(content),document:numberReviewSource(content),...(textSelections?{editableSelections:contract.ranges}:{editableRanges:contract.ranges}),references:[...references].map(([sourceId,content])=>({sourceId,content}))})},
+      ],{name:"submit_artifact_revision",label:"Submit scoped artifact revision",description:"Submit only replacement text for each authorized range.",parameters:contract.parameters,
+        validate:result=>{contract.apply(result);return result;}},{maxTokens:this.ctx.client.defaults.maxTokens});
       return{content:contract.apply(response.result)};
     }
     return (await this.submitStructured([
@@ -195,13 +198,16 @@ export function createArtifactMethodTools(pipeline: PipelineRunner, root: string
         if (mode === "revise") {
           if(params.editRanges&&!revision.path.endsWith('.md'))throw Object.assign(new Error("Line-range revision requires a Markdown artifact"),{code:"ARTIFACT_EDIT_RANGE_FORMAT"});
           const authorRequest=currentExecutionAuthorRequest();
-          const hasOriginalArtifact=baselineWork?.id===workId&&baselineWork.artifacts.some(item=>item.id===artifact.id&&item.currentRevisionId);
-          const authorScope=hasOriginalArtifact&&authorRequest?.trim()&&revision.path.endsWith('.md')
-            ? await new ArtifactWorker(pipeline.createAgentContext('auditor',workId)).selectAuthorScope(content,authorRequest) : undefined;
-          if(authorScope)recordExecutionEvidence('edit-scope-selected',{workId,artifactId:artifact.id,revisionId:revision.id,authority:'author_request',ranges:authorScope.ranges});
+          const originalArtifact=baselineWork?.id===workId?baselineWork.artifacts.find(item=>item.id===artifact.id&&item.currentRevisionId):undefined;
+          let authorScope:ReturnType<typeof authorTextScopeContract>|undefined;
+          if(originalArtifact?.currentRevisionId&&authorRequest?.trim()&&revision.path.endsWith('.md')){
+            const original=await readArtifactRevision({projectRoot:root,workId,artifactId:artifact.id,revisionId:originalArtifact.currentRevisionId});
+            const selector=new ArtifactWorker(pipeline.createAgentContext('auditor',workId));
+            authorScope=await resolveAuthorTextPermission({projectRoot:root,workId,artifactId:artifact.id,revisionId:original.revision.id,originalContent:original.bytes.toString('utf8'),currentContent:content,authorRequest,select:(source,request)=>selector.selectAuthorScope(source,request)});
+          }
           let result: { content: string };
           try {
-            result = await worker.revise(content, authorScope ? authorRequest! : params.instruction, new Map([...sources].filter(([id]) => id !== artifact.id)),params.editRanges,authorScope);
+            result = await worker.revise(content, params.instruction, new Map([...sources].filter(([id]) => id !== artifact.id)),params.editRanges,authorScope,authorScope?authorRequest:undefined);
           } catch (error) {
             if ((error as {code?:string}).code === "ARTIFACT_EDIT_RANGE_INVALID") {
               Object.assign(error as object, { recovery: { action: "workspace__read",
