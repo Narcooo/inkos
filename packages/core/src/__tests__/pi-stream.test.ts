@@ -33,7 +33,18 @@ import {syncWorkSourceArtifacts} from '../harness/source-sync.js';
 const fetchWithProxyMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../utils/proxy-fetch.js", () => ({
-  fetchWithProxy: fetchWithProxyMock,
+  fetchWithProxy: async(url:string,init:RequestInit)=>{
+    const body=JSON.parse(String(init.body));
+    if(body.tools?.[0]?.function?.name==='submit_requested_operations'){
+      const request=body.messages.findLast((m:any)=>m.role==='user').content;
+      const operations:Record<string,unknown>={
+        'Create the script and complete its review and export.':{contentReviewQuote:'review and export.',exportQuote:'review and export.'},
+        'Create and export a script':{contentReviewQuote:'',exportQuote:'export a script'},
+      };
+      return new Response(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{tool_calls:[{id:'scope',type:'function',function:{name:'submit_requested_operations',arguments:JSON.stringify(operations[request]??{contentReviewQuote:'',exportQuote:''})}}]}}]}));
+    }
+    return fetchWithProxyMock(url,init);
+  },
 }));
 
 const model: Model<"openai-completions"> = {
@@ -345,7 +356,8 @@ describe("guardedPiNonStreaming", () => {
       expect(calls[0]!.tools.map(t=>t.function.name)).not.toContain('workspace__review_and_export_work_artifact');
       expect(calls[1]!.tools.map(t=>t.function.name)).toEqual(expect.arrayContaining(['workspace__review_and_export_work_artifact','workspace__revise_work_artifact']));
       expect(calls[1]!.tools.map(t=>t.function.name)).not.toContain('workspace__replace_work_artifact');
-      expect(calls[1]!.messages.at(-3)?.content).toBe(request);
+      expect(calls[1]!.messages.some(message=>message.role==='user'&&message.content===request)).toBe(true);
+      expect((await readTranscriptEvents(root,'create-fixture')).filter(event=>event.type==='request_delivery').at(-1)).toMatchObject({state:{declared:true,steps:[{operation:'review'},{operation:'export'}]}});
       expect((await readTranscriptEvents(root,'create-fixture')).filter(e=>e.type==='request_committed')).toHaveLength(2);
     } finally {evictAgentCache('create-fixture');await rm(root,{recursive:true,force:true});}
   });

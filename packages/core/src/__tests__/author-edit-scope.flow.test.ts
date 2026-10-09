@@ -16,3 +16,34 @@ it('locates author-authorized text before rewriting and preserves surrounding by
   expect(await readFile(join(root,'works/gallery/source/script.md'),'utf8')).toBe('The gallery is open.\n\nMARA (facing the window): I will stay.\n\nShe closes the door.\n');
  }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));await rm(root,{recursive:true,force:true});}
 },20000);
+
+
+it('keeps original chapter scope when a failed length repair is retried in a broader revision mode',async()=>{
+ const {ReviserAgent}=await import('../agents/reviser.js');
+ const {withExecutionEvidence}=await import('../harness/execution-evidence.js');
+ const {buildLengthSpec}=await import('../utils/length-metrics.js');
+ const original='Before dawn, Mara checks the locked gallery.\n\nMaybe.\n\nShe closes the door.\n';
+ const authorRequest='Change only the final spoken response, Maybe. Preserve all surrounding narration.';
+ const requests:any[]=[];let repair=false;
+ const server=createServer(async(req,res)=>{
+  const chunks:Buffer[]=[];for await(const c of req)chunks.push(Buffer.from(c));const body=JSON.parse(Buffer.concat(chunks).toString());requests.push(body);
+  const name=body.tools[0].function.name;
+  const args=name==='submit_author_edit_scope'?{wholeDocument:false,selections:[{startLine:3,endLine:3,text:'Maybe.'}],reason:'Only the spoken response is authorized.'}:{selection_0_text:repair?'I will stay.':'I '.repeat(40)};
+  res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{tool_calls:[{id:'scope-'+requests.length,type:'function',function:{name,arguments:JSON.stringify(args)}}]}}]}));
+ });server.listen(0,'127.0.0.1');await once(server,'listening');
+ try{
+  const client=createLLMClient({service:'custom',provider:'openai',configSource:'studio',model:'fixture',apiKey:'fixture',baseUrl:`http://127.0.0.1:${(server.address() as {port:number}).port}/v1`,apiFormat:'chat',stream:false,thinkingBudget:0});
+  const reviser=new ReviserAgent({client,model:'fixture',projectRoot:'/tmp'});
+  const options={language:'en' as const,lengthSpec:buildLengthSpec(15,'en',{minChapterLength:10,maxChapterLength:16}),contextPackage:{chapter:1,selectedContext:[{source:'delegated-instruction',protection:'protected' as const,reason:'Coordinator workaround',excerpt:'Shorten the entire chapter and revise any paragraph necessary to fit the length budget.'}]}};
+  await expect(withExecutionEvidence(()=>{},()=>reviser.reviseChapter('/tmp',original,1,[],'polish',undefined,options),undefined,undefined,authorRequest)).rejects.toMatchObject({code:'CHAPTER_LENGTH_OUT_OF_RANGE'});
+  repair=true;
+  const result=await withExecutionEvidence(()=>{},()=>reviser.reviseChapter('/tmp',original,1,[],'rewrite',undefined,options),undefined,undefined,authorRequest);
+  expect(result.revisedContent).toBe(original.replace('Maybe.','I will stay.'));
+  const scopes=requests.filter(r=>r.tools[0].function.name==='submit_author_edit_scope');
+  expect(scopes).toHaveLength(2);
+  expect(scopes.every(r=>JSON.parse(r.messages.findLast((m:any)=>m.role==='user').content).authorRequest===authorRequest)).toBe(true);
+  const writes=requests.filter(r=>r.tools[0].function.name==='submit_chapter_range_replacements');
+  expect(writes).toHaveLength(4);
+  expect(writes.every(r=>Object.keys(r.tools[0].function.parameters.properties).join(',')==='selection_0_text')).toBe(true);
+ }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));}
+},20000);

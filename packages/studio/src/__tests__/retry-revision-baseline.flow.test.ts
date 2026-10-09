@@ -13,6 +13,7 @@ it('keeps the original revision across a failed write, server recreation and nat
  const upstream=createServer(async(req,res)=>{
   const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));const body=JSON.parse(Buffer.concat(chunks).toString('utf8'));
   const send=(name:string,args:unknown,observations:unknown[]=[])=>{res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{role:'assistant',tool_calls:[...observations.map((observation,index)=>({id:'observation-'+index,type:'function',function:{name:'record_review_observation',arguments:JSON.stringify(observation)}})),{id:'call-'+Date.now(),type:'function',function:{name,arguments:JSON.stringify(args)}}]}}]}));};
+  if(body.tools[0].function.name==='submit_requested_operations'){send('submit_requested_operations',{contentReviewQuote:'review the result.',exportQuote:''});return;}
   if(body.tools[0].function.name==='submit_author_edit_scope'){
    send('submit_author_edit_scope',{wholeDocument:false,selections:[{startLine:3,endLine:3,text:'The visitor waits.'}],reason:'The author selected the final paragraph.'});return;
   }
@@ -27,7 +28,8 @@ it('keeps the original revision across a failed write, server recreation and nat
    send('submit_artifact_review',{summary:'Recorded comparison.',observationCodes:['FIXTURE_REVISION']},[{category:'quality',assessment:'observation',code:'FIXTURE_REVISION',summary:'The final paragraph changed.',sourceRefs:[{sourceId:input.sources[0].sourceId,startLine:3,endLine:3},{sourceId:input.comparison.sourceId,startLine:3,endLine:3}]}]);return;
   }
   if(phase==='first'){
-   if(mainCalls++===0)send('workspace__revise_work_artifact',{artifactId,instruction:'Change only the final paragraph.'});
+   if(mainCalls++===0)send('bind_delivery_sources',{steps:[{id:'review',targets:[{workId:'gallery',artifactId}]}]});
+   else if(mainCalls===2)send('workspace__revise_work_artifact',{artifactId,instruction:'Change only the final paragraph.'});
    else{res.writeHead(401,{'Content-Type':'application/json'});res.end(JSON.stringify({error:{message:'Fixture transport failure after persisted edit.'}}));}return;
   }
   if(phase==='retry'&&mainCalls++===0){send('workspace__review_work_artifact',{artifactId,instruction:'Review the current revision against the original request.'});return;}
@@ -48,11 +50,14 @@ it('keeps the original revision across a failed write, server recreation and nat
   const afterWrite=await loadWorkManifest(root,'gallery');expect(afterWrite.artifacts[0]!.currentRevisionId).not.toBe(initialRevision);
   const restarted=createStudioServer({} as never,root),detail=await(await restarted.request(`/api/v1/sessions/${session.sessionId}`)).json();
   expect(detail.chatRequest.retry.options.retryOfRequestId).toBe('first-request');expect(detail.chatRequest.baselineWork.artifacts[0].currentRevisionId).toBe(initialRevision);
+  expect(detail.chatRequest.deliveryState.steps).toMatchObject([{id:'review',operation:'review',targets:[{workId:'gallery',artifactId}]}]);
   phase='retry';mainCalls=0;
   const retry=await restarted.request('/api/v1/agent',post({...request,clientRequestId:'second-request',retryOfRequestId:'first-request'}));expect(retry.status).toBe(422);
   expect(reviews).toHaveLength(1);expect(reviews[0].comparison.before.revisionId).toBe(initialRevision);expect(reviews[0].comparison.after.revisionId).toBe(afterWrite.artifacts[0]!.currentRevisionId);
   const stale=await restarted.request('/api/v1/agent',post({...request,clientRequestId:'stale-attempt',retryOfRequestId:'first-request'}));expect(stale.status).toBe(409);expect((await stale.json()).error.code).toBe('CHAT_RETRY_CONFLICT');
   const retained=await(await restarted.request(`/api/v1/sessions/${session.sessionId}`)).json();expect(retained.chatRequest.requestId).toBe('second-request');expect(retained.chatRequest.baselineWork.artifacts[0].currentRevisionId).toBe(initialRevision);
+  expect(retained.chatRequest.deliveryState.steps).toEqual(detail.chatRequest.deliveryState.steps);
+  expect(retained.chatRequest.deliveryState.receipts).toMatchObject([{operation:'review',sources:[{workId:'gallery',artifactId,revisionId:afterWrite.artifacts[0]!.currentRevisionId}]}]);
   phase='fresh';await restarted.request('/api/v1/agent',post({...request,instruction:'Review this current draft.',clientRequestId:'fresh-request'}));
   const fresh=await(await restarted.request(`/api/v1/sessions/${session.sessionId}`)).json();expect(fresh.chatRequest.baselineWork.artifacts[0].currentRevisionId).toBe(afterWrite.artifacts[0]!.currentRevisionId);
  }finally{if(sessionId)evictAgentCache(sessionId);upstream.closeAllConnections();await new Promise<void>(resolve=>upstream.close(()=>resolve()));await rm(root,{recursive:true,force:true});}

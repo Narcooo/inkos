@@ -15,6 +15,7 @@ export const TurnCompletionSchema = Type.Object({
 export type TurnCompletion = Static<typeof TurnCompletionSchema>;
 
 export const TURN_COMPLETION_GUIDANCE = `## Turn completion
+The host independently identifies explicitly requested professional content reviews and exports from the original request. These requirements appear in request-delivery context after the first production action. Once sources exist, use bind_delivery_sources to bind every intended source to its existing step ID, including all requested chapters or companion artifacts. Keep the requirements through recovery. Structural inspection does not perform professional content review. Do not add unrequested operations.
 Use finish_turn to return the final response after answering the request, delivering its requested actions, or identifying a concrete blocker or necessary user decision.
 Announcing planned work is not completion. When work remains possible, call the relevant execution tool and continue from saved results.
 Use answered only for information or discussion; delivered for completed action results; needs_input for a necessary user decision; blocked when the request cannot currently proceed.
@@ -151,7 +152,7 @@ export class TurnArtifactDeliveries {
 export function createTurnCompletionTool(options: {
   readonly state: () => { readonly activeActions: number; readonly hasDelivery: boolean; readonly deliveryFailed: boolean };
   readonly complete: (result: TurnCompletion) => void;
-  readonly validateDelivery?: () => Promise<void>;
+  readonly validateDelivery?: (signal?:AbortSignal) => Promise<void>;
 }): AgentTool<typeof TurnCompletionSchema> {
   return {
     name: TURN_COMPLETION_TOOL,
@@ -166,7 +167,7 @@ export function createTurnCompletionTool(options: {
       if (input.status === "delivered" && (!state.hasDelivery || state.deliveryFailed)) {
         throw Object.assign(new Error("Delivery requires successful production or artifact results. Continue unfinished work or report the concrete blocker."), { code: "TURN_DELIVERY_UNPROVEN" });
       }
-      if (input.status === "delivered") await options.validateDelivery?.();
+      if (input.status === "delivered" || input.status === "answered" && state.hasDelivery) await options.validateDelivery?.(signal);
       options.complete(input);
       return { content: [{ type: "text", text: input.message }], details: { kind: "turn_completion", ...input } };
     },

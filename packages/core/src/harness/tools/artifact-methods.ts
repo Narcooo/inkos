@@ -1,3 +1,4 @@
+import {authorTextScopeRequest,authorTextScopeContract} from '../../agents/author-edit-scope.js';
 import { numberReviewSource } from "../../models/observation.js";
 import { Type } from "@sinclair/typebox";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
@@ -13,7 +14,7 @@ import { syncWorkSourceArtifacts } from "../source-sync.js";
 import { createReplaceWorkArtifactTool, createExportWorkTool } from "./work-artifacts.js";
 import { validatedArtifactWrites } from "../artifact-validation.js";
 import { changedSourceRegion, measureSourceText, splitSourceLines } from "../../utils/source-text.js";
-import {textRangeEditContract,textScopedSelectionEditContract,TextEditSelectionSchema,TextEditRangeSchema,type TextEditRange} from '../../utils/text-range-edits.js';
+import {textRangeEditContract,textScopedSelectionEditContract,TextEditRangeSchema,type TextEditRange} from '../../utils/text-range-edits.js';
 import { readArtifactRevision } from "../artifact-reader.js";
 import { currentExecutionBaselineWork, currentExecutionAuthorRequest, updateExecutionWork, recordExecutionEvidence } from "../execution-evidence.js";
 import {inspectFilmGraph} from './film-delivery.js';
@@ -83,15 +84,11 @@ type EditRange=TextEditRange;
 class ArtifactWorker extends BaseAgent {
   get name() { return "artifact-method"; }
   async selectAuthorScope(content: string, authorRequest: string) {
-    const selected = await this.submitStructured([
-      {role:'system',content:'Your sole task is source navigation, not creative improvement. Identify the smallest exact source unit matching the author’s location and extent, without rewriting it. The desired creative effect does not grant permission to select additional units. Ignore whether the selected passage alone makes that effect easy to achieve. The complete numbered document supplies context. Select only the requested units and content kinds. Return the exact editable source text and its inclusive line bounds to disambiguate repeated phrases. Exclude surrounding labels, formatting and protected text, including stage directions sharing a line with dialogue when only dialogue is editable. Use separate selections where protected text intervenes. Set wholeDocument=true with no selections only when the author permits revising the entire document.'},
-      {role:'user',content:JSON.stringify({authorRequest,document:splitSourceLines(content).map((text,index)=>({line:index+1,text}))})},
-    ], {name:'submit_author_edit_scope',label:'Locate authorized text',description:'Identify editable source ranges from the original author request, without proposed prose.',
-      parameters:Type.Object({wholeDocument:Type.Boolean(),selections:Type.Array(TextEditSelectionSchema),reason:Type.String({description:'Briefly identify the source unit and protected boundaries matched by these selections.'})},{additionalProperties:false}),
-      validate:result=>{if(result.wholeDocument){if(result.selections.length)throw new Error('Whole-document scope must not also select partial text');}else textScopedSelectionEditContract(content,result.selections);return result;},
-    },{maxTokens:Math.min(8192,this.ctx.client.defaults.maxTokens),professionalGuidance:false});
-    return selected.result.wholeDocument ? textRangeEditContract(content,[{startLine:1,endLine:splitSourceLines(content).length}]) : textScopedSelectionEditContract(content,selected.result.selections);
+    const request=authorTextScopeRequest(content,authorRequest);
+    const selected=await this.submitStructured(request.messages,request.tool,{maxTokens:Math.min(8192,this.ctx.client.defaults.maxTokens),professionalGuidance:false});
+    return authorTextScopeContract(content,selected.result);
   }
+
   async review(sources: ReadonlyMap<string, string>, instruction: string, criteria: string[], paths: ReadonlyMap<string,string>, versions:ReadonlyMap<string,{revisionId:string;checksum:string}>, comparison?: ReviewComparison, structure?: unknown) {
     const authorRequest = currentExecutionAuthorRequest();
     const response = await this.submitSourcedReview([

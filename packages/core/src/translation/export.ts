@@ -46,6 +46,7 @@ export async function writeTranslationExport(
     outputPath,
     format,
     chaptersExported: manifest.chapters.length,
+    exportSourcePaths: manifest.chapters.map(chapter=>chapter.translatedPath),
   };
 }
 

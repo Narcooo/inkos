@@ -7,11 +7,13 @@ import {readArtifactRevision} from '../harness/artifact-reader.js';
 import {currentExecutionBaselineWork} from '../harness/execution-evidence.js';
 import {chapterDocumentBody} from '../utils/chapter-document.js';
 import {changedSourceRegion} from '../utils/source-text.js';
+import {chapterReviewContentHash} from '../utils/chapter-review-hash.js';
 
 export interface AuditResult {
   readonly observations: ReadonlyArray<Observation>;
   readonly summary: string;
   readonly unavailable?: boolean;
+  readonly reviewedContentHash?: string;
   readonly reviewedArtifact?: {workId:string;artifactId:string;revisionId:string};
   readonly tokenUsage?: {
     readonly promptTokens: number;
@@ -99,6 +101,7 @@ export class ContinuityAuditor extends BaseAgent {
       observations: result.observations,
       summary: result.summary,
       tokenUsage: usage,
+      reviewedContentHash: chapterReviewContentHash(chapterContent,chapterNumber),
       ...(reviewedArtifact?{reviewedArtifact}:{}),
     };
   }

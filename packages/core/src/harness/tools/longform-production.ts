@@ -223,6 +223,8 @@ export function createWriteChaptersTool(
           startChapterNumber: params.startChapterNumber,
           endChapterNumber: params.startChapterNumber + count - 1,
           completedCount: results.length,
+          reviewedChapters: results.flatMap(result=>!result.review.unavailable&&result.review.reviewedContentHash
+            ?[{chapterNumber:result.chapterNumber,contentHash:result.review.reviewedContentHash}]:[]),
           ...(delivery?{delivery}:{}),
           observations,
           skillIds: skills.map((skill) => skill.skill.id),
@@ -307,6 +309,7 @@ export function createReviseChapterTool(
             changed: result.changed,
             changedRegion:result.changedRegion,
             observations: result.observations,
+            reviewedChapters:result.reviewedContentHash?[{chapterNumber:result.chapterNumber,contentHash:result.reviewedContentHash}]:[],
             ...(result.delivery?{delivery:result.delivery}:{}),
             skillIds: skills.map((skill) => skill.skill.id),
           },

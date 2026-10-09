@@ -182,6 +182,7 @@ export interface RunTranslationProjectResult {
   readonly projectId: string;
   readonly translatedSegments: number;
   readonly reviewedChapters: number;
+  readonly reviewSourcePaths: readonly string[];
   readonly reportPath: string;
   readonly totalSegments:number;
   readonly completedSegments:number;
@@ -189,6 +190,7 @@ export interface RunTranslationProjectResult {
 }
 
 export interface TranslationExportResult {
+  readonly exportSourcePaths: readonly string[];
   readonly outputPath: string;
   readonly format: TranslationExportFormat;
   readonly chaptersExported: number;

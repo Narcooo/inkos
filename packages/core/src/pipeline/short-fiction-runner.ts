@@ -109,6 +109,8 @@ export interface ShortFictionRunOptions {
 }
 
 export interface ShortFictionRunResult {
+  readonly reviewedArtifact?: {readonly artifactId:string;readonly revisionId:string};
+  readonly exportSourcePaths?: readonly string[];
   readonly revisionChanges?: {
     readonly chapterNumbers: readonly number[];
     readonly openingChanged: boolean;
@@ -292,7 +294,7 @@ function shortReviewRequestHash(options: ShortFictionRunOptions): string {
 }
 
 export type ShortProductionStage = "outline" | "draft" | "review" | "package";
-export interface ShortProductionStageResult { readonly storyId: string; readonly stage: ShortProductionStage; readonly stageStatus: "completed" | "failed"; readonly observations: ReadonlyArray<Observation>; readonly artifactPaths: ReadonlyArray<string>; readonly delivery?:ShortProductionState['delivery']; }
+export interface ShortProductionStageResult { readonly storyId: string; readonly stage: ShortProductionStage; readonly stageStatus: "completed" | "failed"; readonly observations: ReadonlyArray<Observation>; readonly artifactPaths: ReadonlyArray<string>; readonly delivery?:ShortProductionState['delivery']; readonly reviewedArtifact?:{readonly artifactId:string;readonly revisionId:string};readonly exportSourcePaths?:readonly string[]; }
 
 export async function runShortFictionStage(options: ShortFictionRunOptions & { readonly storyId: string; readonly stage: ShortProductionStage }): Promise<ShortProductionStageResult> {
   const base = shortWorkBaseDir(safeSegment(options.storyId));
@@ -398,7 +400,10 @@ async function produceShort(
       : stage === "draft" ? [...shortManuscriptPaths(finalDraft), ...await changedWorkSourcePaths(root, storyId, sourceBefore)] : [];
     await syncWorkSourceArtifacts({ projectRoot: root, workId: storyId, accept: stage !== "outline", acceptPaths, title: stage === "outline" ? workTitle : finalDraft.storyTitle });
     const stageStatus = (stage === "review" || stage === "package") && productionState.stages[stage]?.status === "failed" ? "failed" : "completed";
-    return { storyId, stage, stageStatus, delivery:productionState.delivery,observations: [...Object.values(productionState.stages).flatMap(item => item?.observations ?? []),...(productionState.delivery?.observations??[]).filter(o=>SHORT_DELIVERY_CONTRACT_CODES.has(o.code))], artifactPaths: paths.map(path => projectPath(join(baseDir, path))) };
+    return { storyId, stage, stageStatus, delivery:productionState.delivery,
+      ...(stage==='review'&&stageStatus==='completed'?{reviewedArtifact:productionState.stages.review?.reviewedArtifact}:{}),
+      ...(stage==='draft'?{exportSourcePaths:[projectPath(join(baseDir,'final','short-story.json'))]}:{}),
+      observations: [...Object.values(productionState.stages).flatMap(item => item?.observations ?? []),...(productionState.delivery?.observations??[]).filter(o=>SHORT_DELIVERY_CONTRACT_CODES.has(o.code))], artifactPaths: paths.map(path => projectPath(join(baseDir, path))) };
   };
   if (stopAfter === "outline") return stageResult("outline", ["outline/v001.md"]);
   let finalDraft: ShortFictionBatchDraft;
@@ -548,6 +553,7 @@ async function produceShort(
 
     productionState = { ...productionState, stages: { ...productionState.stages, review: {
       status: draftReviewWarning ? "failed" : "completed", inputHash, requestHash, updatedAt: new Date().toISOString(),
+      ...(!draftReviewWarning?{reviewedArtifact:{artifactId:reviewedArtifact.id,revisionId:reviewedRevision.id}}:{}),
       comparison: reviewComparison,
       error: draftReviewWarning,
       observations: draftReviewWarning ? [{ code: "draft-review", category: "execution", assessment: "unavailable",
@@ -846,6 +852,10 @@ function buildShortRunResult(
   return {
     storyId,
     stageResults: coverArtifacts.stageResults,
+    ...(coverArtifacts.stageResults?.review?.status==='completed'
+      &&coverArtifacts.stageResults.review.inputHash===coverArtifacts.delivery?.inputHash
+      ?{reviewedArtifact:coverArtifacts.stageResults.review.reviewedArtifact}:{}),
+    exportSourcePaths:[projectPath(join(baseDir,'final','short-story.json'))],
     delivery:coverArtifacts.delivery,
     observations,
     outlinePath: projectPath(join(baseDir, "outline", "v001.md")),

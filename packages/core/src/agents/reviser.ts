@@ -1,3 +1,5 @@
+import {authorTextScopeRequest,authorTextScopeContract} from './author-edit-scope.js';
+import {currentExecutionAuthorRequest,currentExecutionBaselineWork,currentExecutionWork} from '../harness/execution-evidence.js';
 import { BaseAgent } from "./base.js";
 import type { LengthSpec } from "../models/length-governance.js";
 import type { Observation } from "../models/observation.js";
@@ -65,7 +67,18 @@ export class ReviserAgent extends BaseAgent {
           : `\n## 篇幅要求\n${JSON.stringify({...options.lengthSpec,currentCount:countChapterLength(chapterContent,options.lengthSpec.countingMode),unit:"正文非空白字符，含标点，不含标题"})}`)
       : "";
     const systemPrompt = buildRevisionProtocol(mode, options.language);
-    const source=mode==='spot-fix'?numberReviewSource(chapterContent):chapterContent;
+    const authorRequest=currentExecutionAuthorRequest();
+    const baseline=currentExecutionBaselineWork();
+    const work=currentExecutionWork();
+    const prefix=`source/chapters/${String(chapterNumber).padStart(4,'0')}_`;
+    const predatesRequest=baseline===undefined||Boolean(baseline&&baseline.id===work?.id&&baseline.artifacts.some(artifact=>artifact.revisions.some(revision=>revision.id===artifact.currentRevisionId&&revision.path.startsWith(prefix)&&revision.path.endsWith('.md'))));
+    let authorized:ReturnType<typeof authorTextScopeContract>|undefined;
+    if(authorRequest&&predatesRequest){
+      const scope=authorTextScopeRequest(chapterContent,authorRequest);
+      const selected=await this.submitStructured(scope.messages,scope.tool,{maxTokens:Math.min(8192,this.ctx.client.defaults.maxTokens),professionalGuidance:false});
+      authorized=authorTextScopeContract(chapterContent,selected.result);
+    }
+    const source=mode==='spot-fix'||authorized?numberReviewSource(chapterContent):chapterContent;
     const userPrompt = isEnglish
       ? `Revise chapter ${chapterNumber}.\n\n## Observations or instruction\n${observationList}\n\n## Governed context\n${context}${lengthBlock}\n\n## Current chapter\n${source}`
       : `修订第${chapterNumber}章。\n\n## 观察或用户指令\n${observationList}\n\n## 权威上下文\n${context}${lengthBlock}\n\n## 当前章节\n${source}`;
@@ -74,8 +87,8 @@ export class ReviserAgent extends BaseAgent {
       { role: "user" as const, content: userPrompt },
     ];
     const outputBudget = Math.min(this.ctx.client.defaults.maxTokens, Math.max(8192, Math.ceil((options.lengthSpec?.target ?? chapterContent.length) * 4) + 8192));
-    const output = mode === "spot-fix" || options.targetText!==undefined
-      ? await this.submitSpotFix(messages, chapterContent, outputBudget, options.lengthSpec,options.targetText,options.onCandidate)
+    const output = authorized || mode === "spot-fix" || options.targetText!==undefined
+      ? await this.submitSpotFix(messages, chapterContent, outputBudget, options.lengthSpec,options.targetText,options.onCandidate,authorized)
       : await this.submitRewrite(messages, outputBudget, options.lengthSpec,body);
     const wordCount = options.lengthSpec
       ? countChapterLength(output.revisedContent, options.lengthSpec.countingMode)
@@ -90,10 +103,12 @@ export class ReviserAgent extends BaseAgent {
     lengthSpec?: LengthSpec,
     targetText?:string,
     onCandidate?: (content: string) => Promise<void>,
+    authorized?:ReturnType<typeof authorTextScopeContract>,
   ): Promise<ReviseOutput> {
     let planUsage={promptTokens:0,completionTokens:0,totalTokens:0};
-    let contract:ReturnType<typeof textRangeEditContract>|ReturnType<typeof textSelectionEditContract>;
-    if(targetText!==undefined)contract=textSelectionEditContract(originalChapter,targetText);
+    let contract:ReturnType<typeof textRangeEditContract>|ReturnType<typeof textSelectionEditContract>|ReturnType<typeof authorTextScopeContract>;
+    if(authorized)contract=authorized;
+    else if(targetText!==undefined)contract=textSelectionEditContract(originalChapter,targetText);
     else{
     const plan=await this.submitStructured(messages,{
       name:'submit_chapter_edit_ranges',label:'Select chapter edit ranges',
@@ -104,7 +119,7 @@ export class ReviserAgent extends BaseAgent {
     planUsage=plan.usage;
     contract=textRangeEditContract(originalChapter,plan.result.ranges);
     }
-    const fixedContent=contract.apply(Object.fromEntries(contract.ranges.map(range=>[`range_${range.index}_content`, ''])));
+    const fixedContent=contract.apply(Object.fromEntries(Object.keys(contract.parameters.properties).map(field=>[field, ''])));
     const fixedLength=lengthSpec?countChapterLength(fixedContent,lengthSpec.countingMode):undefined;
     const replacementBudget=lengthSpec&&fixedLength!==undefined?{
       countingMode:lengthSpec.countingMode,fixedContentLength:fixedLength,
@@ -112,10 +127,10 @@ export class ReviserAgent extends BaseAgent {
       ...(lengthSpec.maxChapterLength===undefined?{}:{maximum:lengthSpec.maxChapterLength-fixedLength}),
     }:undefined;
     if(replacementBudget?.maximum!==undefined&&replacementBudget.maximum<0)throw Object.assign(new Error('The protected text alone exceeds the chapter maximum. These edit ranges cannot satisfy both scope and length constraints.'),{code:'CHAPTER_EDIT_SCOPE_CONFLICT',replacementBudget});
-    const { result, usage } = await this.submitStructured([...messages,{role:'user',content:JSON.stringify({editableRanges:contract.ranges,replacementBudget,instruction:'Submit only replacement text in each range_N_content field. The replacement budget is shared by all fields, not per field. Keep the original trailing newline when present. The host preserves all source bytes outside the selected ranges.'})}], {
+    const { result, usage } = await this.submitStructured([...messages,{role:'user',content:JSON.stringify({editableRanges:contract.ranges,replacementBudget,instruction:'Submit only replacement text in each named field. The replacement budget is shared by all fields, not per field. Keep the original trailing newline when present. The host preserves all source bytes outside the selected ranges.'})}], {
       name: "submit_chapter_range_replacements",
       label: "Submit chapter range replacements",
-      description: "Submit replacement prose for each selected source range in its named field.",
+      description: "Submit replacement prose only within the author-authorized source selections, using their named fields.",
       parameters: contract.parameters,
       validate: async result => {
         const candidate=contract.apply(result);

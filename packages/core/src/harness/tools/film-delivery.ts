@@ -69,6 +69,6 @@ export function createExportFilmTool(root:string,workId:string):AgentTool<typeof
       const observations=missing.map(ref=>({code:'EXPORT_ASSET_UNAVAILABLE',category:'execution' as const,assessment:'unavailable' as const,summary:'A referenced image could not be embedded',evidence:[ref]}));
       const delivery=checkFilmRequirements(graph,await readFilmRequirements(root,workId));
       const deliveryObservations=delivery.issues.map(issue=>({code:issue.code,category:'quality' as const,assessment:delivery.status==='unverified'?'unavailable' as const:'issue' as const,summary:JSON.stringify(issue),evidence:[`works/${workId}/source/delivery-requirements.json`]}));
-      return {content:[{type:'text',text:`Exported ${path}. Local preview: ${previewUrl}. Delivery checks: ${delivery.status}`}],details:{kind:'film_exported',workId,path,format,previewUrl,delivery,observations:[...observations,...deliveryObservations]}};
+      return {content:[{type:'text',text:`Exported ${path}. Local preview: ${previewUrl}. Delivery checks: ${delivery.status}`}],details:{kind:'film_exported',workId,path,format,previewUrl,delivery,exportSourcePaths:['source/story-graph.json'],observations:[...observations,...deliveryObservations]}};
     }};
 }

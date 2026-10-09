@@ -595,6 +595,7 @@ function messageEventsToInteractionMessages(events: MessageEvent[]): Interaction
   const rememberToolCalls = (event: MessageEvent, raw: Record<string, unknown>) => {
     for (const block of contentBlocks(raw)) {
       if (!isObject(block) || block.type !== "toolCall") continue;
+      if (block.name==='finish_turn'||block.name==='bind_delivery_sources') continue;
       if (typeof block.id !== "string" || !block.id) continue;
       const tool = typeof block.name === "string" && block.name ? block.name : "tool";
       const args = objectArgs(block.arguments);

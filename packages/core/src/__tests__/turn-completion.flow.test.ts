@@ -21,7 +21,11 @@ it("answers a question, rejects an unevidenced delivery, creates a Work and rest
   const requests: Array<any> = [];
   const upstream = createServer(async (request, response) => {
     const chunks = []; for await (const chunk of request) chunks.push(chunk);
-    requests.push(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+    const body=JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    if(body.tools[0].function.name==='submit_requested_operations'){
+      response.writeHead(200,{'Content-Type':'application/json'});response.end(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{tool_calls:[{id:'scope',type:'function',function:{name:'submit_requested_operations',arguments:JSON.stringify({contentReviewQuote:'',exportQuote:''})}}]}}]}));return;
+    }
+    requests.push(body);
     const reply = replies[requests.length - 1];
     if (!reply) { response.writeHead(500); response.end(); return; }
     response.writeHead(200, { "Content-Type": "application/json" });
@@ -95,13 +99,15 @@ it("retries an interrupted model message once without executing its provisional 
   const requests:any[]=[];
   const upstream=createServer(async(request,response)=>{
     const chunks=[];for await(const chunk of request)chunks.push(chunk);
-    requests.push(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+    const body=JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    const scope=body.tools[0].function.name==='submit_requested_operations';
+    if(!scope)requests.push(body);
     const attempt=requests.length;
-    const name=attempt<=2?'workspace__create_work':'finish_turn';
-    const args=attempt<=2?{workId:attempt===1?'provisional':'gallery',profileId:'script',title:'Gallery',language:'en',intent:'Create an empty script Work.'}:{status:'delivered',message:'The Work is ready.'};
+    const name=scope?'submit_requested_operations':attempt<=2?'workspace__create_work':'finish_turn';
+    const args=scope?{contentReviewQuote:'',exportQuote:''}:attempt<=2?{workId:attempt===1?'provisional':'gallery',profileId:'script',title:'Gallery',language:'en',intent:'Create an empty script Work.'}:{status:'delivered',message:'The Work is ready.'};
     response.writeHead(200,{'Content-Type':'text/event-stream'});
-    response.write(`data: ${JSON.stringify({id:'reply-'+attempt,object:'chat.completion.chunk',choices:[{index:0,delta:{role:'assistant',tool_calls:[{index:0,id:attempt===1?'provisional-call':'complete-'+attempt,type:'function',function:{name,arguments:JSON.stringify(args)}}]},finish_reason:null}]})}\n\n`);
-    if(attempt===1)return; // Complete arguments alone are not a terminal result.
+    response.write(`data: ${JSON.stringify({id:'reply-'+attempt,object:'chat.completion.chunk',choices:[{index:0,delta:{role:'assistant',tool_calls:[{index:0,id:!scope&&attempt===1?'provisional-call':'complete-'+attempt,type:'function',function:{name,arguments:JSON.stringify(args)}}]},finish_reason:null}]})}\n\n`);
+    if(!scope&&attempt===1)return; // Complete arguments alone are not a terminal result.
     response.end(`data: ${JSON.stringify({id:'reply-'+attempt,object:'chat.completion.chunk',choices:[{index:0,delta:{},finish_reason:'tool_calls'}]})}\n\ndata: [DONE]\n\n`);
   });
   upstream.listen(0,'127.0.0.1');await once(upstream,'listening');

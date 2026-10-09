@@ -83,6 +83,7 @@ export function actionObservation(result: ActionResult) {
     ...(result.content && facts.kind !== "work_inspected" ? { content: result.content } : {}),
     artifacts: artifactAddresses(result.artifacts),
     observations: result.observations.map(observationFacts),
+    ...(result.operationReceipts?.length ? {operationReceipts: result.operationReceipts} : {}),
     facts,
   };
 }

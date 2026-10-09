@@ -23,6 +23,7 @@ export interface ExportArtifact {
   readonly kind: "book_exported";
   readonly workId: string;
   readonly sourceDigest: string;
+  readonly exportSourcePaths: readonly string[];
   readonly delivery: Awaited<ReturnType<typeof readBookExportSource>>["delivery"];
   readonly outputPath: string;
   readonly fileName: string;
@@ -137,7 +138,8 @@ export async function buildExportArtifact(
 
   const bookDir = state.bookDir(bookId);
   const outputPath = options.outputPath ?? join(bookDir, "exports", `${bookId}.${format}`);
-  const receipt = {kind: "book_exported" as const, workId: bookId, sourceDigest, delivery};
+  const receipt = {kind: "book_exported" as const, workId: bookId, sourceDigest, delivery,
+    exportSourcePaths: chapters.map(chapter=>`source/chapters/${chapter.file}`)};
 
   if (format === "epub") {
     const epubChapters: Array<{ title: string; content: string }> = [];
@@ -194,6 +196,7 @@ export async function writeExportArtifact(
     kind: artifact.kind,
     workId: artifact.workId,
     sourceDigest: artifact.sourceDigest,
+    exportSourcePaths: artifact.exportSourcePaths,
     delivery: artifact.delivery,
     outputPath: artifact.outputPath,
     chaptersExported: artifact.chaptersExported,

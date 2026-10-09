@@ -9,7 +9,7 @@ import {
   type ContextFragment,
   type SemanticContextCompiler,
 } from "./context-compiler.js";
-import type { WorkManifest, WorkProfile } from "./contracts.js";
+import type { WorkManifest, WorkProfile, RequestDeliveryState } from "./contracts.js";
 import { loadWorkManifest } from "./work-store.js";
 import {executionProgress} from './execution-progress.js';
 
@@ -30,8 +30,13 @@ export function createHarnessContextTransform(input: {
   readonly semanticCompiler?: SemanticContextCompiler;
   readonly conversationCompactor?: ConversationCompactor;
   readonly onContextCompression?: ContextCompressionCallback;
+  readonly requestDelivery?: ()=>Omit<RequestDeliveryState,'authorRequest'|'version'>;
 }): (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]> {
   const sources = new ContextSourceRegistry();
+  sources.register({id:'request-delivery',async load(){return input.requestDelivery?[{
+    id:'request-delivery',source:'Current request delivery record; older requests do not add obligations',
+    protection:'protected' as const,priority:100,content:JSON.stringify(input.requestDelivery()),
+  }]:[];}});
   sources.register({
     id: "work-current",
     async load(request) {
@@ -88,7 +93,7 @@ export function createHarnessContextTransform(input: {
 
     const currentWork = input.work ? await loadWorkManifest(input.projectRoot, input.work.id) : null;
     const compiled = await compileContext({
-      recipe: { id: `${input.profile.id}-agent`, sourceIds: ["work-current"] },
+      recipe: { id: `${input.profile.id}-agent`, sourceIds: ["work-current","request-delivery"] },
       sources,
       request: {
         projectRoot: input.projectRoot,

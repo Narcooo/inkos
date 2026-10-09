@@ -11,6 +11,7 @@ export const ShortStageSchema = z.object({
   inputHash: z.string(),
   requestHash: z.string().optional(),
   reviewHash:z.string().optional(),
+  reviewedArtifact:z.object({artifactId:z.string(),revisionId:z.string()}).strict().optional(),
   comparison: z.object({
     scope: z.enum(["episode_start", "parent_revision"]),
     before: z.object({artifactId:z.string(),revisionId:z.string(),checksum:z.string()}).strict(),

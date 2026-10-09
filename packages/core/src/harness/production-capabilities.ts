@@ -55,6 +55,7 @@ import {
   createWriteChaptersTool,
 } from "./tools/longform-production.js";
 import { createExportBookTool } from "./tools/export-book.js";
+import { operationReceiptsFromDetails } from "./operation-receipts.js";
 import {
   createPatchChapterTextTool,
   createRenameEntityTool,
@@ -611,12 +612,14 @@ async function normalizeToolResult(
   }
   if (isError) throw new Error(content || "Capability tool execution failed.");
   const observations = extractObservations(details);
+  const operationReceipts = await operationReceiptsFromDetails(context.projectRoot, details);
   return ActionResultSchema.parse({
     status: "success",
     summary,
     ...(content ? { content } : {}),
     artifacts,
     observations,
+    ...(operationReceipts.length ? {operationReceipts} : {}),
     ...(details === undefined ? {} : { data: details }),
   });
 }

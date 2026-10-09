@@ -13,6 +13,20 @@ and recovery information. The main agent and delegated workers receive the
 original author request. Specialized creative methods live in the applicable
 Skills; they do not replace the author's requested scope.
 
+Before the first production action, a narrow interpretation of the original
+author request identifies professional-review and export instructions with exact
+quotations. It uses the session model without execution history or sampling
+presets. The executor may bind sources but cannot choose or remove requirements.
+Neither operation is implied when the author did not request it. Once sources exist, every intended source is
+bound by its registered Work/artifact identity. A requirement cannot disappear
+because its operation was never attempted. Completion checks execution receipts
+against the current source version, or an explicitly requested historical review.
+Structural inspection is not a content-review receipt. Existing domain reviews
+can supply receipts for the content they actually reviewed; unavailable reviews
+cannot. Requirements remain in the protected model context and survive Work
+transitions and failed-request restoration. A new request gets its own scope;
+export-only and information-only requests do not inherit old review obligations.
+
 ## Artifacts, edits, and recovery
 
 - Read, review, and export resolve registered artifact versions and verify their

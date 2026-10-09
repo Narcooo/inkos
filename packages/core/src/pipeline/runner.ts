@@ -161,6 +161,7 @@ export interface WriteChaptersOptions {
 }
 
 export interface ReviseResult {
+  readonly reviewedContentHash?: string;
   readonly changedRegion?:ReturnType<typeof changedSourceRegion>;
   readonly delivery?: ReturnType<typeof chapterLengthDelivery>;
   readonly chapterNumber: number;
@@ -915,7 +916,7 @@ export class PipelineRunner {
         || editScope?.targetText !== undefined
         || mode === "rewrite"
         || mode === "rework";
-      const preRevision = explicitRevisionRequested
+      const preRevision:AuditResult = explicitRevisionRequested
         ? { observations: [], summary: language === "en" ? "User-directed revision" : "用户定向修订" }
         : await this.collectReviewObservations({
             auditor,
@@ -936,6 +937,7 @@ export class PipelineRunner {
           wordCount: countChapterLength(content, countingMode),
           changed: false,
           observations: [],
+          reviewedContentHash:preRevision.reviewedContentHash,
           ...(delivery?{delivery}:{}),
         };
       }
@@ -1155,6 +1157,7 @@ export class PipelineRunner {
         changed,
         changedRegion:changedSourceRegion(chapterDocumentBody(content,targetChapter,chapterMeta.title,language),revisedContent),
         observations: remainingObservations,
+        reviewedContentHash:postRevision.reviewedContentHash,
         lengthTelemetry,
         ...(chapterLengthDelivery(revisedCount,lengthSpec)?{delivery:chapterLengthDelivery(revisedCount,lengthSpec)}:{}),
       };
