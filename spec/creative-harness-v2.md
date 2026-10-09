@@ -42,6 +42,14 @@ export-only and information-only requests do not inherit old review obligations.
   explicit author bounds and rejects stale exports. Chapter-only production checks
   the chapters it touched; exporting a book checks every exported chapter.
   Approximate length targets alone never become hard acceptance bounds.
+- Each produced chapter retains the original author's applicable length contract.
+  A new explicit target or range replaces that chapter's previous contract;
+  unrelated revisions retain it. Preserved imported text keeps its own contract.
+  Explicit bounds are checked before draft state settlement, so downstream
+  chapters do not depend on prose already known to require length repair.
+  Rejected complete drafts and revisions remain private recovery candidates,
+  bound to their source authority, request and contract. Recovery resumes the
+  closest candidate without treating it as accepted source.
 - Reviewers submit individual findings with source addresses, then select the
   accepted finding codes for their final report. The host validates each finding
   and assembles the report. A final report cannot reference an unaccepted finding;
@@ -77,6 +85,8 @@ export-only and information-only requests do not inherit old review obligations.
   cover prompt alone does not satisfy that requirement.
 - Derivative works retain registered source-version references. Source selection
   and confirmation preserve the requested output constraints.
+  Directory imports pin the complete selected membership and each revision;
+  retries read those snapshots even if current files change or disappear.
 
 ## Interactive and visual output
 
