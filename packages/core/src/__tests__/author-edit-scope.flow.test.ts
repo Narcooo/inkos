@@ -43,7 +43,7 @@ it('locates author-authorized text before rewriting and preserves surrounding by
   expect(requests.map(r=>r.tools[0].function.name)).toEqual(['submit_author_edit_scope','submit_artifact_revision','submit_artifact_revision']);
   expect(JSON.parse(requests[0].messages.findLast((m:any)=>m.role==='user').content).authorRequest).toBe(authorRequest);
   expect(JSON.parse(requests[1].messages.findLast((m:any)=>m.role==='user').content).editableSelections).toMatchObject([{startLine:3,endLine:3}]);
-  expect(JSON.parse(requests[1].messages.findLast((m:any)=>m.role==='user').content)).toMatchObject({authorRequest,instruction:'Rewrite the entire closing passage to make her choice clear.'});
+  expect(JSON.parse(requests[1].messages.findLast((m:any)=>m.role==='user').content)).toMatchObject({instruction:authorRequest});
   expect(await readFile(join(root,'works/gallery/source/script.md'),'utf8')).toBe('The gallery is open.\n\nMARA (facing the window): I will stay.\nNOAH: Maybe.\n\nShe closes the door.\n');
  }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));await rm(root,{recursive:true,force:true});}
 },20000);

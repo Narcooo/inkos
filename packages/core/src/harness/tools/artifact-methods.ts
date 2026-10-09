@@ -120,11 +120,11 @@ class ArtifactWorker extends BaseAgent {
       const contract=authorScope??textRangeEditContract(content,ranges!);
       const textSelections='startOffset' in contract.ranges[0]!;
       const response=await this.submitStructured([
-        ...(authorRequest?[{role:'system' as const,content:'The author request defines the goal and permission. The delegated instruction gives concrete editing guidance within that permission; apply it where compatible with the author request and the selected text. The selections refer to the original authorized source even when the current revision changed paragraph lengths. Improve the current prose within those same selections.'}]:[]),
+        ...(authorRequest?[{role:'system' as const,content:'The selections refer to the original authorized source even when the current revision changed paragraph lengths. Improve the current prose within those same selections.'}]:[]),
         {role:"system",content:textSelections
           ? 'Revise only each exact selected text fragment. A selection may be part of a source line. The full document and protectedPrefix/protectedSuffix are read-only context and will remain around your replacement. Return only replacement characters for each content value in its named selection_N_text field. Do not repeat the protected prefix/suffix or add surrounding labels, annotations, formatting or line breaks that are outside the selection.'
           : "Revise only the numbered editable ranges using the user's instruction and professional methods. The full document is context. Return each range's replacement in its named range_N_content field, retaining the original trailing newline when present. Do not repeat or modify surrounding text."},
-        {role:"user",content:JSON.stringify({instruction,...(authorRequest?{authorRequest}:{}),measurements:measureSourceText(content),document:numberReviewSource(content),...(textSelections?{editableSelections:contract.ranges}:{editableRanges:contract.ranges}),references:[...references].map(([sourceId,content])=>({sourceId,content}))})},
+        {role:"user",content:JSON.stringify({instruction:authorRequest??instruction,measurements:measureSourceText(content),document:numberReviewSource(content),...(textSelections?{editableSelections:contract.ranges}:{editableRanges:contract.ranges}),references:[...references].map(([sourceId,content])=>({sourceId,content}))})},
       ],{name:"submit_artifact_revision",label:"Submit scoped artifact revision",description:"Submit only replacement text for each authorized range.",parameters:contract.parameters,
         validate:result=>{contract.apply(result);return result;}},{maxTokens:this.ctx.client.defaults.maxTokens});
       return{content:contract.apply(response.result)};
