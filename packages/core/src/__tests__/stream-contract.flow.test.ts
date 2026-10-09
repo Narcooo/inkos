@@ -17,6 +17,7 @@ it.each([
   { streaming: false, modelId: 'claude-sonnet-5-5', samplingAllowed: false },
 ])('enforces required tool selection without rejecting an ordinary answer ($modelId, stream=$streaming)', async ({ streaming, modelId, samplingAllowed }) => {
   const received: Array<{ messages: Array<{role:string}>; stream?: boolean; tool_choice?: unknown; temperature?: number; top_p?: number; top_k?: number }> = [];
+  const preparedKeys:unknown[]=[];
   let completeTool = false;
   const server = createServer(async (request, response) => {
     const chunks = []; for await (const chunk of request) chunks.push(chunk);
@@ -40,14 +41,15 @@ it.each([
       baseUrl: `http://127.0.0.1:${(server.address() as { port: number }).port}/v1`, apiFormat: 'chat', stream: streaming, thinkingBudget: 0 });
     const context = { messages: [{ role: 'user' as const, content: 'Submit a value.', timestamp: 1 }],
       tools: [{ name: 'submit_value', description: 'Submit', parameters: Type.Object({ value: Type.Number() }) }] };
-    const run = async (toolChoice?: unknown) => {
+    const run = async (toolChoice?: unknown) => withExecutionEvidence((type,payload)=>{if(type==='model-request-prepared')preparedKeys.push(payload.parameterKeys);},async()=>{
       const options = { apiKey: 'fixture', maxTokens: 128, toolChoice, temperature: 0.7,
         onPayload: (payload: unknown) => ({ ...(payload as Record<string, unknown>), top_p: 0.8, top_k: 10 }) };
       const events = streaming ? guardedPiStream(client._piModel!, context, options) : guardedPiNonStreaming(client._piModel!, context, options);
       for await (const _event of events) {}
       return events.result();
-    };
+    });
     expect((await run()).stopReason).toBe('stop');
+    if(streaming)expect(preparedKeys[0]).toEqual(Object.keys(received[0]!).sort());
     completeTool = true;
     const completed = await run('required');
     expect(completed).toMatchObject({ stopReason: 'toolUse', content: [{ type: 'toolCall', name: 'submit_value', arguments: { value: 7 } }] });

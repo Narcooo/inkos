@@ -68,6 +68,7 @@ export function guardedPiStream<TApi extends Api>(
         const prepared = applyModelRequestCapabilities(await options?.onPayload?.(configured, activeModel) ?? configured, activeModel);
         recordExecutionEvidence("model-request-prepared", { modelCallId: modelCall?.modelCallId, model: activeModel.id,
           api: activeModel.api,
+          parameterKeys: prepared && typeof prepared === 'object' ? Object.entries(prepared).filter(([,value])=>value!==undefined).map(([key])=>key).sort() : [],
           parameters: prepared && typeof prepared === "object" ? Object.fromEntries(Object.entries(prepared).filter(([key]) => ["stream", "thinking", "max_tokens", "max_completion_tokens", "max_output_tokens", "tool_choice"].includes(key))) : {} });
         return prepared;
       },
