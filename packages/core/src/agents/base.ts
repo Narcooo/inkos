@@ -40,10 +40,10 @@ export abstract class BaseAgent {
 
   protected async chat(
     messages: ReadonlyArray<LLMMessage>,
-    options?: { readonly temperature?: number; readonly maxTokens?: number },
+    options?: { readonly temperature?: number; readonly maxTokens?: number; readonly professionalGuidance?: boolean },
   ): Promise<LLMResponse> {
-    return runWorkerAgent(this.ctx.client, this.ctx.model, await this.appendTaskSkillGuidance(messages, options?.maxTokens), {
-      ...options,
+    return runWorkerAgent(this.ctx.client, this.ctx.model, await this.appendTaskSkillGuidance(messages, options?.maxTokens, options?.professionalGuidance), {
+      temperature:options?.temperature,maxTokens:options?.maxTokens,
       onStreamProgress: this.ctx.onStreamProgress,
       signal: this.ctx.signal,
     });
@@ -61,7 +61,7 @@ export abstract class BaseAgent {
       await this.appendTaskSkillGuidance(messages, options?.maxTokens, options?.professionalGuidance),
       resultTool,
       {
-        ...options,
+        temperature:options?.temperature,maxTokens:options?.maxTokens,
         signal: this.ctx.signal,
         onStreamProgress: this.ctx.onStreamProgress,
         onUsage: (value) => { usage = value; },

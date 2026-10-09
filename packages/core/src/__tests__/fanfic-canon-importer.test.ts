@@ -49,6 +49,8 @@ describe("FanficCanonImporter", () => {
     const result = await agent.importFromText(source, "长原作", "canon");
 
     expect(chatSpy).toHaveBeenCalledTimes(2);
+    expect(chatSpy.mock.calls.map(call=>call[1])).toEqual([{professionalGuidance:false},{professionalGuidance:false}]);
+    expect(submitSpy.mock.calls[0]?.[2]).toEqual({professionalGuidance:false});
     const secondChunkMessages = chatSpy.mock.calls[1]?.[0] as Array<{ role: string; content: string }>;
     expect(secondChunkMessages[1]?.content).toContain("TAIL_CANON_MARKER");
     const finalMessages = submitSpy.mock.calls[0]?.[0] as Array<{ role: string; content: string }>;
