@@ -1,6 +1,6 @@
 import { Type, type Static } from "@sinclair/typebox";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
-import type { ActionResult } from "../harness/contracts.js";
+import type { ActionResult, WorkManifest } from "../harness/contracts.js";
 import { loadWorkManifest } from "../harness/work-store.js";
 import { readArtifactRevision } from "../harness/artifact-reader.js";
 import { posix } from "node:path";
@@ -25,7 +25,7 @@ Call finish_turn alone after other operations finish. Ground delivery claims in 
  * Historical reviews are intentional snapshots and create no refresh obligation.
  */
 export class TurnArtifactDeliveries {
-  private readonly receipts = new Map<string, {workId: string; artifactId: string; revisionId: string; operation: string; scopeIssues?: ActionResult["observations"]}>();
+  private readonly receipts = new Map<string, {workId: string; artifactId: string; revisionId: string; operation: string; scopeIssues?: ActionResult["observations"];qualityIssues?:ActionResult["observations"]}>();
   private readonly requiredOperations = new Map<string, {workId: string; artifactId: string; operation: string}>();
   private readonly requiredCovers = new Set<string>();
   private readonly chaptersWithLengthChecks = new Map<string, Set<number>>();
@@ -61,6 +61,19 @@ export class TurnArtifactDeliveries {
 
   observe(result: ActionResult, parameters: unknown = {}) {
     const data = result.data as Record<string, unknown> | undefined;
+    const historical = parameters && typeof parameters === "object" && "revisionId" in parameters;
+    const observations=Array.isArray(data?.observations)?data.observations as ActionResult["observations"]:result.observations;
+    for(const receipt of result.operationReceipts??[]){
+      if(receipt.operation!=='review')continue;
+      for(const source of receipt.sources){
+        const key=JSON.stringify([source.workId,source.artifactId,'review']);
+        if(historical&&!this.requiredOperations.has(key))continue;
+        const findings=observations.filter(item=>!item.target||(item.target.workId===source.workId&&item.target.artifactId===source.artifactId&&item.target.revisionId===source.revisionId));
+        this.receipts.set(key,{workId:source.workId,artifactId:source.artifactId,revisionId:source.revisionId!,operation:'review',
+          scopeIssues:findings.filter(item=>item.category==='scope'&&item.assessment==='issue'),
+          qualityIssues:findings.filter(item=>item.category==='quality'&&item.assessment==='issue')});
+      }
+    }
     if (!data || typeof data !== "object" || typeof data.workId !== "string") return;
     const delivery = data.delivery as {target?:{coverRequired?:boolean}} | undefined;
     if (delivery?.target?.coverRequired === true) this.requiredCovers.add(data.workId);
@@ -74,7 +87,6 @@ export class TurnArtifactDeliveries {
       this.requiredBookExports.add(data.workId);
       this.bookExports.set(data.workId, data.sourceDigest);
     }
-    const historical = parameters && typeof parameters === "object" && "revisionId" in parameters;
     const chapterReview=data.kind==='chapter_review'&&data.reviewedArtifact&&typeof data.reviewedArtifact==='object'
       ? data.reviewedArtifact as {artifactId?:unknown;revisionId?:unknown}:undefined;
     const operations = data.kind === "artifact_delivered" ? ["review", "export"]
@@ -83,15 +95,17 @@ export class TurnArtifactDeliveries {
     const artifactId = chapterReview?.artifactId ?? (data.kind === "work_exported" ? data.sourceArtifactId : data.artifactId);
     const revisionId = chapterReview?.revisionId ?? (data.kind === "work_exported" ? data.sourceRevisionId : data.revisionId);
     if (typeof artifactId !== "string" || typeof revisionId !== "string") return;
-    const observations=Array.isArray(data.observations)?data.observations as ActionResult["observations"]:result.observations;
     const scopeIssues=observations.filter(item=>item.category==='scope'&&item.assessment==='issue');
-    for (const operation of operations) this.receipts.set(JSON.stringify([data.workId, artifactId, operation]), {
+    for (const operation of operations) {
+      if(operation==='review'&&result.operationReceipts?.some(receipt=>receipt.operation==='review'&&receipt.sources.some(source=>source.workId===data.workId&&source.artifactId===artifactId)))continue;
+      this.receipts.set(JSON.stringify([data.workId, artifactId, operation]), {
       workId: data.workId, artifactId, revisionId, operation,
-      ...(operation==='review'?{scopeIssues}:{}),
-    });
+      ...(operation==='review'?{scopeIssues,qualityIssues:observations.filter(item=>item.category==='quality'&&item.assessment==='issue')}:{}),
+      });
+    }
   }
 
-  async validate(projectRoot: string) {
+  async validate(projectRoot: string, creation?: {workId:string;baselineWork:WorkManifest|null;sourceQuote:string}) {
     const missing = [...this.requiredOperations].filter(([key]) => !this.receipts.has(key)).map(([,operation]) => operation);
     for (const workId of this.requiredBookExports) {
       if (!this.bookExports.has(workId)) missing.push({workId, artifactId: "chapters", operation: "export"});
@@ -146,6 +160,15 @@ export class TurnArtifactDeliveries {
       code:'TURN_REVISION_SCOPE_UNRESOLVED',scopeViolations,
       instruction:'The current review identifies changes outside the author-authorized region. Restore the protected material and re-review the current revision before claiming delivery. If the finding is disputed, verify the before/current sources and obtain a corrected review; do not broaden permission to satisfy a content suggestion.',
     })),{code:'TURN_REVISION_SCOPE_UNRESOLVED'});
+    if(creation){
+      const baseline=creation.baselineWork;
+      const findings=[...this.receipts.values()].filter(receipt=>receipt.workId===creation.workId&&receipt.qualityIssues?.length
+        &&!(baseline?.id===receipt.workId&&baseline.artifacts.some(artifact=>artifact.id===receipt.artifactId)));
+      if(findings.length)throw Object.assign(new Error(JSON.stringify({
+        code:'TURN_NEW_CONTENT_REVIEW_UNRESOLVED',sourceQuote:creation.sourceQuote,findings,
+        instruction:'The requested new content still has current review findings. Verify them against the original request, current sources and actual checks. Correct supported defects within scope and re-review; for an unsupported or stylistic claim, obtain a corrected evidence-based review instead of changing the work to satisfy it. Refresh requested exports after changes. Do not alter protected existing content. Report a concrete blocker if resolution cannot proceed.',
+      })),{code:'TURN_NEW_CONTENT_REVIEW_UNRESOLVED'});
+    }
   }
 }
 

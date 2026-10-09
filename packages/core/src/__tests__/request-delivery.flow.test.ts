@@ -18,7 +18,7 @@ it('retains requested operations across restoration and requires every declared 
     const ledger=new RequestDeliveryLedger(request);
     expect(()=>ledger.requireDeclaration()).toThrow(expect.objectContaining({code:'DELIVERY_REQUIREMENTS_UNDECLARED'}));
     const steps=[{id:'review',operation:'review' as const,sourceQuote:'Review and export both.'},{id:'export',operation:'export' as const,sourceQuote:'Review and export both.'}];
-    ledger.initialize({reviewQuote:'Review and export both.',exportQuote:'Review and export both.'});
+    ledger.initialize({reviewQuote:'Review and export both.',exportQuote:'Review and export both.',newContentQuote:'Create two scenes.'});
     await expect(ledger.validate(root)).rejects.toMatchObject({code:'REQUEST_DELIVERY_INCOMPLETE'});
     await saveWorkManifest(root,createWorkManifest({id:'work',title:'Scenes',profileId:'script',language:'en'}));
     await mkdir(join(root,'works/work/source'),{recursive:true});
@@ -30,6 +30,12 @@ it('retains requested operations across restoration and requires every declared 
     expect(ledger.snapshot().steps.flatMap(step=>step.targets).every(target=>target.version==='current'&&target.revisionId===undefined)).toBe(true);
     await ledger.record(root,[{operation:'export',sources}]);
     const restored=new RequestDeliveryLedger(request,JSON.parse(JSON.stringify(ledger.snapshot())));
+    expect(restored.snapshot().newContentQuote).toBe('Create two scenes.');
+    const legacy=restored.snapshot();delete legacy.newContentQuote;
+    const upgraded=new RequestDeliveryLedger(request,legacy);
+    expect(upgraded.interpretationComplete).toBe(false);
+    upgraded.initialize({reviewQuote:null,exportQuote:null,newContentQuote:'Create two scenes.'});
+    expect(upgraded.snapshot()).toEqual(restored.snapshot());
     await expect(restored.validate(root)).rejects.toMatchObject({code:'REQUEST_DELIVERY_INCOMPLETE'});
     await restored.bind(root,{steps:[{id:'export',targets}]});
     expect(restored.snapshot().steps.map(step=>step.operation)).toEqual(['review','export']);
@@ -72,7 +78,7 @@ it('keeps an unattempted requested review pending in the main agent and isolates
     if(body.tools[0].function.name==='submit_requested_operations'){
       expect(body.messages.filter((m:any)=>m.role==='user').map((m:any)=>m.content)).toEqual([phase==='both'?requested:exportOnly]);
       expect(body.temperature).toBeUndefined();expect(body.tool_choice).toBeUndefined();
-      reply={name:'submit_requested_operations',args:{contentReviewQuote:phase==='both'?requested:'',exportQuote:phase==='both'?requested:exportOnly}};
+      reply={name:'submit_requested_operations',args:{newContentQuote:'',contentReviewQuote:phase==='both'?requested:'',exportQuote:phase==='both'?requested:exportOnly}};
     }else if(body.tools[0].function.name==='submit_artifact_review'){
       reviews++;reply={name:'submit_artifact_review',args:{summary:'The scene is coherent.',observationCodes:[]}};
     }else{

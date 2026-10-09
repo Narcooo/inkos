@@ -38,10 +38,10 @@ vi.mock("../utils/proxy-fetch.js", () => ({
     if(body.tools?.[0]?.function?.name==='submit_requested_operations'){
       const request=body.messages.findLast((m:any)=>m.role==='user').content;
       const operations:Record<string,unknown>={
-        'Create the script and complete its review and export.':{contentReviewQuote:'review and export.',exportQuote:'review and export.'},
-        'Create and export a script':{contentReviewQuote:'',exportQuote:'export a script'},
+        'Create the script and complete its review and export.':{newContentQuote:'Create the script',contentReviewQuote:'review and export.',exportQuote:'review and export.'},
+        'Create and export a script':{newContentQuote:'Create and export a script',contentReviewQuote:'',exportQuote:'export a script'},
       };
-      return new Response(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{tool_calls:[{id:'scope',type:'function',function:{name:'submit_requested_operations',arguments:JSON.stringify(operations[request]??{contentReviewQuote:'',exportQuote:''})}}]}}]}));
+      return new Response(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{tool_calls:[{id:'scope',type:'function',function:{name:'submit_requested_operations',arguments:JSON.stringify(operations[request]??{newContentQuote:'',contentReviewQuote:'',exportQuote:''})}}]}}]}));
     }
     return fetchWithProxyMock(url,init);
   },

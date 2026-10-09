@@ -111,6 +111,9 @@ it('checks exact delivery requirements, corrects a draft and preserves topology 
     const beforeProseRevision=(await loadStoryGraph(root,'film'))!.nodes[0]!;
     await createReviseNodeTool(root,'film',{...deps,submitNode:async()=>({...beforeProseRevision,title:'Unrequested rename',act:'Unrequested act',position:{x:10,y:20},imageSlot:{prompt:'Unrequested image'},sceneDesc:'Scoped scene',dialogue:[{speaker:'Player',text:'Ready',emotion:''}]})}).execute('scoped-edit',{nodeId:'s',fields:['sceneDesc','dialogue'],instruction:'Revise prose only'},undefined);
     expect((await loadStoryGraph(root,'film'))!.nodes[0]).toEqual({...beforeProseRevision,sceneDesc:'Scoped scene',dialogue:[{speaker:'Player',text:'Ready',emotion:''}]});
+    const beforeTitleRevision=(await loadStoryGraph(root,'film'))!.nodes[0]!;
+    await createReviseNodeTool(root,'film',{...deps,submitNode:async()=>({...beforeTitleRevision,title:'A new title',sceneDesc:'Unrequested scene',dialogue:[],choices:[]})}).execute('title-edit',{nodeId:'s',fields:['title'],instruction:'Change only the scene title'},undefined);
+    expect((await loadStoryGraph(root,'film'))!.nodes[0]).toEqual({...beforeTitleRevision,title:'A new title'});
     const exported=await createExportFilmTool(root,'film').execute('export',{});
     expect(exported.details).toMatchObject({delivery:{status:'checks_passed'}});
     await createSetFilmRequirementsTool(root,'film').execute('ending-state',{endingStateRules:[{nodeId:'e',conditions:[{var:'key',op:'==',value:false}]}]});
@@ -138,7 +141,7 @@ it('rewires without losing authored content, inspects real paths and versions a 
     expect(await readFile(join(root,'works/film/source/story-graph.json'))).toEqual(before);
     const inspected=await createInspectFilmTool(root,'film').execute('inspect',{});
     expect(inspected.details).toMatchObject({nodeCount:2,registeredEndingCount:1,longestObservedSimpleRoute:{nodeIds:['s','e'],choices:1}});
-    const exported=await createExportFilmTool(root,'film').execute('export',{format:'html'});
+    const exported=await createExportFilmTool(root,'film').execute('export',{format:'html'}) as any;
     const details=exported.details as {path:string;previewUrl:string};
     expect((await readFile(join(root,details.path))).length).toBeGreaterThan(0);
     const work=await loadWorkManifest(root,'film');
@@ -193,5 +196,39 @@ it('reuses an explicitly selected topology without copying reference prose and r
   expect(target.variables).toEqual([{name:'key',type:'flag',default:true,desc:'Key'}]);
   expect(result.details).toMatchObject({referenceTopology:{workId:'reference'},missingSceneNodeIds:['e']});
   expect(await readFile(join(root,'works/reference/source/story-graph.json'))).toEqual(referenceBefore);
+ }finally{await rm(root,{recursive:true,force:true});}
+});
+
+it('keeps minimum counts and dialogue conditions distinct through structure repair, scene writing and export',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'inkos-film-minimum-'));
+ try{
+  await saveWorkManifest(root,createWorkManifest({id:'film',title:'Note',profileId:'interactive-film',language:'en'}));
+  await applyGraphDelta({projectRoot:root,projectId:'film',delta:{variables:{upsert:[{name:'note',type:'flag',default:false,desc:'A found note'}],remove:[]},notes:[]}});
+  const requirements=createSetFilmRequirementsTool(root,'film');
+  await requirements.execute('minimum',{minNodeCount:3,endingCount:2,minChoicesPerNode:2,minRouteChoices:2,dialogueConditionVariables:['note']});
+  const nodes=StoryGraphSchema.parse({schemaVersion:1,projectId:'film',title:'Note',nodes:[
+   {id:'s',type:'start',sceneDesc:'A note lies on the desk.',choices:[{id:'take',text:'Take it',targetNodeId:'m',effects:[{var:'note',op:'set',value:true}]},{id:'leave',text:'Leave it',targetNodeId:'m'}]},
+   {id:'m',type:'normal',sceneDesc:'The guide waits.',choices:[{id:'stay',text:'Stay',targetNodeId:'a'},{id:'depart',text:'Depart',targetNodeId:'b'}]},
+   {id:'a',type:'ending',sceneDesc:'The player stays.',choices:[]},
+   {id:'b',type:'ending',sceneDesc:'The player leaves.',choices:[]},
+  ]}).nodes;
+  const first=structuredClone(nodes);first[1]!.choices=first[1]!.choices.slice(0,1);
+  const requests:any[]=[];
+  const deps={submitStructure:async(_system:string,user:string)=>{requests.push(JSON.parse(user));return requests.length===1?first:nodes;},submitNode:async()=>({...nodes[1]!,dialogue:[{speaker:'Guide',text:'You found the note.',emotion:'',condition:{var:'note',op:'==' as const,value:true}}]})};
+  await createDraftStructureTool(root,'film',deps).execute('draft',{instruction:'At least three nodes; two endings; the note changes dialogue.'});
+  expect(requests).toHaveLength(2);
+  expect(requests[1].previousCandidate).toEqual(first);
+  expect(requests[1].validationIssues).toEqual(expect.arrayContaining([expect.objectContaining({code:'FILM_VISIBLE_CHOICES',expected:2,actual:1,nodeIds:['m']})]));
+  expect((await loadStoryGraph(root,'film'))!.nodes).toHaveLength(4);
+  const pending=await createInspectFilmTool(root,'film').execute('inspect',{}) as any;
+  expect(pending.details?.delivery.issues).toEqual([{code:'FILM_DIALOGUE_CONDITION_UNUSED',expected:'note'}]);
+  await createFillNodeTool(root,'film',deps).execute('fill',{nodeId:'m',instruction:'The guide responds to possession of the note.'});
+  const exported=await createExportFilmTool(root,'film').execute('export',{format:'html'}) as any;
+  expect(exported.details?.delivery.status).toBe('checks_passed');
+  expect((await readFile(join(root,exported.details!.path))).length).toBeGreaterThan(0);
+  const exact=await requirements.execute('exact',{nodeCount:3}) as any;
+  expect(exact.details?.requirements.nodeCount).toBe(3);
+  expect(exact.details?.requirements.minNodeCount).toBeUndefined();
+  expect(((await createInspectFilmTool(root,'film').execute('inspect-exact',{})) as any).details?.delivery.issues).toEqual([{code:'FILM_NODE_COUNT',expected:3,actual:4}]);
  }finally{await rm(root,{recursive:true,force:true});}
 });

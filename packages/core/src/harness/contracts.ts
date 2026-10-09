@@ -155,6 +155,7 @@ export const DeliveryRequirementSchema=z.object({
 }).strict();
 export const RequestDeliveryStateSchema=z.object({
   version:z.literal(1),authorRequest:z.string(),declared:z.boolean(),
+  newContentQuote:z.string().nullable().optional(),
   steps:z.array(DeliveryRequirementSchema),receipts:z.array(OperationReceiptSchema),
 }).strict();
 export type RequestDeliveryState=z.infer<typeof RequestDeliveryStateSchema>;

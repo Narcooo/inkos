@@ -813,6 +813,7 @@ export async function runAgentSession(
       removeCachedAgent(agentCacheKey(config.projectRoot, config.sessionId));
       currentConfig = {
         ...currentConfig,
+        baselineWork: currentConfig.baselineWork === undefined ? null : currentConfig.baselineWork,
         workId: transition.work.id,
         profileId: transition.work.profileId,
         bookId: transition.work.profileId === "longform-novel" ? transition.work.id : null,
@@ -1142,7 +1143,13 @@ async function runAgentSessionUnlocked(
         tools: [...visibleTools,createDeliveryRequirementsTool({root:projectRoot,ledger:()=>cached!.requestDelivery,ensure:signal=>cached!.ensureDelivery(signal),save:()=>cached!.persistDelivery()}), createTurnCompletionTool({
           state: () => cached ?? { activeActions: 0, hasDelivery: false, deliveryFailed: false },
           complete: result => { if (!cached) throw new Error("Session unavailable"); cached.turnCompletion = result; },
-          validateDelivery: async signal => {await cached!.ensureDelivery(signal);await cached!.artifactDeliveries.validate(projectRoot);await cached!.requestDelivery.validate(projectRoot);},
+          validateDelivery: async signal => {
+            await cached!.ensureDelivery(signal);
+            const sourceQuote=cached!.requestDelivery.snapshot().newContentQuote;
+            const episode=cached!.currentEpisode;
+            await cached!.artifactDeliveries.validate(projectRoot,sourceQuote&&episode?.work?{workId:episode.work.id,baselineWork:episode.baselineWork??null,sourceQuote}:undefined);
+            await cached!.requestDelivery.validate(projectRoot);
+          },
         })],
         messages: initialAgentMessages,
       },
@@ -1351,7 +1358,7 @@ async function runAgentSessionUnlocked(
   };
   let interpretation:Promise<void>|undefined;
   cached.ensureDelivery=async(signal)=>{
-    if(requestDelivery.declared)return;
+    if(requestDelivery.interpretationComplete)return;
     interpretation??=(async()=>{
       const client={provider:model.api==='anthropic-messages'?'anthropic' as const:'openai' as const,
         apiFormat:model.api==='anthropic-messages'?'anthropic' as const:model.api==='openai-responses'?'responses' as const:'chat' as const,

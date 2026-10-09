@@ -25,8 +25,13 @@ export function inspectFilmGraph(graph: StoryGraph, requirements?: FilmRequireme
 
 export function createSetFilmRequirementsTool(root:string,workId:string):AgentTool<typeof FilmRequirementsSchema>{
   return{name:'set_film_requirements',label:'Set confirmed film requirements',parameters:FilmRequirementsSchema,
-    description:'Persist the exact numeric and variable constraints the user requested, before authoring or validation. Omit constraints the user has not specified. Updates preserve other saved constraints.',
-    execute:async(_id,params)=>{const requirements={...await readFilmRequirements(root,workId),...params};const path=`works/${workId}/source/delivery-requirements.json`;
+    description:'Persist the numeric and variable constraints the user requested. Distinguish exact counts from minimums, and conditional choices from conditional dialogue. Omit unrequested constraints. A new count relation replaces the previous relation; other saved constraints remain. An empty variable list clears that list.',
+    execute:async(_id,params)=>{
+      if(params.nodeCount!==undefined&&params.minNodeCount!==undefined)throw Object.assign(new Error('Choose exact nodeCount or minimum minNodeCount according to the author request, not both.'),{code:'FILM_COUNT_CONSTRAINT_CONFLICT'});
+      const requirements={...await readFilmRequirements(root,workId),...params};
+      if(params.nodeCount!==undefined)delete requirements.minNodeCount;
+      if(params.minNodeCount!==undefined)delete requirements.nodeCount;
+      const path=`works/${workId}/source/delivery-requirements.json`;
       await syncWorkSourceArtifacts({projectRoot:root,workId,accept:true,writes:[{relativePath:path,content:JSON.stringify(requirements,null,2)+'\n'}]});
       return{content:[{type:'text',text:JSON.stringify({kind:'film_requirements_saved',path,requirements})}],details:{kind:'film_requirements_saved',workId,path,requirements}};
     }};

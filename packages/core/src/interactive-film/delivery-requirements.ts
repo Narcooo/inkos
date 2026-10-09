@@ -9,13 +9,15 @@ import{ConditionToolSchema}from'./tool-schemas.js';
 import{evaluateCondition}from'./evaluator.js';
 
 export const FilmRequirementsSchema=Type.Object({
-  nodeCount:Type.Optional(Type.Integer({minimum:1})),
+  nodeCount:Type.Optional(Type.Integer({minimum:1,description:"Exact node count, only when the author requires exactly this many. For at least, use minNodeCount instead."})),
+  minNodeCount:Type.Optional(Type.Integer({minimum:1,description:"Minimum node count when the author requests at least this many. Additional nodes are permitted."})),
   endingCount:Type.Optional(Type.Integer({minimum:1})),
   minChoicesPerNode:Type.Optional(Type.Integer({minimum:1,description:"Minimum choices visible to the player at each reachable non-ending node/state. Conditional alternatives are counted only when their conditions hold."})),
   minRouteChoices:Type.Optional(Type.Integer({minimum:1,description:"Require at least one reachable route without repeated nodes containing this many choices, to primaryEndingNodeId when supplied. Other routes and failure endings may be shorter."})),
   primaryEndingNodeId:Type.Optional(Type.String({minLength:1})),
   endingStateRules:Type.Optional(Type.Array(Type.Object({nodeId:Type.String({minLength:1}),conditions:Type.Array(ConditionToolSchema,{minItems:1})}))),
   conditionVariables:Type.Optional(Type.Array(Type.String({minLength:1}),{description:"Only variables the user explicitly requires to occur in choice conditions. This is not the list of all declared variables; do not add constraints for every state flag."})),
+  dialogueConditionVariables:Type.Optional(Type.Array(Type.String({minLength:1}),{description:"Only variables the author explicitly requires to change visible dialogue. This does not require conditional choices."})),
   allowUnreachable:Type.Optional(Type.Boolean()),
 },{additionalProperties:false});
 export type FilmRequirements=Static<typeof FilmRequirementsSchema>;
@@ -23,12 +25,13 @@ export async function readFilmRequirements(root:string,id:string):Promise<FilmRe
   try{return Value.Parse(FilmRequirementsSchema,JSON.parse(await readFile(join(root,'works',id,'source','delivery-requirements.json'),'utf8'))) as FilmRequirements;}
   catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return undefined;throw error;}
 }
-export function checkFilmRequirements(graph:StoryGraph,requirements?:FilmRequirements){
+export function checkFilmRequirements(graph:StoryGraph,requirements?:FilmRequirements,phase:'structure'|'delivery'='delivery'){
   const issues:Array<{code:string;expected?:unknown;actual?:unknown;nodeIds?:readonly string[];state?:Record<string,number|string|boolean>}>=[];
   if(!requirements)return{status:'unverified' as const,issues:[{code:'FILM_REQUIREMENTS_MISSING'}]};
   for(const issue of validateStoryGraph(graph).issues.filter(i=>i.level==='error'))issues.push({code:'FILM_STRUCTURE_INVALID',actual:issue.code,nodeIds:issue.nodeIds});
   const count=(code:string,expected:number|undefined,actual:number)=>{if(expected!==undefined&&actual!==expected)issues.push({code,expected,actual});};
   count('FILM_NODE_COUNT',requirements.nodeCount,graph.nodes.length);
+  if(requirements.minNodeCount!==undefined&&graph.nodes.length<requirements.minNodeCount)issues.push({code:'FILM_MIN_NODE_COUNT',expected:requirements.minNodeCount,actual:graph.nodes.length});
   count('FILM_ENDING_COUNT',requirements.endingCount,graph.nodes.filter(n=>n.type==='ending').length);
   const runtime=exploreRuntimeStates(graph);
   const nodes=new Map(graph.nodes.map(node=>[node.id,node]));
@@ -42,6 +45,7 @@ export function checkFilmRequirements(graph:StoryGraph,requirements?:FilmRequire
     if(runtime.truncated)issues.push({code:'FILM_VISIBLE_CHOICES_NOT_PROVEN'});
   }
   for(const variable of requirements.conditionVariables??[])if(!graph.nodes.some(n=>n.choices.some(c=>c.condition?.var===variable)))issues.push({code:'FILM_CONDITION_UNUSED',expected:variable});
+  if(phase==='delivery')for(const variable of requirements.dialogueConditionVariables??[])if(!graph.nodes.some(n=>n.dialogue.some(line=>line.condition?.var===variable)))issues.push({code:'FILM_DIALOGUE_CONDITION_UNUSED',expected:variable});
   if(!requirements.allowUnreachable){
     const reached=new Set(runtime.states.map(entry=>entry.nodeId));
     const unreachable=graph.nodes.filter(node=>!reached.has(node.id)).map(node=>node.id);

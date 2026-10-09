@@ -22,7 +22,7 @@ it('recovers a committed artifact operation after a final-model failure, preserv
  const server=createServer(async(req,res)=>{
   const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));const body=JSON.parse(Buffer.concat(chunks).toString());
   let reply:{name:string;args:unknown};
-  if(body.tools[0].function.name==='submit_requested_operations')reply={name:'submit_requested_operations',args:{contentReviewQuote:'',exportQuote:request}};
+  if(body.tools[0].function.name==='submit_requested_operations')reply={name:'submit_requested_operations',args:{newContentQuote:'',contentReviewQuote:'',exportQuote:request}};
   else if(phase==='fail'){
    const call=mainCalls++;
    if(call===0)reply={name:'bind_delivery_sources',args:{steps:[{id:'export',targets:[{workId:'work',artifactId}]}]}};
