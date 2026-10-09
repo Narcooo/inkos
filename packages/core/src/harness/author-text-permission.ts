@@ -6,15 +6,32 @@ import {AuthorTextScopeSchema, authorTextScopeContract, type AuthorTextScope} fr
 import {commitAtomicFileSet} from '../utils/atomic-file-set.js';
 import {recordExecutionEvidence} from './execution-evidence.js';
 
+/** Match immutable fragments around arbitrary replacements without regex
+ * backtracking. Earliest ordered matches leave maximal room for later pieces. */
+export function matchesProtectedFragments(content:string,parts:readonly string[]):boolean{
+  const prefix=parts[0]??'',suffix=parts.at(-1)??'';
+  if(!content.startsWith(prefix)||!content.endsWith(suffix))return false;
+  let cursor=prefix.length;
+  const end=content.length-suffix.length;
+  if(cursor>end)return false;
+  for(const part of parts.slice(1,-1)){
+    const index=content.indexOf(part,cursor);
+    if(index<0||index+part.length>end)return false;
+    cursor=index+part.length;
+  }
+  return true;
+}
+
 /** Resolve permission once against the request's immutable source. Later prose
  * can change paragraph counts, but cannot redefine what the author selected. */
 export async function resolveAuthorTextPermission(input:{
   projectRoot:string; workId:string; artifactId:string; revisionId:string;
   originalContent:string; currentContent:string; authorRequest:string;
+  selectorVersion?:number;
   select:(source:string,authorRequest:string)=>Promise<AuthorTextScope>;
 }) {
   const {projectRoot,workId,artifactId,revisionId,originalContent,currentContent,authorRequest}=input;
-  const key=createHash('sha256').update(JSON.stringify({version:1,workId,artifactId,revisionId,originalContent,authorRequest})).digest('hex');
+  const key=createHash('sha256').update(JSON.stringify({version:input.selectorVersion??1,workId,artifactId,revisionId,originalContent,authorRequest})).digest('hex');
   const relativePath=join('.inkos','author-text-permissions',`${key}.json`);
   let selected:AuthorTextScope;
   try { selected=Value.Parse(AuthorTextScopeSchema,JSON.parse(await readFile(join(projectRoot,relativePath),'utf8'))); }
@@ -33,9 +50,7 @@ export async function resolveAuthorTextPermission(input:{
     let cursor=0;
     const protectedParts=ranges.map(range=>{const text=originalContent.slice(cursor,range.startOffset);cursor=range.endOffset;return text;});
     protectedParts.push(originalContent.slice(cursor));
-    const escape=(text:string)=>text.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
-    const pattern=new RegExp('^'+protectedParts.map(escape).join('[\\s\\S]*')+'$(?![\\s\\S])');
-    if(!pattern.test(currentContent))throw Object.assign(new Error('Protected source changed after this request began. Start a new request against the current revision.'),{code:'ARTIFACT_EDIT_BASELINE_CONFLICT',workId,artifactId,revisionId});
+    if(!matchesProtectedFragments(currentContent,protectedParts))throw Object.assign(new Error('Protected source changed after this request began. Start a new request against the current revision.'),{code:'ARTIFACT_EDIT_BASELINE_CONFLICT',workId,artifactId,revisionId});
   }
   recordExecutionEvidence('edit-scope-selected',{workId,artifactId,revisionId,authority:'author_request',ranges:contract.ranges});
   return contract;
