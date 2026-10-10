@@ -105,7 +105,7 @@ it('reviews an explicit candidate snapshot without adopting it or unrelated sour
   } finally {server.closeAllConnections();await new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve()));await rm(root,{recursive:true,force:true});}
 },15000);
 
-it('reviews a sales package with the manuscript and outline versions used to create it', async () => {
+it('reviews a sales package against the current manuscript version', async () => {
   const root=await mkdtemp(join(tmpdir(),'inkos-package-sources-'));
   const requests:Array<{messages:Array<{role:string;content:string}>}>=[];
   const server=createServer(async(req,res)=>{
@@ -128,14 +128,14 @@ it('reviews a sales package with the manuscript and outline versions used to cre
     const client=createLLMClient({service:'custom',provider:'openai',configSource:'studio',model:'fixture',apiKey:'fixture',baseUrl:`http://127.0.0.1:${(server.address() as {port:number}).port}/v1`,apiFormat:'chat',stream:true,temperature:0,thinkingBudget:0});
     const result=await createArtifactMethodTools(new PipelineRunner({client,model:'fixture',projectRoot:root}),root,work.id)[0]!.execute('review',{artifactId:artifact.id,instruction:'Check the package against its story.'});
     const input=JSON.parse([...requests[0]!.messages].reverse().find(m=>m.role==='user')!.content);
-    expect(new Set(input.sources.map((source:{path:string})=>source.path))).toEqual(new Set(['source/final/sales-package.md','source/final/full.md','source/outline/v001.md']));
+    expect(new Set(input.sources.map((source:{path:string})=>source.path))).toEqual(new Set(['source/final/sales-package.md','source/final/full.md']));
     for(const source of input.sources){
       const artifact=work.artifacts.find(item=>item.id===source.sourceId)!;
       const revision=artifact.revisions.find(item=>item.id===artifact.currentRevisionId)!;
       expect(source).toMatchObject({revisionId:revision.id,checksum:revision.checksum,path:revision.path});
     }
     expect(result.details).toMatchObject({kind:'artifact_reviewed',reviewedReferences:expect.any(Array)});
-    expect((result.details as {reviewedReferences:unknown[]}).reviewedReferences).toHaveLength(2);
+    expect((result.details as {reviewedReferences:unknown[]}).reviewedReferences).toHaveLength(1);
   } finally {server.closeAllConnections();await new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve()));await rm(root,{recursive:true,force:true});}
 },15000);
 

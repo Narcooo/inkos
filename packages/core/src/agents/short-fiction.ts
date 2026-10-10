@@ -150,9 +150,7 @@ export interface ShortFictionDraftReviewInput extends ShortFictionDraftInput {
 }
 
 export interface ShortFictionPackageInput {
-  readonly reviewContext?: string;
   readonly direction: string;
-  readonly outlineMarkdown: string;
   readonly draft: ShortFictionBatchDraft;
   readonly language?: ShortFictionLanguage;
 }
@@ -526,10 +524,8 @@ export class ShortFictionPackagingAgent extends BaseAgent {
         { role: "system", content: buildShortFictionPackageSystemPrompt(input.language) },
         { role: "user", content: buildShortFictionPackageUserPrompt({
           direction: input.direction,
-          outlineMarkdown: input.outlineMarkdown,
           draftMarkdown: renderShortFictionDraftMarkdown(input.draft, input.language),
           draftTitle: input.draft.storyTitle,
-          reviewContext:input.reviewContext,
         }, input.language) },
       ], {
         name: "submit_short_package",

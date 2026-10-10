@@ -579,10 +579,8 @@ async function produceShort(
         ? JSON.parse(savedPackage) as ShortFictionSalesPackage
         : await packager.generatePackage({
         direction: packageDirection,
-        outlineMarkdown,
         draft: finalDraft,
         language,
-        reviewContext:JSON.stringify(productionState.delivery),
       });
       await writePackageArtifacts(root, baseDir, salesPackage, language);
       await rm(safeChildPath(root, join(baseDir, "reviews", "package-warning.md")), { force: true });

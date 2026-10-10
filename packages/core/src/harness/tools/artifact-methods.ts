@@ -185,7 +185,7 @@ export function createArtifactMethodTools(pipeline: PipelineRunner, root: string
         ? ['source/source-material.md','source/interactive-spec.md',revision.path==='source/script.md'?'source/script-spec.md':'source/storyboard-spec.md',
           ...(revision.path==='source/storyboard.md'?['source/image-prompts.md']:revision.path==='source/image-prompts.md'?['source/storyboard.md']:[])]
         : profile.capabilityIds.includes('short-fiction')&&['source/final/sales-package.md','source/final/sales-package.json','source/final/cover-prompt.md'].includes(revision.path)
-          ? ['source/outline/v001.md','source/final/full.md']
+          ? ['source/final/full.md']
           : profile.capabilityIds.includes('interactive-film')&&revision.path==='source/story-graph.json'
             ? ['source/delivery-requirements.json'] : [];
       const relatedIds = work.artifacts.filter(item=>item.revisions.some(version=>version.id===item.currentRevisionId&&relatedPaths.includes(version.path))).map(item=>item.id);
@@ -209,7 +209,7 @@ export function createArtifactMethodTools(pipeline: PipelineRunner, root: string
           if(originalArtifact?.currentRevisionId&&authorRequest?.trim()&&revision.path.endsWith('.md')){
             const original=await readArtifactRevision({projectRoot:root,workId,artifactId:artifact.id,revisionId:originalArtifact.currentRevisionId});
             const selector=new ArtifactWorker(pipeline.createAgentContext('auditor',workId));
-            authorScope=await resolveAuthorTextPermission({projectRoot:root,workId,artifactId:artifact.id,revisionId:original.revision.id,originalContent:original.bytes.toString('utf8'),currentContent:content,authorRequest,selectorVersion:artifact.kind==='script'?4:1,select:(source,request)=>selector.selectAuthorScope(source,request,artifact.kind==='script')});
+            authorScope=await resolveAuthorTextPermission({projectRoot:root,workId,artifactId:artifact.id,revisionId:original.revision.id,originalContent:original.bytes.toString('utf8'),currentContent:content,authorRequest,selectorVersion:artifact.kind==='script'?5:1,select:(source,request)=>selector.selectAuthorScope(source,request,artifact.kind==='script')});
           }
           let result: { content: string };
           try {

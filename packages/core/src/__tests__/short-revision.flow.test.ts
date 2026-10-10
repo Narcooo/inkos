@@ -132,7 +132,7 @@ it("defers the cover when packaging fails and resumes it from the completed visu
   }
 },15000);
 
-it('reviews and packages an undersized persisted manuscript without rewriting it and carries delivery issues to packaging',async()=>{
+it('packages the current manuscript while preserving its separate delivery issues',async()=>{
   const root=await mkdtemp(join(tmpdir(),'inkos-review-only-'));roots.push(root);
   const draft={storyTitle:'Short',rawContent:'',chapters:[{number:1,title:'First',content:'One small scene.',charCount:3}]};
   const initial=createInitialWorkManifestWrite({workId:'short',title:'Short',profileId:'short-fiction',language:'en',writes:[]});
@@ -155,7 +155,8 @@ it('reviews and packages an undersized persisted manuscript without rewriting it
   await runShortFictionStage({...options,stage:'package',direction:packagingRequest});
   expect(writer).not.toHaveBeenCalled();
   expect(await readFile(join(root,'works/short/source/final/short-story.json'))).toEqual(before);
-  expect(JSON.parse(packageSpy.mock.calls[0]![0].reviewContext!)).toMatchObject({status:'needs_revision'});
+  expect(Object.keys(packageSpy.mock.calls[0]![0]).sort()).toEqual(['direction','draft','language']);
+  expect(packageSpy.mock.calls[0]![0].draft.chapters).toEqual(draft.chapters);
   expect(packageSpy.mock.calls[0]![0].direction).toContain(packagingRequest);
   expect(packageSpy.mock.calls[0]![0].direction).toContain("Original story");
   const state=JSON.parse(await readFile(join(root,'works/short/source/production-state.json'),'utf8'));

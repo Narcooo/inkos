@@ -24,9 +24,7 @@ export interface ShortFictionDraftPromptInput {
 }
 export interface ShortFictionDraftReviewPromptInput extends ShortFictionDraftPromptInput { readonly draftMarkdown: string; readonly revisionRequest?: string; readonly reviewScope?: string; readonly measurements?: ShortFictionMeasurements; readonly comparison?: unknown; }
 export interface ShortFictionPackagePromptInput {
-  readonly reviewContext?: string;
   readonly direction: string;
-  readonly outlineMarkdown: string;
   readonly draftMarkdown: string;
   readonly draftTitle: string;
 }
@@ -112,10 +110,8 @@ export function buildShortFictionPackageSystemPrompt(language: ShortFictionLangu
 export function buildShortFictionPackageUserPrompt(input: ShortFictionPackagePromptInput, language: ShortFictionLanguage = "zh"): string {
   return [
     language === "en" ? "## Direction" : "## 创作方向", input.direction,
-    "", language === "en" ? "## Plan" : "## 故事方案", input.outlineMarkdown.trim(),
     "", language === "en" ? "## Persisted draft" : "## 已落盘正文", input.draftMarkdown.trim(),
     "", language === "en" ? "## Existing title" : "## 当前标题", input.draftTitle,
-    ...(input.reviewContext?["",language==='en'?"## Review evidence":"## 审稿依据",input.reviewContext]:[]),
   ].join("\n");
 }
 function requestedShortFictionChapters(input: ShortFictionDraftPromptInput): number[] {

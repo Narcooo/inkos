@@ -1,5 +1,27 @@
 import {createServer} from 'node:http';import {once} from 'node:events';import {mkdtemp,mkdir,rm,readFile} from 'node:fs/promises';import {tmpdir} from 'node:os';import {join} from 'node:path';import {it,expect} from 'vitest';
 import {createWorkManifest,saveWorkManifest} from '../harness/work-store.js';import {syncWorkSourceArtifacts} from '../harness/source-sync.js';import {createLLMClient} from '../llm/provider.js';import {PipelineRunner} from '../pipeline/runner.js';import {createArtifactMethodTools} from '../harness/tools/artifact-methods.js';import {executeExplicitCapabilityTool} from '../harness/explicit-action.js';
+import {scriptDialogueScopeRequest} from '../agents/script-edit-scope.js';
+import {authorTextScopeContract} from '../agents/author-edit-scope.js';
+
+it('maps colon-style speech segments to exact source bytes while preserving cast, cues and earlier exchanges',()=>{
+ const source='# Late close\n\n## Cast\n\n**Mara**（45）\nCleaner.\n\n**Noah**（28）\nTicket clerk.\n\n## Script\n\n**First scene**\n\nNoah: We should go.\n\n**Final scene**\n\nMara: Can you stay?\nNoah：（puts the note away）Maybe.\n\nThey leave together.\n';
+ const request=scriptDialogueScopeRequest(source,'Change only the ticket clerk’s final spoken response; preserve all other text.');
+ expect(request).toBeDefined();
+ const indexed=JSON.parse(request!.messages[1]!.content);
+ expect(indexed.cast.map((c:any)=>({id:c.id,name:c.name}))).toEqual([{id:'speaker-1',name:'Mara'},{id:'speaker-2',name:'Noah'}]);
+ const speeches=indexed.sourceUnits.filter((unit:any)=>unit.kind==='dialogue'&&unit.speakerId==='speaker-2');
+ expect(speeches).toHaveLength(2);
+ expect(speeches[1].speechBlock).toBeGreaterThan(speeches[0].speechBlock);
+ const last=speeches[1],selection={wholeDocument:false,speakerIds:['speaker-2'],dialoguePosition:null,selections:[{unitId:last.id,text:''}],reason:'The final clerk response.'};
+ const scope=request!.toAuthorScope(selection),contract=authorTextScopeContract(source,scope);
+ expect(scope.selections[0]!.unitId).toBe(last.sourceUnitId);
+ expect(contract.apply({selection_0_text:'I will wait with you.'})).toBe(source.replace('Maybe.','I will wait with you.'));
+ const label=indexed.sourceUnits.find((unit:any)=>unit.kind==='speaker_label'&&unit.sourceUnitId===last.sourceUnitId);
+ expect(()=>request!.tool.validate({...selection,selections:[{unitId:last.id,text:label.text+last.text}]})).toThrow(expect.objectContaining({code:'SCRIPT_SCOPE_SEGMENT_INVALID'}));
+ const positional={...selection,selections:[],dialoguePosition:{scene:last.scene,position:'last' as const,unit:'exchange' as const}};
+ expect(request!.toAuthorScope(positional)).toEqual(scope);
+ expect(()=>request!.tool.validate({...positional,selections:selection.selections})).toThrow(expect.objectContaining({code:'SCRIPT_SCOPE_POSITION_INVALID'}));
+});
 
 it.each([
  {format:'inline',cast:'**Mara** Cleaner.\n\n**Noah** Ticket clerk.'},
@@ -13,7 +35,7 @@ it.each([
   const name=body.tools[0].function.name,scope=name==='submit_script_edit_scope'?JSON.parse(body.messages.find((m:any)=>m.role==='user').content):undefined;
   const selectedSpeaker=scope&&++selections===1?'speaker-1':'speaker-2';
   const args=scope
-   ?{wholeDocument:false,speakerIds:['speaker-2'],selections:[{unitId:scope.sourceUnits.find((unit:any)=>unit.kind==='dialogue'&&unit.speakerId===selectedSpeaker)?.id,text:''}],reason:'Only the requested clerk speech.'}
+   ?{wholeDocument:false,speakerIds:['speaker-2'],dialoguePosition:null,selections:[{unitId:scope.sourceUnits.find((unit:any)=>unit.kind==='dialogue'&&unit.speakerId===selectedSpeaker)?.id,text:''}],reason:'Only the requested clerk speech.'}
    :{selection_0_text:'I will register the box first.\n'};
   res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{tool_calls:[{id:'dialogue-'+requests.length,type:'function',function:{name,arguments:JSON.stringify(args)}}]}}]}));
  });server.listen(0,'127.0.0.1');await once(server,'listening');
