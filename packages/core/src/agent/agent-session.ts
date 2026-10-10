@@ -1271,6 +1271,7 @@ async function runAgentSessionUnlocked(
   let parentUuid: string | null = null;
   let piTurnIndex = 0;
   let lastAssistantUuid: string | null = null;
+  const persistedToolResults = new Map<string, Promise<unknown>>();
   let skillTurnActive = cached.turnSkills.size > 0;
 
   // ----- Prepare transcript persistence -----
@@ -1386,6 +1387,18 @@ async function runAgentSessionUnlocked(
       piTurnIndex += 1;
       return;
     }
+    if (event.type === "tool_execution_end") {
+      // A completed mutation is already real even if the process exits before
+      // the SDK emits message_end. Persist its result before publishing the
+      // completion event so retry can recover it from the canonical transcript.
+      const result = event.result as { content?: ToolResultMessage["content"]; details?: unknown } | undefined;
+      if (Array.isArray(result?.content)) await persistAgentEvent({
+        type: "message_end",
+        message: { role: "toolResult", toolCallId: event.toolCallId, toolName: event.toolName,
+          content: result.content, details: result.details, isError: event.isError, timestamp: Date.now() },
+      });
+      return;
+    }
     if (event.type !== "message_end") return;
 
     const role = transcriptRoleForMessage(event.message);
@@ -1402,13 +1415,22 @@ async function runAgentSessionUnlocked(
     const uuid = randomUUID();
     const isToolResult = role === "toolResult";
     const toolCallId = toolCallIdForMessage(event.message);
-    await appendAgentTranscriptEvent(projectRoot, sessionId, (seq) => ({
+    const sourceAssistantUuid = lastAssistantUuid;
+    const previousParentUuid = isToolResult && sourceAssistantUuid ? sourceAssistantUuid : parentUuid;
+    const toolResultKey = isToolResult ? JSON.stringify([sourceAssistantUuid, toolCallId]) : undefined;
+    const pendingResult = toolResultKey && persistedToolResults.get(toolResultKey);
+    if (pendingResult) { await pendingResult; return; }
+    // Capture ancestry before async appends. Parallel tool results and reused
+    // provider call IDs must still belong to their own assistant message.
+    if (role === "assistant") lastAssistantUuid = uuid;
+    parentUuid = uuid;
+    const persistence = appendAgentTranscriptEvent(projectRoot, sessionId, (seq) => ({
       type: "message",
       version: 1,
       sessionId,
       requestId,
       uuid,
-      parentUuid: isToolResult && lastAssistantUuid ? lastAssistantUuid : parentUuid,
+      parentUuid: previousParentUuid,
       seq,
       role,
       ...(controlMessage ? { visibility: "model" as const } : {}),
@@ -1416,8 +1438,8 @@ async function runAgentSessionUnlocked(
       timestamp: messageTimestamp(event.message),
       piTurnIndex,
       ...(toolCallId ? { toolCallId } : {}),
-      ...(isToolResult && lastAssistantUuid
-        ? { sourceToolAssistantUuid: lastAssistantUuid }
+      ...(isToolResult && sourceAssistantUuid
+        ? { sourceToolAssistantUuid: sourceAssistantUuid }
         : {}),
       ...(role === "user" && config.attachments?.length ? { display: { userInput: {
         text: userMessage, language: language === "en" ? "en" as const : "zh" as const,
@@ -1425,9 +1447,8 @@ async function runAgentSessionUnlocked(
       } } } : {}),
       message: persistedMessage,
     }));
-
-    if (role === "assistant") lastAssistantUuid = uuid;
-    parentUuid = uuid;
+    if (toolResultKey) persistedToolResults.set(toolResultKey, persistence);
+    await persistence;
   };
 
   // ----- Subscribe to events (transcript persistence + SSE forwarding) -----

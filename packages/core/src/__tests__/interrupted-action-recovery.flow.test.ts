@@ -1,5 +1,6 @@
 import {it,expect} from 'vitest';
 import {mkdtemp,mkdir,rm,readFile} from 'node:fs/promises';
+import {readFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createServer} from 'node:http';
@@ -19,6 +20,7 @@ it('recovers a committed artifact operation after a final-model failure, preserv
  const work=await syncWorkSourceArtifacts({projectRoot:root,workId:'work',accept:true,writes:[{relativePath:'works/work/source/script.md',content:'Nora closes the gallery.\n'}]});
  const artifactId=work.artifacts[0]!.id,request='Export the current script.';
  let phase:'fail'|'resume'|'blocked'='fail',mainCalls=0,exportCalls=0;
+ const publishedReceipts:Array<{count:number;hasAssistantOwner:boolean}>=[];
  const server=createServer(async(req,res)=>{
   const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));const body=JSON.parse(Buffer.concat(chunks).toString());
   let reply:{name:string;args:unknown};
@@ -34,9 +36,17 @@ it('recovers a committed artifact operation after a final-model failure, preserv
   res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{role:'assistant',tool_calls:[{id:'call-'+phase+'-'+mainCalls,type:'function',function:{name:reply.name,arguments:JSON.stringify(reply.args)}}]}}]}));
  });server.listen(0,'127.0.0.1');await once(server,'listening');
  const client=createLLMClient({service:'custom',provider:'openai',configSource:'studio',model:'fixture',apiKey:'fixture',baseUrl:`http://127.0.0.1:${(server.address() as {port:number}).port}/v1`,apiFormat:'chat',stream:false,thinkingBudget:0});
- const config={projectRoot:root,sessionId:'resume-export',sessionKind:'work' as const,workId:'work',bookId:null,profileId:'script',language:'en',attachments:[{id:'note',filename:'note.txt',mimeType:'text/plain',size:5,text:'Nora.'}],model:client._piModel!,apiKey:'fixture',stream:false,pipeline:new PipelineRunner({projectRoot:root,client,model:'fixture'}),onEvent:(event:any)=>{if(event.type==='tool_execution_end'&&event.toolName==='workspace__export_work'&&!event.isError)exportCalls++;}};
+ const observe=(sessionId:string)=>(event:any)=>{if(event.type==='tool_execution_end'&&event.toolName==='workspace__export_work'&&!event.isError){exportCalls++;
+  const events=readFileSync(join(root,'.inkos/sessions',sessionId+'.jsonl'),'utf8').trim().split('\n').map(line=>JSON.parse(line));
+  const results=events.filter(e=>e.type==='message'&&e.role==='toolResult'&&e.message.toolCallId===event.toolCallId&&e.message.toolName===event.toolName);
+  publishedReceipts.push({count:results.length,hasAssistantOwner:results.every(r=>events.some(e=>e.uuid===r.sourceToolAssistantUuid&&e.role==='assistant'&&e.message.content.some((c:any)=>c.type==='toolCall'&&c.id===event.toolCallId)))});
+ }};
+ const config={projectRoot:root,sessionId:'resume-export',sessionKind:'work' as const,workId:'work',bookId:null,profileId:'script',language:'en',attachments:[{id:'note',filename:'note.txt',mimeType:'text/plain',size:5,text:'Nora.'}],model:client._piModel!,apiKey:'fixture',stream:false,pipeline:new PipelineRunner({projectRoot:root,client,model:'fixture'}),onEvent:observe('resume-export')};
  try{
   const failed=await runAgentSession(config,request);expect(failed.errorMessage).toBeDefined();evictAgentCache(config.sessionId);
+  expect(publishedReceipts[0]).toEqual({count:1,hasAssistantOwner:true});
+  const durableEvents=readFileSync(join(root,'.inkos/sessions/resume-export.jsonl'),'utf8').trim().split('\n').map(line=>JSON.parse(line));
+  expect(durableEvents.filter(e=>e.type==='message'&&e.role==='toolResult'&&e.message.toolName==='workspace__export_work')).toHaveLength(1);
   const visible=await deriveBookSessionFromTranscript(root,config.sessionId);
   expect(visible?.messages.flatMap(message=>message.toolExecutions??[])).toEqual(expect.arrayContaining([expect.objectContaining({tool:'export_work',status:'completed'})]));
   const restored=await restoreAgentMessagesFromTranscript(root,config.sessionId,'work');
@@ -50,7 +60,7 @@ it('recovers a committed artifact operation after a final-model failure, preserv
   const completed=await runAgentSession({...config,recoverIncompleteRequest:true},request);
   expect(completed.completion?.status).toBe('delivered');expect(exportCalls).toBe(1);expect(await digest()).toBe(before);
 
-  const staleConfig={...config,sessionId:'stale-export'};phase='fail';mainCalls=0;
+  const staleConfig={...config,sessionId:'stale-export',onEvent:observe('stale-export')};phase='fail';mainCalls=0;
   expect((await runAgentSession(staleConfig,request)).errorMessage).toBeDefined();evictAgentCache(staleConfig.sessionId);
   await syncWorkSourceArtifacts({projectRoot:root,workId:'work',accept:true,writes:[{relativePath:'works/work/source/script.md',content:'Nora reopens the gallery.\n'}]});
   phase='resume';mainCalls=0;
