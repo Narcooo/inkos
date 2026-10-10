@@ -23,7 +23,11 @@ import {createWriteChaptersTool} from '../harness/tools/longform-production.js';
 import {actionFailureFacts} from '../harness/action-observation.js';
 import {buildExportArtifact} from '../interaction/export-artifact.js';
 import {ContinuityAuditor} from '../agents/continuity.js';
+import {ReviserAgent} from '../agents/reviser.js';
 import {StateValidatorAgent} from '../agents/state-validator.js';
+import {withExecutionEvidence} from '../harness/execution-evidence.js';
+import {fixtureToolCalls} from './tool-call-fixtures.js';
+import {createHash} from 'node:crypto';
 import {savePersistedPlan} from '../pipeline/persisted-governed-plan.js';
 
 describe("long-form harness mini-flow", () => {
@@ -86,15 +90,18 @@ describe("long-form harness mini-flow", () => {
     const planPath=join(bookDir,'story/runtime/chapter-0001.intent.md');
     const plan=Buffer.from('Original scene plan.');
     await mkdir(join(bookDir,'story/runtime'),{recursive:true});await writeFile(planPath,plan);
-    const composer=vi.spyOn(ComposerAgent.prototype,'selectTaskContext').mockResolvedValue({chapter:1,selectedContext:[]});
+    const composer=vi.spyOn(ComposerAgent.prototype,'selectTaskContext').mockResolvedValue({chapter:1,selectedContext:[{
+      source:'runtime/chapter_memo',reason:'Coordinator suggestion',excerpt:'Require a different departure scene.',protection:'protected',
+    }]});
+    const auditor=vi.spyOn(ContinuityAuditor.prototype,'auditChapter');
     let calls=0;
     const server=createServer(async(req,res)=>{
       const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));const body=JSON.parse(Buffer.concat(chunks).toString('utf8'));
       const name=body.tools[0].function.name;
       const delta=chapterOutput(1).runtimeStateDelta!;
       const {chapter:_chapter,...summary}=delta.chapterSummary!;
-      const result=name==='submit_chapter_review'?{summary:'Reviewed the chapter.',observationCodes:[]}:{postSettlement:'The witness leaves.',factOps:delta.factOps,hookOps:delta.hookOps,newHookCandidates:[],chapterSummary:summary};
-      calls++;res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{tool_calls:[{id:'settle-'+calls,type:'function',function:{name,arguments:JSON.stringify(result)}}]}}]}));
+      const result=name==='submit_chapter_review'?{summary:'Reviewed the chapter.',observations:[{code:'DEPARTURE',assessment:'issue',category:'quality',summary:'Clarify the departure.',sourceRefs:[{sourceId:'chapter-1',startLine:1,endLine:1}]}]}:{postSettlement:'The witness leaves.',factOps:delta.factOps,hookOps:delta.hookOps,newHookCandidates:[],chapterSummary:summary};
+      calls++;res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{tool_calls:fixtureToolCalls(name,result,'settle-'+calls,body.messages)}}]}));
     });
     server.listen(0,'127.0.0.1');await once(server,'listening');
     try{
@@ -126,7 +133,19 @@ describe("long-form harness mini-flow", () => {
       expect(calls).toBe(1);
       expect(await readFile(join(bookDir,'chapters/0001_Departure.md'))).toEqual(source);
       expect((await state.loadChapterIndex('replay')).map(c=>c.number)).toEqual([1]);
-      await pipeline.reviewChapter('replay',1);
+      const authorRequest='Review this existing chapter and preserve its prose.';
+      await withExecutionEvidence(()=>{},()=>pipeline.reviewChapter('replay',1),undefined,undefined,authorRequest);
+      const context=auditor.mock.calls.at(-1)![4].contextPackage.selectedContext;
+      expect(context.map(entry=>entry.source)).toEqual(['author_request','story/book_rules.md']);
+      expect(context[0]).toMatchObject({excerpt:authorRequest,protection:'protected'});
+      const reviewHash='sha256:'+createHash('sha256').update(chapterOutput(1).content.trim()).digest('hex');
+      expect((await state.loadChapterIndex('replay'))[0]!.observations[0]).toMatchObject({code:'DEPARTURE',targetHash:reviewHash});
+      const reviser=vi.spyOn(ReviserAgent.prototype,'reviseChapter').mockRejectedValue(Object.assign(new Error('Fixture writer unavailable'),{code:'FIXTURE_WRITER_UNAVAILABLE'}));
+      await expect(pipeline.reviseDraft('replay',1,'spot-fix','Clarify the departure.')).rejects.toMatchObject({code:'FIXTURE_WRITER_UNAVAILABLE'});
+      const reviewedIndex=await state.loadChapterIndex('replay');
+      await state.saveChapterIndex('replay',reviewedIndex.map(chapter=>({...chapter,observations:chapter.observations.map(observation=>({...observation,targetHash:'sha256:stale'}))})));
+      await expect(pipeline.reviseDraft('replay',1,'spot-fix','Clarify the departure.')).rejects.toMatchObject({code:'FIXTURE_WRITER_UNAVAILABLE'});
+      expect(reviser.mock.calls.map(call=>call[3].map(observation=>observation.code))).toEqual([['DEPARTURE'],[]]);
       expect(await readFile(planPath)).toEqual(plan);
       await pipeline.importChapters(input);
       expect((await loadWorkManifest(root,'replay')).artifacts.find(a=>a.id===notes.id)?.currentRevisionId).toBeNull();
@@ -134,8 +153,8 @@ describe("long-form harness mini-flow", () => {
       expect(await readFile(join(bookDir,'chapters/0001_Departure.md'))).toEqual(source);
       expect((await state.loadChapterIndex('replay')).map(c=>c.number)).toEqual([1]);
       expect(await readFile(planPath)).toEqual(plan);
-      expect(composer.mock.calls.map(([request])=>request.chapterNumber)).toEqual([1,1,1]);
-      expect(calls).toBe(3);
+      expect(composer.mock.calls.map(([request])=>request.chapterNumber)).toEqual([1,1,1,1,1]);
+      expect(calls).toBe(4);
     }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));}
   },20000);
 

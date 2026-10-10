@@ -43,6 +43,7 @@ export class ReviserAgent extends BaseAgent {
     options?: {
       readonly language: "zh" | "en";
       readonly chapterTitle?:string;
+      readonly instruction?:string;
       readonly targetText?:string;
       readonly candidateText?:string;
       readonly contextPackage: ContextPackage;
@@ -55,7 +56,7 @@ export class ReviserAgent extends BaseAgent {
     const body=(content:string)=>options.chapterTitle===undefined?content:chapterDocumentBody(content,chapterNumber,options.chapterTitle,options.language);
     chapterContent=body(chapterContent);
     const isEnglish = options.language === "en";
-    const observationList = observations.length > 0
+    const reviewObservations = observations.length > 0
       ? observations.map((issue) => [
           `- ${issue.code}: ${issue.summary}`,
           ...(issue.evidence.length > 0
@@ -63,6 +64,7 @@ export class ReviserAgent extends BaseAgent {
             : []),
         ].join("\n")).join("\n")
       : (isEnglish ? "- Follow the user's explicit revision instruction in the governed context." : "- 按 governed context 中的用户明确修订要求执行。");
+    const observationList = [options.instruction, reviewObservations].filter(Boolean).join("\n\n");
     const context = renderNarrativeSelectedContext(options.contextPackage.selectedContext, options.language);
     const lengthBlock = options.lengthSpec
       ? (isEnglish
@@ -89,8 +91,20 @@ export class ReviserAgent extends BaseAgent {
         authorized=await resolveAuthorTextPermission({projectRoot:this.ctx.projectRoot,workId:baseline.id,artifactId:originalArtifact.id,revisionId:original.revision.id,originalContent:scopeSource,currentContent:chapterContent,authorRequest,select});
       }else authorized=authorTextScopeContract(chapterContent,await select(chapterContent,authorRequest));
     }
+    const scopedAuthorRequest = authorRequest && authorized && 'startOffset' in authorized.ranges[0]!
+      ? authorRequest : undefined;
     const source=mode==='spot-fix'||authorized?numberReviewSource(chapterContent):chapterContent;
-    const userPrompt = isEnglish
+    const userPrompt = scopedAuthorRequest ? JSON.stringify({
+      instruction: scopedAuthorRequest,
+      chapterNumber,
+      // The task memo is the coordinator's proposed rewrite, not story evidence.
+      // Keep factual references while giving a localized writer one instruction.
+      references: options.contextPackage.selectedContext.filter(entry => entry.source !== 'runtime/chapter_memo'),
+      observations,
+      ...(options.lengthSpec ? {lengthContract: {...options.lengthSpec,
+        currentCount: countChapterLength(chapterContent, options.lengthSpec.countingMode)}} : {}),
+      currentChapter: source,
+    }) : isEnglish
       ? `Revise chapter ${chapterNumber}.\n\n## Observations or instruction\n${observationList}\n\n## Governed context\n${context}${lengthBlock}\n\n## Current chapter\n${source}`
       : `修订第${chapterNumber}章。\n\n## 观察或用户指令\n${observationList}\n\n## 权威上下文\n${context}${lengthBlock}\n\n## 当前章节\n${source}`;
     const messages = [

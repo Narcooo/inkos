@@ -97,11 +97,12 @@ export class ContinuityAuditor extends BaseAgent {
         },
       },
     );
+    const reviewedContentHash = chapterReviewContentHash(chapterContent,chapterNumber);
     return {
-      observations: result.observations,
+      observations: result.observations.map(observation => ({...observation,targetHash:reviewedContentHash})),
       summary: result.summary,
       tokenUsage: usage,
-      reviewedContentHash: chapterReviewContentHash(chapterContent,chapterNumber),
+      reviewedContentHash,
       ...(reviewedArtifact?{reviewedArtifact}:{}),
     };
   }

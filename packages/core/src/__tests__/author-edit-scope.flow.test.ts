@@ -113,13 +113,14 @@ it('keeps original chapter scope when a failed length repair is retried in a bro
  const server=createServer(async(req,res)=>{
   const chunks:Buffer[]=[];for await(const c of req)chunks.push(Buffer.from(c));const body=JSON.parse(Buffer.concat(chunks).toString());requests.push(body);
   const name=body.tools[0].function.name;
-  const args=name==='submit_author_edit_scope'?{wholeDocument:false,selections:[{unitId:'p2.l1',text:'Maybe.'}],reason:'Only the spoken response is authorized.'}:{selection_0_text:repair?'I will stay.':'I '.repeat(40)};
+  const args=name==='submit_author_edit_scope'?{wholeDocument:false,selections:[{unitId:'p2',text:'Maybe.'}],reason:'Only the spoken response is authorized.'}:{selection_0_text:repair?'I will stay.':requests.length===2?'I will\nstay.':'I '.repeat(40)};
   res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{tool_calls:[{id:'scope-'+requests.length,type:'function',function:{name,arguments:JSON.stringify(args)}}]}}]}));
  });server.listen(0,'127.0.0.1');await once(server,'listening');
  try{
   const client=createLLMClient({service:'custom',provider:'openai',configSource:'studio',model:'fixture',apiKey:'fixture',baseUrl:`http://127.0.0.1:${(server.address() as {port:number}).port}/v1`,apiFormat:'chat',stream:false,thinkingBudget:0});
   const reviser=new ReviserAgent({client,model:'fixture',projectRoot:'/tmp'});
-  const options={language:'en' as const,lengthSpec:buildLengthSpec(15,'en',{minChapterLength:10,maxChapterLength:16}),contextPackage:{chapter:1,selectedContext:[{source:'delegated-instruction',protection:'protected' as const,reason:'Coordinator workaround',excerpt:'Shorten the entire chapter and revise any paragraph necessary to fit the length budget.'}]}};
+  const reference={source:'story/canon.md',protection:'protected' as const,reason:'Established story fact',excerpt:'Mara is the gallery keeper.'};
+  const options={language:'en' as const,lengthSpec:buildLengthSpec(15,'en',{minChapterLength:10,maxChapterLength:16}),contextPackage:{chapter:1,selectedContext:[{source:'runtime/chapter_memo',protection:'protected' as const,reason:'Coordinator workaround',excerpt:'Shorten the entire chapter and revise any paragraph necessary to fit the length budget.'},reference]}};
   await expect(withExecutionEvidence(()=>{},()=>reviser.reviseChapter('/tmp',original,1,[],'polish',undefined,options),undefined,undefined,authorRequest)).rejects.toMatchObject({code:'CHAPTER_LENGTH_OUT_OF_RANGE'});
   repair=true;
   const result=await withExecutionEvidence(()=>{},()=>reviser.reviseChapter('/tmp',original,1,[],'rewrite',undefined,options),undefined,undefined,authorRequest);
@@ -130,5 +131,11 @@ it('keeps original chapter scope when a failed length repair is retried in a bro
   const writes=requests.filter(r=>r.tools[0].function.name==='submit_chapter_range_replacements');
   expect(writes).toHaveLength(4);
   expect(writes.every(r=>Object.keys(r.tools[0].function.parameters.properties).join(',')==='selection_0_text')).toBe(true);
+  for(const request of writes){
+    const task=JSON.parse(request.messages.find((message:any)=>message.role==='user').content);
+    expect(task).toMatchObject({instruction:authorRequest,references:[reference],lengthContract:{minChapterLength:10,maxChapterLength:16}});
+    const selection=JSON.parse(request.messages.findLast((message:any)=>message.role==='user').content);
+    expect(selection.editableRanges[0].singleLine).toBe(true);
+  }
  }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));}
 },20000);

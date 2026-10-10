@@ -59,6 +59,14 @@ export-only and information-only requests do not inherit old review obligations.
   not prove a finding. Prior critique and delegated suggestions are rechecked
   against current text and author constraints, not promoted to new requirements.
   The review session has a bounded number of model turns.
+- Chapter review findings retain the reviewed prose hash. A later revision can
+  reuse content issues only when that hash matches the current prose; stale or
+  unbound findings and execution issues do not become writing instructions.
+- Existing-chapter context carries the original author request separately from
+  the coordinator's revision instructions. A synthesized task memo is not a
+  story fact or an additional author requirement. Localized writers use the
+  author request, factual references and current review evidence. Whole-chapter
+  revisions retain the detailed instruction within the original authority.
 - Local revisions preserve content outside the author's permitted range. The
   request's original baseline remains available across retries for comparison.
   Conversational agents edit through the scoped revision action; raw artifact

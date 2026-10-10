@@ -58,7 +58,8 @@ export function authorTextScopeContract(content:string,result:AuthorTextScope){
   const selections=result.selections.map(selection=>{
     const unit=byId.get(selection.unitId);
     if(!unit)throw Object.assign(new Error('Choose an existing paragraph or line ID from the supplied document.'),{code:'ARTIFACT_EDIT_TARGET_NOT_FOUND'});
-    return{...unit,text:selection.text||unit.text,singleLine:selection.unitId.includes('.l')};
+    const inlineFragment = Boolean(selection.text && selection.text !== unit.text && unit.startLine === unit.endLine);
+    return{...unit,text:selection.text||unit.text,singleLine:selection.unitId.includes('.l')||inlineFragment};
   });
   return textScopedSelectionEditContract(content,selections);
 }

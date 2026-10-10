@@ -5,6 +5,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import {readPinnedParentCanon} from "../harness/parent-canon.js";
 import {renderChapterDocument,chapterDocumentBody} from '../utils/chapter-document.js';
 import {changedSourceRegion} from '../utils/source-text.js';
+import {chapterReviewContentHash} from '../utils/chapter-review-hash.js';
 import {createBuiltInWorkProfileRegistry} from "../harness/builtin-profiles.js";
 import type { LLMClient, OnStreamProgress } from "../llm/provider.js";
 import { createLLMClient } from "../llm/provider.js";
@@ -933,8 +934,11 @@ export class PipelineRunner {
         || editScope?.targetText !== undefined
         || mode === "rewrite"
         || mode === "rework";
+      const currentReviewHash=chapterReviewContentHash(content,targetChapter);
       const preRevision:AuditResult = explicitRevisionRequested
-        ? { observations: [], summary: language === "en" ? "User-directed revision" : "用户定向修订" }
+        ? { observations: chapterMeta.observations.filter(observation => observation.assessment === 'issue'
+            && observation.category !== 'execution' && observation.targetHash === currentReviewHash),
+            summary: language === "en" ? "User-directed revision" : "用户定向修订" }
         : await this.collectReviewObservations({
             auditor,
             book,
@@ -1003,6 +1007,7 @@ export class PipelineRunner {
         {
           language,
           chapterTitle:chapterMeta.title,
+          instruction:revisionIntent,
           targetText:editScope?.targetText,
           candidateText:revisionCandidate.current()?.content,
           onCandidate:async candidate=>revisionCandidate.record(candidate),
@@ -2164,7 +2169,13 @@ export class PipelineRunner {
       bookDir:this.state.bookDir(book.id),chapterNumber,goal:chapterIntent,language:book.language,
     });
     const rules=await readFile(join(this.state.bookDir(book.id),'story/book_rules.md'),'utf8');
-    return {chapterIntent,contextPackage:{...contextPackage,selectedContext:[...contextPackage.selectedContext,
+    const authorRequest=currentExecutionAuthorRequest();
+    // selectTaskContext synthesizes this memo from the coordinator's task.
+    // It is not an author-authored rule or an established story fact.
+    const selectedContext=authorRequest?contextPackage.selectedContext.map(entry=>entry.source==='runtime/chapter_memo'
+      ? {source:'author_request',reason:'Original author request for this operation.',excerpt:authorRequest,protection:'protected' as const}
+      : entry):contextPackage.selectedContext;
+    return {chapterIntent,contextPackage:{...contextPackage,selectedContext:[...selectedContext,
       {source:'story/book_rules.md',reason:'Author constraints for the existing chapter.',excerpt:rules,protection:'protected' as const},
     ]}};
   }

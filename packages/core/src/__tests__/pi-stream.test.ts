@@ -1,4 +1,5 @@
 import {fixtureToolCalls} from './tool-call-fixtures.js';
+import {createHash} from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Context, Model } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
@@ -337,7 +338,7 @@ describe("guardedPiNonStreaming", () => {
     const client=createLLMClient({provider:'openai',service:'custom',configSource:'studio',baseUrl:model.baseUrl,model:model.id,apiKey:'fixture',apiFormat:'chat',stream:false,temperature:0,thinkingBudget:0});
     const review=await new ContinuityAuditor({client,model:model.id,projectRoot:'/tmp'}).auditChapter('/tmp',chapter,3,undefined,{language:'en',contextPackage:{chapter:3,selectedContext:[{source:'story/current_state.md',reason:'Current ownership',excerpt:canon,protection:'protected'}]}});
     expect(names).toEqual(['submit_chapter_review','submit_chapter_review']);
-    expect(review.observations).toEqual([{code:'OWNERSHIP_CONFLICT',assessment:'issue',summary:'The chapter removes the key without showing a transfer.',evidence:[],sourceRefs:[{sourceId:'chapter-3',quote:chapter},{sourceId:'governed-context',quote:suppliedContextLine}]}]);
+    expect(review.observations).toEqual([{code:'OWNERSHIP_CONFLICT',assessment:'issue',summary:'The chapter removes the key without showing a transfer.',evidence:[],targetHash:'sha256:'+createHash('sha256').update(chapter).digest('hex'),sourceRefs:[{sourceId:'chapter-3',quote:chapter},{sourceId:'governed-context',quote:suppliedContextLine}]}]);
     expect(review.tokenUsage).toEqual({promptTokens:20,completionTokens:10,totalTokens:30});
   });
   it('rebinds a newly created Work before the next model call and exposes its review/export tools',async()=>{
