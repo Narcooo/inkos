@@ -73,6 +73,51 @@ describe("long-form harness mini-flow", () => {
     expect(await state.getNextChapterNumber(id)).toBe(2);
   },20000);
 
+  it('resumes state projection after restart without regenerating a completed scoped revision',async()=>{
+    const root=await tempRoot(),id='resume',state=new StateManager(root),bookDir=state.bookDir(id),now=new Date().toISOString();
+    const original='The witness closes the ledger.\n\nThe witness leaves the room.';
+    const replacement='The witness takes the key and leaves the room.';
+    const authorRequest='Change only the final paragraph to clarify the departure; preserve the first paragraph.';
+    await saveWorkManifest(root,createWorkManifest({id,title:'Return',profileId:'longform-novel',language:'en'}));
+    await state.saveBookConfig(id,{id,title:'Return',genre:'general',platform:'other',status:'active',targetChapters:1,chapterWordCount:20,minChapterLength:1,maxChapterLength:30,language:'en',createdAt:now,updatedAt:now});
+    await mkdir(join(bookDir,'story/outline'),{recursive:true});
+    for(const [name,content] of Object.entries({'outline/story_frame.md':'The witness leaves with the key.','outline/volume_map.md':'One departure scene.','book_rules.md':'Preserve the ledger closing.','book_rules.json':JSON.stringify({version:'2',prohibitions:[],enableFullCastTracking:false,allowedDeviations:[]})}))await writeFile(join(bookDir,'story',name),content);
+    await createInitialRuntimeState({bookDir,language:'en'});await state.saveChapterIndex(id,[]);await state.snapshotState(id,0);
+    vi.spyOn(ComposerAgent.prototype,'selectTaskContext').mockResolvedValue({chapter:1,selectedContext:[]});
+    vi.spyOn(ContinuityAuditor.prototype,'auditChapter').mockResolvedValue({summary:'',observations:[]});
+    vi.spyOn(StateValidatorAgent.prototype,'validate').mockResolvedValue({consistent:true,reconciliationRequired:false,observations:[]});
+    const revise=vi.spyOn(ReviserAgent.prototype,'reviseChapter');
+    const calls:string[]=[];let failProjection=false;
+    const server=createServer(async(req,res)=>{
+      const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));const body=JSON.parse(Buffer.concat(chunks).toString());const name=body.tools[0].function.name;calls.push(name);
+      const delta=chapterOutput(1).runtimeStateDelta!;const {chapter:_chapter,...summary}=delta.chapterSummary!;
+      const args=name==='submit_chapter_length_bounds'?{target:0,minimum:0,maximum:0,sourceQuote:''}
+        :name==='submit_edit_location'?{kind:'paragraphs',boundary:'last',count:1,target:''}
+        :name==='submit_chapter_range_replacements'?{selection_0_text:replacement}
+        :{postSettlement:'The witness is outside.',factOps:failProjection?'{malformed}':delta.factOps,hookOps:delta.hookOps,newHookCandidates:[],chapterSummary:{...summary,title:'Return'}};
+      res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{tool_calls:[{id:'resume-'+calls.length,type:'function',function:{name,arguments:JSON.stringify(args)}}]}}]}));
+    });server.listen(0,'127.0.0.1');await once(server,'listening');
+    try{
+      const client=createLLMClient({service:'custom',provider:'openai',configSource:'studio',model:'fixture',apiKey:'fixture',baseUrl:`http://127.0.0.1:${(server.address() as {port:number}).port}/v1`,apiFormat:'chat',stream:false,thinkingBudget:0});
+      const runner=()=>new PipelineRunner({projectRoot:root,client,model:'fixture'});
+      await runner().importChapters({bookId:id,chapters:[{title:'Return',content:original}],resumeFrom:1});
+      const before=await loadWorkManifest(root,id),sourcePath=join(bookDir,'chapters/0001_Return.md'),bytes=await readFile(sourcePath),snapshot=await loadRuntimeStateSnapshot(bookDir);
+      failProjection=true;
+      await expect(withExecutionEvidence(()=>{},()=>runner().reviseDraft(id,1,'spot-fix','Clarify the final departure.'),undefined,before,authorRequest,before)).rejects.toMatchObject({code:'WORKER_SCHEMA_INVALID',recovery:{action:'longform__revise_chapter',workId:id}});
+      expect(await readFile(sourcePath)).toEqual(bytes);expect(await loadRuntimeStateSnapshot(bookDir)).toEqual(snapshot);
+      expect(revise).toHaveBeenCalledTimes(1);
+      failProjection=false;
+      const result=await withExecutionEvidence(()=>{},()=>runner().reviseDraft(id,1,'polish','Retry the failed state projection.'),undefined,before,authorRequest,before);
+      expect(revise).toHaveBeenCalledTimes(1);
+      expect(calls.filter(name=>name==='submit_chapter_range_replacements')).toHaveLength(1);
+      expect(result).toMatchObject({changed:true,editPermission:{basis:'original_author_request',selectedOriginalText:['The witness leaves the room.'],surroundingText:'protected'}});
+      const {chapterDocumentBody}=await import('../utils/chapter-document.js');
+      expect(chapterDocumentBody(await readFile(sourcePath,'utf8'),1,'Return','en')).toBe(original.replace('The witness leaves the room.',replacement));
+      expect((await loadRuntimeStateSnapshot(bookDir)).manifest.lastAppliedChapter).toBe(1);
+      await expect(readFile(join(root,'.inkos/chapter-revision-candidates',id,'1.json'))).rejects.toMatchObject({code:'ENOENT'});
+    }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));}
+  },20000);
+
   it('reviews and replays an imported chapter without replanning its story or advancing its state twice',async()=>{
     const root=await tempRoot();
     const state=new StateManager(root),bookDir=state.bookDir('replay');

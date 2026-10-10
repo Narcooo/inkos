@@ -47,6 +47,11 @@ it('resumes the closest rejected revision after recreation without adopting it o
   resuming=true;
   const result=await new ReviserAgent(ctx).reviseChapter(root,source,2,[],'rewrite',undefined,{...options,candidateText:restored.current()!.content,onCandidate:restored.record});
   expect(result.wordCount).toBe(11);
+  await restored.prepareSettlement(result,'unchanged story authority');
+  const projected=await chapterRevisionCandidate(input);
+  expect(projected.readyForSettlement('unchanged story authority')).toMatchObject({revisedContent:result.revisedContent,wordCount:11});
+  expect(projected.readyForSettlement('changed story authority')).toBeUndefined();
+  expect((await chapterRevisionCandidate({...input,authorRequest:'A new revision.'})).readyForSettlement('unchanged story authority')).toBeUndefined();
   await writeFile(sourcePath,result.revisedContent);await restored.complete();
   expect((await chapterRevisionCandidate(input)).current()).toBeUndefined();
   expect(await readFile(sourcePath,'utf8')).toBe(result.revisedContent);

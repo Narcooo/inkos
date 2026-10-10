@@ -994,11 +994,14 @@ export class PipelineRunner {
       const reviser = new ReviserAgent(this.agentCtxFor("reviser", bookId));
       const revisionCandidate=await chapterRevisionCandidate({projectRoot:this.config.projectRoot,bookId,chapterNumber:targetChapter,
         source:content,authorRequest:currentExecutionAuthorRequest()??revisionIntent,lengthSpec});
+      const revisionAuthority=JSON.stringify({version:1,scopeSelectorVersion:2,title:chapterMeta.title,language,baselineSnapshot,authorityContext,
+        explicitOperation:currentExecutionAuthorRequest()?undefined:{mode,targetText:editScope?.targetText}});
+      const savedRevision=revisionCandidate.readyForSettlement(revisionAuthority);
       this.logStage(stageLanguage, {
-        zh: `修订第${targetChapter}章`,
-        en: `revising chapter ${targetChapter}`,
+        zh: savedRevision?`沿用第${targetChapter}章已保存的修订，继续核对故事状态`:`修订第${targetChapter}章`,
+        en: savedRevision?`resuming story-state checks for the saved chapter ${targetChapter} revision`:`revising chapter ${targetChapter}`,
       });
-      const reviseOutput = await reviser.reviseChapter(
+      const reviseOutput = savedRevision ?? await reviser.reviseChapter(
         bookDir,
         content,
         targetChapter,
@@ -1026,6 +1029,7 @@ export class PipelineRunner {
       if (reviseOutput.revisedContent.length === 0) {
         throw new Error("Reviser returned empty content");
       }
+      if(!savedRevision)await revisionCandidate.prepareSettlement(reviseOutput,revisionAuthority);
       const revisedContent = reviseOutput.revisedContent;
       const changed = revisedContent !== content;
       const revisedCount = countChapterLength(revisedContent, lengthSpec.countingMode);
@@ -1040,6 +1044,11 @@ export class PipelineRunner {
         content: revisedContent,
         chapterIntent: reviseControlInput.chapterIntent,
         contextPackage: reviseControlInput.contextPackage,
+      }).catch(error=>{
+        Object.assign(error,{candidatePreserved:true,recovery:{action:'longform__revise_chapter',workId:bookId,
+          parameters:{bookId,chapterNumber:targetChapter,mode,...(externalContext?{instruction:externalContext}:{}),...(editScope?.targetText?{targetText:editScope.targetText}:{})},
+          reason:'The scope- and length-checked revision is saved but not published. Retry continues its story-state projection and review without regenerating prose while the original source, author request and story authority are unchanged.'}});
+        throw error;
       });
       let stateValidation = await stateValidator.validate(
         revisedContent,

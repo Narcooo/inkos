@@ -14,8 +14,8 @@ it('keeps the original revision across a failed write, server recreation and nat
   const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));const body=JSON.parse(Buffer.concat(chunks).toString('utf8'));
   const send=(name:string,args:unknown,observations:unknown[]=[])=>{res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{role:'assistant',tool_calls:[...observations.map((observation,index)=>({id:'observation-'+index,type:'function',function:{name:'record_review_observation',arguments:JSON.stringify(observation)}})),{id:'call-'+Date.now(),type:'function',function:{name,arguments:JSON.stringify(args)}}]}}]}));};
   if(body.tools[0].function.name==='submit_requested_operations'){send('submit_requested_operations',{contentReviewQuote:'review the result.',exportQuote:''});return;}
-  if(body.tools[0].function.name==='submit_author_edit_scope'){
-   send('submit_author_edit_scope',{wholeDocument:false,selections:[{unitId:'p2.l1',text:'The visitor waits.'}],reason:'The author selected the final paragraph.'});return;
+  if(body.tools[0].function.name==='submit_edit_location'){
+   send('submit_edit_location',{kind:'paragraphs',boundary:'last',count:1,target:''});return;
   }
   if(body.tools[0].function.name==='submit_artifact_revision'){
    send('submit_artifact_revision',{selection_0_text:'The visitor waits by the door.'});return;
