@@ -3,8 +3,8 @@ import {createWorkManifest,saveWorkManifest} from '../harness/work-store.js';imp
 import {scriptDialogueScopeRequest} from '../agents/script-edit-scope.js';
 import {authorTextScopeContract} from '../agents/author-edit-scope.js';
 
-it('maps colon-style speech segments to exact source bytes while preserving cast, cues and earlier exchanges',()=>{
- const source='# Late close\n\n## Cast\n\n**Mara**（45）\nCleaner.\n\n**Noah**（28）\nTicket clerk.\n\n## Script\n\n**First scene**\n\nNoah: We should go.\n\n**Final scene**\n\nMara: Can you stay?\nNoah：（puts the note away）Maybe.\n\nThey leave together.\n';
+it.each(['plain','bold-name','bold-colon'])('maps %s speech to exact source bytes while preserving cast, cues and earlier exchanges',format=>{
+ const source='# Late close\n\n## Cast\n\n**Mara**（45）\nCleaner.\n\n**Noah**（28）\nTicket clerk.\n\n## Script\n\n**First scene**\n\nNoah: We should go.\n\n**Final scene**\n\nMara: Can you stay?\nNoah：（puts the note away）Maybe.\n\nThey leave together.\n'.replace(/^(Mara|Noah)([:：])/gmu,(_match,name,colon)=>format==='bold-name'?`**${name}**${colon}`:format==='bold-colon'?`**${name}${colon}**`:name+colon);
  const request=scriptDialogueScopeRequest(source,'Change only the ticket clerk’s final spoken response; preserve all other text.');
  expect(request).toBeDefined();
  const indexed=JSON.parse(request!.messages[1]!.content);

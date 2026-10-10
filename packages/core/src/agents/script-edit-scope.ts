@@ -17,9 +17,23 @@ export function scriptDialogueIndex(content:string){
   const {paragraphs}=sourceUnits(content);
   const inlineSpeech=(text:string)=>{
     const ending=text.match(/\r?\n$/u)?.[0]??'';
-    const match=text.slice(0,text.length-ending.length).match(/^(\s*([^:：\n()（）*]+?)(?:[（(][^）)\n]*[）)])?\s*[:：][ \t]*)([（(][^）)\n]*[）)][ \t]*)?(.*)$/u);
-    if(!match||!match[4]?.trim())return undefined;
-    return {name:match[2]!.trim(),label:match[1]!,direction:match[3]??'',text:match[4]!};
+    const line=text.slice(0,text.length-ending.length),colon=line.search(/[:：]/u);
+    if(colon<0)return undefined;
+    let name=line.slice(0,colon).trim(),start=colon+1;
+    // Markdown emphasis may wrap the name alone or include its colon. Keep
+    // those delimiters in the protected source label, not the editable speech.
+    for(const marker of ['**','__','*','_']){
+      if(name.startsWith(marker)&&!name.endsWith(marker)&&line.slice(start).startsWith(marker)){
+        name=name.slice(marker.length);start+=marker.length;break;
+      }
+    }
+    name=name.replace(/[（(][^）)\n]*[）)]\s*$/u,'').trim().replace(/^(\*\*|__|\*|_)(.*?)\1$/u,'$2');
+    if(!name||/[:：\n()（）*]/u.test(name))return undefined;
+    start+=line.slice(start).match(/^[ \t]*/u)![0].length;
+    const direction=line.slice(start).match(/^[（(][^）)\n]*[）)][ \t]*/u)?.[0]??'';
+    const spoken=line.slice(start+direction.length);
+    if(!spoken.trim())return undefined;
+    return {name,label:line.slice(0,start),direction,text:spoken};
   };
   const cast:Array<{id:string;name:string;description:string;sourceUnitId?:string}>=[];
   const castParagraphIds=new Set<string>();
