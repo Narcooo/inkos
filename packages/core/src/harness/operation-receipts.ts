@@ -4,15 +4,18 @@ import {loadWorkManifest} from './work-store.js';
 import {readArtifactRevision} from './artifact-reader.js';
 import {toPosixPath} from '../utils/posix-path.js';
 import {chapterReviewContentHash} from '../utils/chapter-review-hash.js';
+import type {Observation} from '../models/observation.js';
 
 /** Only domain-produced completion facts become receipts. Reading, technical
  * inspection and a model's narrative claim do not establish an operation. */
-export async function operationReceiptsFromDetails(root:string,details:unknown):Promise<OperationReceipt[]>{
-  if(!details||typeof details!=='object')return[];
+export async function resolveOperationEvidence(root:string,details:unknown,observations:readonly Observation[]){
+  const empty={operationReceipts:[] as OperationReceipt[],observations:[...observations]};
+  if(!details||typeof details!=='object')return empty;
   const data=details as Record<string,any>;
   const workId=data.workId;
-  if(typeof workId!=='string')return[];
+  if(typeof workId!=='string')return empty;
   const receipts:OperationReceipt[]=[];
+  const chapterTargets=new Map<number,NonNullable<Observation['target']>>();
   const direct=(operation:OperationReceipt['operation'],artifactId:unknown,revisionId:unknown)=>{
     if(typeof artifactId==='string'&&typeof revisionId==='string')receipts.push({operation,sources:[{workId,artifactId,revisionId}]});
   };
@@ -48,8 +51,19 @@ export async function operationReceiptsFromDetails(root:string,details:unknown):
       const source=current.find(item=>item.revision.path.startsWith(prefix)&&item.revision.path.endsWith('.md'));
       if(!source)continue;
       const {bytes}=await readArtifactRevision({projectRoot:root,workId,artifactId:source.artifact.id,revisionId:source.revision.id});
-      if(chapterReviewContentHash(bytes.toString('utf8'),chapter.chapterNumber)===chapter.contentHash)direct('review',source.artifact.id,source.revision.id);
+      if(chapterReviewContentHash(bytes.toString('utf8'),chapter.chapterNumber)===chapter.contentHash){
+        direct('review',source.artifact.id,source.revision.id);
+        chapterTargets.set(chapter.chapterNumber,{workId,artifactId:source.artifact.id,revisionId:source.revision.id});
+      }
     }
   }
-  return OperationReceiptSchema.array().parse(receipts);
+  // A batch exposes one flattened findings list, but each finding belongs to
+  // its chapter review. Bind by the producer's chapter grouping before those
+  // findings reach per-artifact delivery checks.
+  const groups=Array.isArray(data.chapters)&&data.chapters.every((chapter:any)=>Array.isArray(chapter.observations))
+    ?data.chapters:chapters.length===1?[{chapterNumber:chapters[0].chapterNumber,observations}]:[];
+  const targets=groups.flatMap((chapter:any)=>chapter.observations.map(()=>chapterTargets.get(chapter.chapterNumber)));
+  const bound=targets.length===observations.length?observations.map((observation,index)=>
+    observation.target||!targets[index]?observation:{...observation,target:targets[index]}):[...observations];
+  return {operationReceipts:OperationReceiptSchema.array().parse(receipts),observations:bound};
 }

@@ -12,6 +12,8 @@ import {createLLMClient} from '../llm/provider.js';
 import {TurnArtifactDeliveries} from '../agent/turn-completion.js';
 import {ActionResultSchema} from '../harness/contracts.js';
 import {fixtureToolCalls,isReviewReadback} from './tool-call-fixtures.js';
+import {resolveOperationEvidence} from '../harness/operation-receipts.js';
+import {chapterReviewContentHash} from '../utils/chapter-review-hash.js';
 
 it('reviews a native chapter against its episode baseline and prevents delivery while its scope finding is unresolved',async()=>{
  const root=await mkdtemp(join(tmpdir(),'inkos-chapter-scope-'));const inputs:any[]=[];
@@ -40,3 +42,31 @@ it('reviews a native chapter against its episode baseline and prevents delivery 
   expect(inputs).toHaveLength(2);
  }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));await rm(root,{recursive:true,force:true});}
 },20000);
+
+it('keeps batch review findings on their own chapter and clears them after that chapter is repaired and reviewed',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'inkos-batch-review-'));
+ try{
+  await saveWorkManifest(root,createWorkManifest({id:'book',title:'Gallery',profileId:'longform-novel',language:'en'}));
+  await mkdir(join(root,'works/book/source/chapters'),{recursive:true});
+  const bodies=['Nora keeps the gallery key.','Eli keeps the same gallery key.'];
+  const paths=['works/book/source/chapters/0001_Opening.md','works/book/source/chapters/0002_Closing.md'];
+  const persist=()=>syncWorkSourceArtifacts({projectRoot:root,workId:'book',accept:true,writes:bodies.map((body,index)=>({relativePath:paths[index]!,content:`# Chapter ${index+1}\n\n${body}\n`}))});
+  const before=await persist(),deliveries=new TurnArtifactDeliveries();
+  const target=before.artifacts.find(a=>a.revisions.some(r=>r.path==='source/chapters/0002_Closing.md'))!;
+  const issue={code:'FIXTURE_POSSESSION',summary:'Two chapters assign the same key to different people without a handover.',assessment:'issue' as const,category:'quality' as const,evidence:[],targetHash:chapterReviewContentHash(bodies[1]!,2)};
+  const details={kind:'chapters_written',workId:'book',chapters:[{chapterNumber:1,observations:[]},{chapterNumber:2,observations:[issue]}],reviewedChapters:bodies.map((body,index)=>({chapterNumber:index+1,contentHash:chapterReviewContentHash(body,index+1)})),observations:[issue]};
+  const observe=async(data:typeof details|{kind:string;workId:string;reviewedChapters:Array<{chapterNumber:number;contentHash:string}>;observations:[]})=>{
+   const evidence=await resolveOperationEvidence(root,data,data.observations);
+   deliveries.observe(ActionResultSchema.parse({status:'success',summary:'Chapter review completed.',artifacts:[],...evidence,data:{...data,observations:evidence.observations}}));
+  };
+  await observe(details);
+  const creation={workId:'book',baselineWork:null,sourceQuote:'Create two chapters and review them.'};
+  const failure=await deliveries.validate(root,creation).catch(error=>error);
+  expect(failure.code).toBe('TURN_NEW_CONTENT_REVIEW_UNRESOLVED');
+  expect(JSON.parse(failure.message).findings.map((finding:any)=>({artifactId:finding.artifactId,codes:finding.qualityIssues.map((item:any)=>item.code)})))
+    .toEqual([{artifactId:target.id,codes:[issue.code]}]);
+  bodies[1]='Nora hands the gallery key to Eli.';await persist();
+  await observe({kind:'chapter_revision',workId:'book',reviewedChapters:[{chapterNumber:2,contentHash:chapterReviewContentHash(bodies[1],2)}],observations:[]});
+  await expect(deliveries.validate(root,creation)).resolves.toBeUndefined();
+ }finally{await rm(root,{recursive:true,force:true});}
+});
