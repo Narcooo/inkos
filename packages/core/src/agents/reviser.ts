@@ -102,6 +102,7 @@ export class ReviserAgent extends BaseAgent {
       references: options.contextPackage.selectedContext.filter(entry => entry.source !== 'runtime/chapter_memo'),
       observations,
       ...(options.lengthSpec ? {lengthContract: {...options.lengthSpec,
+        unit:options.lengthSpec.countingMode==='en_words'?'words':'non-whitespace-characters',
         currentCount: countChapterLength(chapterContent, options.lengthSpec.countingMode)}} : {}),
       currentChapter: source,
     }) : isEnglish
@@ -149,11 +150,12 @@ export class ReviserAgent extends BaseAgent {
     const fixedLength=lengthSpec?countChapterLength(fixedContent,lengthSpec.countingMode):undefined;
     const replacementBudget=lengthSpec&&fixedLength!==undefined?{
       countingMode:lengthSpec.countingMode,fixedContentLength:fixedLength,
+      unit:lengthSpec.countingMode==='en_words'?'words':'non-whitespace-characters',
       minimum:Math.max(0,(lengthSpec.minChapterLength??0)-fixedLength),
       ...(lengthSpec.maxChapterLength===undefined?{}:{maximum:lengthSpec.maxChapterLength-fixedLength}),
     }:undefined;
     if(replacementBudget?.maximum!==undefined&&replacementBudget.maximum<0)throw Object.assign(new Error('The protected text alone exceeds the chapter maximum. These edit ranges cannot satisfy both scope and length constraints.'),{code:'CHAPTER_EDIT_SCOPE_CONFLICT',replacementBudget});
-    const { result, usage } = await this.submitStructured([...messages,{role:'user',content:JSON.stringify({editableRanges:contract.ranges,replacementBudget,instruction:'Submit only replacement text in each named field. These selections identify the original authorized source, even if the current revision split a selection into multiple paragraphs. Continue improving the current prose within that same permission. The replacement budget is shared by all fields, not per field. Keep the original trailing newline when present. Preserve all source bytes outside the selected ranges.'})}], {
+    const { result, usage } = await this.submitStructured([...messages,{role:'user',content:JSON.stringify({editableRanges:contract.ranges,replacementBudget,instruction:'Submit only replacement text in each named field. These selections identify the original authorized source, even if the current revision split a selection into multiple paragraphs. Continue improving the current prose within that same permission. The replacement budget is shared by all fields, not per field. For non-whitespace-characters, punctuation, Latin letters and digits also count; only whitespace is excluded. Keep the original trailing newline when present. Preserve all source bytes outside the selected ranges.'})}], {
       name: "submit_chapter_range_replacements",
       label: "Submit chapter range replacements",
       description: "Submit replacement prose only within the author-authorized source selections, using their named fields.",

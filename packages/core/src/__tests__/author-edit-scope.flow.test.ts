@@ -103,28 +103,30 @@ it('retains the original final paragraph permission after committed prose expand
 },20000);
 
 
-it('keeps original chapter scope when a failed length repair is retried in a broader revision mode',async()=>{
+it.each([
+ {language:'en' as const,original:'Before dawn, Mara checks the locked gallery.\n\nMaybe.\n\nShe closes the door.\n',selected:'Maybe.',replacement:'I will stay.',lineBreak:'I will\nstay.',overlong:'I '.repeat(40),authorRequest:'Change only the final spoken response, Maybe. Preserve all surrounding narration.',target:15,minimum:10,maximum:16,unit:'words'},
+ {language:'zh' as const,original:'天亮前，她确认画廊的门锁。\n\n再想想。\n\n她关上门。\n',selected:'再想想。',replacement:'我留下。',lineBreak:'我会\n留下。',overlong:'我'.repeat(40),authorRequest:'只修改最后一句发言“再想想。”，其余叙述保持不变。',target:22,minimum:20,maximum:24,unit:'non-whitespace-characters'},
+])('keeps original chapter scope and explicit $unit when a failed repair is retried',async fixture=>{
  const {ReviserAgent}=await import('../agents/reviser.js');
  const {withExecutionEvidence}=await import('../harness/execution-evidence.js');
  const {buildLengthSpec}=await import('../utils/length-metrics.js');
- const original='Before dawn, Mara checks the locked gallery.\n\nMaybe.\n\nShe closes the door.\n';
- const authorRequest='Change only the final spoken response, Maybe. Preserve all surrounding narration.';
+ const {original,authorRequest}=fixture;
  const requests:any[]=[];let repair=false;
  const server=createServer(async(req,res)=>{
   const chunks:Buffer[]=[];for await(const c of req)chunks.push(Buffer.from(c));const body=JSON.parse(Buffer.concat(chunks).toString());requests.push(body);
   const name=body.tools[0].function.name;
-  const args=name==='submit_author_edit_scope'?{wholeDocument:false,selections:[{unitId:'p2',text:'Maybe.'}],reason:'Only the spoken response is authorized.'}:{selection_0_text:repair?'I will stay.':requests.length===2?'I will\nstay.':'I '.repeat(40)};
+  const args=name==='submit_author_edit_scope'?{wholeDocument:false,selections:[{unitId:'p2',text:fixture.selected}],reason:'Only the spoken response is authorized.'}:{selection_0_text:repair?fixture.replacement:requests.length===2?fixture.lineBreak:fixture.overlong};
   res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{tool_calls:[{id:'scope-'+requests.length,type:'function',function:{name,arguments:JSON.stringify(args)}}]}}]}));
  });server.listen(0,'127.0.0.1');await once(server,'listening');
  try{
   const client=createLLMClient({service:'custom',provider:'openai',configSource:'studio',model:'fixture',apiKey:'fixture',baseUrl:`http://127.0.0.1:${(server.address() as {port:number}).port}/v1`,apiFormat:'chat',stream:false,thinkingBudget:0});
   const reviser=new ReviserAgent({client,model:'fixture',projectRoot:'/tmp'});
   const reference={source:'story/canon.md',protection:'protected' as const,reason:'Established story fact',excerpt:'Mara is the gallery keeper.'};
-  const options={language:'en' as const,lengthSpec:buildLengthSpec(15,'en',{minChapterLength:10,maxChapterLength:16}),contextPackage:{chapter:1,selectedContext:[{source:'runtime/chapter_memo',protection:'protected' as const,reason:'Coordinator workaround',excerpt:'Shorten the entire chapter and revise any paragraph necessary to fit the length budget.'},reference]}};
+  const options={language:fixture.language,lengthSpec:buildLengthSpec(fixture.target,fixture.language,{minChapterLength:fixture.minimum,maxChapterLength:fixture.maximum}),contextPackage:{chapter:1,selectedContext:[{source:'runtime/chapter_memo',protection:'protected' as const,reason:'Coordinator workaround',excerpt:'Shorten the entire chapter and revise any paragraph necessary to fit the length budget.'},reference]}};
   await expect(withExecutionEvidence(()=>{},()=>reviser.reviseChapter('/tmp',original,1,[],'polish',undefined,options),undefined,undefined,authorRequest)).rejects.toMatchObject({code:'CHAPTER_LENGTH_OUT_OF_RANGE'});
   repair=true;
   const result=await withExecutionEvidence(()=>{},()=>reviser.reviseChapter('/tmp',original,1,[],'rewrite',undefined,options),undefined,undefined,authorRequest);
-  expect(result.revisedContent).toBe(original.replace('Maybe.','I will stay.'));
+  expect(result.revisedContent).toBe(original.replace(fixture.selected,fixture.replacement));
   const scopes=requests.filter(r=>r.tools[0].function.name==='submit_author_edit_scope');
   expect(scopes).toHaveLength(2);
   expect(scopes.every(r=>JSON.parse(r.messages.findLast((m:any)=>m.role==='user').content).authorRequest===authorRequest)).toBe(true);
@@ -133,9 +135,10 @@ it('keeps original chapter scope when a failed length repair is retried in a bro
   expect(writes.every(r=>Object.keys(r.tools[0].function.parameters.properties).join(',')==='selection_0_text')).toBe(true);
   for(const request of writes){
     const task=JSON.parse(request.messages.find((message:any)=>message.role==='user').content);
-    expect(task).toMatchObject({instruction:authorRequest,references:[reference],lengthContract:{minChapterLength:10,maxChapterLength:16}});
+    expect(task).toMatchObject({instruction:authorRequest,references:[reference],lengthContract:{minChapterLength:fixture.minimum,maxChapterLength:fixture.maximum,unit:fixture.unit}});
     const selection=JSON.parse(request.messages.findLast((message:any)=>message.role==='user').content);
     expect(selection.editableRanges[0].singleLine).toBe(true);
+    expect(selection.replacementBudget.unit).toBe(fixture.unit);
   }
  }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));}
 },20000);
