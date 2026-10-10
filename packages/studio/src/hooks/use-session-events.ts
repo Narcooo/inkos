@@ -4,7 +4,7 @@ import { useNewSSEMessages } from "./use-sse";
 import type { HashRoute } from "./use-hash-route";
 import { useChatStore } from "../store/chat";
 import { bookKey, mergeSessionIds, updateSession } from "../store/chat/slices/message/runtime";
-import { clearBookCreateSessionId, getBookCreateSessionId } from "../pages/chat-page-state";
+import { clearBookCreateSessionId, getBookCreateSessionId, getProjectChatSessionId } from "../pages/chat-page-state";
 import type { AgentResponse } from "../store/chat/types";
 
 type SessionTarget = NonNullable<AgentResponse["session"]> & { sessionId: string; workId: string; profileId: string; previousWorkId?: string | null };
@@ -25,8 +25,14 @@ export function useSessionEvents(
   const activeSessionId = useChatStore(state => state.activeSessionId);
   const activeSession = useChatStore(state => state.activeSessionId ? state.sessions[state.activeSessionId] : undefined);
   useEffect(() => {
-    const target = activeSession?.pendingWorkTarget;
-    if (!activeSessionId || !target || activeSession.isChatStreaming || activeSession.isStreaming) return;
+    const entrySessionId = route.page === "book-create" ? getBookCreateSessionId()
+      : route.page === "chat" ? getProjectChatSessionId() : null;
+    const target = activeSession?.pendingWorkTarget ?? (
+      entrySessionId === activeSessionId && activeSession?.workId && activeSession.profileId
+        ? { workId: activeSession.workId, profileId: activeSession.profileId, fromWorkId: null }
+        : undefined
+    );
+    if (!activeSessionId || !activeSession || !target || activeSession.isChatStreaming || activeSession.isStreaming) return;
     if (!["chat", "book", "book-create", "work-chat", "film-author"].includes(route.page)) return;
     const routeWorkId = route.page === "work-chat" ? route.workId : route.page === "book" ? route.bookId : undefined;
     if (routeWorkId && routeWorkId !== target.fromWorkId && routeWorkId !== target.workId) return;

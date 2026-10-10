@@ -531,7 +531,7 @@ export function ChatPage({ activeBookId, activeWorkId, workProfileId, mode = act
     autoScrollPinnedRef.current = true;
   }, [activeSessionId]);
 
-  // Entering a book loads its latest session; book-create mode persists its orphan session in localStorage.
+  // Entry bookmarks identify the conversation, even after creation binds it to a Work.
   useEffect(() => {
     let cancelled = false;
     const activeAtStart=useChatStore.getState().activeSessionId;
@@ -590,7 +590,7 @@ export function ChatPage({ activeBookId, activeWorkId, workProfileId, mode = act
 
         const state = useChatStore.getState();
         const session = state.sessions[existingId];
-        if (session && session.bookId === null && (mode !== "project-chat" || session.messages.length > 0)) {
+        if (session && (mode !== "project-chat" || session.messages.length > 0)) {
           activateSession(existingId);
           return;
         }
