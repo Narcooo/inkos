@@ -55,7 +55,7 @@ export interface InkosModel {
 }
 
 export interface ProviderCompat {
-  /** OpenAI Responses store 参数是否被兼容层接受；Google Gemini OpenAI-compatible 不接受。 */
+  /** Whether the Chat-compatible endpoint accepts the SDK's optional store field. */
   readonly supportsStore?: boolean;
   readonly supportsSystemRole?: boolean;
   readonly supportsDeveloperRole?: boolean;

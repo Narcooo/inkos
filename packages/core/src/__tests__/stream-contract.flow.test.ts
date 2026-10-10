@@ -1,8 +1,12 @@
 import { createServer } from "node:http";
 import { once } from "node:events";
+import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Type } from "@sinclair/typebox";
 import { expect, it } from "vitest";
 import { createLLMClient } from "../llm/provider.js";
+import { resolveServiceModel } from "../llm/service-resolver.js";
 import { BaseAgent } from "../agents/base.js";
 import type { StreamProgress } from "../llm/provider.js";
 import { guardedPiStream, guardedPiNonStreaming } from "../agent/pi-stream.js";
@@ -82,6 +86,27 @@ it.each([
         expect(received.at(-1)).not.toHaveProperty(option);
       }
     }
+    // Studio selects models through the service resolver rather than the
+    // worker client factory. Exercise both entry points at the wire boundary.
+    const root = await mkdtemp(join(tmpdir(), 'inkos-studio-transport-'));
+    try {
+      await mkdir(join(root, '.inkos'));
+      await writeFile(join(root, '.inkos/secrets.json'), JSON.stringify({services:{
+        kkaiapi:{apiKey:'fixture'}, 'custom:fixture':{apiKey:'fixture'},
+      }}));
+      for (const service of ['kkaiapi', 'custom:fixture']) {
+        const resolved = await resolveServiceModel(service, modelId, root, client._piModel!.baseUrl, 'chat');
+        const options = {apiKey:resolved.apiKey, maxTokens:128};
+        const events = streaming ? guardedPiStream(resolved.model, context, options)
+          : guardedPiNonStreaming(resolved.model, context, options);
+        for await (const _event of events) {}
+        expect((await events.result()).stopReason).toBe('stop');
+        expect(received.at(-1)).toMatchObject({model:modelId});
+        for (const option of ['temperature','top_p','top_k','seed','reasoning_effort','thinking','response_format','tool_choice','store']) {
+          expect(received.at(-1)).not.toHaveProperty(option);
+        }
+      }
+    } finally { await rm(root, {recursive:true,force:true}); }
   } finally { server.closeAllConnections(); await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
 }, 15000);
 

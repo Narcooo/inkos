@@ -15,7 +15,7 @@ import type {
 import { resolveServicePreset } from "./service-presets.js";
 import { getEndpoint } from "./providers/index.js";
 import { lookupModel } from "./providers/lookup.js";
-import { applyModelRequestCapabilities } from "./model-request-capabilities.js";
+import { applyModelRequestCapabilities, resolveChatCompat } from "./model-request-capabilities.js";
 import { fetchWithProxy } from "../utils/proxy-fetch.js";
 import { isApiKeyOptionalForEndpoint } from "../utils/llm-endpoint-auth.js";
 import { createLeadingThinkTagStripper, stripLeadingThinkBlock } from "./think-tag-stripper.js";
@@ -356,7 +356,7 @@ export function createLLMClient(config: LLMConfig): LLMClient {
   const baseUrl = config.baseUrl || inkosProvider?.baseUrl || preset?.baseUrl || "";
   const extraHeaders = sanitizeHttpHeaders(config.headers ?? parseEnvHeaders());
   const compat = piApi === "openai-completions"
-    ? resolveProviderCompat(inkosProvider)
+    ? resolveChatCompat(inkosProvider?.compat)
     : undefined;
 
   const provider = config.provider === "anthropic" || piApi === "anthropic-messages" ? "anthropic" : "openai";
@@ -413,17 +413,6 @@ function resolvePiApi(
     return apiFormat === "responses" ? "openai-responses" : "openai-completions";
   }
   return (presetApi ?? "openai-completions") as PiApi;
-}
-
-function resolveProviderCompat(
-  provider: ReturnType<typeof getEndpoint>,
-): Record<string, unknown> {
-  return {
-    // Chat storage is not used by InkOS. Do not assume that every compatible
-    // endpoint accepts the SDK's optional store field.
-    supportsStore: false,
-    ...(provider?.compat ?? {}),
-  };
 }
 
 function parseEnvHeaders(): Record<string, string> | undefined {

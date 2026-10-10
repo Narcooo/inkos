@@ -1,5 +1,11 @@
 import type { Api, Model } from "@mariozechner/pi-ai";
 import { lookupModel } from "./providers/lookup.js";
+import type { ProviderCompat } from "./providers/types.js";
+
+/** Chat requests use the same optional-field policy in Studio and workers. */
+export function resolveChatCompat(configured?: ProviderCompat): ProviderCompat {
+  return { supportsStore: false, ...configured };
+}
 
 /** Shape every final request body using the selected model's wire constraints. */
 export function applyModelRequestCapabilities(payload: unknown, model: Model<Api>): unknown {
