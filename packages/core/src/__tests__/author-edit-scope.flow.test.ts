@@ -147,13 +147,16 @@ it.each([
   const options={language:fixture.language,lengthSpec:buildLengthSpec(fixture.target,fixture.language,{minChapterLength:fixture.minimum,maxChapterLength:fixture.maximum}),contextPackage:{chapter:1,selectedContext:[{source:'runtime/chapter_memo',protection:'protected' as const,reason:'Coordinator workaround',excerpt:'Shorten the entire chapter and revise any paragraph necessary to fit the length budget.'},reference]}};
   await expect(withExecutionEvidence(()=>{},()=>reviser.reviseChapter('/tmp',original,1,[],'polish',undefined,options),undefined,undefined,authorRequest)).rejects.toMatchObject({code:'CHAPTER_LENGTH_OUT_OF_RANGE'});
   repair=true;
-  const result=await withExecutionEvidence(()=>{},()=>reviser.reviseChapter('/tmp',original,1,[],'rewrite',undefined,options),undefined,undefined,authorRequest);
+  const revisionGuidance='Use a shorter direct response. Rewrite the surrounding narration if necessary.';
+  const result=await withExecutionEvidence(()=>{},()=>reviser.reviseChapter('/tmp',original,1,[],'rewrite',undefined,{...options,instruction:revisionGuidance,targetText:original}),undefined,undefined,authorRequest);
   expect(result.revisedContent).toBe(original.replace(fixture.selected,fixture.replacement));
   const scopes=requests.filter(r=>r.tools[0].function.name==='submit_author_edit_scope');
   expect(scopes).toHaveLength(2);
   expect(scopes.every(r=>JSON.parse(r.messages.findLast((m:any)=>m.role==='user').content).authorRequest===authorRequest)).toBe(true);
   const writes=requests.filter(r=>r.tools[0].function.name==='submit_chapter_range_replacements');
   expect(writes).toHaveLength(4);
+  const resumedTask=JSON.parse(writes.at(-1).messages.find((message:any)=>message.role==='user').content);
+  expect(resumedTask.revisionGuidance).toEqual({source:'coordinator',instruction:revisionGuidance,authority:'advice_within_author_scope'});
   expect(writes.every(r=>Object.keys(r.tools[0].function.parameters.properties).join(',')==='selection_0_text')).toBe(true);
   for(const request of writes){
     const task=JSON.parse(request.messages.find((message:any)=>message.role==='user').content);

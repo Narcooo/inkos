@@ -97,8 +97,16 @@ export class ReviserAgent extends BaseAgent {
     const userPrompt = scopedAuthorRequest ? JSON.stringify({
       instruction: scopedAuthorRequest,
       chapterNumber,
+      // The coordinator can refine a failed attempt without changing the
+      // author's permission. Keep its advice separate from factual references;
+      // the original source selections below still enforce the edit boundary.
+      ...(options.instruction?.trim() ? {revisionGuidance: {
+        source: 'coordinator',
+        instruction: options.instruction,
+        authority: 'advice_within_author_scope',
+      }} : {}),
       // The task memo is the coordinator's proposed rewrite, not story evidence.
-      // Keep factual references while giving a localized writer one instruction.
+      // Keep it out of factual references and supply current advice above.
       references: options.contextPackage.selectedContext.filter(entry => entry.source !== 'runtime/chapter_memo'),
       observations,
       ...(options.lengthSpec ? {lengthContract: {...options.lengthSpec,
