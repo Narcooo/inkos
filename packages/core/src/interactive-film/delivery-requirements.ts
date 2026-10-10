@@ -45,7 +45,20 @@ export function checkFilmRequirements(graph:StoryGraph,requirements?:FilmRequire
     if(runtime.truncated)issues.push({code:'FILM_VISIBLE_CHOICES_NOT_PROVEN'});
   }
   for(const variable of requirements.conditionVariables??[])if(!graph.nodes.some(n=>n.choices.some(c=>c.condition?.var===variable)))issues.push({code:'FILM_CONDITION_UNUSED',expected:variable});
-  if(phase==='delivery')for(const variable of requirements.dialogueConditionVariables??[])if(!graph.nodes.some(n=>n.dialogue.some(line=>line.condition?.var===variable)))issues.push({code:'FILM_DIALOGUE_CONDITION_UNUSED',expected:variable});
+  if(phase==='delivery')for(const variable of requirements.dialogueConditionVariables??[]){
+    const conditioned=graph.nodes.filter(node=>node.dialogue.some(line=>line.condition?.var===variable));
+    if(!conditioned.length){issues.push({code:'FILM_DIALOGUE_CONDITION_UNUSED',expected:variable});continue;}
+    const varies=conditioned.some(node=>{
+      const lines=node.dialogue.filter(line=>line.condition?.var===variable),variants=new Set<string>();
+      for(const entry of runtime.states){
+        if(entry.nodeId!==node.id)continue;
+        variants.add(JSON.stringify(lines.filter(line=>evaluateCondition(line.condition,entry.state)).map(({speaker,text,emotion})=>({speaker,text,emotion}))));
+        if(variants.size>1)return true;
+      }
+      return false;
+    });
+    if(!varies)issues.push({code:runtime.truncated?'FILM_DIALOGUE_VARIATION_NOT_PROVEN':'FILM_DIALOGUE_VARIATION_UNREACHABLE',expected:variable,nodeIds:conditioned.map(node=>node.id)});
+  }
   if(!requirements.allowUnreachable){
     const reached=new Set(runtime.states.map(entry=>entry.nodeId));
     const unreachable=graph.nodes.filter(node=>!reached.has(node.id)).map(node=>node.id);

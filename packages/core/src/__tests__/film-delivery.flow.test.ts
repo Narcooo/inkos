@@ -245,6 +245,15 @@ it('keeps minimum counts and dialogue conditions distinct through structure repa
   const exported=await createExportFilmTool(root,'film').execute('export',{format:'html'}) as any;
   expect(exported.details?.delivery.status).toBe('checks_passed');
   expect((await readFile(join(root,exported.details!.path))).length).toBeGreaterThan(0);
+  // A condition in the file is insufficient when every route reaches it with
+  // the same value. Inspection and export must report the missing variation.
+  await applyGraphDelta({projectRoot:root,projectId:'film',delta:{nodes:{upsert:[{
+    ...nodes[0]!,choices:nodes[0]!.choices.map(choice=>({...choice,effects:[{var:'note',op:'set',value:true}]})),
+  }],remove:[]},notes:[]}});
+  const unreachable=[{code:'FILM_DIALOGUE_VARIATION_UNREACHABLE',expected:'note',nodeIds:['m']}];
+  expect(((await createInspectFilmTool(root,'film').execute('inspect-dead-condition',{})) as any).details.delivery.issues).toEqual(unreachable);
+  expect(((await createExportFilmTool(root,'film').execute('export-dead-condition',{})) as any).details.delivery.issues).toEqual(unreachable);
+  await applyGraphDelta({projectRoot:root,projectId:'film',delta:{nodes:{upsert:[nodes[0]!],remove:[]},notes:[]}});
   const exact=await requirements.execute('exact',{nodeCount:3}) as any;
   expect(exact.details?.requirements.nodeCount).toBe(3);
   expect(exact.details?.requirements.minNodeCount).toBeUndefined();
