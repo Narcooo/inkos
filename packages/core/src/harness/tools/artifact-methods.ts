@@ -1,4 +1,5 @@
-import {authorTextScopeRequest,authorTextScopeContract,authorEditPermission} from '../../agents/author-edit-scope.js';
+import {authorTextScopeContract,authorEditPermission} from '../../agents/author-edit-scope.js';
+import {SourceLocatorAgent,type SourceIdentity} from '../../agents/source-locator.js';
 import {resolveAuthorTextPermission} from '../author-text-permission.js';
 import {scriptDialogueScopeRequest} from '../../agents/script-edit-scope.js';
 import { numberReviewSource } from "../../models/observation.js";
@@ -85,15 +86,13 @@ export function createDeliverWorkArtifactTool(pipeline: PipelineRunner, root: st
 type EditRange=TextEditRange;
 class ArtifactWorker extends BaseAgent {
   get name() { return "artifact-method"; }
-  async selectAuthorScope(content: string, authorRequest: string, script=false) {
+  async selectAuthorScope(content: string, authorRequest: string, script=false,identity:SourceIdentity={kind:'artifact'}) {
     const dialogue=script?scriptDialogueScopeRequest(content,authorRequest):undefined;
     if(dialogue){
       const selected=await this.submitStructured(dialogue.messages,dialogue.tool,{maxTokens:Math.min(4096,this.ctx.client.defaults.maxTokens),professionalGuidance:false});
       return dialogue.toAuthorScope(selected.result);
     }
-    const request=authorTextScopeRequest(content,authorRequest);
-    const selected=await this.submitStructured(request.messages,request.tool,{maxTokens:Math.min(8192,this.ctx.client.defaults.maxTokens),professionalGuidance:false});
-    return selected.result;
+    return new SourceLocatorAgent(this.ctx).select(content,authorRequest,identity);
   }
 
   async review(sources: ReadonlyMap<string, string>, instruction: string, criteria: string[], paths: ReadonlyMap<string,string>, versions:ReadonlyMap<string,{revisionId:string;checksum:string}>, comparison?: ReviewComparison, structure?: unknown) {
@@ -211,7 +210,7 @@ export function createArtifactMethodTools(pipeline: PipelineRunner, root: string
           if(originalArtifact?.currentRevisionId&&authorRequest?.trim()&&revision.path.endsWith('.md')){
             const original=await readArtifactRevision({projectRoot:root,workId,artifactId:artifact.id,revisionId:originalArtifact.currentRevisionId});
             const selector=new ArtifactWorker(pipeline.createAgentContext('auditor',workId));
-            authorScope=await resolveAuthorTextPermission({projectRoot:root,workId,artifactId:artifact.id,revisionId:original.revision.id,originalContent:original.bytes.toString('utf8'),currentContent:content,authorRequest,selectorVersion:artifact.kind==='script'?7:1,select:(source,request)=>selector.selectAuthorScope(source,request,artifact.kind==='script')});
+            authorScope=await resolveAuthorTextPermission({projectRoot:root,workId,artifactId:artifact.id,revisionId:original.revision.id,originalContent:original.bytes.toString('utf8'),currentContent:content,authorRequest,selectorVersion:artifact.kind==='script'?8:2,select:(source,request)=>selector.selectAuthorScope(source,request,artifact.kind==='script',{kind:'artifact',title:work.title,path:original.revision.path})});
           }
           let result: { content: string };
           try {

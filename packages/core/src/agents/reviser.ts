@@ -1,4 +1,5 @@
-import {authorTextScopeRequest,authorTextScopeContract,authorEditPermission} from './author-edit-scope.js';
+import {authorTextScopeContract,authorEditPermission} from './author-edit-scope.js';
+import {SourceLocatorAgent} from './source-locator.js';
 import {currentExecutionAuthorRequest,currentExecutionBaselineWork,currentExecutionWork} from '../harness/execution-evidence.js';
 import {resolveAuthorTextPermission} from '../harness/author-text-permission.js';
 import {readArtifactRevision} from '../harness/artifact-reader.js';
@@ -82,14 +83,11 @@ export class ReviserAgent extends BaseAgent {
     let authorized:ReturnType<typeof authorTextScopeContract>|undefined;
     let scopeSource=chapterContent;
     if(authorRequest&&predatesRequest){
-      const select=async(source:string,request:string)=>{
-        const scope=authorTextScopeRequest(source,request);
-        return (await this.submitStructured(scope.messages,scope.tool,{maxTokens:Math.min(8192,this.ctx.client.defaults.maxTokens),professionalGuidance:false})).result;
-      };
+      const select=(source:string,request:string)=>new SourceLocatorAgent(this.ctx).select(source,request,{kind:'chapter',chapterNumber,title:options.chapterTitle});
       if(originalArtifact?.currentRevisionId&&baseline){
         const original=await readArtifactRevision({projectRoot:this.ctx.projectRoot,workId:baseline.id,artifactId:originalArtifact.id,revisionId:originalArtifact.currentRevisionId});
         scopeSource=body(original.bytes.toString('utf8'));
-        authorized=await resolveAuthorTextPermission({projectRoot:this.ctx.projectRoot,workId:baseline.id,artifactId:originalArtifact.id,revisionId:original.revision.id,originalContent:scopeSource,currentContent:chapterContent,authorRequest,select});
+        authorized=await resolveAuthorTextPermission({projectRoot:this.ctx.projectRoot,workId:baseline.id,artifactId:originalArtifact.id,revisionId:original.revision.id,originalContent:scopeSource,currentContent:chapterContent,authorRequest,selectorVersion:2,select});
       }else authorized=authorTextScopeContract(chapterContent,await select(chapterContent,authorRequest));
     }
     const scopedAuthorRequest = authorRequest && authorized && 'startOffset' in authorized.ranges[0]!
@@ -178,7 +176,10 @@ export class ReviserAgent extends BaseAgent {
           const failure=error as Error&{code?:string;delivery?:object};
           if(failure.code!=='CHAPTER_LENGTH_OUT_OF_RANGE')throw error;
           const sourceLength=lengthSpec?countChapterLength(originalChapter,lengthSpec.countingMode):undefined;
-          throw Object.assign(new Error(JSON.stringify({code:failure.code,...failure.delivery,scope:'selected_ranges',replacementBudget,source:{length:sourceLength,unchangedByThisAttempt:true},candidateCommitted:false,instruction:'The rejected replacement has not changed the source chapter. Adjust only the selected replacement fields to their combined budget. Do not include or rewrite protected surrounding text.'})),{code:failure.code,delivery:failure.delivery,replacementBudget});
+          const submittedLength=lengthSpec&&fixedLength!==undefined?countChapterLength(candidate,lengthSpec.countingMode)-fixedLength:undefined;
+          const measuredBudget=replacementBudget&&submittedLength!==undefined?{...replacementBudget,submittedLength,
+            ...(replacementBudget.maximum===undefined?{}:{reduceByAtLeast:Math.max(0,submittedLength-replacementBudget.maximum)})}:replacementBudget;
+          throw Object.assign(new Error(JSON.stringify({code:failure.code,...failure.delivery,scope:'selected_ranges',replacementBudget:measuredBudget,source:{length:sourceLength,unchangedByThisAttempt:true},candidateCommitted:false,instruction:'The rejected replacement has not changed the source chapter. Adjust only the selected replacement fields to their combined budget. submittedLength measures their actual added length; reduceByAtLeast is the minimum reduction needed to fit. Do not include or rewrite protected surrounding text.'})),{code:failure.code,delivery:failure.delivery,replacementBudget:measuredBudget});
         }
         return result;
       },
