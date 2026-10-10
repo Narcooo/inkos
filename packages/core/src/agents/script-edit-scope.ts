@@ -15,6 +15,7 @@ const ScriptScope=Type.Object({
  * formats keep the general source selector; this index never rewrites text. */
 export function scriptDialogueIndex(content:string){
   const {paragraphs}=sourceUnits(content);
+  const leadingDirection=(text:string)=>text.match(/^(?:[ \t]*[（(][^）)\n]*[）)])+[ \t]*/u)?.[0]??'';
   const inlineSpeech=(text:string)=>{
     const ending=text.match(/\r?\n$/u)?.[0]??'';
     const line=text.slice(0,text.length-ending.length),colon=line.search(/[:：]/u);
@@ -30,7 +31,7 @@ export function scriptDialogueIndex(content:string){
     name=name.replace(/[（(][^）)\n]*[）)]\s*$/u,'').trim().replace(/^(\*\*|__|\*|_)(.*?)\1$/u,'$2');
     if(!name||/[:：\n()（）*]/u.test(name))return undefined;
     start+=line.slice(start).match(/^[ \t]*/u)![0].length;
-    const direction=line.slice(start).match(/^[（(][^）)\n]*[）)][ \t]*/u)?.[0]??'';
+    const direction=leadingDirection(line.slice(start));
     const spoken=line.slice(start+direction.length);
     if(!spoken.trim())return undefined;
     return {name,label:line.slice(0,start),direction,text:spoken};
@@ -105,7 +106,12 @@ export function scriptDialogueIndex(content:string){
     if(!inDialogue)speechBlock++;
     inDialogue=true;
     for(const line of spoken){
-      dialogue.push({id:line.id,speakerId:speaker.id,scene,speechBlock,precedingDirection,text:line.text});
+      const direction=leadingDirection(line.text);
+      if(direction){
+        const ending=line.text.match(/\r?\n$/u)?.[0]??'';
+        dialogue.push({id:`${line.id}.speech`,sourceUnitId:line.id,speakerId:speaker.id,scene,speechBlock,
+          precedingDirection:precedingDirection+direction,label:'',direction,text:line.text.slice(direction.length,line.text.length-ending.length)});
+      }else dialogue.push({id:line.id,speakerId:speaker.id,scene,speechBlock,precedingDirection,text:line.text});
     }
   }
   return {cast,dialogue,castParagraphIds};
@@ -122,7 +128,7 @@ export function scriptDialogueScopeRequest(content:string,authorRequest:string){
     if(spoken)return paragraph.lines.flatMap(line=>{
       const inline=inlineByLine.get(line.id);
       if(inline)return [
-        {id:`line-${line.id}-speaker`,kind:'speaker_label',sourceUnitId:line.id,text:inline.label!},
+        ...(inline.label?[{id:`line-${line.id}-speaker`,kind:'speaker_label',sourceUnitId:line.id,text:inline.label}]:[]),
         ...(inline.direction?[{id:`line-${line.id}-direction`,kind:'stage_direction',sourceUnitId:line.id,text:inline.direction}]:[]),
         {...inline,kind:'dialogue'},
       ];

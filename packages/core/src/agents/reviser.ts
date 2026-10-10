@@ -1,4 +1,4 @@
-import {authorTextScopeRequest,authorTextScopeContract} from './author-edit-scope.js';
+import {authorTextScopeRequest,authorTextScopeContract,authorEditPermission} from './author-edit-scope.js';
 import {currentExecutionAuthorRequest,currentExecutionBaselineWork,currentExecutionWork} from '../harness/execution-evidence.js';
 import {resolveAuthorTextPermission} from '../harness/author-text-permission.js';
 import {readArtifactRevision} from '../harness/artifact-reader.js';
@@ -21,11 +21,7 @@ export const DEFAULT_REVISE_MODE: ReviseMode = "rewrite";
 export interface ReviseOutput {
   readonly revisedContent: string;
   readonly wordCount: number;
-  readonly editPermission?: {
-    readonly basis: 'original_author_request';
-    readonly selectedOriginalText: ReadonlyArray<string>;
-    readonly surroundingText: 'protected';
-  };
+  readonly editPermission?: ReturnType<typeof authorEditPermission>;
   readonly tokenUsage?: {
     readonly promptTokens: number;
     readonly completionTokens: number;
@@ -133,11 +129,8 @@ export class ReviserAgent extends BaseAgent {
     const wordCount = options.lengthSpec
       ? countChapterLength(output.revisedContent, options.lengthSpec.countingMode)
       : output.wordCount;
-    return { ...output, wordCount, ...(scopedAuthorRequest && authorized ? {editPermission: {
-      basis: 'original_author_request' as const,
-      selectedOriginalText: authorized.ranges.map(range => range.content),
-      surroundingText: 'protected' as const,
-    }} : {}) };
+    const editPermission=scopedAuthorRequest?authorEditPermission(authorized):undefined;
+    return { ...output, wordCount, ...(editPermission?{editPermission}:{}) };
   }
 
   private async submitSpotFix(

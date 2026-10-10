@@ -399,14 +399,27 @@ export class ShortFictionWriterAgent extends BaseAgent {
     if(input.openingHookChars){
       let valid=true;try{validateOpeningHook(currentDraft.openingHook,input.openingHookChars,input.language);}catch{valid=false;}
       if(!valid){
+        const lengthContract=openingHookLengthContract(input.openingHookChars,input.language);
+        const distance=(text:string|undefined)=>{
+          const count=countChapterLength(text??'',resolveLengthCountingMode(input.language));
+          return Math.max(0,lengthContract.minimum-count,count-lengthContract.maximum);
+        };
         const {result}=await this.submitStructured([
           {role:"system",content:"Write the requested independent opening scene before chapter one. Preserve the supplied title, story events and first chapter. Submit only the opening scene through the tool."},
-          {role:"user",content:JSON.stringify({title:currentDraft.storyTitle,targetLength:input.openingHookChars,direction:input.direction,outline:input.outlineMarkdown,firstChapter:currentDraft.chapters.find(chapter=>chapter.number===1),currentOpeningHook:currentDraft.openingHook})},
-        ],{name:"submit_short_opening_hook",label:"Complete opening scene",description:"Submit the requested independent opening scene.",parameters:Type.Object({openingHook:Type.String({minLength:1})}),validate:result=>{validateOpeningHook(result.openingHook,input.openingHookChars!,input.language);return result;}},
+          {role:"user",content:JSON.stringify({title:currentDraft.storyTitle,targetLength:input.openingHookChars,lengthContract,direction:input.direction,outline:input.outlineMarkdown,firstChapter:currentDraft.chapters.find(chapter=>chapter.number===1),currentOpeningHook:currentDraft.openingHook})},
+        ],{name:"submit_short_opening_hook",label:"Complete opening scene",description:"Submit the requested independent opening scene.",parameters:Type.Object({openingHook:Type.String({minLength:1})}),validate:async result=>{
+          const candidate=result.openingHook.trim();
+          if(distance(candidate)<=distance(currentDraft.openingHook)){
+            currentDraft={...currentDraft,openingHook:candidate};
+            currentDraft={...currentDraft,rawContent:renderShortFictionDraftMarkdown(currentDraft,input.language)};
+            const incomplete=new Set(findIncompleteShortFictionChapters(currentDraft,input));
+            await input.onBatchComplete?.(currentDraft,currentDraft.chapters.filter(chapter=>!incomplete.has(chapter.number)).map(chapter=>chapter.number));
+          }
+          validateOpeningHook(candidate,input.openingHookChars!,input.language);return result;
+        }},
         {maxTokens:Math.min(2048,this.ctx.client.defaults.maxTokens)});
         currentDraft={...currentDraft,openingHook:result.openingHook.trim()};
         currentDraft={...currentDraft,rawContent:renderShortFictionDraftMarkdown(currentDraft,input.language)};
-        await input.onBatchComplete?.(currentDraft,currentDraft.chapters.filter(chapter=>!findIncompleteShortFictionChapters(currentDraft,input).includes(chapter.number)).map(chapter=>chapter.number));
       }
     }
     const missingChapters = findIncompleteShortFictionChapters(currentDraft, input);

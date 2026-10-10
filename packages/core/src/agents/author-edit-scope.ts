@@ -63,3 +63,9 @@ export function authorTextScopeContract(content:string,result:AuthorTextScope){
   });
   return textScopedSelectionEditContract(content,selections);
 }
+
+/** Report the same source selections enforced by the host to the coordinator. */
+export function authorEditPermission(scope:ReturnType<typeof authorTextScopeContract>|undefined){
+  if(!scope||!('startOffset' in scope.ranges[0]!))return undefined;
+  return {basis:'original_author_request' as const,selectedOriginalText:scope.ranges.map(range=>range.content),surroundingText:'protected' as const};
+}

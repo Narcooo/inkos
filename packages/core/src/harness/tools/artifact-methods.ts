@@ -1,4 +1,4 @@
-import {authorTextScopeRequest,authorTextScopeContract} from '../../agents/author-edit-scope.js';
+import {authorTextScopeRequest,authorTextScopeContract,authorEditPermission} from '../../agents/author-edit-scope.js';
 import {resolveAuthorTextPermission} from '../author-text-permission.js';
 import {scriptDialogueScopeRequest} from '../../agents/script-edit-scope.js';
 import { numberReviewSource } from "../../models/observation.js";
@@ -124,7 +124,9 @@ class ArtifactWorker extends BaseAgent {
         {role:"system",content:textSelections
           ? 'Revise only each exact selected text fragment. A selection may be part of a source line. The full document and protectedPrefix/protectedSuffix are read-only context and will remain around your replacement. Return only replacement characters for each content value in its named selection_N_text field. Do not repeat the protected prefix/suffix or add surrounding labels, annotations, formatting or line breaks that are outside the selection.'
           : "Revise only the numbered editable ranges using the user's instruction and professional methods. The full document is context. Return each range's replacement in its named range_N_content field, retaining the original trailing newline when present. Do not repeat or modify surrounding text."},
-        {role:"user",content:JSON.stringify({instruction:authorRequest&&textSelections?authorRequest:instruction,measurements:measureSourceText(content),document:numberReviewSource(content),...(textSelections?{editableSelections:contract.ranges}:{editableRanges:contract.ranges}),references:[...references].map(([sourceId,content])=>({sourceId,content}))})},
+        {role:"user",content:JSON.stringify({instruction:authorRequest&&textSelections?authorRequest:instruction,
+          ...(authorRequest&&textSelections&&instruction.trim()!==authorRequest.trim()?{revisionGuidance:{source:'coordinator',instruction,authority:'advice_within_author_scope'}}:{}),
+          measurements:measureSourceText(content),document:numberReviewSource(content),...(textSelections?{editableSelections:contract.ranges}:{editableRanges:contract.ranges}),references:[...references].map(([sourceId,content])=>({sourceId,content}))})},
       ],{name:"submit_artifact_revision",label:"Submit scoped artifact revision",description:"Submit only replacement text for each authorized range.",parameters:contract.parameters,
         validate:result=>{contract.apply(result);return result;}},{maxTokens:this.ctx.client.defaults.maxTokens});
       return{content:contract.apply(response.result)};
@@ -209,7 +211,7 @@ export function createArtifactMethodTools(pipeline: PipelineRunner, root: string
           if(originalArtifact?.currentRevisionId&&authorRequest?.trim()&&revision.path.endsWith('.md')){
             const original=await readArtifactRevision({projectRoot:root,workId,artifactId:artifact.id,revisionId:originalArtifact.currentRevisionId});
             const selector=new ArtifactWorker(pipeline.createAgentContext('auditor',workId));
-            authorScope=await resolveAuthorTextPermission({projectRoot:root,workId,artifactId:artifact.id,revisionId:original.revision.id,originalContent:original.bytes.toString('utf8'),currentContent:content,authorRequest,selectorVersion:artifact.kind==='script'?6:1,select:(source,request)=>selector.selectAuthorScope(source,request,artifact.kind==='script')});
+            authorScope=await resolveAuthorTextPermission({projectRoot:root,workId,artifactId:artifact.id,revisionId:original.revision.id,originalContent:original.bytes.toString('utf8'),currentContent:content,authorRequest,selectorVersion:artifact.kind==='script'?7:1,select:(source,request)=>selector.selectAuthorScope(source,request,artifact.kind==='script')});
           }
           let result: { content: string };
           try {
@@ -222,7 +224,9 @@ export function createArtifactMethodTools(pipeline: PipelineRunner, root: string
             }
             throw error;
           }
-          return createReplaceWorkArtifactTool(root, workId).execute(id, { path: revision.path, content: result.content, expectedRevisionId: revision.id }, signal, onUpdate);
+          const saved=await createReplaceWorkArtifactTool(root, workId).execute(id, { path: revision.path, content: result.content, expectedRevisionId: revision.id }, signal, onUpdate);
+          const editPermission=authorRequest?authorEditPermission(authorScope):undefined;
+          return editPermission?{...saved,details:{...saved.details,editPermission}}:saved;
         }
         const authorRequest = currentExecutionAuthorRequest();
         const scope = authorRequest?.trim() ? authorRequest : params.instruction;

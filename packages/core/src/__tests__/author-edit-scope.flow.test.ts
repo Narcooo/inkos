@@ -27,16 +27,17 @@ it.each([
  {format:'inline',cast:'**Mara** Cleaner.\n\n**Noah** Ticket clerk.'},
  {format:'multiline',cast:'## 人物\n\n**Mara**\nCleaner.\n\n**Noah**\nTicket clerk.\n\n## 剧本正文'},
  {format:'separate paragraphs',cast:'## Cast\n\n**Mara**\n\nCleaner.\n\n**Noah**\n\nTicket clerk.\n\n## Script'},
-])('binds a requested speaker to speech lines and protects $format cast and stage directions',async({cast})=>{
+ {format:'separate speaker with inline cue',cast:'## Cast\n\n**Mara**\nCleaner.\n\n**Noah**\nTicket clerk.\n\n## Script',inlineCue:true},
+])('binds a requested speaker to speech lines and protects $format cast and stage directions',async({cast,inlineCue=false})=>{
  const root=await mkdtemp(join(tmpdir(),'inkos-script-dialogue-')),requests:any[]=[];let selections=0;
- const original=`# Late close\n\n${cast}\n\n**Final scene**\n\nMara puts down the bucket.\n\n**MARA**\n(quietly)\nLet us go.\n\n**NOAH**\n(puts the note away)\nAll right.\n\nThey leave together.\n`;
+ const original=`# Late close\n\n${cast}\n\n**Final scene**\n\nMara puts down the bucket.\n\n**MARA**\n(quietly)${inlineCue?'':'\n'}Let us go.\n\n**NOAH**\n(puts the note away)${inlineCue?'':'\n'}All right.\n\nThey leave together.\n`;
  const server=createServer(async(req,res)=>{
   const chunks:Buffer[]=[];for await(const c of req)chunks.push(Buffer.from(c));const body=JSON.parse(Buffer.concat(chunks).toString());requests.push(body);
   const name=body.tools[0].function.name,scope=name==='submit_script_edit_scope'?JSON.parse(body.messages.find((m:any)=>m.role==='user').content):undefined;
   const selectedSpeaker=scope&&++selections===1?'speaker-1':'speaker-2';
   const args=scope
    ?{wholeDocument:false,speakerIds:['speaker-2'],dialoguePosition:null,selections:[{unitId:scope.sourceUnits.find((unit:any)=>unit.kind==='dialogue'&&unit.speakerId===selectedSpeaker)?.id,text:''}],reason:'Only the requested clerk speech.'}
-   :{selection_0_text:'I will register the box first.\n'};
+   :{selection_0_text:'I will register the box first.'+(inlineCue?'':'\n')};
   res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{tool_calls:[{id:'dialogue-'+requests.length,type:'function',function:{name,arguments:JSON.stringify(args)}}]}}]}));
  });server.listen(0,'127.0.0.1');await once(server,'listening');
  try{
@@ -44,12 +45,15 @@ it.each([
   const work=await syncWorkSourceArtifacts({projectRoot:root,workId:'gallery',accept:true,writes:[{relativePath:'works/gallery/source/script.md',content:original}]});
   const llm={service:'custom',provider:'openai' as const,configSource:'studio' as const,model:'fixture',apiKey:'fixture',baseUrl:`http://127.0.0.1:${(server.address() as {port:number}).port}/v1`,apiFormat:'chat' as const,stream:false,thinkingBudget:0,maxTokens:8192};
   const pipeline=new PipelineRunner({projectRoot:root,client:createLLMClient(llm),model:'fixture',defaultLLMConfig:llm});
-  await executeExplicitCapabilityTool({projectRoot:root,workId:'gallery',authorRequest:'Change only the ticket clerk’s final speech to express a concrete choice. Preserve all stage directions.',binding:{capabilityId:'workspace',actionId:'revise_work_artifact',profileId:'script',risk:'recoverable-write'},tool:createArtifactMethodTools(pipeline,root,'gallery')[1]!,parameters:{artifactId:work.artifacts[0]!.id,instruction:'Rewrite Mara’s closing scene, including her actions.'}});
+  const edited=await executeExplicitCapabilityTool({projectRoot:root,workId:'gallery',authorRequest:'Change only the ticket clerk’s final speech to express a concrete choice. Preserve all stage directions.',binding:{capabilityId:'workspace',actionId:'revise_work_artifact',profileId:'script',risk:'recoverable-write'},tool:createArtifactMethodTools(pipeline,root,'gallery')[1]!,parameters:{artifactId:work.artifacts[0]!.id,instruction:'Rewrite Mara’s closing scene, including her actions.'}});
   expect(requests.map(r=>r.tools[0].function.name)).toEqual(['submit_script_edit_scope','submit_script_edit_scope','submit_artifact_revision']);
   expect(JSON.parse(requests[1].messages.find((m:any)=>m.role==='tool').content)).toMatchObject({code:'SCRIPT_SCOPE_SPEAKER_MISMATCH'});
   const indexed=JSON.parse(requests[0].messages.find((m:any)=>m.role==='user').content);
   expect(indexed.cast).toMatchObject([{id:'speaker-1',name:'Mara',description:'Cleaner.'},{id:'speaker-2',name:'Noah',description:'Ticket clerk.'}]);
-  expect(indexed.sourceUnits.filter((unit:any)=>unit.kind==='dialogue').map((unit:any)=>({speakerId:unit.speakerId,text:unit.text}))).toEqual([{speakerId:'speaker-1',text:'Let us go.\n'},{speakerId:'speaker-2',text:'All right.\n'}]);
+  const ending=inlineCue?'':'\n';
+  expect(indexed.sourceUnits.filter((unit:any)=>unit.kind==='dialogue').map((unit:any)=>({speakerId:unit.speakerId,text:unit.text}))).toEqual([{speakerId:'speaker-1',text:'Let us go.'+ending},{speakerId:'speaker-2',text:'All right.'+ending}]);
+  expect(edited.data).toMatchObject({editPermission:{basis:'original_author_request',selectedOriginalText:['All right.'+ending],surroundingText:'protected'}});
+  expect(JSON.parse(requests.at(-1).messages.findLast((m:any)=>m.role==='user').content).revisionGuidance).toEqual({source:'coordinator',instruction:'Rewrite Mara’s closing scene, including her actions.',authority:'advice_within_author_scope'});
   expect(await readFile(join(root,'works/gallery/source/script.md'),'utf8')).toBe(original.replace('All right.','I will register the box first.'));
  }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));await rm(root,{recursive:true,force:true});}
 },20000);

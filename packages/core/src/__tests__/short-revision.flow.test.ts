@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { ShortFictionOutlineAgent, ShortFictionWriterAgent, ShortFictionDraftReviewerAgent, ShortFictionPackagingAgent, renderShortFictionDraftMarkdown } from "../agents/short-fiction.js";
+import { ShortFictionOutlineAgent, ShortFictionWriterAgent, ShortFictionDraftReviewerAgent, ShortFictionPackagingAgent, renderShortFictionDraftMarkdown, type ShortFictionBatchDraft } from "../agents/short-fiction.js";
 import { createInspectWorkTool, createShortFictionReviseTool } from "../agent/agent-tools.js";
 import { runShortFictionProduction, runShortFictionStage, reviseShortFictionProduction } from "../pipeline/short-fiction-runner.js";
 import { createInitialWorkManifestWrite, syncWorkSourceArtifacts } from "../harness/source-sync.js";
@@ -16,10 +16,35 @@ import { createProductionCapabilityRegistry } from "../harness/production-capabi
 import { createBuiltInWorkProfileRegistry } from "../harness/builtin-profiles.js";
 import { actionObservation } from "../harness/action-observation.js";
 import { withExecutionEvidence } from "../harness/execution-evidence.js";
+import {createLLMClient} from '../llm/provider.js';
 
 const roots:string[]=[];
 beforeEach(()=>{vi.spyOn(ShortFictionDraftReviewerAgent.prototype,'reviewPackage').mockResolvedValue({summary:'Reviewed package facts.',observations:[]});});
 afterEach(async()=>{vi.restoreAllMocks();await Promise.all(roots.splice(0).map(root=>rm(root,{recursive:true,force:true})));});
+
+it('resumes the closest unfinished opening without rewriting saved chapters',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'inkos-opening-recovery-'));roots.push(root);
+  const words=(n:number)=>Array(n).fill('word').join(' ');
+  const draft={storyTitle:'The receipt',openingHook:words(40),rawContent:'',chapters:[{number:1,title:'Return',content:words(20),charCount:20}]};
+  const checkpoint=join(root,'partial.json');await writeFile(checkpoint,JSON.stringify(draft));
+  const submittedCounts=[30,28,32,20];let calls=0;const inputs:any[]=[];
+  const server=createServer(async(req,res)=>{
+    const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));const body=JSON.parse(Buffer.concat(chunks).toString());
+    inputs.push(JSON.parse(body.messages.find((m:any)=>m.role==='user').content));
+    expect(body.tools[0].function.name).toBe('submit_short_opening_hook');
+    const count=submittedCounts[calls++]!;
+    res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{tool_calls:[{id:'opening-'+calls,type:'function',function:{name:'submit_short_opening_hook',arguments:JSON.stringify({openingHook:words(count)})}}]}}]}));
+  });server.listen(0,'127.0.0.1');await once(server,'listening');
+  try{
+    const client=createLLMClient({service:'custom',provider:'openai',configSource:'studio',model:'fixture',apiKey:'fixture',baseUrl:`http://127.0.0.1:${(server.address() as {port:number}).port}/v1`,apiFormat:'chat',stream:false,thinkingBudget:0});
+    const options={direction:'Return the receipt.',outlineMarkdown:'A handover.',chapterCount:1,charsPerChapter:20,minChapterLength:15,maxChapterLength:25,openingHookChars:20,language:'en' as const,onBatchComplete:async(value:ShortFictionBatchDraft,completed:ReadonlyArray<number>)=>{expect(completed).toEqual([1]);await writeFile(checkpoint,JSON.stringify(value));}};
+    await expect(new ShortFictionWriterAgent({client,model:'fixture',projectRoot:root}).continueDraft({...options,draft})).rejects.toMatchObject({code:'SHORT_OPENING_HOOK_CONTRACT'});
+    const saved=JSON.parse(await readFile(checkpoint,'utf8'));expect(saved.openingHook).toBe(words(28));expect(saved.chapters).toEqual(draft.chapters);
+    const resumed=await new ShortFictionWriterAgent({client,model:'fixture',projectRoot:root}).continueDraft({...options,draft:saved});
+    expect(resumed.openingHook).toBe(words(20));expect(resumed.chapters).toEqual(draft.chapters);
+    expect(calls).toBe(4);expect(inputs.at(-1)).toMatchObject({currentOpeningHook:words(28),lengthContract:{target:20,minimum:15,maximum:25,unit:'words'}});
+  }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));}
+},20000);
 
 it('bounds package correction to one pass and binds remaining findings to the current package while preserving the manuscript',async()=>{
   const root=await mkdtemp(join(tmpdir(),'inkos-package-fidelity-'));roots.push(root);
