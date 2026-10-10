@@ -123,7 +123,10 @@ export const InteractiveFilmCreateActionPayloadSchema = z.object({
   projectId: z.string().min(1).optional(),
 }).strict();
 
+const CreationSourceReferenceSchema = z.object({workId:z.string().min(1),artifactId:z.string().min(1),revisionId:z.string().min(1).optional()}).strict();
+
 export const TranslationCreateActionPayloadSchema = z.object({
+  sources: z.array(CreationSourceReferenceSchema).min(1).optional(),
   sourceText: z.string().min(1).optional(),
   glossary: z.array(z.object({ source: z.string(), target: z.string(), note: z.string().optional() })).optional(),
   filePath: z.string().min(1).optional(),
@@ -132,8 +135,6 @@ export const TranslationCreateActionPayloadSchema = z.object({
   title: z.string().min(1).optional(),
   segmentMaxChars: z.number().int().min(1).optional(),
 }).strict();
-
-const CreationSourceReferenceSchema = z.object({workId:z.string().min(1),artifactId:z.string().min(1),revisionId:z.string().min(1).optional()}).strict();
 
 export const FanficCreateActionPayloadSchema = z.object({
   source: CreationSourceReferenceSchema.optional(),

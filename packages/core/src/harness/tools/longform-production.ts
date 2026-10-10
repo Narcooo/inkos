@@ -285,7 +285,7 @@ export function createReviseChapterTool(
   return {
     name: "revise_chapter",
     label: "Revise chapter",
-    description: "Revise one persisted chapter using source-bound edits by default. For a precise local change, read and bind targetText to keep every surrounding paragraph unchanged. Request rewrite mode only for an author-authorized whole-chapter rewrite. Check the returned changedRegion before claiming the requested change is complete.",
+    description: "Revise one persisted chapter using source-bound edits by default. For a precise local change, read and bind targetText to keep every surrounding paragraph unchanged. Request rewrite mode only for an author-authorized whole-chapter rewrite. Check changedRegion for the actual edit and editPermission for the author's allowed original selections. A wider delegated instruction cannot change protected passages; do not keep retrying edits outside those selections.",
     parameters: ReviseChapterParams,
     async execute(_toolCallId, params: Static<typeof ReviseChapterParams>, signal) {
         const bookId = resolveBookId("revise_chapter", params.bookId, activeBookId);
@@ -308,6 +308,7 @@ export function createReviseChapterTool(
             wordCount: result.wordCount,
             changed: result.changed,
             changedRegion:result.changedRegion,
+            ...(result.editPermission ? {editPermission:result.editPermission} : {}),
             observations: result.observations,
             reviewedChapters:result.reviewedContentHash?[{chapterNumber:result.chapterNumber,contentHash:result.reviewedContentHash}]:[],
             ...(result.delivery?{delivery:result.delivery}:{}),

@@ -150,6 +150,9 @@ it.each([
   const revisionGuidance='Use a shorter direct response. Rewrite the surrounding narration if necessary.';
   const result=await withExecutionEvidence(()=>{},()=>reviser.reviseChapter('/tmp',original,1,[],'rewrite',undefined,{...options,instruction:revisionGuidance,targetText:original}),undefined,undefined,authorRequest);
   expect(result.revisedContent).toBe(original.replace(fixture.selected,fixture.replacement));
+  expect(result.editPermission).toEqual({basis:'original_author_request',selectedOriginalText:[fixture.selected],surroundingText:'protected'});
+  const {actionResultFacts}=await import('../harness/action-observation.js');
+  expect(actionResultFacts(result).editPermission).toEqual(result.editPermission);
   const scopes=requests.filter(r=>r.tools[0].function.name==='submit_author_edit_scope');
   expect(scopes).toHaveLength(2);
   expect(scopes.every(r=>JSON.parse(r.messages.findLast((m:any)=>m.role==='user').content).authorRequest===authorRequest)).toBe(true);

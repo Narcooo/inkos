@@ -324,6 +324,7 @@ const ProposeActionParams = Type.Object({
     projectId: Type.Optional(Type.String({ description: "Optional stable Work ID." })),
   }, { description: "Structured execution args for action=interactive_film_create." })),
   translationCreate: Type.Optional(Type.Object({
+    sources: Type.Optional(CreationSourceReferences),
     filePath: Type.Optional(Type.String({ description: "Project-relative EPUB/PDF/TXT/Markdown source file path to translate. Use sourceText for pasted input." })),
     sourceText: Type.Optional(Type.String({ minLength: 1 })),
     glossary: Type.Optional(Type.Array(Type.Object({ source: Type.String(), target: Type.String(), note: Type.Optional(Type.String()) }))),
@@ -520,7 +521,7 @@ function withSingleAttachmentFallback(
     return !value || (value.startsWith(".inkos/uploads/") && value !== path);
   };
 
-  if (params.action === "translation_create" && payload.translationCreate && useHostAttachment(payload.translationCreate.filePath)) {
+  if (params.action === "translation_create" && payload.translationCreate && !payload.translationCreate.sources?.length && !payload.translationCreate.sourceText?.trim() && useHostAttachment(payload.translationCreate.filePath)) {
     return { ...payload, translationCreate: { ...payload.translationCreate, filePath: path } };
   }
   if (
@@ -591,8 +592,8 @@ function assertExecutableProposedAction(params: ProposeActionParamsType, payload
     return;
   }
   if (params.action === "translation_create") {
-    if (!payload?.translationCreate?.filePath?.trim() && !payload?.translationCreate?.sourceText?.trim()) {
-      throw new Error("propose_action requires translationCreate.filePath or sourceText.");
+    if (!payload?.translationCreate?.sources?.length && !payload?.translationCreate?.filePath?.trim() && !payload?.translationCreate?.sourceText?.trim()) {
+      throw new Error("propose_action requires translationCreate.sources, filePath or sourceText.");
     }
     requireProposedText(payload?.translationCreate?.sourceLanguage, "translationCreate.sourceLanguage");
     requireProposedText(payload?.translationCreate?.targetLanguage, "translationCreate.targetLanguage");

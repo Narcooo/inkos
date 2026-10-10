@@ -63,7 +63,7 @@ export function actionResultFacts(value: unknown): Record<string, unknown> {
   }
   if (data.delivery !== undefined) facts.delivery = deliveryFacts(data.delivery);
   if (data.artifacts !== undefined) facts.artifacts = artifactAddresses(data.artifacts);
-  for (const key of ["nextRead", "structure", "suggestedActions", "lineage", "measurements", "reviewedReferences", "changedRegion", "comparison", "revisionChanges"]) {
+  for (const key of ["nextRead", "structure", "suggestedActions", "lineage", "measurements", "reviewedReferences", "changedRegion", "editPermission", "comparison", "revisionChanges"]) {
     if (data[key] !== undefined) facts[key] = data[key];
   }
   if (data.currentState && typeof data.currentState === "object") {

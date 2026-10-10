@@ -16,6 +16,17 @@ const ZERO_USAGE = {
 } as const;
 
 describe("FanficCanonImporter", () => {
+  it("retains the complete original source without a model call when it fits", async () => {
+    const agent = new FanficCanonImporter({client: TEST_CLIENT, model: "test-model", projectRoot: process.cwd()});
+    const chat = vi.spyOn(agent as unknown as {chat: (...args: unknown[]) => Promise<unknown>}, "chat");
+    const submit = vi.spyOn(agent as unknown as {submitStructured: (...args: unknown[]) => Promise<unknown>}, "submitStructured");
+    const source = "# Arrival\n\nEli is the curator. She keeps Nora's blue notebook.\n\n# Departure\n\nNora asks Eli to return it.\n";
+    const result = await agent.importFromText(source, "Gallery", "canon", "en");
+    expect(result.fullDocument.endsWith(source)).toBe(true);
+    expect(chat).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
+  });
+
   it("semantically compiles long source chunks instead of truncating the tail", async () => {
     const agent = new FanficCanonImporter({
       client: TEST_CLIENT,

@@ -323,6 +323,9 @@ ${reviseFrom.userFeedback || "（无）"}
     ],{name:"submit_foundation_cast_index",label:"Identify opening cast",description:"Submit the names and tiers of the opening cast.",parameters:FoundationCastIndexToolSchema},
     {maxTokens:Math.min(2048,this.ctx.client.defaults.maxTokens),professionalGuidance:false});
     const {result:cards} = await this.submitStructured([
+      // Character facts and author constraints may be absent from the generated
+      // outline. Keep their original authority through this writing stage.
+      {role:"system",content:input.systemPrompt},
       {role:"system",content:input.language==="en"
         ? "Create concise character cards for the named people who shape the opening conflict. Ground each card in the supplied story. Give present motive, knowledge, relationship pressure and limits in about 80–120 words; avoid repeating the plot or expanding unnamed occupational groups into full biographies."
         : "为影响开篇冲突的具名人物写简明角色卡。每人约150—250字，写清当下动机、已知信息、关系压力与能力边界，依据已给定故事，不重复整篇情节，不把无名岗位群体扩写成完整传记。"},

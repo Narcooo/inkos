@@ -23,6 +23,7 @@ export type TranslationSourceKind = "text" | "markdown" | "pdf" | "epub";
 export type TranslationExportFormat = "txt" | "md" | "epub";
 
 export interface CreateTranslationProjectInput {
+  readonly sources?: ReadonlyArray<{ readonly workId: string; readonly artifactId: string; readonly revisionId?: string }>;
   readonly filePath?: string;
   readonly sourceText?: string;
   readonly glossary?: ReadonlyArray<TranslationGlossaryTerm>;

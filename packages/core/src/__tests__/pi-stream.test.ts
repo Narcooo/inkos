@@ -429,12 +429,14 @@ describe("guardedPiNonStreaming", () => {
   });
   it('assembles indexed character documents while preserving quoted character prose',async()=>{
     const card='An adult clerk says "Wait."\nThe witness keeps the original receipt.';
+    const source='Mara is the clerk. She keeps the receipt; the witness has only seen it.';
     const called:string[]=[];
     const skillApplications:Array<{skills:unknown[]}>=[];
     fetchWithProxyMock.mockImplementation(async(_url:string,init:RequestInit)=>{
       const body=JSON.parse(String(init.body)),name=body.tools[0].function.name;called.push(name);
       if(name==='submit_foundation_cast_index')expect(JSON.parse(body.messages.find((m:{role:string})=>m.role==='user').content))
         .toEqual({storyFrame:'Evidence conflict',volumeMap:'One resolved chapter',bookRules:'Keep the receipt'});
+      if(name==='submit_foundation_cast_documents')expect(body.messages.filter((m:{role:string})=>m.role==='system').some((m:{content:string})=>m.content.includes(source))).toBe(true);
       const args=name==='submit_foundation_outline'?{storyFrame:'Evidence conflict',volumeMap:'One resolved chapter'}:
         name==='submit_foundation_details'?{bookRules:'Keep the receipt',bookRulesData:{prohibitions:[],enableFullCastTracking:false,allowedDeviations:[]},pendingHooks:[]}:
         name==='submit_foundation_cast_index'?{roles:[{tier:'major',name:'Mara'},{tier:'minor',name:'Witness'}]}:
@@ -443,7 +445,7 @@ describe("guardedPiNonStreaming", () => {
     });
     const client=createLLMClient({provider:'openai',service:'custom',configSource:'studio',baseUrl:model.baseUrl,model:model.id,apiKey:'fixture',apiFormat:'chat',stream:false,temperature:0,thinkingBudget:0});
     const result=await withExecutionEvidence((type,payload)=>{if(type==='skills-applied')skillApplications.push(payload as {skills:unknown[]});},
-      ()=>new ArchitectAgent({client,model:model.id,projectRoot:'/tmp'}).generateFoundation({id:'fixture',title:'Receipt',genre:'other',platform:'other',language:'en',status:'outlining',targetChapters:1,chapterWordCount:300,createdAt:'2026-01-01',updatedAt:'2026-01-01'}),
+      ()=>new ArchitectAgent({client,model:model.id,projectRoot:'/tmp'}).generateFoundation({id:'fixture',title:'Receipt',genre:'other',platform:'other',language:'en',status:'outlining',targetChapters:1,chapterWordCount:300,createdAt:'2026-01-01',updatedAt:'2026-01-01'},source),
       createBuiltInWorkProfileRegistry('/tmp').require('longform-novel'),undefined,'Create Receipt, write the opening chapter, review and export it.');
     expect(called).toEqual(['submit_foundation_outline','submit_foundation_details','submit_foundation_cast_index','submit_foundation_cast_documents']);
     expect(skillApplications.map(event=>event.skills.length>0)).toEqual([true,true,false,true]);

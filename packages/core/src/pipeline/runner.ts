@@ -165,6 +165,7 @@ export interface WriteChaptersOptions {
 }
 
 export interface ReviseResult {
+  readonly editPermission?: import('../agents/reviser.js').ReviseOutput['editPermission'];
   readonly reviewedContentHash?: string;
   readonly changedRegion?:ReturnType<typeof changedSourceRegion>;
   readonly delivery?: ReturnType<typeof chapterLengthDelivery>;
@@ -1190,6 +1191,7 @@ export class PipelineRunner {
         chapterNumber: targetChapter,
         wordCount: revisedCount,
         changed,
+        ...(reviseOutput.editPermission ? {editPermission: reviseOutput.editPermission} : {}),
         changedRegion:changedSourceRegion(chapterDocumentBody(content,targetChapter,chapterMeta.title,language),revisedContent),
         observations: remainingObservations,
         reviewedContentHash:postRevision.reviewedContentHash,
