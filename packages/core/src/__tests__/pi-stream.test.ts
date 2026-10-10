@@ -223,7 +223,7 @@ describe("guardedPiNonStreaming", () => {
         : name==="submit_short_opening_hook"?{openingHook:words(10)}
         : name==="submit_short_revision_chapter"?{title:"Handover",content:words(allowRepair?25:45)}
         : name==="submit_short_revision_plan"?{revisionBrief:"Clarify the independent opening",openingHook:Array(allowOpeningRepair?10:30).fill("revised").join(" ")}
-        : name==="submit_short_fiction_review"?{summary:"Reviewed",observations:[]}
+        : name==="submit_short_fiction_review"||name==="submit_short_package_review"?{summary:"Reviewed",observations:[]}
         : name==="submit_short_package"?{title:"Borrowed Receipt",intro:"A receipt is returned.",sellingPoints:["A witnessed handover"],coverPrompt:"A receipt on a desk"}
         : undefined;
       if(name==='submit_chapter_edit_ranges')return new Response(JSON.stringify({error:{message:'Fixture compression service unavailable'}}),{status:403});

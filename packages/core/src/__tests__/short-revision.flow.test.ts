@@ -2,7 +2,7 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ShortFictionOutlineAgent, ShortFictionWriterAgent, ShortFictionDraftReviewerAgent, ShortFictionPackagingAgent, renderShortFictionDraftMarkdown } from "../agents/short-fiction.js";
 import { createInspectWorkTool, createShortFictionReviseTool } from "../agent/agent-tools.js";
 import { runShortFictionProduction, runShortFictionStage, reviseShortFictionProduction } from "../pipeline/short-fiction-runner.js";
@@ -18,7 +18,40 @@ import { actionObservation } from "../harness/action-observation.js";
 import { withExecutionEvidence } from "../harness/execution-evidence.js";
 
 const roots:string[]=[];
+beforeEach(()=>{vi.spyOn(ShortFictionDraftReviewerAgent.prototype,'reviewPackage').mockResolvedValue({summary:'Reviewed package facts.',observations:[]});});
 afterEach(async()=>{vi.restoreAllMocks();await Promise.all(roots.splice(0).map(root=>rm(root,{recursive:true,force:true})));});
+
+it('bounds package correction to one pass and binds remaining findings to the current package while preserving the manuscript',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'inkos-package-fidelity-'));roots.push(root);
+  const draft={storyTitle:'The receipt',rawContent:'',chapters:[{number:1,title:'Return',content:'Nora returns the borrowed receipt to Eli. They check the signature together.',charCount:13}]};
+  const manuscript=JSON.stringify(draft),base='works/short/source';
+  const writes=[{relativePath:base+'/outline/v001.md',content:'The receipt is returned.'},
+    {relativePath:base+'/final/short-story.json',content:manuscript},
+    {relativePath:base+'/production-state.json',content:JSON.stringify({version:2,intent:'A witnessed handover.',target:{chapterCount:1,charsPerChapter:20,language:'en'},stages:{}})}];
+  const initial=createInitialWorkManifestWrite({workId:'short',title:draft.storyTitle,profileId:'short-fiction',language:'en',writes});
+  await commitAtomicFileSet({rootDir:root,writes:[...writes,initial.write]});
+  await syncWorkSourceArtifacts({projectRoot:root,workId:'short',accept:true});
+  const first={title:draft.storyTitle,intro:'Nora burns the receipt.',sellingPoints:['A handover'],coverPrompt:'A receipt',rawContent:''};
+  const second={...first,intro:'Nora returns the receipt.'};
+  const issue={code:'PACKAGE_EVENT',category:'quality' as const,assessment:'issue' as const,summary:'The described event conflicts with the manuscript.',evidence:[]};
+  const remaining={...issue,code:'PACKAGE_UNRESOLVED'};
+  const reviewer=vi.mocked(ShortFictionDraftReviewerAgent.prototype.reviewPackage).mockReset()
+    .mockResolvedValueOnce({summary:'Review first package.',observations:[issue]})
+    .mockResolvedValueOnce({summary:'Review revised package.',observations:[remaining]});
+  const packager=vi.spyOn(ShortFictionPackagingAgent.prototype,'generatePackage').mockResolvedValueOnce(first).mockResolvedValueOnce(second);
+  const runtime={projectRoot:root,model:'fixture',client:{defaults:{maxTokens:4096}}} as never;
+  const result=await runShortFictionStage({projectRoot:root,storyId:'short',stage:'package',direction:'Package the current story.',cover:false,runtimes:{planner:runtime,writer:runtime,draftReview:runtime,package:runtime}});
+  expect(packager).toHaveBeenCalledTimes(2);expect(reviewer).toHaveBeenCalledTimes(2);
+  expect(packager.mock.calls[1]![0].revision).toEqual({previous:first,observations:[issue]});
+  expect(reviewer.mock.calls.map(([input])=>input.draft)).toEqual([draft,draft]);
+  expect(await readFile(join(root,base,'final/short-story.json'),'utf8')).toBe(manuscript);
+  const work=await loadWorkManifest(root,'short'),artifact=work.artifacts.find(a=>a.revisions.some(r=>r.path==='source/final/sales-package.md'))!;
+  expect(artifact.revisions).toHaveLength(2);
+  const revision=artifact.revisions.find(r=>r.id===artifact.currentRevisionId)!;
+  expect(result.stageStatus).toBe('completed');
+  expect(result.observations).toEqual(expect.arrayContaining([expect.objectContaining({code:'PACKAGE_UNRESOLVED',assessment:'issue',scope:'sales-package',targetHash:revision.checksum,target:{workId:'short',artifactId:artifact.id,revisionId:revision.id}})]));
+  expect(result.observations.some(o=>o.code==='PACKAGE_EVENT')).toBe(false);
+});
 
 it('keeps original author chapter permission across completed edits and rejects protected writes before committing',async()=>{
   const root=await mkdtemp(join(tmpdir(),'inkos-short-permission-'));roots.push(root);

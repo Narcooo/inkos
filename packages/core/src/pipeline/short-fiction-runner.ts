@@ -266,7 +266,7 @@ async function loadCompletedShortRun(
     charsPerChapter: options.charsPerChapter ?? state.target?.charsPerChapter,
     language: options.language ?? state.target?.language,
   })) return null;
-  if(state?.delivery&&state.stages.package?.reviewHash!==shortInputHash(state.delivery))return null;
+  if(state?.delivery&&state.stages.package?.reviewHash!==shortPackageReviewHash(state.delivery))return null;
   const observations: Observation[] = state
     ? Object.values(state.stages).flatMap(stage => stage?.observations ?? [])
     : [{ code: "production-history-unavailable", category: "execution", assessment: "unavailable", summary: "This manuscript predates persisted stage results. Review status requires verification.", evidence: [projectPath(join(baseDir, "reviews", "draft-v001.md"))] }];
@@ -295,6 +295,9 @@ function shortReviewRequestHash(options: ShortFictionRunOptions): string {
 }
 
 export type ShortProductionStage = "outline" | "draft" | "review" | "package";
+function shortPackageReviewHash(delivery:ShortProductionState['delivery']):string {
+  return shortInputHash({delivery,packageMethodVersion:2});
+}
 export interface ShortProductionStageResult { readonly storyId: string; readonly stage: ShortProductionStage; readonly stageStatus: "completed" | "failed"; readonly observations: ReadonlyArray<Observation>; readonly artifactPaths: ReadonlyArray<string>; readonly delivery?:ShortProductionState['delivery']; readonly reviewedArtifact?:{readonly artifactId:string;readonly revisionId:string};readonly exportSourcePaths?:readonly string[]; }
 
 export async function runShortFictionStage(options: ShortFictionRunOptions & { readonly storyId: string; readonly stage: ShortProductionStage }): Promise<ShortProductionStageResult> {
@@ -397,7 +400,7 @@ async function produceShort(
     const acceptPaths = stage === "review"
       ? ["source/reviews/draft-v001.md", "source/reviews/draft-warning.md", "source/production-state.json"]
       : stage === "package"
-      ? ["source/final/sales-package.json", "source/final/sales-package.md", "source/final/cover-prompt.md", "source/reviews/package-warning.md", "source/production-state.json"]
+      ? ["source/final/sales-package.json", "source/final/sales-package.md", "source/final/cover-prompt.md", "source/reviews/package-v001.md", "source/reviews/package-warning.md", "source/production-state.json"]
       : stage === "draft" ? [...shortManuscriptPaths(finalDraft), ...await changedWorkSourcePaths(root, storyId, sourceBefore)] : [];
     await syncWorkSourceArtifacts({ projectRoot: root, workId: storyId, accept: stage !== "outline", acceptPaths, title: stage === "outline" ? workTitle : finalDraft.storyTitle });
     const stageStatus = (stage === "review" || stage === "package") && productionState.stages[stage]?.status === "failed" ? "failed" : "completed";
@@ -411,6 +414,8 @@ async function produceShort(
   let draftReviewObservations: ReadonlyArray<Observation> = [];
   let draftReviewWarning: string | undefined;
   let packageWarning: string | undefined;
+  let packageObservations: ReadonlyArray<Observation> = [];
+  let packageReviewedArtifact: {artifactId:string;revisionId:string} | undefined;
   let salesPackage: ShortFictionSalesPackage | undefined;
   async function refreshDelivery(){
     const inputHash=shortInputHash({draft:finalDraft,outline:outlineMarkdown,intent:productionState.intent});
@@ -570,12 +575,13 @@ async function produceShort(
     const packager = new ShortFictionPackagingAgent(options.runtimes.package);
     try {
       const cachedPackage = productionState.stages.package;
-      const reviewHash=shortInputHash(productionState.delivery);
+      const reviewHash=shortPackageReviewHash(productionState.delivery);
       const savedPackage = await tryReadProjectText(root, join(baseDir, "final", "sales-package.json"));
       const packageDirection=stopAfter==="package"&&options.direction.trim()&&options.direction!==productionState.intent
         ? [productionState.intent,language==="en"?"Current packaging request:":"本次包装要求：",options.direction].join("\n\n")
         : productionState.intent;
-      salesPackage = cachedPackage?.status === "completed" && cachedPackage.inputHash === inputHash && cachedPackage.reviewHash===reviewHash && savedPackage && !options.retryStages?.includes("package")
+      const reusePackage = cachedPackage?.status === "completed" && cachedPackage.inputHash === inputHash && cachedPackage.reviewHash===reviewHash && savedPackage && !options.retryStages?.includes("package");
+      salesPackage = reusePackage
         ? JSON.parse(savedPackage) as ShortFictionSalesPackage
         : await packager.generatePackage({
         direction: packageDirection,
@@ -583,6 +589,31 @@ async function produceShort(
         language,
       });
       await writePackageArtifacts(root, baseDir, salesPackage, language);
+      if (reusePackage) {
+        packageObservations=cachedPackage!.observations;
+        packageReviewedArtifact=cachedPackage!.reviewedArtifact;
+      } else {
+        const reviewer=new ShortFictionDraftReviewerAgent(options.runtimes.draftReview);
+        // One correction pass bounds latency and prevents review/rewrite loops.
+        // Each review remains attached to the exact package it inspected.
+        for (let pass=0;pass<2;pass++) {
+          const work=await syncWorkSourceArtifacts({projectRoot:root,workId:storyId,accept:true,
+            acceptPaths:['source/final/sales-package.json','source/final/sales-package.md','source/final/cover-prompt.md']});
+          const artifact=work.artifacts.find(a=>a.revisions.some(r=>r.id===a.currentRevisionId&&r.path==='source/final/sales-package.md'))!;
+          const revision=artifact.revisions.find(r=>r.id===artifact.currentRevisionId)!;
+          const review=await reviewer.reviewPackage({draft:finalDraft,sales:salesPackage,language});
+          packageReviewedArtifact={artifactId:artifact.id,revisionId:revision.id};
+          packageObservations=review.observations.map(o=>({...o,category:o.category??'quality',scope:'sales-package',
+            targetHash:revision.checksum,target:{workId:storyId,artifactId:artifact.id,revisionId:revision.id}}));
+          await writeText(root,join(baseDir,'reviews','package-v001.md'),renderShortFictionReview(review,language,'package'));
+          await syncWorkSourceArtifacts({projectRoot:root,workId:storyId,accept:true,acceptPaths:['source/reviews/package-v001.md']});
+          const issues=review.observations.filter(o=>o.assessment==='issue');
+          if (pass===1||!issues.length) break;
+          salesPackage=await packager.generatePackage({direction:packageDirection,draft:finalDraft,language,
+            revision:{previous:salesPackage,observations:issues}});
+          await writePackageArtifacts(root,baseDir,salesPackage,language);
+        }
+      }
       await rm(safeChildPath(root, join(baseDir, "reviews", "package-warning.md")), { force: true });
     } catch (error) {
       options.signal?.throwIfAborted();
@@ -592,8 +623,9 @@ async function produceShort(
         : `# 包装阶段需要重试\n\n完整正文已经保留。简介与封面包装失败不会再把正文标成失败。\n\n## 原因\n\n${packageWarning}`);
     }
     productionState = { ...productionState, stages: { ...productionState.stages, package: {
-      status: packageWarning ? "failed" : "completed", inputHash, reviewHash:shortInputHash(productionState.delivery),updatedAt: new Date().toISOString(), error: packageWarning,
-      observations: packageWarning ? [{ code: "package-generation", category: "execution", assessment: "unavailable", summary: packageWarning, evidence: [], targetHash: inputHash }] : [],
+      status: packageWarning ? "failed" : "completed", inputHash, reviewHash:shortPackageReviewHash(productionState.delivery),updatedAt: new Date().toISOString(), error: packageWarning,
+      ...(packageReviewedArtifact?{reviewedArtifact:packageReviewedArtifact}:{}),
+      observations: [...packageObservations,...(packageWarning ? [{ code: "package-generation", category: "execution" as const, assessment: "unavailable" as const, summary: packageWarning, evidence: [], targetHash: inputHash }] : [])],
     } } };
     await writeShortProductionState(root, baseDir, productionState);
   } catch (error) {
@@ -602,7 +634,7 @@ async function produceShort(
 
   if (stopAfter === "package") return stageResult("package", packageWarning
     ? ["reviews/package-warning.md", "production-state.json"]
-    : ["final/sales-package.json", "final/sales-package.md", "final/cover-prompt.md"]);
+    : ["final/sales-package.json", "final/sales-package.md", "final/cover-prompt.md", "reviews/package-v001.md"]);
   const coverArtifacts: { readonly coverImagePath?: string; readonly coverError?: string; readonly coverErrorCode?: string } = options.cover === false
     ? { coverError: "disabled" }
     : packageWarning || !salesPackage?.coverPrompt.trim()
@@ -839,6 +871,7 @@ async function reviseShortFictionWithLock(options: ShortFictionRunOptions & { re
 function renderShortFictionReview(
   review: ShortFictionDraftReview,
   language: ShortFictionLanguage,
+  kind: 'draft' | 'package' = 'draft',
 ): string {
   const observations = review.observations.length > 0
     ? review.observations.flatMap((observation) => [
@@ -851,11 +884,13 @@ function renderShortFictionReview(
               ...observation.evidence.map((item) => `- ${item}`),
             ]
           : []),
+        ...(observation.sourceRefs?.length ? ["",language==='en'?'Sources:':'来源：',
+          ...observation.sourceRefs.map(source=>`${source.sourceId}\n\n> ${source.quote.replace(/\n/g,'\n> ')}`)] : []),
         "",
       ])
     : [language === "en" ? "No evidence-backed observations." : "没有有证据的审稿观察。"];
   return [
-    language === "en" ? "# Draft review" : "# 成稿审查",
+    kind==='package' ? (language==='en'?'# Sales package review':'# 销售包装审查') : (language === "en" ? "# Draft review" : "# 成稿审查"),
     "",
     review.summary,
     "",

@@ -153,6 +153,10 @@ export interface ShortFictionPackageInput {
   readonly direction: string;
   readonly draft: ShortFictionBatchDraft;
   readonly language?: ShortFictionLanguage;
+  readonly revision?: {
+    readonly previous: ShortFictionSalesPackage;
+    readonly observations: ReadonlyArray<Observation>;
+  };
 }
 
 export class ShortFictionOutlineAgent extends BaseAgent {
@@ -512,6 +516,22 @@ export class ShortFictionDraftReviewerAgent extends BaseAgent {
       }, {  maxTokens: Math.min(4096, safeShortFictionOutputBudget(this.ctx.client.defaults.maxTokens)) });
     return response.result;
   }
+
+  async reviewPackage(input: {draft: ShortFictionBatchDraft; sales: ShortFictionSalesPackage; language?: ShortFictionLanguage}): Promise<ShortFictionDraftReview> {
+    const language=input.language??'zh';
+    const sources=new Map([
+      ['package',renderShortFictionSalesPackage(input.sales,language)],
+      ['manuscript',renderShortFictionDraftMarkdown(input.draft,language)],
+    ]);
+    const response=await this.submitSourcedReview([
+      {role:'system',content:language==='en'
+        ? 'Check factual promises in this sales package against the complete manuscript: people, actions, timing, relationships and outcomes. Commercial compression, emotional metaphor and symbolic cover composition are allowed when they still describe this story. Distinguish enacted events from intentions and future possibilities. Report a factual issue only when the package makes an unsupported or conflicting claim; cite the package wording and relevant manuscript evidence. Do not review the quality of the manuscript or treat uncertain inferences as facts. Report only defects and material uncertainties; matching claims do not need individual findings. Review only; do not rewrite.'
+        : '核对销售包装对完整成稿的事实承诺：人物、行动、时间、关系与结果。只要仍然服务这本故事，允许商业化压缩、情绪隐喻和象征性封面构图。区分已经发生的事件、意图与未来可能。只有包装确实作出无依据或冲突的事实承诺时才报硬伤，同时引用包装原句与相关正文依据。不要审正文质量，也不要把不确定推断当作事实。只登记问题和实质性的不确定之处，符合正文的陈述无需逐条登记。只审稿，不改写。'},
+      {role:'user',content:[...sources].map(([id,text])=>`## Source: ${id}\n${numberReviewSource(text)}`).join('\n\n')},
+    ],sources,{name:'submit_short_package_review',label:'Review package fidelity',description:'Submit source-grounded findings about the package factual promises.'},
+    {maxTokens:Math.min(4096,safeShortFictionOutputBudget(this.ctx.client.defaults.maxTokens)),categoryRequired:true});
+    return response.result;
+  }
 }
 
 export class ShortFictionPackagingAgent extends BaseAgent {
@@ -527,6 +547,13 @@ export class ShortFictionPackagingAgent extends BaseAgent {
           draftMarkdown: renderShortFictionDraftMarkdown(input.draft, input.language),
           draftTitle: input.draft.storyTitle,
         }, input.language) },
+        ...(input.revision ? [{role:'user' as const,content:JSON.stringify({
+          previousPackage:input.revision.previous,
+          candidateFindings:input.revision.observations,
+          instruction:input.language==='en'
+            ? 'Recheck each finding against the manuscript, then correct supported factual mismatches in the package. Preserve justified commercial compression, metaphor and the story’s appeal. Findings are proposals, not source facts. Return the complete package; the manuscript stays unchanged.'
+            : '逐条对照正文核实这些候选判断，再修正包装中有依据的事实偏差。保留合理的商业化压缩、隐喻与故事吸引力。审稿意见是待核实的判断，不是故事事实。提交完整包装，正文保持。',
+        })}] : []),
       ], {
         name: "submit_short_package",
         label: "Submit short-fiction package",
