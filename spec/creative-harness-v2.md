@@ -78,6 +78,13 @@ export-only and information-only requests do not inherit old review obligations.
   request-baseline comparison. Changed chapters have citable earlier text;
   unchanged chapters are compared in full without duplicating their text in the
   model context. Review state records both artifact versions and checksums.
+- State projection review receives the actual before/proposed fact and hook
+  records, including fact validity and historical entries, plus chapter prose.
+  A derived active-state table is not the complete factual record. Corrections
+  identify a proposed record and cite chapter evidence; only those corrections
+  feed settlement recovery. Content review owns alignment with planning and
+  authoring documents. An unchanged projection still needs checking because it
+  may have omitted a new chapter event.
 - Atomic file sets journal multi-file writes. Interrupted operations can recover
   without treating an unfinished candidate as an accepted version.
 - Filesystem discovery, pending writes, acceptance scopes, and image receipts

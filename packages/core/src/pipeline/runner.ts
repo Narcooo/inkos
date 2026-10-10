@@ -19,7 +19,7 @@ import { ComposerAgent, type ComposeChapterOutput } from "../agents/composer.js"
 import { WriterAgent, type WriteChapterInput, type WriteChapterOutput } from "../agents/writer.js";
 import { ContinuityAuditor } from "../agents/continuity.js";
 import { ReviserAgent, DEFAULT_REVISE_MODE, type ReviseMode } from "../agents/reviser.js";
-import { StateValidatorAgent, type ValidationResult } from "../agents/state-validator.js";
+import { StateValidatorAgent, withStateProjectionContext, type ValidationResult } from "../agents/state-validator.js";
 import { RadarAgent } from "../agents/radar.js";
 import type { RadarSource } from "../agents/radar-source.js";
 import { StateManager } from "../state/manager.js";
@@ -1048,7 +1048,7 @@ export class PipelineRunner {
         baselineHooks,
         settledRevision.updatedHooks,
         language,
-        authorityContext,
+        withStateProjectionContext(authorityContext,baselineSnapshot,settledRevision.runtimeStateSnapshot),
       );
       if (!stateValidation.consistent || stateValidation.reconciliationRequired) {
         const recovery = await reconcileChapterStateAfterReview({
@@ -1068,6 +1068,7 @@ export class PipelineRunner {
           oldHooks: baselineHooks,
           originalValidation: stateValidation,
           authorityContext,
+          previousProjection:baselineSnapshot,
           language,
           logger: this.config.logger,
         });
@@ -1449,6 +1450,7 @@ export class PipelineRunner {
       previousTruth: {
         oldState,
         oldHooks,
+        snapshot:runtimeSnapshot,
       },
       authorityContext: {
         storyFrame: authorityStoryFrame,
@@ -1591,7 +1593,7 @@ export class PipelineRunner {
       oldHooks,
       syncedOutput.updatedHooks,
       pipelineLang,
-      authorityContext,
+      withStateProjectionContext(authorityContext,baselineSnapshot,syncedOutput.runtimeStateSnapshot),
     );
 
     if (!validation.consistent) {
@@ -1613,6 +1615,7 @@ export class PipelineRunner {
         oldHooks,
         originalValidation: validation,
         authorityContext,
+        previousProjection:baselineSnapshot,
         language: pipelineLang,
         logWarn: (message) => this.logWarn(pipelineLang, message),
         logger: this.config.logger,
