@@ -336,7 +336,7 @@ export async function runWorkerAgentTool<TParameters extends TSchema>(
   let modelTurns = 0;
   let lastSupportingTurn = -1;
   let resultAttemptsExhausted = false;
-  let lastValidationError: (Error & {code?:string}) | undefined;
+  let lastValidationError: (Error & {code?:string;issues?:ReturnType<typeof toolArgumentIssues>}) | undefined;
   const maxResultTurns = resultTool.maxTurns ?? 3;
   const temperature = options.temperature ?? client.defaults.temperature;
   const { validate, supportingTools = [], maxTurns: _maxTurns, ...toolDefinition } = resultTool;
@@ -348,8 +348,8 @@ export async function runWorkerAgentTool<TParameters extends TSchema>(
       if (issues.length) {
         const failure={code:'WORKER_SCHEMA_INVALID',resultTool:toolName,issues};
         recordExecutionEvidence('worker-result-invalid',failure);
-        lastValidationError=undefined;
-        throw new Error(JSON.stringify(failure));
+        lastValidationError=Object.assign(new Error(JSON.stringify(failure)),failure);
+        throw lastValidationError;
       }
       return params;
   };
@@ -440,6 +440,7 @@ export async function runWorkerAgentTool<TParameters extends TSchema>(
     options.signal?.throwIfAborted();
     if (resultAttemptsExhausted) throw Object.assign(new Error(lastValidationError?.message??'Structured result remained invalid after bounded correction attempts'), {
       code:lastValidationError?.code??'WORKER_RESULT_INVALID',resultTool:resultTool.name,attempts:modelTurns,
+      ...(lastValidationError?.issues ? {issues:lastValidationError.issues} : {}),
       lastToolError:[...agent.state.messages].reverse().find(message=>message.role==='toolResult'&&message.isError),
     });
     const initialResult = agent.state.messages.at(-1);

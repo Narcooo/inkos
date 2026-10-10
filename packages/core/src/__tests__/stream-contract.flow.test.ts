@@ -250,12 +250,14 @@ it('bounds invalid structured submissions and returns schema paths instead of ec
   server.listen(0,'127.0.0.1');await once(server,'listening');
   try{
     const client=createLLMClient({service:'custom',configSource:'studio',provider:'openai',model:'test-model',baseUrl:`http://127.0.0.1:${(server.address() as {port:number}).port}/v1`,apiKey:'fixture',apiFormat:'chat',stream:true,temperature:0,thinkingBudget:0});
-    await expect(runWorkerAgentTool(client,'test-model',[{role:'user',content:'Submit chapters.'}],{
+    const failure=await runWorkerAgentTool(client,'test-model',[{role:'user',content:'Submit chapters.'}],{
       name:'submit_chapters',label:'Submit',description:'Submit chapter records',parameters:Type.Object({chapters:Type.Array(Type.Object({number:Type.Integer()})),state:Type.Union([Type.Literal('draft'),Type.Literal('ready')])}),
-    },{maxTokens:128})).rejects.toMatchObject({code:'WORKER_RESULT_INVALID',attempts:3});
+    },{maxTokens:128}).then(()=>{throw new Error('Invalid submission was accepted');},error=>error);
+    expect(failure).toMatchObject({code:'WORKER_SCHEMA_INVALID',attempts:3,resultTool:'submit_chapters'});
     expect(requests).toHaveLength(3);
     const feedback=JSON.parse(requests[1].messages.find(message=>message.role==='tool')!.content);
     expect(feedback).toMatchObject({code:'WORKER_SCHEMA_INVALID',issues:[{path:'/chapters',expectedType:'array',actualType:'string'},{path:'/state',actualType:'string',allowedValues:['draft','ready']}]});
+    expect(failure.issues).toEqual(feedback.issues);
     expect(Object.keys(feedback.issues[0]).sort()).toEqual(['actualType','expectedType','instruction','message','path','type']);
   }finally{server.closeAllConnections();await new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve()));}
 },15000);
