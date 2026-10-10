@@ -1,6 +1,6 @@
 import type { AuditResult } from "../agents/continuity.js";
 import type { ChapterMeta } from "../models/chapter.js";
-import type { LengthTelemetry } from "../models/length-governance.js";
+import type { LengthTelemetry, LengthSpec } from "../models/length-governance.js";
 
 export interface ChapterPersistenceUsage {
   readonly promptTokens: number;
@@ -14,6 +14,7 @@ export async function persistChapterArtifacts(params: {
   readonly auditResult: AuditResult;
   readonly finalWordCount: number;
   readonly lengthTelemetry?: LengthTelemetry;
+  readonly lengthSpec?: LengthSpec;
   readonly tokenUsage?: ChapterPersistenceUsage;
   readonly loadChapterIndex: () => Promise<ReadonlyArray<ChapterMeta>>;
   readonly saveChapter: (index: ReadonlyArray<ChapterMeta>) => Promise<void>;
@@ -31,6 +32,7 @@ export async function persistChapterArtifacts(params: {
     observations: [...params.auditResult.observations],
     provenance: "generated",
     lengthTelemetry: params.lengthTelemetry,
+    lengthSpec: params.lengthSpec,
     tokenUsage: params.tokenUsage,
   };
   const existingIdx = existingIndex.findIndex((e) => e.number === params.chapterNumber);

@@ -4,7 +4,8 @@ import { readFile } from "node:fs/promises";
 import { extname } from "node:path";
 import { loadStoryGraph } from "../../interactive-film/graph-store.js";
 import { validateStoryGraph } from "../../interactive-film/validation.js";
-import { enumerateRuntimePaths } from "../../interactive-film/paths.js";
+import { enumerateRuntimePaths, exploreRuntimeStates } from "../../interactive-film/paths.js";
+import { visibleDialogue } from "../../interactive-film/evaluator.js";
 import { buildPlayableHtml } from "../../interactive-film/export-html.js";
 import { exportInk } from "../../interactive-film/export-ink.js";
 import { safeChildPath } from "../../utils/path-safety.js";
@@ -17,7 +18,20 @@ export function inspectFilmGraph(graph: StoryGraph, requirements?: FilmRequireme
   const report=validateStoryGraph(graph),enumeration=enumerateRuntimePaths(graph);
   const paths=enumeration.paths.filter(path=>path.endingId!==null).sort((a,b)=>b.length-a.length);
   const simple=paths.find(path=>new Set(path.nodeIds).size===path.nodeIds.length);
+  const runtime=exploreRuntimeStates(graph);
+  const dialogueVisibility={exhaustive:!runtime.truncated,lines:graph.nodes.flatMap(node=>node.dialogue.flatMap((line,dialogueIndex)=>{
+    if(!line.condition)return[];
+    const witnessed=new Set<boolean>(),witnesses:Array<{state:Record<string,string|number|boolean>;visible:boolean}>=[];
+    for(const entry of runtime.states){
+      if(entry.nodeId!==node.id)continue;
+      const visible=visibleDialogue(node,entry.state).includes(line);
+      if(!witnessed.has(visible)){witnessed.add(visible);witnesses.push({state:entry.state,visible});}
+      if(witnessed.size===2)break;
+    }
+    return[{nodeId:node.id,dialogueIndex,condition:line.condition,witnesses}];
+  }))};
   return {delivery:checkFilmRequirements(graph,requirements),nodeCount:graph.nodes.length,
+    dialogueVisibility,
     endingNodeCount:graph.nodes.filter(node=>node.type==='ending').length,registeredEndingCount:graph.endings.length,
     report,pathsTruncated:enumeration.truncated,longestObservedSimpleRoute:simple?{...simple,choices:simple.length-1}:null,
     nodes:graph.nodes.map(node=>({id:node.id,type:node.type,choiceCount:node.choices.length,hasScene:!!node.sceneDesc.trim()}))};
@@ -25,8 +39,13 @@ export function inspectFilmGraph(graph: StoryGraph, requirements?: FilmRequireme
 
 export function createSetFilmRequirementsTool(root:string,workId:string):AgentTool<typeof FilmRequirementsSchema>{
   return{name:'set_film_requirements',label:'Set confirmed film requirements',parameters:FilmRequirementsSchema,
-    description:'Persist the exact numeric and variable constraints the user requested, before authoring or validation. Omit constraints the user has not specified. Updates preserve other saved constraints.',
-    execute:async(_id,params)=>{const requirements={...await readFilmRequirements(root,workId),...params};const path=`works/${workId}/source/delivery-requirements.json`;
+    description:'Persist the numeric and variable constraints the user requested. Distinguish exact counts from minimums, and conditional choices from conditional dialogue. Omit unrequested constraints. A new count relation replaces the previous relation; other saved constraints remain. An empty variable list clears that list.',
+    execute:async(_id,params)=>{
+      if(params.nodeCount!==undefined&&params.minNodeCount!==undefined)throw Object.assign(new Error('Choose exact nodeCount or minimum minNodeCount according to the author request, not both.'),{code:'FILM_COUNT_CONSTRAINT_CONFLICT'});
+      const requirements={...await readFilmRequirements(root,workId),...params};
+      if(params.nodeCount!==undefined)delete requirements.minNodeCount;
+      if(params.minNodeCount!==undefined)delete requirements.nodeCount;
+      const path=`works/${workId}/source/delivery-requirements.json`;
       await syncWorkSourceArtifacts({projectRoot:root,workId,accept:true,writes:[{relativePath:path,content:JSON.stringify(requirements,null,2)+'\n'}]});
       return{content:[{type:'text',text:JSON.stringify({kind:'film_requirements_saved',path,requirements})}],details:{kind:'film_requirements_saved',workId,path,requirements}};
     }};
@@ -69,6 +88,6 @@ export function createExportFilmTool(root:string,workId:string):AgentTool<typeof
       const observations=missing.map(ref=>({code:'EXPORT_ASSET_UNAVAILABLE',category:'execution' as const,assessment:'unavailable' as const,summary:'A referenced image could not be embedded',evidence:[ref]}));
       const delivery=checkFilmRequirements(graph,await readFilmRequirements(root,workId));
       const deliveryObservations=delivery.issues.map(issue=>({code:issue.code,category:'quality' as const,assessment:delivery.status==='unverified'?'unavailable' as const:'issue' as const,summary:JSON.stringify(issue),evidence:[`works/${workId}/source/delivery-requirements.json`]}));
-      return {content:[{type:'text',text:`Exported ${path}. Local preview: ${previewUrl}. Delivery checks: ${delivery.status}`}],details:{kind:'film_exported',workId,path,format,previewUrl,delivery,observations:[...observations,...deliveryObservations]}};
+      return {content:[{type:'text',text:`Exported ${path}. Local preview: ${previewUrl}. Delivery checks: ${delivery.status}`}],details:{kind:'film_exported',workId,path,format,previewUrl,delivery,exportSourcePaths:['source/story-graph.json'],observations:[...observations,...deliveryObservations]}};
     }};
 }

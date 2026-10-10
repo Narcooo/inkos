@@ -2,8 +2,8 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
-import { afterEach, expect, it, vi } from "vitest";
-import { ShortFictionOutlineAgent, ShortFictionWriterAgent, ShortFictionDraftReviewerAgent, ShortFictionPackagingAgent, renderShortFictionDraftMarkdown } from "../agents/short-fiction.js";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { ShortFictionOutlineAgent, ShortFictionWriterAgent, ShortFictionDraftReviewerAgent, ShortFictionPackagingAgent, renderShortFictionDraftMarkdown, type ShortFictionBatchDraft } from "../agents/short-fiction.js";
 import { createInspectWorkTool, createShortFictionReviseTool } from "../agent/agent-tools.js";
 import { runShortFictionProduction, runShortFictionStage, reviseShortFictionProduction } from "../pipeline/short-fiction-runner.js";
 import { createInitialWorkManifestWrite, syncWorkSourceArtifacts } from "../harness/source-sync.js";
@@ -16,16 +16,114 @@ import { createProductionCapabilityRegistry } from "../harness/production-capabi
 import { createBuiltInWorkProfileRegistry } from "../harness/builtin-profiles.js";
 import { actionObservation } from "../harness/action-observation.js";
 import { withExecutionEvidence } from "../harness/execution-evidence.js";
+import {createLLMClient} from '../llm/provider.js';
 
 const roots:string[]=[];
+beforeEach(()=>{vi.spyOn(ShortFictionDraftReviewerAgent.prototype,'reviewPackage').mockResolvedValue({summary:'Reviewed package facts.',observations:[]});});
 afterEach(async()=>{vi.restoreAllMocks();await Promise.all(roots.splice(0).map(root=>rm(root,{recursive:true,force:true})));});
+
+it('resumes the closest unfinished opening without rewriting saved chapters',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'inkos-opening-recovery-'));roots.push(root);
+  const words=(n:number)=>Array(n).fill('word').join(' ');
+  const draft={storyTitle:'The receipt',openingHook:words(40),rawContent:'',chapters:[{number:1,title:'Return',content:words(20),charCount:20}]};
+  const checkpoint=join(root,'partial.json');await writeFile(checkpoint,JSON.stringify(draft));
+  const submittedCounts=[30,28,32,20];let calls=0;const inputs:any[]=[];
+  const server=createServer(async(req,res)=>{
+    const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));const body=JSON.parse(Buffer.concat(chunks).toString());
+    inputs.push(JSON.parse(body.messages.find((m:any)=>m.role==='user').content));
+    expect(body.tools[0].function.name).toBe('submit_short_opening_hook');
+    const count=submittedCounts[calls++]!;
+    res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{tool_calls:[{id:'opening-'+calls,type:'function',function:{name:'submit_short_opening_hook',arguments:JSON.stringify({openingHook:words(count)})}}]}}]}));
+  });server.listen(0,'127.0.0.1');await once(server,'listening');
+  try{
+    const client=createLLMClient({service:'custom',provider:'openai',configSource:'studio',model:'fixture',apiKey:'fixture',baseUrl:`http://127.0.0.1:${(server.address() as {port:number}).port}/v1`,apiFormat:'chat',stream:false,thinkingBudget:0});
+    const options={direction:'Return the receipt.',outlineMarkdown:'A handover.',chapterCount:1,charsPerChapter:20,minChapterLength:15,maxChapterLength:25,openingHookChars:20,language:'en' as const,onBatchComplete:async(value:ShortFictionBatchDraft,completed:ReadonlyArray<number>)=>{expect(completed).toEqual([1]);await writeFile(checkpoint,JSON.stringify(value));}};
+    await expect(new ShortFictionWriterAgent({client,model:'fixture',projectRoot:root}).continueDraft({...options,draft})).rejects.toMatchObject({code:'SHORT_OPENING_HOOK_CONTRACT'});
+    const saved=JSON.parse(await readFile(checkpoint,'utf8'));expect(saved.openingHook).toBe(words(28));expect(saved.chapters).toEqual(draft.chapters);
+    const resumed=await new ShortFictionWriterAgent({client,model:'fixture',projectRoot:root}).continueDraft({...options,draft:saved});
+    expect(resumed.openingHook).toBe(words(20));expect(resumed.chapters).toEqual(draft.chapters);
+    expect(calls).toBe(4);expect(inputs.at(-1)).toMatchObject({currentOpeningHook:words(28),lengthContract:{target:20,minimum:15,maximum:25,unit:'words'}});
+  }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));}
+},20000);
+
+it('bounds package correction to one pass and binds remaining findings to the current package while preserving the manuscript',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'inkos-package-fidelity-'));roots.push(root);
+  const draft={storyTitle:'The receipt',rawContent:'',chapters:[{number:1,title:'Return',content:'Nora returns the borrowed receipt to Eli. They check the signature together.',charCount:13}]};
+  const manuscript=JSON.stringify(draft),base='works/short/source';
+  const writes=[{relativePath:base+'/outline/v001.md',content:'The receipt is returned.'},
+    {relativePath:base+'/final/short-story.json',content:manuscript},
+    {relativePath:base+'/production-state.json',content:JSON.stringify({version:2,intent:'A witnessed handover.',target:{chapterCount:1,charsPerChapter:20,language:'en'},stages:{}})}];
+  const initial=createInitialWorkManifestWrite({workId:'short',title:draft.storyTitle,profileId:'short-fiction',language:'en',writes});
+  await commitAtomicFileSet({rootDir:root,writes:[...writes,initial.write]});
+  await syncWorkSourceArtifacts({projectRoot:root,workId:'short',accept:true});
+  const first={title:draft.storyTitle,intro:'Nora burns the receipt.',sellingPoints:['A handover'],coverPrompt:'A receipt',rawContent:''};
+  const second={...first,intro:'Nora returns the receipt.'};
+  const issue={code:'PACKAGE_EVENT',category:'quality' as const,assessment:'issue' as const,summary:'The described event conflicts with the manuscript.',evidence:[]};
+  const remaining={...issue,code:'PACKAGE_UNRESOLVED'};
+  const reviewer=vi.mocked(ShortFictionDraftReviewerAgent.prototype.reviewPackage).mockReset()
+    .mockResolvedValueOnce({summary:'Review first package.',observations:[issue]})
+    .mockResolvedValueOnce({summary:'Review revised package.',observations:[remaining]});
+  const packager=vi.spyOn(ShortFictionPackagingAgent.prototype,'generatePackage').mockResolvedValueOnce(first).mockResolvedValueOnce(second);
+  const runtime={projectRoot:root,model:'fixture',client:{defaults:{maxTokens:4096}}} as never;
+  const result=await runShortFictionStage({projectRoot:root,storyId:'short',stage:'package',direction:'Package the current story.',cover:false,runtimes:{planner:runtime,writer:runtime,draftReview:runtime,package:runtime}});
+  expect(packager).toHaveBeenCalledTimes(2);expect(reviewer).toHaveBeenCalledTimes(2);
+  expect(packager.mock.calls[1]![0].revision).toEqual({previous:first,observations:[issue]});
+  expect(reviewer.mock.calls.map(([input])=>input.draft)).toEqual([draft,draft]);
+  expect(await readFile(join(root,base,'final/short-story.json'),'utf8')).toBe(manuscript);
+  const work=await loadWorkManifest(root,'short'),artifact=work.artifacts.find(a=>a.revisions.some(r=>r.path==='source/final/sales-package.md'))!;
+  expect(artifact.revisions).toHaveLength(2);
+  const revision=artifact.revisions.find(r=>r.id===artifact.currentRevisionId)!;
+  expect(result.stageStatus).toBe('completed');
+  expect(result.observations).toEqual(expect.arrayContaining([expect.objectContaining({code:'PACKAGE_UNRESOLVED',assessment:'issue',scope:'sales-package',targetHash:revision.checksum,target:{workId:'short',artifactId:artifact.id,revisionId:revision.id}})]));
+  expect(result.observations.some(o=>o.code==='PACKAGE_EVENT')).toBe(false);
+});
+
+it('keeps original author chapter permission across completed edits and rejects protected writes before committing',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'inkos-short-permission-'));roots.push(root);
+  const draft={storyTitle:'Night light',openingHook:'A lamp fails.',rawContent:'',chapters:[1,2].map(number=>({number,title:`Scene ${number}`,content:Array(40).fill(`scene${number}`).join(' '),charCount:40}))};
+  const writes=[
+    {relativePath:'works/short/source/outline/v001.md',content:'Original outline'},
+    {relativePath:'works/short/source/final/short-story.json',content:JSON.stringify(draft)},
+    {relativePath:'works/short/source/final/full.md',content:renderShortFictionDraftMarkdown(draft,'en')},
+    {relativePath:'works/short/source/production-state.json',content:JSON.stringify({version:2,intent:'Original intent',target:{chapterCount:2,charsPerChapter:40,language:'en'},stages:{}})},
+  ];
+  const initial=createInitialWorkManifestWrite({workId:'short',title:draft.storyTitle,profileId:'short-fiction',language:'en',writes});
+  await commitAtomicFileSet({rootDir:root,writes:[...writes,initial.write]});
+  const baseline=await syncWorkSourceArtifacts({projectRoot:root,workId:'short',accept:true});
+  const scope=vi.spyOn(ShortFictionWriterAgent.prototype,'selectAuthorScope').mockResolvedValue({wholeManuscript:false,chapterNumbers:[2],opening:false,outline:false});
+  const writer=vi.spyOn(ShortFictionWriterAgent.prototype,'reviseDraft').mockImplementation(async(input)=>({draft:{...input.draft,chapters:input.draft.chapters.map(chapter=>chapter.number===2?{...chapter,content:Array(40).fill('revised').join(' ')}:chapter)},outlineMarkdown:input.outlineMarkdown}));
+  vi.spyOn(ShortFictionDraftReviewerAgent.prototype,'reviewDraft').mockResolvedValue({summary:'Reviewed',observations:[]});
+  vi.spyOn(ShortFictionPackagingAgent.prototype,'generatePackage').mockResolvedValue({title:draft.storyTitle,intro:'A shared decision.',sellingPoints:['A lamp'],coverPrompt:'A lamp',rawContent:''});
+  const runtime={projectRoot:root,model:'fixture',client:{defaults:{maxTokens:4096}}} as never;
+  const authorRequest='Change only chapter 2. Preserve chapter 1, the opening and title; review the whole story.';
+  const execute=(revisionChapterNumbers?:number[])=>withExecutionEvidence(()=>{},()=>reviseShortFictionProduction({projectRoot:root,storyId:'short',direction:'Apply the latest review findings.',revisionChapterNumbers,cover:false,runtimes:{planner:runtime,writer:runtime,draftReview:runtime,package:runtime}}),undefined,baseline,authorRequest,baseline);
+  await execute();
+  expect(writer.mock.calls[0]![0].chapterNumbers).toEqual([2]);
+  const manuscriptPath=join(root,'works/short/source/final/short-story.json');
+  const accepted=await readFile(manuscriptPath);
+  expect(JSON.parse(accepted.toString()).chapters[0]).toEqual(draft.chapters[0]);
+  await expect(execute([1])).rejects.toMatchObject({code:'SHORT_REVISION_OUT_OF_SCOPE',allowedChapterNumbers:[2]});
+  expect(writer).toHaveBeenCalledTimes(1);
+  expect(scope).toHaveBeenCalledTimes(1);
+  expect(scope.mock.calls[0]).toEqual([draft,authorRequest]);
+  expect(await readFile(manuscriptPath)).toEqual(accepted);
+  writer.mockImplementationOnce(async(input)=>({draft:{...input.draft,openingHook:'An unauthorized new opening.'},outlineMarkdown:input.outlineMarkdown}));
+  await expect(execute([2])).rejects.toMatchObject({code:'SHORT_REVISION_OUT_OF_SCOPE',changedParts:['opening']});
+  expect(await readFile(manuscriptPath)).toEqual(accepted);
+  const checkpoint=JSON.parse(await readFile(join(root,'.inkos/short-revisions/short.json'),'utf8'));
+  await withExecutionEvidence(()=>{},()=>reviseShortFictionProduction({projectRoot:root,storyId:'short',direction:'',resumeOperationId:checkpoint.operationId,cover:false,runtimes:{planner:runtime,writer:runtime,draftReview:runtime,package:runtime}}),undefined,await loadWorkManifest(root,'short'),'Continue the saved revision.');
+  expect(scope).toHaveBeenCalledTimes(1);
+  expect(JSON.parse(writer.mock.calls.at(-1)![0].direction).authorRequest).toBe(authorRequest);
+  expect(JSON.parse(await readFile(manuscriptPath,'utf8')).chapters[0]).toEqual(draft.chapters[0]);
+});
 
 it("reuses completed production only for the same review request and preserves review provenance during packaging", async () => {
   const root = await mkdtemp(join(tmpdir(), "inkos-review-request-")); roots.push(root);
   const draft = {storyTitle:"Night light", rawContent:"", chapters:[{number:1, title:"Return", content:Array(40).fill("word").join(" "), charCount:40}]};
   vi.spyOn(ShortFictionOutlineAgent.prototype,"createOutline").mockResolvedValue({storyTitle:draft.storyTitle,rawContent:"A keeper repairs a lamp."});
   vi.spyOn(ShortFictionWriterAgent.prototype,"writeDraft").mockResolvedValue(draft);
-  const reviewer = vi.spyOn(ShortFictionDraftReviewerAgent.prototype,"reviewDraft").mockResolvedValue({summary:"Reviewed",observations:[]});
+  const continueDraft = vi.spyOn(ShortFictionWriterAgent.prototype,"continueDraft");
+  const reviewer = vi.spyOn(ShortFictionDraftReviewerAgent.prototype,"reviewDraft").mockResolvedValue({summary:"Reviewed",observations:[{code:'SCOPE_CHECK',category:'scope',assessment:'observation',summary:'Scope checked.',evidence:[]}]});
   vi.spyOn(ShortFictionPackagingAgent.prototype,"generatePackage").mockResolvedValue({title:draft.storyTitle,intro:"A keeper repairs a lamp.",sellingPoints:["A choice"],coverPrompt:"A lamp",rawContent:""});
   const runtime = {projectRoot:root,model:"fixture",client:{defaults:{maxTokens:4096}}} as never;
   const options = {projectRoot:root,storyId:"night-light",direction:"A keeper repairs a lamp.",language:"en" as const,chapterCount:1,charsPerChapter:40,cover:false,
@@ -35,12 +133,14 @@ it("reuses completed production only for the same review request and preserves r
   const manuscript = await readFile(join(root,"works/night-light/source/final/short-story.json"));
   await run("Review the keeper's motivation.", "motivation");
   expect(reviewer).toHaveBeenCalledTimes(1);
+  expect(continueDraft).toHaveBeenCalledTimes(1);
   await run("Review the keeper's motivation.", "chronology");
   expect(reviewer).toHaveBeenCalledTimes(2);
   await run("Review the apprentice's chronology.", "chronology");
   expect(reviewer).toHaveBeenCalledTimes(3);
   const statePath = join(root,"works/night-light/source/production-state.json");
   const reviewed = JSON.parse(await readFile(statePath,"utf8"));
+  expect(reviewed.stages.review.observations[0]).toMatchObject({code:'SCOPE_CHECK',category:'scope'});
   await runShortFictionStage({...options,stage:"package"});
   const packaged = JSON.parse(await readFile(statePath,"utf8"));
   expect(packaged.reviewScope).toBe("chronology");
@@ -90,7 +190,7 @@ it("defers the cover when packaging fails and resumes it from the completed visu
   }
 },15000);
 
-it('reviews and packages an undersized persisted manuscript without rewriting it and carries delivery issues to packaging',async()=>{
+it('packages the current manuscript while preserving its separate delivery issues',async()=>{
   const root=await mkdtemp(join(tmpdir(),'inkos-review-only-'));roots.push(root);
   const draft={storyTitle:'Short',rawContent:'',chapters:[{number:1,title:'First',content:'One small scene.',charCount:3}]};
   const initial=createInitialWorkManifestWrite({workId:'short',title:'Short',profileId:'short-fiction',language:'en',writes:[]});
@@ -107,12 +207,14 @@ it('reviews and packages an undersized persisted manuscript without rewriting it
   const runtime={client:{} as never,model:'fixture',projectRoot:root};
   const options={projectRoot:root,storyId:'short',direction:'',minChapterLengthRatio:0.9,runtimes:{planner:runtime,writer:runtime,draftReview:runtime,package:runtime}};
   const review=await runShortFictionStage({...options,stage:'review'});
+  expect(reviewSpy.mock.calls[0]![0]).toMatchObject({chapterCount:1,charsPerChapter:40,minChapterLength:36,language:'en'});
   expect(review.observations).toEqual(expect.arrayContaining([expect.objectContaining({code:'SHORT_CHAPTER_CONTRACT',assessment:'issue',scope:'chapter:1'})]));
   const packagingRequest="Emphasize the shared decision in the synopsis.";
   await runShortFictionStage({...options,stage:'package',direction:packagingRequest});
   expect(writer).not.toHaveBeenCalled();
   expect(await readFile(join(root,'works/short/source/final/short-story.json'))).toEqual(before);
-  expect(JSON.parse(packageSpy.mock.calls[0]![0].reviewContext!)).toMatchObject({status:'needs_revision'});
+  expect(Object.keys(packageSpy.mock.calls[0]![0]).sort()).toEqual(['direction','draft','language']);
+  expect(packageSpy.mock.calls[0]![0].draft.chapters).toEqual(draft.chapters);
   expect(packageSpy.mock.calls[0]![0].direction).toContain(packagingRequest);
   expect(packageSpy.mock.calls[0]![0].direction).toContain("Original story");
   const state=JSON.parse(await readFile(join(root,'works/short/source/production-state.json'),'utf8'));
@@ -278,6 +380,12 @@ it.each(["resume", "restart", "finalize"] as const)("%s preserves revision owner
     expect(await readFile(join(archiveDir,archives[0]!))).toEqual(checkpointBytes);
   }
   expect(result.status).toBe("success");
+  const reviewInput=vi.mocked(ShortFictionDraftReviewerAgent.prototype.reviewDraft).mock.calls.at(-1)![0];
+  const baselineArtifact=before.artifacts.find(a=>a.revisions.some(r=>r.id===a.currentRevisionId&&r.path==='source/final/short-story.json'))!;
+  expect(reviewInput.comparison).toMatchObject({scope:'episode_start',before:{artifactId:baselineArtifact.id,revisionId:baselineArtifact.currentRevisionId},draft});
+  expect(reviewInput).toMatchObject({charsPerChapter:40,maxChapterLength:60});
+  const reviewState=JSON.parse(await readFile(join(root,'works/short/source/production-state.json'),'utf8')).stages.review;
+  expect(reviewState.comparison).toEqual({scope:reviewInput.comparison!.scope,before:reviewInput.comparison!.before,after:reviewInput.comparison!.after});
   expect((result.data as {kind:string}).kind).toBe("short_fiction_revised");
   expect(actionObservation(result).facts.revisionChanges).toEqual({chapterNumbers:[1,2],openingChanged:false,titleChanged:false,outlineChanged:true});
   expect(pack.mock.calls[0]?.[0].draft.chapters).toEqual(changed.chapters);

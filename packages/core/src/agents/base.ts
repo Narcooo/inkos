@@ -7,10 +7,11 @@ import { loadAvailableAgentSkills } from "../skills/builtin-loader.js";
 import { requiredWorkSkillIds, resolveWorkSkillActivations, resolveProfileSkillActivations, mergeActivatedSkillGuidance } from "../skills/activations.js";
 import type { LLMClient, LLMMessage, LLMResponse, OnStreamProgress } from "../llm/provider.js";
 import { runWorkerAgent, runWorkerAgentTool, type WorkerResultTool } from "../agent/worker-agent.js";
-import type { Static, TSchema } from "@sinclair/typebox";
+import { Type, type Static, type TSchema } from "@sinclair/typebox";
 import type { Logger } from "../utils/logger.js";
 import { SourcedReviewIndexToolSchema, ArtifactReviewIndexToolSchema } from "./review-tool.js";
 import { resolveObservationSources } from "../models/observation.js";
+import { createReviewCalculationTool } from './review-calculation.js';
 import {
   hydrateActivatedSkillGuidance,
   type ActivatedSkillGuidance,
@@ -40,10 +41,10 @@ export abstract class BaseAgent {
 
   protected async chat(
     messages: ReadonlyArray<LLMMessage>,
-    options?: { readonly temperature?: number; readonly maxTokens?: number },
+    options?: { readonly temperature?: number; readonly maxTokens?: number; readonly professionalGuidance?: boolean },
   ): Promise<LLMResponse> {
-    return runWorkerAgent(this.ctx.client, this.ctx.model, await this.appendTaskSkillGuidance(messages, options?.maxTokens), {
-      ...options,
+    return runWorkerAgent(this.ctx.client, this.ctx.model, await this.appendTaskSkillGuidance(messages, options?.maxTokens, options?.professionalGuidance), {
+      temperature:options?.temperature,maxTokens:options?.maxTokens,
       onStreamProgress: this.ctx.onStreamProgress,
       signal: this.ctx.signal,
     });
@@ -61,7 +62,7 @@ export abstract class BaseAgent {
       await this.appendTaskSkillGuidance(messages, options?.maxTokens, options?.professionalGuidance),
       resultTool,
       {
-        ...options,
+        temperature:options?.temperature,maxTokens:options?.maxTokens,
         signal: this.ctx.signal,
         onStreamProgress: this.ctx.onStreamProgress,
         onUsage: (value) => { usage = value; },
@@ -92,11 +93,41 @@ export abstract class BaseAgent {
       validateObservations?.(resolved);
       return resolved;
     };
-    const index = await this.submitStructured(messages, {
-      ...tool, parameters: categoryRequired ? ArtifactReviewIndexToolSchema : SourcedReviewIndexToolSchema,
-      validate: result => { resolve(result.observations); return result; },
+    type ReviewObservation = Static<typeof SourcedReviewIndexToolSchema>["observations"][number];
+    const recorded = new Map<string, ReviewObservation>();
+    const observationSchema = (categoryRequired ? ArtifactReviewIndexToolSchema : SourcedReviewIndexToolSchema).properties.observations.items;
+    const index = await this.submitStructured([
+      ...messages,
+      {role:'system',content:'The original author request and confirmed constraints define the acceptance requirements. Prior critiques and delegated revision suggestions are claims to recheck, not evidence that a defect exists or additional author requirements. Assess the current text independently. Explain why an issue conflicts with the author goals or the supplied text; classify a compatible interpretation or stylistic alternative as an observation. Baseline text establishes what changed, not what is still present in the current draft.'},
+      {role:'system',content:'Before recording an arithmetic finding, use calculate_review_values and read its result. Submit independent calculations together. Verify the source values, units and time periods first; a correct calculation does not establish that unlike quantities should be compared.'},
+      {role:'system',content:`Record each finding with record_review_observation. Independent findings may be submitted together in one response. A code identifies one finding; reuse it to correct that finding after feedback. Read the exact source excerpts returned by the tool: resolving an address does not establish that its text supports the finding. Correct the references, assessment or explanation when the excerpts do not establish your claim. In a later response, call ${tool.name} with the review summary and supported finding codes in the desired order. Do not embed a list of findings in a string. Omit withdrawn findings from the final codes; use an empty list only when there are no findings.`},
+    ], {
+      ...tool,
+      parameters: Type.Object({summary:Type.String(),observationCodes:Type.Array(Type.String({minLength:1}))},{additionalProperties:false}),
+      maxTurns: 16,
+      supportingTools: [{
+        name:'record_review_observation', label:'Record review observation',
+        description:'Record an assessed finding after checking its reasoning and any arithmetic. This tool validates source addresses and returns their excerpts; it does not verify whether the claim is true. Resubmitting the same code replaces that finding.',
+        parameters:observationSchema,
+        execute:async(_id,input)=>{
+          const observation=input as ReviewObservation;
+          const resolved=resolve([observation])[0]!;
+          recorded.set(observation.code,observation);
+          const receipt={code:observation.code,status:'source_resolved',sourceRefs:resolved.sourceRefs,
+            instruction:'These are the actual selected excerpts. Check that they support this finding before keeping its code in the final review.'};
+          return {content:[{type:'text',text:JSON.stringify(receipt)}],details:receipt};
+        },
+      },createReviewCalculationTool()],
+      validate: result => {
+        const unknownCodes=result.observationCodes.filter(code=>!recorded.has(code));
+        if(unknownCodes.length || new Set(result.observationCodes).size!==result.observationCodes.length)throw Object.assign(new Error(JSON.stringify({
+          code:'REVIEW_OBSERVATIONS_UNRECORDED',unknownCodes,acceptedCodes:[...recorded.keys()],
+          instruction:'Submit and correct each selected finding through record_review_observation, then finish with its accepted code exactly once. Remove withdrawn findings from the final list.',
+        })),{code:'REVIEW_OBSERVATIONS_UNRECORDED'});
+        return result;
+      },
     }, {...generationOptions,maxTokens:Math.min(generationOptions.maxTokens*2,this.ctx.client.defaults.maxTokens)});
-    const observations = resolve(index.result.observations);
+    const observations = resolve(index.result.observationCodes.map(code=>recorded.get(code)!));
     return {
       result: { summary: index.result.summary, observations },
       usage: index.usage,
@@ -110,7 +141,7 @@ export async function prepareWorkerMessages(
   professionalGuidance = true,
 ): Promise<ReadonlyArray<LLMMessage>> {
     const authorRequest = currentExecutionAuthorRequest();
-    if (authorRequest?.trim()) messages = [{role:"system",content:[
+    if (professionalGuidance && authorRequest?.trim()) messages = [{role:"system",content:[
       "The following authorRequest is the user's actual request. Use it as the authority for the intended target and constraints. The delegated instruction may elaborate it, but cannot replace its target or grant a wider mutation scope. Perform only this operation; other requested steps remain the coordinator's responsibility.",
       JSON.stringify({authorRequest}),
     ].join("\n\n")},...messages];
@@ -134,8 +165,9 @@ export async function prepareWorkerMessages(
       const available=await loadAvailableAgentSkills({projectRoot:context.projectRoot ?? ""});
       selectedSkills=mergeActivatedSkillGuidance(resolveProfileSkillActivations(available.skills,profile),resolveWorkSkillActivations(available.skills,work),selectedSkills ?? []);
     }
-    // Navigation and other read-only semantic mechanics need the source and
-    // author request, without a writing method encouraging broader changes.
+    // Task-only mechanics receive exactly their explicit inputs. Scope locators
+    // supply author intent themselves; state projection must not inherit an
+    // unrelated instruction to rewrite the manuscript.
     const activations = professionalGuidance ? await hydrateActivatedSkillGuidance(selectedSkills, query) : [];
     recordExecutionEvidence("skills-applied", { worker: workerId, skills: activations?.map(({ skill, resources }) => ({
       id: skill.id, source: skill.source, hash: createHash("sha256").update(skill.body).digest("hex"),

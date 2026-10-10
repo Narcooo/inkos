@@ -37,7 +37,7 @@ export async function compileStyleGuide(input: {
         : `来源：${input.sourceName?.trim() || "参考文本"}\n\n${sample}`,
     },
   ], undefined, "style-guide"), {
-    temperature: 0.3,
+
     signal: input.signal,
   });
   const guide = response.content.trim();

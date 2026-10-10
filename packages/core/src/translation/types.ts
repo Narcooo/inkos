@@ -23,6 +23,7 @@ export type TranslationSourceKind = "text" | "markdown" | "pdf" | "epub";
 export type TranslationExportFormat = "txt" | "md" | "epub";
 
 export interface CreateTranslationProjectInput {
+  readonly sources?: ReadonlyArray<{ readonly workId: string; readonly artifactId: string; readonly revisionId?: string }>;
   readonly filePath?: string;
   readonly sourceText?: string;
   readonly glossary?: ReadonlyArray<TranslationGlossaryTerm>;
@@ -182,6 +183,7 @@ export interface RunTranslationProjectResult {
   readonly projectId: string;
   readonly translatedSegments: number;
   readonly reviewedChapters: number;
+  readonly reviewSourcePaths: readonly string[];
   readonly reportPath: string;
   readonly totalSegments:number;
   readonly completedSegments:number;
@@ -189,6 +191,7 @@ export interface RunTranslationProjectResult {
 }
 
 export interface TranslationExportResult {
+  readonly exportSourcePaths: readonly string[];
   readonly outputPath: string;
   readonly format: TranslationExportFormat;
   readonly chaptersExported: number;

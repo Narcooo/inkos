@@ -23,6 +23,7 @@ import {
   beginAgentModelCall,
 } from "../llm/agent-trajectory.js";
 import { fetchWithProxy } from "../utils/proxy-fetch.js";
+import { applyModelRequestCapabilities } from "../llm/model-request-capabilities.js";
 
 /**
  * The single Pi transport boundary used by both conversational and worker
@@ -60,24 +61,14 @@ export function guardedPiStream<TApi extends Api>(
       onPayload: async (payload, activeModel) => {
         let configured = explicitDeepSeekThinkingMode(payload, activeModel);
         const choice = (options as SimpleStreamOptions & { toolChoice?: unknown } | undefined)?.toolChoice;
-        if (choice !== undefined && configured && typeof configured === "object") {
-          if (activeModel.api === "openai-completions") configured = { ...configured, tool_choice: choice };
-          if (activeModel.api === "openai-responses") {
-            const forced = choice as { type?: string; function?: { name?: string } };
-            configured = { ...configured as Record<string, unknown>, tool_choice: forced?.type === "function" && forced.function?.name
-              ? { type: "function", name: forced.function.name } : choice };
-          }
-          if (activeModel.api === "anthropic-messages") {
-            // Native Claude support for forced selection varies by model and
-            // thinking mode. Keep its compatible wire default and enforce the
-            // requested result contract below, without disabling reasoning.
-            // https://platform.claude.com/docs/en/agents-and-tools/tool-use/define-tools
-            configured = { ...configured as Record<string, unknown>, tool_choice: { type: choice === "none" ? "none" : "auto" } };
-          }
+        if ((choice === "none" || (choice && typeof choice === "object" && "type" in choice && choice.type === "none"))
+          && configured && typeof configured === "object") {
+          configured = { ...configured, tool_choice: activeModel.api === "anthropic-messages" ? {type:"none"} : "none" };
         }
-        const prepared = await options?.onPayload?.(configured, activeModel) ?? configured;
+        const prepared = applyModelRequestCapabilities(await options?.onPayload?.(configured, activeModel) ?? configured, activeModel);
         recordExecutionEvidence("model-request-prepared", { modelCallId: modelCall?.modelCallId, model: activeModel.id,
           api: activeModel.api,
+          parameterKeys: prepared && typeof prepared === 'object' ? Object.entries(prepared).filter(([,value])=>value!==undefined).map(([key])=>key).sort() : [],
           parameters: prepared && typeof prepared === "object" ? Object.fromEntries(Object.entries(prepared).filter(([key]) => ["stream", "thinking", "max_tokens", "max_completion_tokens", "max_output_tokens", "tool_choice"].includes(key))) : {} });
         return prepared;
       },
@@ -85,7 +76,9 @@ export function guardedPiStream<TApi extends Api>(
     }),
     options?.signal,
     deadlineOptions,
-  ), emptyRetries > 0 && !options?.signal?.aborted ? () => guardedPiStream(model, context, options, emptyRetries - 1, deadlineOptions) : undefined,
+  ), emptyRetries > 0 && !options?.signal?.aborted ? (missingTool) => guardedPiStream(model,
+    missingTool ? requiredToolRetryContext(context, (options as SimpleStreamOptions & {toolChoice?:unknown} | undefined)?.toolChoice) : context,
+    options, emptyRetries - 1, deadlineOptions) : undefined,
   (options as SimpleStreamOptions & { toolChoice?: unknown } | undefined)?.toolChoice);
 }
 
@@ -137,9 +130,10 @@ export function guardedPiNonStreaming<TApi extends Api>(
       if (options?.maxTokens) payload.max_tokens = options.maxTokens;
       if (options?.temperature !== undefined) payload.temperature = options.temperature;
       const toolChoice = (options as SimpleStreamOptions & { toolChoice?: unknown } | undefined)?.toolChoice;
-      if (toolChoice !== undefined) payload.tool_choice = toolChoice;
+      if (toolChoice === "none") payload.tool_choice = "none";
       const configured = explicitDeepSeekThinkingMode(payload, model);
       const transformed = await options?.onPayload?.(configured, model);
+      const prepared = applyModelRequestCapabilities(transformed ?? configured, model);
       const json = await withTransientLLMRetry(async (attempt) => {
         const deadline = createRequestDeadline(options?.signal);
         const traceHeaders = agentTrajectoryHeaders(model.baseUrl, modelCall, attempt, {
@@ -155,7 +149,7 @@ export function guardedPiNonStreaming<TApi extends Api>(
               ...(options?.headers ?? {}),
               ...traceHeaders,
             },
-            body: JSON.stringify(transformed ?? configured),
+            body: JSON.stringify(prepared),
             signal: deadline.signal,
           }, proxyUrl);
           const raw = await response.text();
@@ -176,11 +170,26 @@ export function guardedPiNonStreaming<TApi extends Api>(
       eventStream.end();
     }
   })();
-  return observeModelStream(model, modelCall?.modelCallId, eventStream, emptyRetries > 0 && !options?.signal?.aborted ? () => guardedPiNonStreaming(model, context, options, proxyUrl, emptyRetries - 1) : undefined,
+  return observeModelStream(model, modelCall?.modelCallId, eventStream, emptyRetries > 0 && !options?.signal?.aborted ? (missingTool) => guardedPiNonStreaming(model,
+    missingTool ? requiredToolRetryContext(context, (options as SimpleStreamOptions & {toolChoice?:unknown} | undefined)?.toolChoice) : context,
+    options, proxyUrl, emptyRetries - 1) : undefined,
     (options as SimpleStreamOptions & { toolChoice?: unknown } | undefined)?.toolChoice);
 }
 
 const discardedToolOutputs = new WeakSet<AssistantMessage>();
+
+function requiredToolRetryContext(context: Context, choice: unknown): Context {
+  const selected = choice && typeof choice === "object"
+    ? choice as {type?:string;name?:string;function?:{name?:string}} : undefined;
+  const name = selected?.type === "function" ? selected.function?.name ?? selected.name : undefined;
+  return { ...context, messages: [...context.messages, {
+    role: "user", timestamp: Date.now(), content: [
+      "Execution feedback: the previous response did not supply the required tool call and was not accepted as a result.",
+      name ? `Call ${name} with the requested result.` : "Call an available tool to carry out the requested operation or report the turn's status.",
+      "Use the supplied tool schema. Plain text does not execute an action or submit a result.",
+    ].join(" "),
+  }] };
+}
 
 function missingRequiredTool(message: AssistantMessage, choice: unknown): boolean {
   const selected = choice && typeof choice === "object"
@@ -190,7 +199,7 @@ function missingRequiredTool(message: AssistantMessage, choice: unknown): boolea
   return !message.content.some(part => part.type === "toolCall" && (!name || part.name === name));
 }
 
-function observeModelStream(model: Model<Api>, modelCallId: string | undefined, source: AssistantMessageEventStream, retry?: () => AssistantMessageEventStream, toolChoice?: unknown): AssistantMessageEventStream {
+function observeModelStream(model: Model<Api>, modelCallId: string | undefined, source: AssistantMessageEventStream, retry?: (missingTool?:boolean) => AssistantMessageEventStream, toolChoice?: unknown): AssistantMessageEventStream {
   const output = createAssistantMessageEventStream();
   let started = false;
   const forward = (event: Parameters<typeof output.push>[0]) => {
@@ -234,7 +243,7 @@ function observeModelStream(model: Model<Api>, modelCallId: string | undefined, 
           recordExecutionEvidence("model-call-completed", { modelCallId, status: "invalid_tool_choice", response: event.message });
           if (retry) {
             recordExecutionEvidence("model-call-retry", { modelCallId, reason: "MODEL_REQUIRED_TOOL_MISSING" });
-            for await (const retried of retry()) forward(retried);
+            for await (const retried of retry(true)) forward(retried);
           } else {
             const failure = { ...event.message, stopReason: "error" as const, errorCode: "MODEL_REQUIRED_TOOL_MISSING",
               errorMessage: "The provider completed without the required tool call; the transport retry budget is exhausted." };

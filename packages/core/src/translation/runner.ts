@@ -33,6 +33,7 @@ export async function runTranslationProject(
     const reportLines = [`# Translation Review`, ""];
     let translatedSegments = 0;
     let reviewedChapters = 0;
+    const reviewSourcePaths:string[]=[];
     const batchSize = Math.max(1, Math.min(options.batchSize ?? 8, 32));
 
   for (const chapterInfo of manifest.chapters) {
@@ -104,6 +105,7 @@ export async function runTranslationProject(
         glossary,
       });
       reviewedChapters++;
+      reviewSourcePaths.push(chapterInfo.translatedPath);
       reviewSummary = review.summary;
       observations = review.observations;
       reportLines.push(`## ${completedChapter.title}`, "", `- summary: ${review.summary}`, "");
@@ -152,6 +154,7 @@ export async function runTranslationProject(
       projectId,
       translatedSegments,
       reviewedChapters,
+      reviewSourcePaths,
       observations,
       reportPath,
       totalSegments,completedSegments,pendingSegments:totalSegments-completedSegments,

@@ -5,7 +5,7 @@ import { decodeStructuredFields } from "./structured-arguments.js";
 
 /** Bounded repair facts from the declared schema, without echoing submitted prose. */
 export function toolArgumentIssues(schema: TSchema, value: unknown) {
-  return [...Value.Errors(schema, value)].slice(0, 16).map(({path,type,message,schema: failed}) => {
+  return [...Value.Errors(schema, value)].slice(0, 16).map(({path,type,message,schema: failed,value: received}) => {
     const branches = failed.anyOf as Array<Record<string, unknown>> | undefined;
     const choices: unknown[] | undefined = Array.isArray(failed.enum) ? failed.enum
       : branches?.every(branch => Object.hasOwn(branch, "const")) ? branches.map(branch => branch.const)
@@ -13,7 +13,12 @@ export function toolArgumentIssues(schema: TSchema, value: unknown) {
     const allowedValues = choices && choices.length <= 32
       && choices.every(choice => choice === null || ["string", "number", "boolean"].includes(typeof choice))
       && JSON.stringify(choices).length <= 1024 ? choices : undefined;
-    return {path,type,message,...(allowedValues ? {allowedValues} : {})};
+    const actualType = received === null ? "null" : Array.isArray(received) ? "array" : typeof received;
+    const expectedType = typeof failed.type === "string" ? failed.type : undefined;
+    const instruction = actualType === "string" && (expectedType === "array" || expectedType === "object")
+      ? `Submit this field as a native JSON ${expectedType}, not a string containing JSON. Correct the listed fields and resubmit the tool arguments.` : undefined;
+    return {path,type,message,actualType,...(expectedType ? {expectedType} : {}),
+      ...(instruction ? {instruction} : {}),...(allowedValues ? {allowedValues} : {})};
   });
 }
 

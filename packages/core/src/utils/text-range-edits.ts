@@ -4,7 +4,7 @@ import {splitSourceLines} from './source-text.js';
 export const TextEditRangeSchema=Type.Object({startLine:Type.Integer({minimum:1}),endLine:Type.Integer({minimum:1})});
 export type TextEditRange={startLine:number;endLine:number};
 export const TextEditSelectionSchema=Type.Object({startLine:Type.Integer({minimum:1}),endLine:Type.Integer({minimum:1}),text:Type.String({minLength:1})});
-export type TextEditSelection=TextEditRange&{text:string};
+export type TextEditSelection=TextEditRange&{text:string;singleLine?:boolean};
 
 /** Line bounds disambiguate repeated phrases; exact text protects other content on the same line. */
 export function textScopedSelectionEditContract(content:string,selections:readonly TextEditSelection[]){
@@ -20,7 +20,12 @@ export function textScopedSelectionEditContract(content:string,selections:readon
   return{
     ranges:spans.map((span,index)=>({...span,index})),
     parameters:Type.Object(Object.fromEntries(spans.map((span,index)=>[`selection_${index}_text`,Type.String({description:'Replacement characters for content only. The protectedPrefix and protectedSuffix are already retained; do not reproduce or rewrite them.'})])),{additionalProperties:false}),
-    apply(replacements:Record<string,string>){let cursor=0;const output:string[]=[];for(const [index,span] of spans.entries()){output.push(content.slice(cursor,span.startOffset),replacements[`selection_${index}_text`]!);cursor=span.endOffset;}output.push(content.slice(cursor));return output.join('');},
+    apply(replacements:Record<string,string>){let cursor=0;const output:string[]=[];for(const [index,span] of spans.entries()){
+      const replacement=replacements[`selection_${index}_text`]!;
+      const body=span.content.endsWith('\n')?replacement.replace(/\r?\n$/,''):replacement;
+      if(span.singleLine&&/[\r\n]/.test(body))throw Object.assign(new Error(`selection_${index}_text selects one source line or an inline fragment. Return only its replacement text; do not insert other lines or surrounding document fields.`),{code:'ARTIFACT_EDIT_SHAPE_INVALID',selectionIndex:index});
+      output.push(content.slice(cursor,span.startOffset),replacement);cursor=span.endOffset;
+    }output.push(content.slice(cursor));return output.join('');},
   };
 }
 

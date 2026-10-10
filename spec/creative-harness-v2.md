@@ -13,14 +13,78 @@ and recovery information. The main agent and delegated workers receive the
 original author request. Specialized creative methods live in the applicable
 Skills; they do not replace the author's requested scope.
 
+Before the first production action, a narrow interpretation of the original
+author request identifies professional-review and export instructions with exact
+quotations. It uses the session model without execution history or sampling
+presets. The executor may bind sources but cannot choose or remove requirements.
+Neither operation is implied when the author did not request it. Once sources exist, every intended source is
+bound by its registered Work/artifact identity. A requirement cannot disappear
+because its operation was never attempted. Completion checks execution receipts
+against the current source version, or an explicitly requested historical review.
+Structural inspection is not a content-review receipt. Existing domain reviews
+can supply receipts for the content they actually reviewed; unavailable reviews
+cannot. Requirements remain in the protected model context and survive Work
+transitions and failed-request restoration. A new request gets its own scope;
+export-only and information-only requests do not inherit old review obligations.
+
 ## Artifacts, edits, and recovery
 
 - Read, review, and export resolve registered artifact versions and verify their
   checksums. A missing artifact returns a recoverable, typed lookup error.
 - Review-and-export fixes one version for both operations. Content findings and
-  successful execution are separate results.
+  successful execution are separate results. Valid current-artifact delivery
+  attempts retain their review/export obligations through failure. Export alone
+  cannot fulfill a failed review; completion requires each operation's current
+  revision receipt. Explicit historical reviews remain snapshot evidence.
+- Chapter exports measure their actual source text in its native language unit,
+  independent of cached chapter counts. Export receipts bind the complete source
+  and its length contract. Draft export remains available; final delivery checks
+  explicit author bounds and rejects stale exports. Chapter-only production checks
+  the chapters it touched; exporting a book checks every exported chapter.
+  Approximate length targets alone never become hard acceptance bounds.
+- Each produced chapter retains the original author's applicable length contract.
+  A new explicit target or range replaces that chapter's previous contract;
+  unrelated revisions retain it. Preserved imported text keeps its own contract.
+  Explicit bounds are checked before draft state settlement, so downstream
+  chapters do not depend on prose already known to require length repair.
+  Rejected complete drafts and revisions remain private recovery candidates,
+  bound to their source authority, request and contract. Recovery resumes the
+  closest candidate without treating it as accepted source.
+- Reviewers submit individual findings with source addresses, then select the
+  accepted finding codes for their final report. The host validates each finding
+  and assembles the report. A final report cannot reference an unaccepted finding;
+  corrections replace the same code. Independent findings may share one model
+  response. The host returns the actual selected excerpts, and finalization must
+  occur in a later response after that readback. Resolving a source address does
+  not prove a finding. Prior critique and delegated suggestions are rechecked
+  against current text and author constraints, not promoted to new requirements.
+  The review session has a bounded number of model turns.
+- Chapter review findings retain the reviewed prose hash. A later revision can
+  reuse content issues only when that hash matches the current prose; stale or
+  unbound findings and execution issues do not become writing instructions.
+- Existing-chapter context carries the original author request separately from
+  the coordinator's revision instructions. A synthesized task memo is not a
+  story fact or an additional author requirement. Localized writers use the
+  author request, factual references and current review evidence. Whole-chapter
+  revisions retain the detailed instruction within the original authority.
 - Local revisions preserve content outside the author's permitted range. The
   request's original baseline remains available across retries for comparison.
+  Conversational agents edit through the scoped revision action; raw artifact
+  replacement is an internal commit primitive or an explicit host operation.
+  The same boundary covers raw chapter patches and replacements. Generated
+  chapter revisions default to source-bound edits with the persisted length
+  contract; a whole-chapter rewrite is an explicit authoring choice.
+- Short-fiction reviews receive the persisted length requirements and a verified
+  request-baseline comparison. Changed chapters have citable earlier text;
+  unchanged chapters are compared in full without duplicating their text in the
+  model context. Review state records both artifact versions and checksums.
+- State projection review receives the actual before/proposed fact and hook
+  records, including fact validity and historical entries, plus chapter prose.
+  A derived active-state table is not the complete factual record. Corrections
+  identify a proposed record and cite chapter evidence; only those corrections
+  feed settlement recovery. Content review owns alignment with planning and
+  authoring documents. An unchanged projection still needs checking because it
+  may have omitted a new chapter event.
 - Atomic file sets journal multi-file writes. Interrupted operations can recover
   without treating an unfinished candidate as an accepted version.
 - Filesystem discovery, pending writes, acceptance scopes, and image receipts
@@ -29,8 +93,15 @@ Skills; they do not replace the author's requested scope.
 - Short-fiction revision checkpoints carry a stable operation identity and
   completed chapter progress. A changed instruction cannot silently reset that
   operation; source changes are detected before resuming.
+- Successful recovery writes bind an unbound session to their canonical Work
+  and refresh its tools. Reading another Work does not change the session target.
+- Short-fiction production retains a requested cover across draft checkpoints.
+  Delivery requires a readable, checksum-verified current cover artifact; a
+  cover prompt alone does not satisfy that requirement.
 - Derivative works retain registered source-version references. Source selection
   and confirmation preserve the requested output constraints.
+  Directory imports pin the complete selected membership and each revision;
+  retries read those snapshots even if current files change or disappear.
 
 ## Interactive and visual output
 
@@ -39,12 +110,29 @@ their domain boundaries. Prose-only scene revisions preserve world state and
 choices. Player actions retain the actual player input; bounded context includes
 earlier narrative evidence as well as the current state. Interactive-film edits
 receive the complete graph's authoring context while keeping write scope bounded.
+Physical placement is identified by `value.role=placement` (entity to destination)
+or `value.role=holding` (holder to object), independently of free-form edge labels.
+Legacy `at`, `within`, `holding` and `holds` representations remain readable.
+Ending a tracked physical location, containment or holding relation must retain
+a resulting placement, or an explicit entity-status change recording intentional
+disappearance/consumption. The host rejects silent placement loss before commit
+and returns the affected identities for correction of the same turn. This checks
+that a disposition is recorded; it does not infer its meaning from action prose
+or certify the model's semantic interpretation. Relationship upserts include
+returns to locations/holders that appeared earlier in history.
+New graph display text is checked before persistence; wholly Unicode-escaped
+labels receive a field-addressed error for model correction. Opaque state values
+and mixed prose/code are preserved. Full-graph validation also protects exports.
+Players and the graph editor resolve registered speaker IDs to character names.
 
 Image revisions can send the previous image as a provider reference. Image
 generation waits outside the Work mutation lock, then commits against its
 captured moment. A failed replacement retains the previous successful image.
 Provider credentials are only retried for image downloads on that provider's
 own origin.
+Background illustration progress and failures remain visible beside the chat
+input when the world inspector is collapsed. The inspector offers a retry for
+the enabled missing illustrations and suppresses duplicate in-flight requests.
 
 ## Compatibility
 
@@ -52,6 +140,21 @@ Node.js 22.16.0 or later is required. Core, Studio, and CLI package versions are
 aligned at 2.0.0. Legacy migration is available through `inkos work migrate`;
 preview before applying with `--apply`. Migration preserves legacy source files
 and reports conflicts rather than overwriting them.
+
+Model cards declare request constraints independently of the gateway protocol.
+Text-producing workers and tool-producing workers share the final payload
+normalizer across the Pi SDK and custom HTTP transports.
+Requests use the protocol default for tool selection, while the host requires
+the originally selected tool result. Sampling parameters are omitted by default;
+only explicit configuration or per-call user overrides supply a temperature.
+Creative agents do not inject stage-specific sampling presets. A missing result receives explicit tool-contract feedback
+on its bounded retry; another missing result fails with
+`MODEL_REQUIRED_TOOL_MISSING`. Models that prohibit sampling overrides receive
+their server defaults. Sonnet 5.5's documented limits and request constraints
+apply through both native Claude and OpenAI-compatible gateways.
+Malformed structured results receive bounded schema feedback with field paths,
+expected and received types, and native JSON container instructions when needed.
+The host does not rewrite malformed prose into a passing result.
 
 ## Verification recorded on 2026-09-25
 

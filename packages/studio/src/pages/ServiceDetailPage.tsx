@@ -55,7 +55,7 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
   const [showKey, setShowKey] = useState(false);
   const [customName, setCustomName] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
-  const [temperature, setTemperature] = useState("0.7");
+  const [temperature, setTemperature] = useState("");
   const [apiFormat, setApiFormat] = useState<LLMApiFormat>("chat");
   const [stream, setStream] = useState(true);
   const [detectedModel, setDetectedModel] = useState<string>("");
@@ -74,12 +74,12 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
       .then((data) => {
         if (cancelled) return;
         const matched = matchServiceConfigEntryForDetail(data.services ?? [], serviceId);
+        setTemperature(typeof matched?.temperature === "number" ? String(matched.temperature) : "");
         if (!matched) return;
         if (isCustom) {
           setCustomName(String(matched.name ?? persistedCustomName));
           setBaseUrl(String(matched.baseUrl ?? ""));
         }
-        if (typeof matched.temperature === "number") setTemperature(String(matched.temperature));
         if (isLLMApiFormat(matched.apiFormat)) setApiFormat(matched.apiFormat);
         if (typeof matched.stream === "boolean") setStream(matched.stream);
         if (Array.isArray(matched.models)) {
@@ -460,12 +460,13 @@ export function ServiceDetailPage({ serviceId, nav }: { serviceId: string; nav: 
             {tr("高级参数", "Advanced")}
           </summary>
           <div className="space-y-4 pt-2">
-            <Field label="temperature">
+            <Field label={tr("随机性（可选）", "Temperature (optional)")}>
               <div className="flex items-center gap-3">
-                <input type="range" min="0" max="2" step="0.05" value={temperature}
-                  onChange={(e) => setTemperature(e.target.value)} className="flex-1 accent-primary h-1" />
+                {temperature !== "" && <input type="range" min="0" max="2" step="0.05" value={temperature}
+                  onChange={(e) => setTemperature(e.target.value)} className="flex-1 accent-primary h-1" />}
                 <input type="number" value={temperature} onChange={(e) => setTemperature(e.target.value)}
-                  min="0" max="2" step="0.05" className="w-16 rounded-md border border-border/60 bg-background px-2 py-1 text-xs text-right font-mono" />
+                  placeholder={tr("模型默认", "Default")} min="0" max="2" step="0.05" className="w-24 rounded-md border border-border/60 bg-background px-2 py-1 text-xs text-right font-mono" />
+                {temperature !== "" && <button type="button" onClick={() => setTemperature("")} className="text-xs text-muted-foreground">{tr("使用默认", "Use default")}</button>}
               </div>
             </Field>
           </div>

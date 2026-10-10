@@ -156,6 +156,7 @@ import {
   type RequestedIntent,
   type SessionKind,
   type AgentSessionAttachment,
+  type AgentSessionConfig,
   type ActionResult,
   type ConfirmedCapabilityBinding,
 } from "@actalk/inkos-core";
@@ -1021,6 +1022,7 @@ function formatAgentActionFailure(
 }
 
 interface CollectedToolExec {
+  deliveryState?: AgentSessionConfig['deliveryState'];
   id: string;
   tool: string;
   agent?: string;
@@ -1315,7 +1317,7 @@ async function executeConfirmedProductionAction(args: {
   } else if (args.requestedIntent === "fanfic_init") {
     const payload = actionPayload?.fanficCreate;
     const title = requirePayloadText(payload?.title, pick(lang, "确认创建同人缺少书名，请补充后重新确认。", "The fanfiction confirmation is missing a title."));
-    if (!payload?.source && !payload?.sourceText?.trim() && !payload?.sourcePath?.trim()) {
+    if (!payload?.source && !payload?.sources?.length && !payload?.sourceText?.trim() && !payload?.sourcePath?.trim()) {
       throw new ApiError(400, "CONFIRMED_ACTION_PAYLOAD_INCOMPLETE", pick(lang, "创建同人需要原作资料或上传文件。", "Fanfiction creation requires source material or an uploaded file."));
     }
     tool = createFanficBookTool(args.pipeline, args.root, {
@@ -1389,7 +1391,7 @@ async function executeConfirmedProductionAction(args: {
     const payload = actionPayload?.imitationCreate;
     const title = requirePayloadText(payload?.title, pick(lang, "确认创建仿写缺少书名。", "The imitation confirmation is missing a title."));
     const storyIdea = requirePayloadText(payload?.storyIdea, pick(lang, "仿写需要一个原创故事方向。", "Style imitation requires an original story idea."));
-    if (!payload?.source && !payload?.referenceText?.trim() && !payload?.referencePath?.trim()) {
+    if (!payload?.source && !payload?.sources?.length && !payload?.referenceText?.trim() && !payload?.referencePath?.trim()) {
       throw new ApiError(400, "CONFIRMED_ACTION_PAYLOAD_INCOMPLETE", pick(lang, "仿写需要参考文本或上传文件。", "Style imitation requires reference text or an uploaded file."));
     }
     tool = createImitationBookTool(args.pipeline, args.root, {
@@ -2417,8 +2419,7 @@ async function probeServiceCapabilities(args: {
         baseUrl: args.baseUrl,
         apiKey: args.apiKey.trim(),
         model,
-        temperature: 0.7,
-        maxTokens: 16,
+
         thinkingBudget: 0,
         proxyUrl: args.proxyUrl,
         apiFormat: plan.apiFormat,
@@ -3117,7 +3118,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
             ].filter(Boolean).join("\n\n"),
           },
         ], inspirationSkills),
-        { temperature: 0.9, maxTokens: 600, signal: c.req.raw.signal },
+        {  maxTokens: 600, signal: c.req.raw.signal },
       );
       const card = response.content.trim();
       if (!card) {
@@ -3547,7 +3548,17 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     if (body.services !== undefined) {
       const existingServices = normalizeServiceConfig(llm.services);
       const incomingServices = normalizeServiceConfig(body.services);
-      llm.services = mergeServiceConfig(existingServices, incomingServices);
+      const resetsTemperature = (entry: unknown) => Boolean(entry && typeof entry === "object" && (entry as Record<string, unknown>).temperature === null);
+      const resetInput = Array.isArray(body.services)
+        ? body.services.filter(resetsTemperature)
+        : Object.fromEntries(Object.entries(body.services && typeof body.services === "object" ? body.services : {}).filter(([, entry]) => resetsTemperature(entry)));
+      const resetKeys = new Set(normalizeServiceConfig(resetInput).map(serviceConfigKey));
+      llm.services = mergeServiceConfig(existingServices, incomingServices).map((entry) => {
+        if (!resetKeys.has(serviceConfigKey(entry))) return entry;
+        const {temperature: _temperature, ...defaults} = entry;
+        return defaults;
+      });
+      if (resetKeys.has(String(body.service ?? llm.service))) delete llm.temperature;
     }
     if (body.defaultModel !== undefined) {
       llm.defaultModel = body.defaultModel;
@@ -4590,7 +4601,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
           throw new ApiError(409, 'CHAT_RETRY_CONFLICT', 'The failed submission no longer matches this retry. Reload the saved request.');
         }
         if (saved.baselineWork === undefined) throw new ApiError(409, 'CHAT_RETRY_BASELINE_UNAVAILABLE', 'The original revision inventory is unavailable for this older request. Send a new instruction against the current version.');
-        request.snapshot = { ...request.snapshot, baselineWork: saved.baselineWork };
+        request.snapshot = { ...request.snapshot, baselineWork: saved.baselineWork, deliveryState:saved.deliveryState };
       } catch (error) {
         if (previous) chatRequests.set(sessionId, previous); else chatRequests.delete(sessionId);
         throw error;
@@ -4625,6 +4636,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       activeBookId,
       sessionId: reqSessionId,
       clientRequestId: reqClientRequestId,
+      retryOfRequestId: reqRetryOfRequestId,
       sessionKind: reqSessionKind,
       profileId: reqProfileId,
       workId: reqWorkId,
@@ -4642,6 +4654,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       activeBookId?: string;
       sessionId?: string;
       clientRequestId?: unknown;
+      retryOfRequestId?: unknown;
       sessionKind?: string;
       profileId?: string;
       workId?: string | null;
@@ -5068,6 +5081,8 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
           exec.logs = [...(exec.logs ?? []), pick(surfaceLanguage, "继续完成确认请求中的剩余动作…", "Continuing the remaining confirmed request...")].slice(-80);
           await persistConfirmedTask(bookSession.sessionId, confirmedIntent, exec, sourceRequestId);
           const continuation = await runAgentSession({
+            deliveryState:exec.deliveryState,
+            onDeliveryStateChange:async deliveryState=>{exec.deliveryState=deliveryState;await persistConfirmedTask(bookSession.sessionId,confirmedIntent,exec,sourceRequestId);},
             onWorkTransition: publishExecutionTarget,
             signal: taskController.signal,
             model,
@@ -5155,17 +5170,26 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
               }
             },
           }, originalInstruction === instruction ? instruction : `${originalInstruction}\n\nConfirmed action instruction:\n${instruction}`);
-          exec.status = "completed";
+          const incomplete=Boolean(continuation.errorMessage)||!continuation.completion||continuation.completion.status==='blocked';
+          exec.status = incomplete ? "error" : "completed";
           exec.completedAt = Date.now();
-          if (continuation.errorMessage) {
+          if (incomplete) {
+            const reason=continuation.errorMessage??continuation.completion?.message??'Missing request completion evidence.';
+            const message=continuation.responseText||pick(surfaceLanguage,'已完成的部分已保存；剩余交付步骤尚未完成。','Completed production is saved; the remaining requested steps are not complete.');
+            exec.error=message;
             exec.logs = [
               ...(exec.logs ?? []),
-              pick(surfaceLanguage, `后续对话不可用：${continuation.errorMessage}`, `Follow-up response unavailable: ${continuation.errorMessage}`),
+              message,
             ].slice(-80);
             exec.details = {
               ...(exec.details && typeof exec.details === "object" ? exec.details as Record<string, unknown> : {}),
-              continuationError: continuation.errorMessage,
+              primaryExecutionStatus:'completed',continuationError:reason,
             };
+            await persistConfirmedTask(bookSession.sessionId,confirmedIntent,exec,sourceRequestId);
+            await refreshBookSessionFromTranscript();
+            broadcast('agent:error',{instruction,activeBookId:bookSession.bookId,sessionId:bookSession.sessionId,sessionKind:bookSession.sessionKind,error:message});
+            return c.json({error:{code:'AGENT_TASK_INCOMPLETE',message},completionStatus:'blocked',response:message,
+              session:workSessionResponseMetadata(bookSession),details:{toolExecutions:[exec,...continuedToolExecs]}},continuation.errorMessage?502:422);
           }
           await persistConfirmedTask(bookSession.sessionId, confirmedIntent, exec, sourceRequestId);
           const responseText = continuation.responseText
@@ -5178,6 +5202,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
           broadcast("agent:complete", { instruction, activeBookId: bookSession.bookId, sessionId: bookSession.sessionId, sessionKind: bookSession.sessionKind });
           return c.json({
             response: responseForUser,
+            completionStatus:continuation.completion?.status,
             details: { toolExecutions: [exec, ...continuedToolExecs] },
             session: {
               ...workSessionResponseMetadata(bookSession),
@@ -5236,6 +5261,10 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
         {
           signal: chatRequest?.controller.signal,
           baselineWork: chatRequest?.snapshot.baselineWork,
+          deliveryState: chatRequest?.snapshot.deliveryState,
+          onDeliveryStateChange: async deliveryState=>{
+            if(chatRequest){chatRequest.snapshot={...chatRequest.snapshot,deliveryState};await chatRequestStore.save(chatRequest.snapshot);}
+          },
           onWorkTransition: publishExecutionTarget,
           model,
           apiKey: agentApiKey,
@@ -5257,6 +5286,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
           actionSource,
           requestedIntent,
           proposalAction: normalizeStudioProposalAction(bookSession.proposalAction),
+          recoverIncompleteRequest: typeof reqRetryOfRequestId === 'string',
           actionPayload,
           requestedSkills,
           disabledSkills,

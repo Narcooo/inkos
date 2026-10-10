@@ -1,4 +1,6 @@
 import type { StateValidationAuthorityContext, ValidationResult, StateValidatorAgent } from "../agents/state-validator.js";
+import {withStateProjectionContext} from '../agents/state-validator.js';
+import type {RuntimeStateSnapshot} from '../state/state-reducer.js';
 import type { WriteChapterOutput, WriterAgent } from "../agents/writer.js";
 import type { BookConfig } from "../models/book.js";
 import type { ContextPackage } from "../models/input-governance.js";
@@ -24,6 +26,7 @@ export async function validateChapterTruthPersistence(params: {
   readonly previousTruth: {
     readonly oldState: string;
     readonly oldHooks: string;
+    readonly snapshot?: RuntimeStateSnapshot;
   };
   readonly authorityContext?: StateValidationAuthorityContext;
   readonly reducedControlInput: {
@@ -49,7 +52,7 @@ export async function validateChapterTruthPersistence(params: {
       params.previousTruth.oldHooks,
       persistenceOutput.updatedHooks,
       params.language,
-      params.authorityContext,
+      withStateProjectionContext(params.authorityContext,params.previousTruth.snapshot,persistenceOutput.runtimeStateSnapshot),
     );
   } catch (error) {
     params.logger?.warn(`State validation error for chapter ${params.chapterNumber}: ${String(error)}`);
@@ -91,6 +94,7 @@ export async function validateChapterTruthPersistence(params: {
       oldHooks: params.previousTruth.oldHooks,
       originalValidation: validation,
       authorityContext: params.authorityContext,
+      previousProjection:params.previousTruth.snapshot,
       language: params.language,
       logWarn: params.logWarn,
       logger: params.logger,

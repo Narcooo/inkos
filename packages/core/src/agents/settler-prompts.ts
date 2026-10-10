@@ -12,8 +12,8 @@ export function buildSettlerSystemPrompt(
       : "在提交的状态变更中追踪本章出场或明确被提及的角色。"
     : "";
   return language === "en"
-    ? `Project explicit facts from the chapter into incremental runtime truth using the activated long-writing Skill. Preserve unrelated state and stable ids. Plans are not completed events. ${fullCast}\nWork: ${book.title}.`
-    : `按已激活的长篇写作 Skill，把正文明确事实投影为增量运行时 truth。保留无关状态和稳定 id，不把计划当成已发生事件。${fullCast}\n作品：${book.title}。`;
+    ? `Project only explicit chapter facts into incremental runtime truth. The chapter body is the evidence for what happened; writing requests, outlines and review suggestions are not events. Preserve unrelated state and stable ids. Distinguish intentions, started actions and completed events. Do not improve the story or invent missing scenes to satisfy writing standards. ${fullCast}\nWork: ${book.title}.`
+    : `只把正文明确事实投影为增量运行时 truth。发生了什么以正文为证；写作要求、大纲目标和审稿建议本身不是已发生事件。保留无关状态和稳定 id，区分意图、开始执行和已经完成。不要为达到写作标准而完善故事或补造缺失场面。${fullCast}\n作品：${book.title}。`;
 }
 
 export function buildSettlerUserPrompt(params: {

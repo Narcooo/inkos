@@ -3,6 +3,8 @@ import type {
   ValidationResult,
 } from "../agents/state-validator.js";
 import type { StateValidatorAgent } from "../agents/state-validator.js";
+import {withStateProjectionContext} from '../agents/state-validator.js';
+import type {RuntimeStateSnapshot} from '../state/state-reducer.js';
 import type { StateValidationAuthorityContext } from "../agents/state-validator.js";
 import type { WriteChapterOutput } from "../agents/writer.js";
 import type { WriterAgent } from "../agents/writer.js";
@@ -29,6 +31,7 @@ export interface SettlementRetryParams {
   readonly oldHooks: string;
   readonly originalValidation: ValidationResult;
   readonly authorityContext?: StateValidationAuthorityContext;
+  readonly previousProjection?: RuntimeStateSnapshot;
   readonly language: LengthLanguage;
   readonly logWarn?: (message: { zh: string; en: string }) => void;
   readonly logger?: Pick<Logger, "warn">;
@@ -82,7 +85,7 @@ export async function reconcileChapterStateAfterReview(
       params.oldHooks,
       retryOutput.updatedHooks,
       params.language,
-      params.authorityContext,
+      withStateProjectionContext(params.authorityContext,params.previousProjection,retryOutput.runtimeStateSnapshot),
     );
   } catch (error) {
     const validation: ValidationResult = {
@@ -134,7 +137,8 @@ export function buildStateReconciliationFeedback(
   observations: ReadonlyArray<Observation>,
   language: LengthLanguage,
 ): string {
-  if (observations.length === 0) {
+  const corrections=observations.filter(observation=>observation.assessment===undefined||observation.assessment==='issue');
+  if (corrections.length === 0) {
     return language === "en"
       ? "The previous settlement contradicted the chapter text. Reconcile truth files strictly to the body."
       : "上一次状态结算与正文矛盾。请严格以正文为准修正 truth files。";
@@ -143,13 +147,13 @@ export function buildStateReconciliationFeedback(
   if (language === "en") {
     return [
       "The previous settlement needs reconciliation. Align these differences with the chapter body:",
-      ...observations.map((observation) => `- [${observation.code}] ${observation.summary}`),
+      ...corrections.map((observation) => `- [${observation.code}] ${observation.summary}${observation.sourceRefs?.length?`\n${JSON.stringify({sourceRefs:observation.sourceRefs})}`:''}`),
     ].join("\n");
   }
 
   return [
     "上一次状态结算需要对账。请对照正文修正以下差异：",
-    ...observations.map((observation) => `- [${observation.code}] ${observation.summary}`),
+    ...corrections.map((observation) => `- [${observation.code}] ${observation.summary}${observation.sourceRefs?.length?`\n${JSON.stringify({sourceRefs:observation.sourceRefs})}`:''}`),
   ].join("\n");
 }
 

@@ -40,7 +40,7 @@ export function renderNarrativeSelectedContext(
   entries: ReadonlyArray<ContextPackage["selectedContext"][number]>,
   language: "zh" | "en" = "zh",
 ): string {
-  const heading = language === "en" ? "Evidence" : "证据";
+  const heading = language === "en" ? "Context" : "上下文";
   const reasonLabel = language === "en" ? "reason" : "原因";
   const detailLabel = language === "en" ? "detail" : "细节";
 
@@ -48,6 +48,7 @@ export function renderNarrativeSelectedContext(
     .map((entry, index) => {
       const lines = [
         `### ${heading} ${index + 1}`,
+        JSON.stringify({source:entry.source,protection:entry.protection}),
         `- ${reasonLabel}: ${entry.reason}`,
         entry.excerpt ? `- ${detailLabel}: ${entry.excerpt}` : "",
       ].filter(Boolean);

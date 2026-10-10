@@ -22,7 +22,7 @@ import {StoryGraphSchema} from '../interactive-film/graph-schema.js';
 
 it('reviews a pinned graph with deterministic structural facts and persists the same evidence',async()=>{
   const root=await mkdtemp(join(tmpdir(),'inkos-graph-review-'));const requests:any[]=[];
-  const server=createServer(async(req,res)=>{const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));const body=JSON.parse(Buffer.concat(chunks).toString('utf8'));requests.push(body);res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{tool_calls:[{id:'review',type:'function',function:{name:body.tools[0].function.name,arguments:JSON.stringify({summary:'Reviewed',observations:[]})}}]}}]}));});
+  const server=createServer(async(req,res)=>{const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));const body=JSON.parse(Buffer.concat(chunks).toString('utf8'));requests.push(body);res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{tool_calls:[{id:'review',type:'function',function:{name:body.tools[0].function.name,arguments:JSON.stringify({summary:'Reviewed',observationCodes:[]})}}]}}]}));});
   server.listen(0,'127.0.0.1');await once(server,'listening');
   try{
     await saveWorkManifest(root,createWorkManifest({id:'film',title:'Relay',profileId:'interactive-film',language:'en'}));
@@ -56,7 +56,7 @@ it('reviews an explicit candidate snapshot without adopting it or unrelated sour
   const server=createServer(async(req,res)=>{
     const chunks: Buffer[]=[]; for await(const chunk of req) chunks.push(Buffer.from(chunk));
     requests.push(JSON.parse(Buffer.concat(chunks).toString('utf8')));
-    const args={summary:'Candidate inspected',observations:[]};
+    const args={summary:'Candidate inspected',observationCodes:[]};
     res.writeHead(200,{'Content-Type':'text/event-stream'});
     res.write(`data: ${JSON.stringify({id:'review',object:'chat.completion.chunk',choices:[{index:0,delta:{role:'assistant',tool_calls:[{index:0,id:'review-call',type:'function',function:{name:'submit_artifact_review',arguments:JSON.stringify(args)}}]},finish_reason:null}]})}\n\n`);
     res.end(`data: ${JSON.stringify({id:'review',object:'chat.completion.chunk',choices:[{index:0,delta:{},finish_reason:'tool_calls'}]})}\n\ndata: [DONE]\n\n`);
@@ -74,7 +74,7 @@ it('reviews an explicit candidate snapshot without adopting it or unrelated sour
     const tool=createArtifactMethodTools(pipeline,root,'candidate')[0];
     await expect(tool.execute('missing',{artifactId:target.id,instruction:'Review candidate'})).rejects.toMatchObject({code:'ARTIFACT_REVISION_REQUIRED'});
     const authorRequest='Review this candidate scene and preserve the separate notes.';
-    const delegatedInstruction='Review candidate';
+    const delegatedInstruction='Check the scene entry and exit states against the supplied source.';
     const result=await executeExplicitCapabilityTool({projectRoot:root,workId:'candidate',authorRequest,
       binding:{capabilityId:'workspace',actionId:tool.name,profileId:'short-fiction',risk:'recoverable-write'},tool,
       parameters:{artifactId:target.id,revisionId:target.revisions[0].id,instruction:delegatedInstruction},
@@ -84,8 +84,7 @@ it('reviews an explicit candidate snapshot without adopting it or unrelated sour
     const report=JSON.parse(await readFile(join(root,'works/candidate',(result.data as {path:string}).path),'utf8'));
     expect(report).toMatchObject({artifactId:target.id,revisionId:target.revisions[0].id,targetHash:target.revisions[0].checksum,scope:authorRequest,coordinatorInstruction:delegatedInstruction,reviewBasis:'author_request'});
     const request = JSON.parse([...requests[0]!.messages].reverse().find(message => message.role === 'user')!.content);
-    expect(request).toMatchObject({instruction:authorRequest});
-    expect(request).not.toHaveProperty('reviewFocus');
+    expect(request).toMatchObject({instruction:authorRequest,reviewFocus:delegatedInstruction});
     const authorContexts=requests[0]!.messages.flatMap(message=>message.content.split('\n\n')).flatMap(block=>{try{const value=JSON.parse(block);return value.authorRequest?[value.authorRequest]:[];}catch{return[];}});
     expect(authorContexts).toEqual([authorRequest]);
     expect(currentExecutionAuthorRequest()).toBeUndefined();
@@ -106,14 +105,14 @@ it('reviews an explicit candidate snapshot without adopting it or unrelated sour
   } finally {server.closeAllConnections();await new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve()));await rm(root,{recursive:true,force:true});}
 },15000);
 
-it('reviews a sales package with the manuscript and outline versions used to create it', async () => {
+it('reviews a sales package against the current manuscript version', async () => {
   const root=await mkdtemp(join(tmpdir(),'inkos-package-sources-'));
   const requests:Array<{messages:Array<{role:string;content:string}>}>=[];
   const server=createServer(async(req,res)=>{
     const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));
     requests.push(JSON.parse(Buffer.concat(chunks).toString('utf8')));
     res.writeHead(200,{'Content-Type':'text/event-stream'});
-    res.write(`data: ${JSON.stringify({id:'review',choices:[{index:0,delta:{role:'assistant',tool_calls:[{index:0,id:'review',type:'function',function:{name:'submit_artifact_review',arguments:JSON.stringify({summary:'Compared production sources',observations:[]})}}]},finish_reason:null}]})}\n\n`);
+    res.write(`data: ${JSON.stringify({id:'review',choices:[{index:0,delta:{role:'assistant',tool_calls:[{index:0,id:'review',type:'function',function:{name:'submit_artifact_review',arguments:JSON.stringify({summary:'Compared production sources',observationCodes:[]})}}]},finish_reason:null}]})}\n\n`);
     res.end(`data: ${JSON.stringify({id:'review',choices:[{index:0,delta:{},finish_reason:'tool_calls'}]})}\n\ndata: [DONE]\n\n`);
   });
   server.listen(0,'127.0.0.1');await once(server,'listening');
@@ -129,14 +128,14 @@ it('reviews a sales package with the manuscript and outline versions used to cre
     const client=createLLMClient({service:'custom',provider:'openai',configSource:'studio',model:'fixture',apiKey:'fixture',baseUrl:`http://127.0.0.1:${(server.address() as {port:number}).port}/v1`,apiFormat:'chat',stream:true,temperature:0,thinkingBudget:0});
     const result=await createArtifactMethodTools(new PipelineRunner({client,model:'fixture',projectRoot:root}),root,work.id)[0]!.execute('review',{artifactId:artifact.id,instruction:'Check the package against its story.'});
     const input=JSON.parse([...requests[0]!.messages].reverse().find(m=>m.role==='user')!.content);
-    expect(new Set(input.sources.map((source:{path:string})=>source.path))).toEqual(new Set(['source/final/sales-package.md','source/final/full.md','source/outline/v001.md']));
+    expect(new Set(input.sources.map((source:{path:string})=>source.path))).toEqual(new Set(['source/final/sales-package.md','source/final/full.md']));
     for(const source of input.sources){
       const artifact=work.artifacts.find(item=>item.id===source.sourceId)!;
       const revision=artifact.revisions.find(item=>item.id===artifact.currentRevisionId)!;
       expect(source).toMatchObject({revisionId:revision.id,checksum:revision.checksum,path:revision.path});
     }
     expect(result.details).toMatchObject({kind:'artifact_reviewed',reviewedReferences:expect.any(Array)});
-    expect((result.details as {reviewedReferences:unknown[]}).reviewedReferences).toHaveLength(2);
+    expect((result.details as {reviewedReferences:unknown[]}).reviewedReferences).toHaveLength(1);
   } finally {server.closeAllConnections();await new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve()));await rm(root,{recursive:true,force:true});}
 },15000);
 

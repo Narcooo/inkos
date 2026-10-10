@@ -374,6 +374,7 @@ export function ChatPage({ activeBookId, activeWorkId, workProfileId, mode = act
   // image and choices live in the chat center now, opened on demand.
   const [worldPanelOpen, setWorldPanelOpen] = useState(false);
   const [playImageError, setPlayImageError] = useState<string | null>(null);
+  const [playImageGeneration, setPlayImageGeneration] = useState<{pending:boolean;error:string|null}>({pending:false,error:null});
   const [playImageMenuOpen, setPlayImageMenuOpen] = useState(false);
   const [playImageSettings, setPlayImageSettings] = useState<PlayImageSettings>({ actors: false, moments: false, inventory: false });
   const [playImageCoverReady, setPlayImageCoverReady] = useState(false);
@@ -530,7 +531,7 @@ export function ChatPage({ activeBookId, activeWorkId, workProfileId, mode = act
     autoScrollPinnedRef.current = true;
   }, [activeSessionId]);
 
-  // Entering a book loads its latest session; book-create mode persists its orphan session in localStorage.
+  // Entry bookmarks identify the conversation, even after creation binds it to a Work.
   useEffect(() => {
     let cancelled = false;
     const activeAtStart=useChatStore.getState().activeSessionId;
@@ -589,7 +590,7 @@ export function ChatPage({ activeBookId, activeWorkId, workProfileId, mode = act
 
         const state = useChatStore.getState();
         const session = state.sessions[existingId];
-        if (session && session.bookId === null && (mode !== "project-chat" || session.messages.length > 0)) {
+        if (session && (mode !== "project-chat" || session.messages.length > 0)) {
           activateSession(existingId);
           return;
         }
@@ -782,7 +783,7 @@ export function ChatPage({ activeBookId, activeWorkId, workProfileId, mode = act
     );
   };
 
-  useEffect(() => { setPlayImageError(null); }, [activeSessionId]);
+  useEffect(() => { setPlayImageError(null); setPlayImageGeneration({pending:false,error:null}); }, [activeSessionId]);
 
   useEffect(() => {
     if (!playWorldId || loading) return;
@@ -1274,10 +1275,17 @@ export function ChatPage({ activeBookId, activeWorkId, workProfileId, mode = act
               </div>
             ) : null}
           </div>
-          {playImageError ? (
-            <p className="mt-2 text-right text-[13px] leading-5 text-destructive/80">
-              {isZh ? `配图失败：${playImageError}` : `Image failed: ${playImageError}`}
-            </p>
+          {playImageGeneration.pending ? <p role="status" className="mt-2 text-right text-[13px] leading-5 text-muted-foreground">
+            {isZh ? "正在生成配图…" : "Generating images…"}
+          </p> : null}
+          {playImageGeneration.error || playImageError ? (
+            <div role="alert" className="mt-2 text-right text-[13px] leading-5 text-destructive/80">
+              <span>{isZh ? "配图未完成。" : "Image generation failed."}</span>
+              {playImageGeneration.error ? <button type="button" className="ml-2 underline" onClick={()=>setWorldPanelOpen(true)}>
+                {isZh ? "查看并重试" : "View and retry"}
+              </button> : null}
+              <details><summary>{isZh ? "详情" : "Details"}</summary>{playImageGeneration.error ?? playImageError}</details>
+            </div>
           ) : null}
         </div>
       </div>
@@ -1285,12 +1293,14 @@ export function ChatPage({ activeBookId, activeWorkId, workProfileId, mode = act
 
       {isPlaySurface && playWorldId && (
         <PlayHud
+          key={playWorldId}
           sessionId={playWorldId}
           isStreaming={loading}
           isZh={isZh}
           open={worldPanelOpen}
           onClose={() => setWorldPanelOpen(false)}
           imageSettings={playImageSettings}
+          onImageStatusChange={setPlayImageGeneration}
           sessionTitle={activeSession?.title ?? null}
         />
       )}

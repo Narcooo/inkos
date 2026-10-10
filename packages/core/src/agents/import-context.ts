@@ -55,7 +55,7 @@ export async function compileImportSource(input: {
       },
       { role: "user", content: `Source chunk ${index + 1}/${chunks.length}\n\n${chunk}` },
     ], undefined, "import-context"), {
-      temperature: 0.2,
+
       signal: input.signal,
     });
     const body = response.content.trim();

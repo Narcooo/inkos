@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { Agent } from "@mariozechner/pi-agent-core";
 import { preserveToolArgumentTypes } from "./tool-arguments.js";
 import { createTurnCompletionTool, TurnArtifactDeliveries, TURN_COMPLETION_GUIDANCE, TURN_COMPLETION_TOOL, type TurnCompletion } from "./turn-completion.js";
+import {RequestDeliveryLedger,interpretDeliveryRequirements,createDeliveryRequirementsTool,REQUEST_DELIVERY_TOOL,type RequestDeliveryState} from './request-delivery.js';
 import type { AgentEvent, AgentMessage } from "@mariozechner/pi-agent-core";
 import { getModel, getEnvApiKey, createAssistantMessageEventStream } from "@mariozechner/pi-ai";
 import type {
@@ -71,6 +72,7 @@ import { opaqueConversationId, runWithAgentTrajectory } from "../llm/agent-traje
 import { guardedPiNonStreaming, guardedPiStream } from "./pi-stream.js";
 import { splitTextByEstimatedTokens } from "../llm/semantic-input.js";
 import { estimateTextTokens } from "../llm/provider.js";
+import { recoverInterruptedActionResults } from "./interrupted-request.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -89,6 +91,11 @@ export interface AgentSessionConfig {
   workId?: string | null;
   /** Original request's Work revision inventory, retained by a trusted retry host. */
   baselineWork?: WorkManifest | null;
+  /** Set by a trusted host for an explicit retry of an interrupted submission. */
+  recoverIncompleteRequest?: boolean;
+  /** Host-owned state from this exact failed request, never client-supplied scope. */
+  deliveryState?: RequestDeliveryState;
+  onDeliveryStateChange?: (state:RequestDeliveryState)=>Promise<void>;
   /** Play interaction mode chosen by the player at launch (guided = choice-only, open = free text). */
   playMode?: PlayMode;
   /** Where this turn came from. Button/slash turns can execute confirmed production actions. */
@@ -197,6 +204,9 @@ interface CachedAgent {
   hasDelivery: boolean;
   deliveryFailed: boolean;
   artifactDeliveries: TurnArtifactDeliveries;
+  requestDelivery: RequestDeliveryLedger;
+  persistDelivery: ()=>Promise<void>;
+  ensureDelivery: (signal?:AbortSignal)=>Promise<void>;
   pendingWorkTransition?: AgentWorkTransition;
   completedPlayScene?: string;
   agent: Agent;
@@ -754,13 +764,47 @@ export async function runAgentSession(
   userMessage: string,
 ): Promise<AgentSessionResult> {
   return runInAgentSessionQueue(config.projectRoot, config.sessionId, async () => {
-    let currentConfig = config;
+    const attachmentBlock = buildAttachmentUserBlock(config.attachments, config.language);
+    const transcriptInput = attachmentBlock ? `${userMessage}${attachmentBlock}` : userMessage;
+    let savedDelivery=config.deliveryState;
+    if(!savedDelivery){
+      const history=await readTranscriptEvents(config.projectRoot,config.sessionId);
+      const latest=[...history].reverse().find(event=>event.type==='request_started');
+      if(latest?.type==='request_started'&&latest.input===transcriptInput
+        &&(config.recoverIncompleteRequest||!history.some(event=>event.type==='request_committed'&&event.requestId===latest.requestId))){
+        const recorded=[...history].reverse().find(event=>event.type==='request_delivery'&&event.requestId===latest.requestId);
+        if(recorded?.type==='request_delivery')savedDelivery=recorded.state;
+      }
+    }
+    const delivery=new RequestDeliveryLedger(config.resumeAction&&savedDelivery?savedDelivery.authorRequest:userMessage,savedDelivery);
+    const artifacts=new TurnArtifactDeliveries();
+    const recovered = config.recoverIncompleteRequest
+      ? await recoverInterruptedActionResults(config.projectRoot, config.sessionId, transcriptInput, config.sessionKind) : [];
+    for (const action of recovered) {
+      artifacts.observe(action.result, action.parameters);
+      await delivery.record(config.projectRoot, action.result.operationReceipts ?? []);
+    }
+    const latestRecovered = recovered.at(-1);
+    let currentConfig = latestRecovered ? {
+      ...config,
+      resumeAction: config.resumeAction ?? {
+        replayOnly: true,
+        toolCallId: `recovered-operation-${randomUUID()}`,
+        capabilityId: latestRecovered.toolName.split('__')[0]!,
+        actionId: latestRecovered.toolName.split('__')[1]!,
+        parameters: latestRecovered.parameters as Record<string, unknown>,
+        result: latestRecovered.result,
+      },
+      backgroundTaskContext: [config.backgroundTaskContext,
+        `This submission continues an interrupted request. The host verified these completed operations against their persisted current artifact versions: ${JSON.stringify(recovered.map(action => ({tool: action.toolName, artifacts: action.result.artifacts})))}. A later failed attempt did not undo those saved results. Continue only unfinished requested work.`,
+      ].filter(Boolean).join('\n\n'),
+    } : config;
     const visited = new Set<string>();
-    let result = await runAgentSessionUnlocked(currentConfig, userMessage);
+    let result = await runAgentSessionUnlocked(currentConfig, userMessage, delivery, artifacts);
     while (result.workTransition && !result.errorMessage) {
       const transition = result.workTransition;
       const scene = completedInteractiveScene(transition.action.capabilityId, transition.action.result);
-      if (scene !== undefined) {
+      if (scene !== undefined && delivery.declared && !delivery.hasRequirements) {
         removeCachedAgent(agentCacheKey(config.projectRoot, config.sessionId));
         return {...result,workTransition:undefined,workId:transition.work.id,profileId:transition.work.profileId,responseText:scene};
       }
@@ -769,6 +813,7 @@ export async function runAgentSession(
       removeCachedAgent(agentCacheKey(config.projectRoot, config.sessionId));
       currentConfig = {
         ...currentConfig,
+        baselineWork: currentConfig.baselineWork === undefined ? null : currentConfig.baselineWork,
         workId: transition.work.id,
         profileId: transition.work.profileId,
         bookId: transition.work.profileId === "longform-novel" ? transition.work.id : null,
@@ -776,7 +821,7 @@ export async function runAgentSession(
         proposalAction: undefined, actionPayload: undefined,
         resumeAction: transition.action,
       };
-      result = await runAgentSessionUnlocked(currentConfig, userMessage);
+      result = await runAgentSessionUnlocked(currentConfig, userMessage,delivery,artifacts);
     }
     return result;
   });
@@ -813,9 +858,15 @@ function currentTurnCompletion(cached: CachedAgent): TurnCompletion | undefined 
   return cached.turnCompletion;
 }
 
+function canCompletePlayScene(cached:CachedAgent|undefined|null):cached is CachedAgent&{completedPlayScene:string}{
+  return !!cached&&cached.completedPlayScene!==undefined&&cached.requestDelivery.declared&&!cached.requestDelivery.hasRequirements;
+}
+
 async function runAgentSessionUnlocked(
   config: AgentSessionConfig,
   userMessage: string,
+  requestDelivery:RequestDeliveryLedger,
+  artifactDeliveries:TurnArtifactDeliveries,
 ): Promise<AgentSessionResult> {
   const { sessionId, language, pipeline, projectRoot, onEvent, onContextCompression } = config;
   // Normalize at the entry point so downstream comparisons, closures, and
@@ -989,6 +1040,11 @@ async function runAgentSessionUnlocked(
       registry: capabilities,
       profile,
       includeAction: (capabilityId, action) => {
+        // Author-driven changes use the scoped revision action. The raw commit
+        // primitive remains available to explicit callers and domain tools.
+        const rawCommit = capabilityId === "workspace" && action.id === "replace_work_artifact"
+          || capabilityId === "longform" && ["patch_chapter_text", "replace_chapter_text"].includes(action.id);
+        if (rawCommit && !(confirmedCapabilityAction?.capabilityId === capabilityId && confirmedCapabilityAction.actionId === action.id)) return false;
         if (confirmedCapabilityAction) {
           return capabilityId === confirmedCapabilityAction.capabilityId && action.id === confirmedCapabilityAction.actionId;
         }
@@ -1007,6 +1063,8 @@ async function runAgentSessionUnlocked(
         });
         cached.activeActions++;
         try {
+          if(capabilities.resolve(capabilityId,actionId).action.risk!=='read')await cached.ensureDelivery(signal);
+          await cached.artifactDeliveries.requireOperations(projectRoot, cached.workId, capabilityId, actionId, parameters);
           const result = await cached.harnessRuntime.executeAction({
             handle,
             capabilityId,
@@ -1022,8 +1080,10 @@ async function runAgentSessionUnlocked(
             cached.deliveryFailed = false;
           }
           cached.artifactDeliveries.observe(result, parameters);
+          if(await cached.requestDelivery.record(projectRoot,result.operationReceipts??[]))await cached.persistDelivery();
           cached.completedPlayScene = completedInteractiveScene(capabilityId, result) ?? cached.completedPlayScene;
-          if (result.status === "success" && WORK_CREATION_ACTIONS.has(actionId)) {
+          const bindsRecoveredWork = !cached.workId && capabilities.resolve(capabilityId, actionId).action.risk !== "read";
+          if (result.status === "success" && (WORK_CREATION_ACTIONS.has(actionId) || bindsRecoveredWork)) {
             const ids = new Set(result.artifacts.map(artifact => artifact.workId));
             const data = result.data && typeof result.data === "object" ? result.data as Record<string, unknown> : undefined;
             const createdId = typeof data?.workId === "string" ? data.workId : ids.size === 1 ? [...ids][0] : undefined;
@@ -1070,19 +1130,26 @@ async function runAgentSessionUnlocked(
       ...(config.resumeAction ? { resumeAfterAction: true } : {}),
     });
     const restoredContextBlock = restoredSystemContext.length > 0
-      ? `\n\n## Restored committed context\n${restoredSystemContext.join("\n\n")}`
+      ? `\n\n## Restored execution context\n${restoredSystemContext.join("\n\n")}`
       : "";
     const agent = new Agent({
       beforeToolCall: preserveToolArgumentTypes,
+      toolExecution: 'sequential',
       initialState: {
         model,
         systemPrompt: [baseSystemPrompt, TURN_COMPLETION_GUIDANCE, restoredContextBlock, config.backgroundTaskContext]
           .filter(Boolean)
           .join("\n\n"),
-        tools: [...visibleTools, createTurnCompletionTool({
+        tools: [...visibleTools,createDeliveryRequirementsTool({root:projectRoot,ledger:()=>cached!.requestDelivery,ensure:signal=>cached!.ensureDelivery(signal),save:()=>cached!.persistDelivery()}), createTurnCompletionTool({
           state: () => cached ?? { activeActions: 0, hasDelivery: false, deliveryFailed: false },
           complete: result => { if (!cached) throw new Error("Session unavailable"); cached.turnCompletion = result; },
-          validateDelivery: () => cached!.artifactDeliveries.validate(projectRoot),
+          qualityFindings:()=>cached!.artifactDeliveries.qualityFindings(),
+          language,
+          validateDelivery: async signal => {
+            await cached!.ensureDelivery(signal);
+            await cached!.artifactDeliveries.validate(projectRoot);
+            await cached!.requestDelivery.validate(projectRoot);
+          },
         })],
         messages: initialAgentMessages,
       },
@@ -1090,6 +1157,7 @@ async function runAgentSessionUnlocked(
         projectRoot,
         work,
         profile,
+        requestDelivery:()=>{const {declared,steps,receipts}=cached!.requestDelivery.snapshot();return{declared,steps,receipts};},
         budgetTokens: agentContextBudget(model),
         semanticCompiler: async (request) => ({
           content: await compileHarnessContextText({
@@ -1130,7 +1198,7 @@ async function runAgentSessionUnlocked(
         // Pi snapshots its tool table per run. Resume with the new Work's actual
         // Profile before another model call, rather than continuing with stale tools.
         if (cached?.pendingWorkTransition) return stopForWorkTransition(streamModel);
-        if (cached?.completedPlayScene !== undefined) return stopForWorkTransition(streamModel);
+        if (canCompletePlayScene(cached)) return stopForWorkTransition(streamModel);
         if (cached?.turnCompletion) return stopForWorkTransition(streamModel);
         const streamOptions = {
           ...options,
@@ -1152,6 +1220,9 @@ async function runAgentSessionUnlocked(
       hasDelivery: false,
       deliveryFailed: false,
       artifactDeliveries: new TurnArtifactDeliveries(),
+      requestDelivery,
+      ensureDelivery:async()=>{},
+      persistDelivery:async()=>{await config.onDeliveryStateChange?.(requestDelivery.snapshot());},
       agent,
       sessionId,
       projectRoot,
@@ -1200,6 +1271,7 @@ async function runAgentSessionUnlocked(
   let parentUuid: string | null = null;
   let piTurnIndex = 0;
   let lastAssistantUuid: string | null = null;
+  const persistedToolResults = new Map<string, Promise<unknown>>();
   let skillTurnActive = cached.turnSkills.size > 0;
 
   // ----- Prepare transcript persistence -----
@@ -1278,8 +1350,30 @@ async function runAgentSessionUnlocked(
   cached.turnCompletion = undefined;
   cached.hasDelivery = config.resumeAction?.result.status === "success";
   cached.deliveryFailed = false;
-  cached.artifactDeliveries = new TurnArtifactDeliveries();
+  cached.artifactDeliveries = artifactDeliveries;
+  cached.requestDelivery = requestDelivery;
+  cached.persistDelivery = async()=>{
+    const state=requestDelivery.snapshot();
+    await appendAgentTranscriptEvent(projectRoot,sessionId,seq=>({type:'request_delivery',version:1,sessionId,requestId,seq,timestamp:Date.now(),state}));
+    await config.onDeliveryStateChange?.(state);
+  };
+  let interpretation:Promise<void>|undefined;
+  cached.ensureDelivery=async(signal)=>{
+    if(requestDelivery.interpretationComplete)return;
+    interpretation??=(async()=>{
+      const client={provider:model.api==='anthropic-messages'?'anthropic' as const:'openai' as const,
+        apiFormat:model.api==='anthropic-messages'?'anthropic' as const:model.api==='openai-responses'?'responses' as const:'chat' as const,
+        stream:config.stream??true,proxyUrl:config.proxyUrl,_piModel:model,_apiKey:config.apiKey??getEnvApiKey(model.provider),
+        defaults:{maxTokens:model.maxTokens,thinkingBudget:0,extra:{}},
+      };
+      requestDelivery.initialize(await interpretDeliveryRequirements(client,requestDelivery.snapshot().authorRequest,signal));
+      await cached!.persistDelivery();
+    })().finally(()=>{interpretation=undefined;});
+    await interpretation;
+  };
   if (config.resumeAction) cached.artifactDeliveries.observe(config.resumeAction.result, config.resumeAction.parameters);
+  if (config.resumeAction) await requestDelivery.record(projectRoot,config.resumeAction.result.operationReceipts??[]);
+  await cached.persistDelivery();
   let episodeFinished = false;
   const finishEpisode = (status: "completed" | "failed" | "cancelled") => {
     if (episodeFinished) return;
@@ -1293,6 +1387,18 @@ async function runAgentSessionUnlocked(
       piTurnIndex += 1;
       return;
     }
+    if (event.type === "tool_execution_end") {
+      // A completed mutation is already real even if the process exits before
+      // the SDK emits message_end. Persist its result before publishing the
+      // completion event so retry can recover it from the canonical transcript.
+      const result = event.result as { content?: ToolResultMessage["content"]; details?: unknown } | undefined;
+      if (Array.isArray(result?.content)) await persistAgentEvent({
+        type: "message_end",
+        message: { role: "toolResult", toolCallId: event.toolCallId, toolName: event.toolName,
+          content: result.content, details: result.details, isError: event.isError, timestamp: Date.now() },
+      });
+      return;
+    }
     if (event.type !== "message_end") return;
 
     const role = transcriptRoleForMessage(event.message);
@@ -1300,21 +1406,31 @@ async function runAgentSessionUnlocked(
 
     if (assistantInvokesSkill(event.message)) skillTurnActive = true;
     const persistedMessage = sanitizeSkillTurnMessage(event.message, skillTurnActive);
+    const controlCalls=role==='assistant'?(event.message as AssistantMessage).content.filter(part=>part.type==='toolCall'):[];
     const controlMessage = role === "assistant"
-      ? (event.message as AssistantMessage).content.some(part => part.type === "toolCall" && part.name === TURN_COMPLETION_TOOL)
-      : role === "toolResult" && (event.message as ToolResultMessage).toolName === TURN_COMPLETION_TOOL;
+      ? controlCalls.length>0&&controlCalls.every(part=>part.type==='toolCall'&&[TURN_COMPLETION_TOOL,REQUEST_DELIVERY_TOOL].includes(part.name))
+      : role === "toolResult" && [TURN_COMPLETION_TOOL,REQUEST_DELIVERY_TOOL].includes((event.message as ToolResultMessage).toolName);
     const completion = role === "assistant" && cached?.turnCompletion
       && (event.message as AssistantMessage).content.length === 0 ? cached.turnCompletion : undefined;
     const uuid = randomUUID();
     const isToolResult = role === "toolResult";
     const toolCallId = toolCallIdForMessage(event.message);
-    await appendAgentTranscriptEvent(projectRoot, sessionId, (seq) => ({
+    const sourceAssistantUuid = lastAssistantUuid;
+    const previousParentUuid = isToolResult && sourceAssistantUuid ? sourceAssistantUuid : parentUuid;
+    const toolResultKey = isToolResult ? JSON.stringify([sourceAssistantUuid, toolCallId]) : undefined;
+    const pendingResult = toolResultKey && persistedToolResults.get(toolResultKey);
+    if (pendingResult) { await pendingResult; return; }
+    // Capture ancestry before async appends. Parallel tool results and reused
+    // provider call IDs must still belong to their own assistant message.
+    if (role === "assistant") lastAssistantUuid = uuid;
+    parentUuid = uuid;
+    const persistence = appendAgentTranscriptEvent(projectRoot, sessionId, (seq) => ({
       type: "message",
       version: 1,
       sessionId,
       requestId,
       uuid,
-      parentUuid: isToolResult && lastAssistantUuid ? lastAssistantUuid : parentUuid,
+      parentUuid: previousParentUuid,
       seq,
       role,
       ...(controlMessage ? { visibility: "model" as const } : {}),
@@ -1322,8 +1438,8 @@ async function runAgentSessionUnlocked(
       timestamp: messageTimestamp(event.message),
       piTurnIndex,
       ...(toolCallId ? { toolCallId } : {}),
-      ...(isToolResult && lastAssistantUuid
-        ? { sourceToolAssistantUuid: lastAssistantUuid }
+      ...(isToolResult && sourceAssistantUuid
+        ? { sourceToolAssistantUuid: sourceAssistantUuid }
         : {}),
       ...(role === "user" && config.attachments?.length ? { display: { userInput: {
         text: userMessage, language: language === "en" ? "en" as const : "zh" as const,
@@ -1331,16 +1447,15 @@ async function runAgentSessionUnlocked(
       } } } : {}),
       message: persistedMessage,
     }));
-
-    if (role === "assistant") lastAssistantUuid = uuid;
-    parentUuid = uuid;
+    if (toolResultKey) persistedToolResults.set(toolResultKey, persistence);
+    await persistence;
   };
 
   // ----- Subscribe to events (transcript persistence + SSE forwarding) -----
   const unsubscribe = agent.subscribe(async (event: AgentEvent) => {
     await persistAgentEvent(event);
     if ((event.type === "tool_execution_start" || event.type === "tool_execution_end" || event.type === "tool_execution_update")
-      && event.toolName === TURN_COMPLETION_TOOL) return;
+      && [TURN_COMPLETION_TOOL,REQUEST_DELIVERY_TOOL].includes(event.toolName)) return;
     onEvent?.(event);
   });
 
@@ -1382,7 +1497,7 @@ async function runAgentSessionUnlocked(
     const turnMessages = agent.state.messages.slice(turnMessageStartIndex);
     errorMessage = assistantErrorMessage(finalAssistant)
       ?? (turnAborted ? "Agent turn aborted." : undefined)
-      ?? (!cached.pendingWorkTransition && cached.completedPlayScene === undefined && !completion
+      ?? (!cached.pendingWorkTransition && !canCompletePlayScene(cached) && !completion
         ? "Agent ended without an explicit completion result." : undefined)
       ?? (!turnHasObservableOutcome(turnMessages) ? "Agent returned no text or tool result." : undefined);
     if (errorMessage) {
@@ -1432,11 +1547,11 @@ async function runAgentSessionUnlocked(
   // ----- Extract result -----
   const allMessages = agent.state.messages;
   finalAssistant ??= lastAssistantMessage(allMessages);
-  const completion = cached.completedPlayScene !== undefined
+  const completion = canCompletePlayScene(cached)
     ? { status: "delivered" as const, message: cached.completedPlayScene }
     : currentTurnCompletion(cached);
   errorMessage ??= assistantErrorMessage(finalAssistant);
-  const responseText = errorMessage ? "" : cached.completedPlayScene ?? completion?.message ?? (finalAssistant ? extractTextFromAssistant(finalAssistant) : "");
+  const responseText = errorMessage ? "" : (canCompletePlayScene(cached)?cached.completedPlayScene:undefined) ?? completion?.message ?? (finalAssistant ? extractTextFromAssistant(finalAssistant) : "");
 
   return {
     responseText,

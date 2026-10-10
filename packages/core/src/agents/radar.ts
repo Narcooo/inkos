@@ -80,7 +80,7 @@ ${rankingsText}
         description: "Submit evidence-grounded market recommendations in ranked order.",
         parameters: RadarResultToolSchema,
       },
-      { temperature: 0.6 },
+      {  },
     );
 
     return {

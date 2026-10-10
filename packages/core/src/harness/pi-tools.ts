@@ -72,6 +72,7 @@ export function createCapabilityPiTools(
           // authoritative in the Episode ledger; Pi events expose its domain
           // payload when one exists.
           details: { ...((result.data && typeof result.data === "object") ? result.data : result),
+            ...(result.operationReceipts?.length?{operationReceipts:result.operationReceipts}:{}),
             displayText: result.content ?? result.summary, recoveredToolCallIds,
             hostExecution: { risk: action.risk, status: result.status, artifacts: result.artifacts } },
         };

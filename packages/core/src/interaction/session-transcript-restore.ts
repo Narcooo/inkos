@@ -332,6 +332,76 @@ export function committedMessageEvents(events: TranscriptEvent[], sessionKind?: 
     .sort((a, b) => a.seq - b.seq);
 }
 
+/** A failed conversation turn does not undo completed tool operations. Retain
+ * only call/result pairs; a streamed or unexecuted call is not an outcome. */
+export function interruptedToolExchanges(
+  events: TranscriptEvent[],
+  sessionKind?: SessionKind,
+  input?: string,
+) {
+  const committed = new Set(events.filter(event => event.type === "request_committed").map(event => event.requestId));
+  const blocked = new Set(events.filter((event): event is MessageEvent => event.type === "message" && event.display?.completion?.status === "blocked")
+    .map(event => event.requestId));
+  const starts = events.filter(event => event.type === "request_started");
+  const allowed = new Set<string>();
+  for (const start of (input === undefined ? starts : [...starts].reverse())) {
+    const matches = (!committed.has(start.requestId) || input !== undefined && blocked.has(start.requestId))
+      && (!sessionKind || start.sessionKind === undefined || start.sessionKind === sessionKind)
+      && (input === undefined || start.input === input);
+    // Delivery recovery is limited to the contiguous retry chain of this input.
+    if (input !== undefined && !matches) break;
+    if (matches) allowed.add(start.requestId);
+  }
+  const pending = new Map<string, { event: MessageEvent; call: Record<string, unknown> }>();
+  const exchanges: Array<{ assistant: MessageEvent; call: Record<string, unknown>; result: MessageEvent }> = [];
+  for (const event of events) {
+    if (event.type !== "message" || !allowed.has(event.requestId) || !isObject(event.message)) continue;
+    const raw = event.message;
+    if (event.role === "assistant") {
+      for (const call of contentBlocks(raw)) {
+        if (isObject(call) && call.type === "toolCall" && typeof call.id === "string" && typeof call.name === "string") {
+          pending.set(JSON.stringify([event.requestId, call.id]), { event, call });
+        }
+      }
+    } else if (event.role === "toolResult" && typeof raw.toolCallId === "string") {
+      const key = JSON.stringify([event.requestId, raw.toolCallId]);
+      const match = pending.get(key);
+      if (match && match.call.name === raw.toolName) {
+        exchanges.push({ assistant: match.event, call: match.call, result: event });
+        pending.delete(key);
+      }
+    }
+  }
+  return exchanges;
+}
+
+function interruptedMessageEvents(events: TranscriptEvent[], sessionKind?: SessionKind): MessageEvent[] {
+  const exchanges = interruptedToolExchanges(events, sessionKind);
+  const calls = new Map<number, Set<unknown>>();
+  const results = new Set<number>();
+  const requests = new Set<string>();
+  for (const exchange of exchanges) {
+    const ids = calls.get(exchange.assistant.seq) ?? new Set();
+    ids.add(exchange.call.id);
+    calls.set(exchange.assistant.seq, ids);
+    results.add(exchange.result.seq);
+    requests.add(exchange.result.requestId);
+  }
+  return events.flatMap(event => {
+    if (event.type !== "message" || !requests.has(event.requestId)) return [];
+    if (event.role === "user" || results.has(event.seq)) return [event];
+    const ids = calls.get(event.seq);
+    if (!ids || !isObject(event.message)) return [];
+    return [{
+      ...event,
+      message: {
+        ...event.message,
+        content: contentBlocks(event.message).filter(block => isObject(block) && block.type === "toolCall" && ids.has(block.id)),
+      },
+    } as MessageEvent];
+  });
+}
+
 function visibleMessageEvents(events: TranscriptEvent[]): MessageEvent[] {
   return events.flatMap((event): MessageEvent[] => {
     if (event.type === "message" && event.visibility === "model") return [];
@@ -369,13 +439,14 @@ export async function restoreAgentMessagesFromTranscript(
   sessionKind?: SessionKind,
 ): Promise<AgentMessage[]> {
   const events = await readTranscriptEvents(projectRoot, sessionId);
-  const committed = committedMessageEvents(events, sessionKind);
+  const interrupted = interruptedMessageEvents(events, sessionKind);
+  const committed = [...committedMessageEvents(events, sessionKind), ...interrupted].sort((a, b) => a.seq - b.seq);
   const requestKinds = new Map(
     events
       .filter((event) => event.type === "request_started")
       .map((event) => [event.requestId, event.sessionKind]),
   );
-  return cleanRestoredAgentMessages(
+  const restored = cleanRestoredAgentMessages(
     committed
       .filter((event) => {
         if (!sessionKind || requestKinds.get(event.requestId) !== undefined) return true;
@@ -387,6 +458,11 @@ export async function restoreAgentMessagesFromTranscript(
       })
       .map((event) => sanitizeRestoredSkillMessage(event.message as AgentMessage)),
   );
+  if (interrupted.length) restored.push(systemMessage(
+    'Some earlier requests were interrupted. Their completed tool call/result pairs are retained as historical execution evidence; unfinished calls were discarded. These individual outcomes do not mean the whole request completed.',
+    events.at(-1)?.timestamp ?? Date.now(),
+  ));
+  return restored;
 }
 
 function sanitizeRestoredSkillMessage(message: AgentMessage): AgentMessage {
@@ -595,6 +671,7 @@ function messageEventsToInteractionMessages(events: MessageEvent[]): Interaction
   const rememberToolCalls = (event: MessageEvent, raw: Record<string, unknown>) => {
     for (const block of contentBlocks(raw)) {
       if (!isObject(block) || block.type !== "toolCall") continue;
+      if (block.name==='finish_turn'||block.name==='bind_delivery_sources') continue;
       if (typeof block.id !== "string" || !block.id) continue;
       const tool = typeof block.name === "string" && block.name ? block.name : "tool";
       const args = objectArgs(block.arguments);
@@ -706,6 +783,7 @@ function messageEventsToInteractionMessages(events: MessageEvent[]): Interaction
       continue;
     }
 
+    flushPendingToolExecutions();
     clearPending();
     const message = messageEventToInteractionMessage(event);
     if (message) messages.push(message);

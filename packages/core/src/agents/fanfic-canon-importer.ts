@@ -20,9 +20,21 @@ export class FanficCanonImporter extends BaseAgent {
     language: "zh" | "en" = "zh",
   ): Promise<FanficCanonOutput> {
     const source = await this.prepareSourceText(sourceText, sourceName, language);
+    // A source that fits is already the best factual reference. Summarizing it
+    // again discards details before the architect or writer can inspect them.
+    if (!source.compiled) {
+      return { fullDocument: [
+        language === "en" ? `# Original source — ${sourceName}` : `# 原作正文 — ${sourceName}`,
+        language === "en" ? `Adaptation mode: ${fanficMode}` : `同人模式：${fanficMode}`,
+        language === "en"
+          ? "The complete source below establishes original facts. Apply only the author's permitted deviations when creating the new story."
+          : "下方完整原文是原作事实依据。创作新故事时，只按作者明确允许的范围改变原作。",
+        "", source.text,
+      ].join("\n\n") };
+    }
     const systemPrompt = language === "en"
-      ? `Compile source-grounded fan-fiction canon with the activated import and fan-fiction Skills. Mode: ${fanficMode}. Submit one readable Markdown canon document through the result tool. Include only source-evidenced sections relevant to this work; do not manufacture a genre-specific system.${source.compiled ? " The input is a traceable semantic source package." : ""}`
-      : `按已激活的导入与同人 Skills 编译有来源依据的同人正典。模式：${fanficMode}。通过结果工具提交一份可读 Markdown 正典文档；只保留原作有证据且对本作有用的内容，不强造题材专属体系。${source.compiled ? "输入是可追溯的语义资料包。" : ""}`;
+      ? `Extract factual reference notes from the supplied source, separating established characters, relationships, setting and original timeline events. Adaptation mode: ${fanficMode}. This mode guides which source facts are relevant; it does not authorize writing the adaptation, inventing scenes or treating a proposed divergence as an event that already occurred. Submit a readable Markdown canon document with source evidence and explicit uncertainty where needed. Keep original timeline events identifiable as source events, distinct from the future adaptation.${source.compiled ? " The input is a traceable semantic source package." : ""}`
+      : `从给定原作中提取有依据的参考事实，区分已建立的人物、关系、设定和原作时间线事件。同人模式：${fanficMode}。模式只用于判断哪些原作事实相关，不是让你撰写同人正文、补造场面或把拟议的分歧当成已经发生的事件。提交可读 Markdown 正典资料，给出原作依据，缺少依据之处明确留白。原作时间线事件要保留其来源身份，不混作未来同人作品已经发生的历史。${source.compiled ? "输入是可追溯的语义资料包。" : ""}`;
 
     const { result } = await this.submitStructured(
       [
@@ -37,7 +49,7 @@ export class FanficCanonImporter extends BaseAgent {
         description: "Submit the source-grounded canon sections for host persistence.",
         parameters: FanficCanonToolSchema,
       },
-      { temperature: 0.3 },
+      {professionalGuidance:false},
     );
 
     const canonMarkdown = result.canonMarkdown.trim();
@@ -77,8 +89,8 @@ export class FanficCanonImporter extends BaseAgent {
           {
             role: "system",
             content: language === "en"
-              ? "Compile the complete source chunk into a traceable Markdown evidence package with the activated import Skill."
-              : "按已激活的导入 Skill，把完整原作片段编译为可追溯 Markdown 资料包。",
+              ? "Extract a traceable Markdown evidence package from the complete source chunk. Record only source-supported facts, relationships and events, with their source context. Do not continue, adapt or improve the story."
+              : "从完整原作片段提取可追溯 Markdown 资料包。只记录有原文依据的事实、关系和事件，并保留它们的来源语境。不要续写、改编或完善故事。",
           },
           {
             role: "user",
@@ -90,7 +102,7 @@ export class FanficCanonImporter extends BaseAgent {
             ].join("\n"),
           },
         ],
-        { temperature: 0.2 },
+        {professionalGuidance:false},
       );
       const content = response.content.trim();
       if (!content) throw new Error(`Fanfic source compiler returned empty output for chunk ${index + 1}/${chunks.length}.`);

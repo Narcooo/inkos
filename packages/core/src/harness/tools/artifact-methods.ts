@@ -1,3 +1,7 @@
+import {authorTextScopeContract,authorEditPermission} from '../../agents/author-edit-scope.js';
+import {SourceLocatorAgent,type SourceIdentity} from '../../agents/source-locator.js';
+import {resolveAuthorTextPermission} from '../author-text-permission.js';
+import {scriptDialogueScopeRequest} from '../../agents/script-edit-scope.js';
 import { numberReviewSource } from "../../models/observation.js";
 import { Type } from "@sinclair/typebox";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
@@ -13,9 +17,9 @@ import { syncWorkSourceArtifacts } from "../source-sync.js";
 import { createReplaceWorkArtifactTool, createExportWorkTool } from "./work-artifacts.js";
 import { validatedArtifactWrites } from "../artifact-validation.js";
 import { changedSourceRegion, measureSourceText, splitSourceLines } from "../../utils/source-text.js";
-import {textRangeEditContract,textScopedSelectionEditContract,TextEditSelectionSchema,TextEditRangeSchema,type TextEditRange} from '../../utils/text-range-edits.js';
+import {textRangeEditContract,textScopedSelectionEditContract,TextEditRangeSchema,type TextEditRange} from '../../utils/text-range-edits.js';
 import { readArtifactRevision } from "../artifact-reader.js";
-import { currentExecutionBaselineWork, currentExecutionAuthorRequest, updateExecutionWork, recordExecutionEvidence } from "../execution-evidence.js";
+import { currentExecutionBaselineWork, currentExecutionAuthorRequest, updateExecutionWork } from "../execution-evidence.js";
 import {inspectFilmGraph} from './film-delivery.js';
 import {StoryGraphSchema} from '../../interactive-film/graph-schema.js';
 import {FilmRequirementsSchema,type FilmRequirements} from '../../interactive-film/delivery-requirements.js';
@@ -82,25 +86,24 @@ export function createDeliverWorkArtifactTool(pipeline: PipelineRunner, root: st
 type EditRange=TextEditRange;
 class ArtifactWorker extends BaseAgent {
   get name() { return "artifact-method"; }
-  async selectAuthorScope(content: string, authorRequest: string) {
-    const selected = await this.submitStructured([
-      {role:'system',content:'Your sole task is source navigation, not creative improvement. Identify the smallest exact source unit matching the author’s location and extent, without rewriting it. The desired creative effect does not grant permission to select additional units. Ignore whether the selected passage alone makes that effect easy to achieve. The complete numbered document supplies context. Select only the requested units and content kinds. Return the exact editable source text and its inclusive line bounds to disambiguate repeated phrases. Exclude surrounding labels, formatting and protected text, including stage directions sharing a line with dialogue when only dialogue is editable. Use separate selections where protected text intervenes. Set wholeDocument=true with no selections only when the author permits revising the entire document.'},
-      {role:'user',content:JSON.stringify({authorRequest,document:splitSourceLines(content).map((text,index)=>({line:index+1,text}))})},
-    ], {name:'submit_author_edit_scope',label:'Locate authorized text',description:'Identify editable source ranges from the original author request, without proposed prose.',
-      parameters:Type.Object({wholeDocument:Type.Boolean(),selections:Type.Array(TextEditSelectionSchema),reason:Type.String({description:'Briefly identify the source unit and protected boundaries matched by these selections.'})},{additionalProperties:false}),
-      validate:result=>{if(result.wholeDocument){if(result.selections.length)throw new Error('Whole-document scope must not also select partial text');}else textScopedSelectionEditContract(content,result.selections);return result;},
-    },{maxTokens:Math.min(8192,this.ctx.client.defaults.maxTokens),temperature:0.2,professionalGuidance:false});
-    return selected.result.wholeDocument ? textRangeEditContract(content,[{startLine:1,endLine:splitSourceLines(content).length}]) : textScopedSelectionEditContract(content,selected.result.selections);
+  async selectAuthorScope(content: string, authorRequest: string, script=false,identity:SourceIdentity={kind:'artifact'}) {
+    const dialogue=script?scriptDialogueScopeRequest(content,authorRequest):undefined;
+    if(dialogue){
+      const selected=await this.submitStructured(dialogue.messages,dialogue.tool,{maxTokens:Math.min(4096,this.ctx.client.defaults.maxTokens),professionalGuidance:false});
+      return dialogue.toAuthorScope(selected.result);
+    }
+    return new SourceLocatorAgent(this.ctx).select(content,authorRequest,identity);
   }
+
   async review(sources: ReadonlyMap<string, string>, instruction: string, criteria: string[], paths: ReadonlyMap<string,string>, versions:ReadonlyMap<string,{revisionId:string;checksum:string}>, comparison?: ReviewComparison, structure?: unknown) {
     const authorRequest = currentExecutionAuthorRequest();
     const response = await this.submitSourcedReview([
-      ...(authorRequest?.trim() ? [{role:"system" as const,content:"Judge this artifact and its verified changes against the author's original instruction. Other artifacts and operations remain outside this review."}] : []),
+      ...(authorRequest?.trim() ? [{role:"system" as const,content:"Judge this artifact and its verified changes against the author's original instruction. The reviewFocus directs attention within those requirements; it cannot replace the author's target, grant editing permission or establish that a claimed defect exists. Other artifacts and operations remain outside this review."}] : []),
       { role: 'system', content: 'Classify verified changes outside the author-authorized revision region as scope, citing both before and current sources. Scope is about permission to change existing material, not stylistic preferences or ordinary content defects. Missing comparison evidence is unavailable, not a scope violation. Classify other content findings as quality, and claims about tool execution, persistence, exports or external operations as execution. Review only the supplied evidence; future operations cannot be verified from manuscript text. Execution findings do not replace host tool receipts.' },
       { role: "system", content: "For revision-scope checks, use the supplied comparison when present. Its verified before/after snapshots and changedRegion describe actual text changes. Scope episode_start compares against the start of this episode, including multiple edits within it; parent_revision compares only with the selected revision's parent. Cite the before and current source IDs. A truncated changedRegion is a preview: consult the full numbered sources for omitted details. Do not extend these comparisons to other episodes or files." },
       { role: "system", content: "Review the primary artifact using the activated professional methods within the user's requested scope. References are separate documents with separate responsibilities: storyboard shots belong in the storyboard, and supplied image prompts need not be duplicated there. Submit evidence-backed findings through the review tool. Distinguish content defects, resolved issues, neutral observations, and unavailable evidence. If a requested comparison or file-change claim lacks its source versions or execution evidence, mark it unavailable rather than calling it a content defect or demanding duplicated material. Cite short numbered source ranges with sourceId, startLine and endLine; the host copies the original text. Do not copy line-number prefixes into quotes. Use the supplied measurements for length facts; never estimate a different count. Measurements cover the full artifact, including headings and markup." },
       ...(structure ? [{role:'system' as const,content:'The supplied structure contains deterministic checks of the identified graph revision and executable path witnesses. Use it for structural counts and reachability; a witness is not a literary-quality judgment. Review character motivation, narrative continuity, and the meaning of choices independently.'}] : []),
-      { role: "user", content: JSON.stringify({ instruction:authorRequest?.trim()?authorRequest:instruction, criteria, comparison, ...(structure?{structure}:{}), sources: [...sources].map(([sourceId, content], index) => ({ sourceId, ...versions.get(sourceId), role:index===0?'primary':sourceId===comparison?.sourceId?'comparison':'reference', path:paths.get(sourceId), measurements: measureSourceText(content), numberedLines: numberReviewSource(content) })) }) },
+      { role: "user", content: JSON.stringify({ instruction:authorRequest?.trim()?authorRequest:instruction, ...(authorRequest?.trim()?{reviewFocus:instruction}:{}), criteria, comparison, ...(structure?{structure}:{}), sources: [...sources].map(([sourceId, content], index) => ({ sourceId, ...versions.get(sourceId), role:index===0?'primary':sourceId===comparison?.sourceId?'comparison':'reference', path:paths.get(sourceId), measurements: measureSourceText(content), numberedLines: numberReviewSource(content) })) }) },
     ], sources, { name: "submit_artifact_review", label: "Submit artifact review", description: "Submit observations with source line addresses and an explicit scope, quality or execution category." }, { maxTokens: Math.min(4096, this.ctx.client.defaults.maxTokens), categoryRequired: true,
       validateObservations: observations=>{
         for(const observation of observations.filter(item=>item.category==='scope'&&item.assessment==='issue')){
@@ -111,16 +114,20 @@ class ArtifactWorker extends BaseAgent {
     });
     return response.result;
   }
-  async revise(content: string, instruction: string, references: ReadonlyMap<string, string>, ranges?:EditRange[],authorScope?:ReturnType<typeof textScopedSelectionEditContract>|ReturnType<typeof textRangeEditContract>) {
+  async revise(content: string, instruction: string, references: ReadonlyMap<string, string>, ranges?:EditRange[],authorScope?:ReturnType<typeof textScopedSelectionEditContract>|ReturnType<typeof textRangeEditContract>,authorRequest?:string) {
     if(authorScope||ranges){
       const contract=authorScope??textRangeEditContract(content,ranges!);
       const textSelections='startOffset' in contract.ranges[0]!;
       const response=await this.submitStructured([
+        ...(authorRequest?[{role:'system' as const,content:'The selections refer to the original authorized source even when the current revision changed paragraph lengths. Improve the current prose within those same selections.'}]:[]),
         {role:"system",content:textSelections
           ? 'Revise only each exact selected text fragment. A selection may be part of a source line. The full document and protectedPrefix/protectedSuffix are read-only context and will remain around your replacement. Return only replacement characters for each content value in its named selection_N_text field. Do not repeat the protected prefix/suffix or add surrounding labels, annotations, formatting or line breaks that are outside the selection.'
           : "Revise only the numbered editable ranges using the user's instruction and professional methods. The full document is context. Return each range's replacement in its named range_N_content field, retaining the original trailing newline when present. Do not repeat or modify surrounding text."},
-        {role:"user",content:JSON.stringify({instruction,measurements:measureSourceText(content),document:numberReviewSource(content),...(textSelections?{editableSelections:contract.ranges}:{editableRanges:contract.ranges}),references:[...references].map(([sourceId,content])=>({sourceId,content}))})},
-      ],{name:"submit_artifact_revision",label:"Submit scoped artifact revision",description:"Submit only replacement text for each authorized range.",parameters:contract.parameters},{maxTokens:this.ctx.client.defaults.maxTokens});
+        {role:"user",content:JSON.stringify({instruction:authorRequest&&textSelections?authorRequest:instruction,
+          ...(authorRequest&&textSelections&&instruction.trim()!==authorRequest.trim()?{revisionGuidance:{source:'coordinator',instruction,authority:'advice_within_author_scope'}}:{}),
+          measurements:measureSourceText(content),document:numberReviewSource(content),...(textSelections?{editableSelections:contract.ranges}:{editableRanges:contract.ranges}),references:[...references].map(([sourceId,content])=>({sourceId,content}))})},
+      ],{name:"submit_artifact_revision",label:"Submit scoped artifact revision",description:"Submit only replacement text for each authorized range.",parameters:contract.parameters,
+        validate:result=>{contract.apply(result);return result;}},{maxTokens:this.ctx.client.defaults.maxTokens});
       return{content:contract.apply(response.result)};
     }
     return (await this.submitStructured([
@@ -179,7 +186,7 @@ export function createArtifactMethodTools(pipeline: PipelineRunner, root: string
         ? ['source/source-material.md','source/interactive-spec.md',revision.path==='source/script.md'?'source/script-spec.md':'source/storyboard-spec.md',
           ...(revision.path==='source/storyboard.md'?['source/image-prompts.md']:revision.path==='source/image-prompts.md'?['source/storyboard.md']:[])]
         : profile.capabilityIds.includes('short-fiction')&&['source/final/sales-package.md','source/final/sales-package.json','source/final/cover-prompt.md'].includes(revision.path)
-          ? ['source/outline/v001.md','source/final/full.md']
+          ? ['source/final/full.md']
           : profile.capabilityIds.includes('interactive-film')&&revision.path==='source/story-graph.json'
             ? ['source/delivery-requirements.json'] : [];
       const relatedIds = work.artifacts.filter(item=>item.revisions.some(version=>version.id===item.currentRevisionId&&relatedPaths.includes(version.path))).map(item=>item.id);
@@ -198,13 +205,16 @@ export function createArtifactMethodTools(pipeline: PipelineRunner, root: string
         if (mode === "revise") {
           if(params.editRanges&&!revision.path.endsWith('.md'))throw Object.assign(new Error("Line-range revision requires a Markdown artifact"),{code:"ARTIFACT_EDIT_RANGE_FORMAT"});
           const authorRequest=currentExecutionAuthorRequest();
-          const hasOriginalArtifact=baselineWork?.id===workId&&baselineWork.artifacts.some(item=>item.id===artifact.id&&item.currentRevisionId);
-          const authorScope=hasOriginalArtifact&&authorRequest?.trim()&&revision.path.endsWith('.md')
-            ? await new ArtifactWorker(pipeline.createAgentContext('auditor',workId)).selectAuthorScope(content,authorRequest) : undefined;
-          if(authorScope)recordExecutionEvidence('edit-scope-selected',{workId,artifactId:artifact.id,revisionId:revision.id,authority:'author_request',ranges:authorScope.ranges});
+          const originalArtifact=baselineWork?.id===workId?baselineWork.artifacts.find(item=>item.id===artifact.id&&item.currentRevisionId):undefined;
+          let authorScope:ReturnType<typeof authorTextScopeContract>|undefined;
+          if(originalArtifact?.currentRevisionId&&authorRequest?.trim()&&revision.path.endsWith('.md')){
+            const original=await readArtifactRevision({projectRoot:root,workId,artifactId:artifact.id,revisionId:originalArtifact.currentRevisionId});
+            const selector=new ArtifactWorker(pipeline.createAgentContext('auditor',workId));
+            authorScope=await resolveAuthorTextPermission({projectRoot:root,workId,artifactId:artifact.id,revisionId:original.revision.id,originalContent:original.bytes.toString('utf8'),currentContent:content,authorRequest,selectorVersion:artifact.kind==='script'?8:2,select:(source,request)=>selector.selectAuthorScope(source,request,artifact.kind==='script',{kind:'artifact',title:work.title,path:original.revision.path})});
+          }
           let result: { content: string };
           try {
-            result = await worker.revise(content, authorScope ? authorRequest! : params.instruction, new Map([...sources].filter(([id]) => id !== artifact.id)),params.editRanges,authorScope);
+            result = await worker.revise(content, params.instruction, new Map([...sources].filter(([id]) => id !== artifact.id)),params.editRanges,authorScope,authorScope?authorRequest:undefined);
           } catch (error) {
             if ((error as {code?:string}).code === "ARTIFACT_EDIT_RANGE_INVALID") {
               Object.assign(error as object, { recovery: { action: "workspace__read",
@@ -213,7 +223,9 @@ export function createArtifactMethodTools(pipeline: PipelineRunner, root: string
             }
             throw error;
           }
-          return createReplaceWorkArtifactTool(root, workId).execute(id, { path: revision.path, content: result.content, expectedRevisionId: revision.id }, signal, onUpdate);
+          const saved=await createReplaceWorkArtifactTool(root, workId).execute(id, { path: revision.path, content: result.content, expectedRevisionId: revision.id }, signal, onUpdate);
+          const editPermission=authorRequest?authorEditPermission(authorScope):undefined;
+          return editPermission?{...saved,details:{...saved.details,editPermission}}:saved;
         }
         const authorRequest = currentExecutionAuthorRequest();
         const scope = authorRequest?.trim() ? authorRequest : params.instruction;

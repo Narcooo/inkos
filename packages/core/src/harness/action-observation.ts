@@ -63,7 +63,7 @@ export function actionResultFacts(value: unknown): Record<string, unknown> {
   }
   if (data.delivery !== undefined) facts.delivery = deliveryFacts(data.delivery);
   if (data.artifacts !== undefined) facts.artifacts = artifactAddresses(data.artifacts);
-  for (const key of ["nextRead", "structure", "suggestedActions", "lineage", "measurements", "reviewedReferences", "changedRegion", "comparison", "revisionChanges"]) {
+  for (const key of ["nextRead", "structure", "suggestedActions", "lineage", "measurements", "reviewedReferences", "changedRegion", "editPermission", "comparison", "revisionChanges"]) {
     if (data[key] !== undefined) facts[key] = data[key];
   }
   if (data.currentState && typeof data.currentState === "object") {
@@ -83,6 +83,7 @@ export function actionObservation(result: ActionResult) {
     ...(result.content && facts.kind !== "work_inspected" ? { content: result.content } : {}),
     artifacts: artifactAddresses(result.artifacts),
     observations: result.observations.map(observationFacts),
+    ...(result.operationReceipts?.length ? {operationReceipts: result.operationReceipts} : {}),
     facts,
   };
 }

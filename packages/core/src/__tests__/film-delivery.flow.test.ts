@@ -6,7 +6,7 @@ import {Value} from '@sinclair/typebox/value';
 import {createWorkManifest,saveWorkManifest,loadWorkManifest} from '../harness/work-store.js';
 import {applyGraphDelta} from '../interactive-film/authoring-store.js';
 import {loadStoryGraph} from '../interactive-film/graph-store.js';
-import {createConnectChoiceTool,createFillNodeTool,createReviseNodeTool,createDraftStructureTool} from '../agent/film-authoring-tools.js';
+import {createConnectChoiceTool,createFillNodeTool,createReviseNodeTool,createDraftStructureTool,createDefineEndingTool} from '../agent/film-authoring-tools.js';
 import {createInspectFilmTool,createExportFilmTool,createSetFilmRequirementsTool} from '../harness/tools/film-delivery.js';
 import {StoryGraphSchema} from '../interactive-film/graph-schema.js';
 import {findSimpleRuntimeRoute,enumerateRuntimePaths,exploreRuntimeStates} from '../interactive-film/paths.js';
@@ -39,9 +39,22 @@ it('persists conditional dialogue and presents only the lines supported by the e
     const start=saved.nodes.find(n=>n.id==='s')!,merged=saved.nodes.find(n=>n.id==='m')!;
     const states=start.choices.map(choice=>applyEffects(initVarState(saved.variables),choice.effects));
     expect(states.map(state=>visibleDialogue(merged,state))).toEqual([[merged.dialogue[0]],[merged.dialogue[1]]]);
+    const inspection=await createInspectFilmTool(root,'dialogue').execute('visibility',{}) as any;
+    expect(inspection.details.dialogueVisibility).toEqual({exhaustive:true,lines:[
+      {nodeId:'m',dialogueIndex:0,condition:{var:'recording',op:'==',value:1},witnesses:[{state:{recording:1},visible:true},{state:{recording:0},visible:false}]},
+      {nodeId:'m',dialogueIndex:1,condition:{var:'recording',op:'==',value:0},witnesses:[{state:{recording:1},visible:false},{state:{recording:0},visible:true}]},
+    ]});
     const before=await readFile(join(root,'works/dialogue/source/story-graph.json'));
     await expect(applyGraphDelta({projectRoot:root,projectId:'dialogue',delta:{nodes:{upsert:[{...merged,dialogue:[{...merged.dialogue[0]!,condition:{var:'recording',op:'==',value:true}}]}],remove:[]},notes:[]}})).rejects.toMatchObject({code:'VARIABLE_TYPE_MISMATCH'});
     expect(await readFile(join(root,'works/dialogue/source/story-graph.json'))).toEqual(before);
+    const endingTool=createDefineEndingTool(root,'dialogue');
+    const ending={id:'outcome',nodeId:'e',title:String.raw`\u5b8c\u6210`,type:'complete'};
+    await expect(endingTool.execute('encoded',ending)).rejects.toMatchObject({code:'ENCODED_DISPLAY_TEXT',issues:[{path:'/endings/0/title'}]});
+    expect(await readFile(join(root,'works/dialogue/source/story-graph.json'))).toEqual(before);
+    const legacy=StoryGraphSchema.parse({...saved,endings:[ending]});
+    expect(checkFilmRequirements(legacy,{nodeCount:3}).issues).toContainEqual({code:'FILM_STRUCTURE_INVALID',actual:'ENCODED_DISPLAY_TEXT',nodeIds:['e']});
+    await endingTool.execute('readable',{...ending,title:'完成',description:String.raw`A code example: \u5b8c`});
+    expect((await loadStoryGraph(root,'dialogue'))!.endings[0].title).toBe('完成');
   }finally{await rm(root,{recursive:true,force:true});}
 });
 
@@ -98,11 +111,20 @@ it('checks exact delivery requirements, corrects a draft and preserves topology 
     await createDraftStructureTool(root,'film',deps).execute('structure',{instruction:'Two nodes'},undefined);
     expect(structure).toHaveBeenCalledTimes(2);
     expect((await loadStoryGraph(root,'film'))?.nodes.map(n=>n.id)).toEqual(['s','e']);
-    for(const tool of [createFillNodeTool(root,'film',deps),createReviseNodeTool(root,'film',deps)])await tool.execute('edit',{nodeId:'s',instruction:'Edit prose',fields:['sceneDesc','dialogue']},undefined);
+    for(const tool of [createFillNodeTool(root,'film',deps),createReviseNodeTool(root,'film',deps)]) {
+      const receipt=await tool.execute('edit',{nodeId:'s',instruction:'Edit prose',fields:['sceneDesc','dialogue']},undefined);
+      const persisted=(await loadStoryGraph(root,'film'))!.nodes.find(node=>node.id==='s');
+      expect(receipt.details).toMatchObject({kind:'graph_updated',node:persisted});
+      const visible=JSON.parse(receipt.content.find(item=>item.type==='text')!.text!);
+      expect(visible.node).toEqual(persisted);
+    }
     expect((await loadStoryGraph(root,'film'))?.nodes[0]).toMatchObject({id:'s',type:'start',sceneDesc:'Edited',choices:start.choices});
     const beforeProseRevision=(await loadStoryGraph(root,'film'))!.nodes[0]!;
     await createReviseNodeTool(root,'film',{...deps,submitNode:async()=>({...beforeProseRevision,title:'Unrequested rename',act:'Unrequested act',position:{x:10,y:20},imageSlot:{prompt:'Unrequested image'},sceneDesc:'Scoped scene',dialogue:[{speaker:'Player',text:'Ready',emotion:''}]})}).execute('scoped-edit',{nodeId:'s',fields:['sceneDesc','dialogue'],instruction:'Revise prose only'},undefined);
     expect((await loadStoryGraph(root,'film'))!.nodes[0]).toEqual({...beforeProseRevision,sceneDesc:'Scoped scene',dialogue:[{speaker:'Player',text:'Ready',emotion:''}]});
+    const beforeTitleRevision=(await loadStoryGraph(root,'film'))!.nodes[0]!;
+    await createReviseNodeTool(root,'film',{...deps,submitNode:async()=>({...beforeTitleRevision,title:'A new title',sceneDesc:'Unrequested scene',dialogue:[],choices:[]})}).execute('title-edit',{nodeId:'s',fields:['title'],instruction:'Change only the scene title'},undefined);
+    expect((await loadStoryGraph(root,'film'))!.nodes[0]).toEqual({...beforeTitleRevision,title:'A new title'});
     const exported=await createExportFilmTool(root,'film').execute('export',{});
     expect(exported.details).toMatchObject({delivery:{status:'checks_passed'}});
     await createSetFilmRequirementsTool(root,'film').execute('ending-state',{endingStateRules:[{nodeId:'e',conditions:[{var:'key',op:'==',value:false}]}]});
@@ -130,12 +152,16 @@ it('rewires without losing authored content, inspects real paths and versions a 
     expect(await readFile(join(root,'works/film/source/story-graph.json'))).toEqual(before);
     const inspected=await createInspectFilmTool(root,'film').execute('inspect',{});
     expect(inspected.details).toMatchObject({nodeCount:2,registeredEndingCount:1,longestObservedSimpleRoute:{nodeIds:['s','e'],choices:1}});
-    const exported=await createExportFilmTool(root,'film').execute('export',{format:'html'});
+    const exported=await createExportFilmTool(root,'film').execute('export',{format:'html'}) as any;
     const details=exported.details as {path:string;previewUrl:string};
     expect((await readFile(join(root,details.path))).length).toBeGreaterThan(0);
     const work=await loadWorkManifest(root,'film');
     expect(work.artifacts.flatMap(a=>a.revisions.filter(r=>r.id===a.currentRevisionId)).find(r=>r.path==='source/exports/playable.html')?.contentType).toBe('text/html');
-    await applyGraphDelta({projectRoot:root,projectId:'film',delta:{nodes:{upsert:[{id:'unused',title:'Unused',type:'normal',sceneDesc:'Preserved in history',dialogue:[],choices:[],act:''}],remove:[]},notes:[]}});
+    const stableGraph=(await loadStoryGraph(root,'film'))!;
+    await applyGraphDelta({projectRoot:root,projectId:'film',delta:{nodes:{upsert:[
+      {...stableGraph.nodes[0]!,choices:[...stableGraph.nodes[0]!.choices,{id:'unused-route',text:'Unused route',targetNodeId:'unused',effects:[]}]},
+      {id:'unused',title:'Unused',type:'ending',sceneDesc:'Preserved in history',dialogue:[],choices:[],act:''},
+    ],remove:[]},endings:{upsert:[{id:'retired-ending',nodeId:'unused',title:'Unused',type:'end',description:''}],remove:[]},notes:[]}});
     const withUnused=await loadWorkManifest(root,'film');
     const graphArtifact=withUnused.artifacts.find(a=>a.revisions.some(r=>r.id===a.currentRevisionId&&r.path==='source/story-graph.json'))!;
     const previous=await readArtifactRevision({projectRoot:root,workId:'film',artifactId:graphArtifact.id});
@@ -150,7 +176,11 @@ it('rewires without losing authored content, inspects real paths and versions a 
       const handle=runtime.startEpisode({profileId:'interactive-film',work:withUnused});
       const removed=await runtime.executeAction({handle,capabilityId:'interactive-film',actionId:'remove_node',source:'agent',parameters:{nodeId:'unused'}});
       expect(removed.status).toBe('success');
-      expect((await loadStoryGraph(root,'film'))!.nodes.map(node=>node.id)).toEqual(['s','e']);
+      const current=(await loadStoryGraph(root,'film'))!;
+      expect(current).toEqual(stableGraph);
+      expect(removed.data).toMatchObject({removedNodeId:'unused',remainingEndingIds:['ending']});
+      await expect(applyGraphDelta({projectRoot:root,projectId:'film',delta:{endings:{upsert:[{id:'dangling',nodeId:'unused',title:'Invalid',type:'end',description:''}],remove:[]},notes:[]}})).rejects.toMatchObject({code:'ENDING_NODE_NOT_FOUND',endingId:'dangling',nodeId:'unused'});
+      expect(await loadStoryGraph(root,'film')).toEqual(stableGraph);
       expect((await readArtifactRevision({projectRoot:root,workId:'film',artifactId:graphArtifact.id,revisionId:previous.revision.id})).bytes).toEqual(previous.bytes);
       expect(JSON.parse(previous.bytes.toString('utf8')).nodes.some((node:{id:string})=>node.id==='unused')).toBe(true);
       runtime.finishEpisode(handle,'completed');
@@ -185,5 +215,48 @@ it('reuses an explicitly selected topology without copying reference prose and r
   expect(target.variables).toEqual([{name:'key',type:'flag',default:true,desc:'Key'}]);
   expect(result.details).toMatchObject({referenceTopology:{workId:'reference'},missingSceneNodeIds:['e']});
   expect(await readFile(join(root,'works/reference/source/story-graph.json'))).toEqual(referenceBefore);
+ }finally{await rm(root,{recursive:true,force:true});}
+});
+
+it('keeps minimum counts and dialogue conditions distinct through structure repair, scene writing and export',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'inkos-film-minimum-'));
+ try{
+  await saveWorkManifest(root,createWorkManifest({id:'film',title:'Note',profileId:'interactive-film',language:'en'}));
+  await applyGraphDelta({projectRoot:root,projectId:'film',delta:{variables:{upsert:[{name:'note',type:'flag',default:false,desc:'A found note'}],remove:[]},notes:[]}});
+  const requirements=createSetFilmRequirementsTool(root,'film');
+  await requirements.execute('minimum',{minNodeCount:3,endingCount:2,minChoicesPerNode:2,minRouteChoices:2,dialogueConditionVariables:['note']});
+  const nodes=StoryGraphSchema.parse({schemaVersion:1,projectId:'film',title:'Note',nodes:[
+   {id:'s',type:'start',sceneDesc:'A note lies on the desk.',choices:[{id:'take',text:'Take it',targetNodeId:'m',effects:[{var:'note',op:'set',value:true}]},{id:'leave',text:'Leave it',targetNodeId:'m'}]},
+   {id:'m',type:'normal',sceneDesc:'The guide waits.',choices:[{id:'stay',text:'Stay',targetNodeId:'a'},{id:'depart',text:'Depart',targetNodeId:'b'}]},
+   {id:'a',type:'ending',sceneDesc:'The player stays.',choices:[]},
+   {id:'b',type:'ending',sceneDesc:'The player leaves.',choices:[]},
+  ]}).nodes;
+  const first=structuredClone(nodes);first[1]!.choices=first[1]!.choices.slice(0,1);
+  const requests:any[]=[];
+  const deps={submitStructure:async(_system:string,user:string)=>{requests.push(JSON.parse(user));return requests.length===1?first:nodes;},submitNode:async()=>({...nodes[1]!,dialogue:[{speaker:'Guide',text:'You found the note.',emotion:'',condition:{var:'note',op:'==' as const,value:true}}]})};
+  await createDraftStructureTool(root,'film',deps).execute('draft',{instruction:'At least three nodes; two endings; the note changes dialogue.'});
+  expect(requests).toHaveLength(2);
+  expect(requests[1].previousCandidate).toEqual(first);
+  expect(requests[1].validationIssues).toEqual(expect.arrayContaining([expect.objectContaining({code:'FILM_VISIBLE_CHOICES',expected:2,actual:1,nodeIds:['m']})]));
+  expect((await loadStoryGraph(root,'film'))!.nodes).toHaveLength(4);
+  const pending=await createInspectFilmTool(root,'film').execute('inspect',{}) as any;
+  expect(pending.details?.delivery.issues).toEqual([{code:'FILM_DIALOGUE_CONDITION_UNUSED',expected:'note'}]);
+  await createFillNodeTool(root,'film',deps).execute('fill',{nodeId:'m',instruction:'The guide responds to possession of the note.'});
+  const exported=await createExportFilmTool(root,'film').execute('export',{format:'html'}) as any;
+  expect(exported.details?.delivery.status).toBe('checks_passed');
+  expect((await readFile(join(root,exported.details!.path))).length).toBeGreaterThan(0);
+  // A condition in the file is insufficient when every route reaches it with
+  // the same value. Inspection and export must report the missing variation.
+  await applyGraphDelta({projectRoot:root,projectId:'film',delta:{nodes:{upsert:[{
+    ...nodes[0]!,choices:nodes[0]!.choices.map(choice=>({...choice,effects:[{var:'note',op:'set',value:true}]})),
+  }],remove:[]},notes:[]}});
+  const unreachable=[{code:'FILM_DIALOGUE_VARIATION_UNREACHABLE',expected:'note',nodeIds:['m']}];
+  expect(((await createInspectFilmTool(root,'film').execute('inspect-dead-condition',{})) as any).details.delivery.issues).toEqual(unreachable);
+  expect(((await createExportFilmTool(root,'film').execute('export-dead-condition',{})) as any).details.delivery.issues).toEqual(unreachable);
+  await applyGraphDelta({projectRoot:root,projectId:'film',delta:{nodes:{upsert:[nodes[0]!],remove:[]},notes:[]}});
+  const exact=await requirements.execute('exact',{nodeCount:3}) as any;
+  expect(exact.details?.requirements.nodeCount).toBe(3);
+  expect(exact.details?.requirements.minNodeCount).toBeUndefined();
+  expect(((await createInspectFilmTool(root,'film').execute('inspect-exact',{})) as any).details?.delivery.issues).toEqual([{code:'FILM_NODE_COUNT',expected:3,actual:4}]);
  }finally{await rm(root,{recursive:true,force:true});}
 });

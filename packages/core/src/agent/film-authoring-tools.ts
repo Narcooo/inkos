@@ -171,7 +171,7 @@ export interface FilmLLMDeps {
     nodeId: string,
     signal?: AbortSignal,
     currentNode?: StoryNode,
-    fields?: ReadonlyArray<"sceneDesc" | "dialogue">,
+    fields?: ReadonlyArray<"title" | "sceneDesc" | "dialogue">,
   ) => Promise<StoryNode>;
   readonly submitStructure: (
     system: string,
@@ -196,7 +196,7 @@ function defaultSubmitNode(
       description: currentNode ? "Submit only the selected prose fields. The host preserves every other node field."
         : "Submit the complete scene, dialogue, choices, and image direction for the requested node. The host owns the node id.",
       parameters: currentNode ? Type.Pick(StoryNodeRevisionToolSchema, fields ?? ["sceneDesc", "dialogue"]) : StoryNodeContentToolSchema,
-    }, { temperature: 0.6, maxTokens: 4000, signal });
+    }, {  maxTokens: 4000, signal });
     return StoryNodeSchema.parse({ ...currentNode, ...submitted, id: nodeId });
   };
 }
@@ -215,7 +215,7 @@ function defaultSubmitStructure(
       label: "Submit Story Structure",
       description: "Submit the complete branching node skeleton. Node ids and choice targets must form one connected playable graph.",
       parameters: StoryStructureToolSchema,
-    }, { temperature: 0.6, maxTokens: 6000, signal });
+    }, {  maxTokens: 6000, signal });
     return submitted.nodes.map((node) => StoryNodeSchema.parse(node));
   };
 }
@@ -227,9 +227,9 @@ const FillNodeParams = Type.Object({
 
 const ReviseNodeParams = Type.Object({
   ...FillNodeParams.properties,
-  fields: Type.Array(Type.Union([Type.Literal("sceneDesc"), Type.Literal("dialogue")]), {
+  fields: Type.Array(Type.Union([Type.Literal("title"), Type.Literal("sceneDesc"), Type.Literal("dialogue")]), {
     minItems: 1, uniqueItems: true,
-    description: "Select only the fields the author permits changing. For dialogue-only edits select dialogue; for description-only edits select sceneDesc. Select both only when both are in scope.",
+    description: "Select only the fields the author permits changing: title, sceneDesc, dialogue. Title-only or dialogue-only changes preserve every unselected field.",
   }),
 });
 
@@ -274,15 +274,17 @@ export function createFillNodeTool(
       const node = await deps.submitNode(systemPrompt, userPrompt, params.nodeId, signal);
       const existing=graph?.nodes.find(n=>n.id===params.nodeId);
       const filled=existing?{...node,id:existing.id,type:existing.type,choices:existing.choices}:node;
-      const { rev } = await applyGraphDelta({
+      const { graph: persisted, rev } = await applyGraphDelta({
         projectRoot,
         projectId,
         delta: { nodes: { upsert: [filled], remove: [] }, notes: [] },
         phase: "workshop",
       });
-      return textResult(`Node ${params.nodeId} filled (rev ${rev}).`, graphUpdatedDetails(rev, {
+      const details = graphUpdatedDetails(rev, {
+        node: persisted.nodes.find(node => node.id === params.nodeId),
         skillIds: deps.skillIds?.() ?? [],
-      }));
+      });
+      return textResult(JSON.stringify(details), details);
     },
   };
 }
@@ -307,18 +309,21 @@ export function createReviseNodeTool(
       if(!current)throw Object.assign(new Error('Select an existing node'),{code:'NODE_NOT_FOUND'});
       const generated = await deps.submitNode(systemPrompt, userPrompt, params.nodeId, signal, current, params.fields);
       const node={...current,
+        ...(params.fields.includes("title") ? {title:generated.title} : {}),
         ...(params.fields.includes("sceneDesc") ? {sceneDesc:generated.sceneDesc} : {}),
         ...(params.fields.includes("dialogue") ? {dialogue:generated.dialogue} : {}),
       };
-      const { rev } = await applyGraphDelta({
+      const { graph: persisted, rev } = await applyGraphDelta({
         projectRoot,
         projectId,
         delta: { nodes: { upsert: [node], remove: [] }, notes: [] },
         phase: "workshop",
       });
-      return textResult(`Node ${params.nodeId} revised (rev ${rev}).`, graphUpdatedDetails(rev, {
+      const details = graphUpdatedDetails(rev, {
+        node: persisted.nodes.find(node => node.id === params.nodeId),
         skillIds: deps.skillIds?.() ?? [],
-      }));
+      });
+      return textResult(JSON.stringify(details), details);
     },
   };
 }
@@ -378,7 +383,7 @@ export function createDraftStructureTool(
         const variables=[...(graph?.variables??[]).filter(variable=>!reference.variables.some(item=>item.name===variable.name)),...reference.variables];
         const candidate=StoryGraphSchema.parse({...(graph??{schemaVersion:1,projectId,title:projectId}),nodes,endings,variables});
         const requirements=await readFilmRequirements(projectRoot,projectId);
-        if(requirements){const report=checkFilmRequirements(candidate,requirements);if(report.status!=='checks_passed')throw Object.assign(new Error(JSON.stringify({code:'FILM_REFERENCE_REQUIREMENTS_UNMET',issues:report.issues})),{code:'FILM_REFERENCE_REQUIREMENTS_UNMET',issues:report.issues});}
+        if(requirements){const report=checkFilmRequirements(candidate,requirements,'structure');if(report.status!=='checks_passed')throw Object.assign(new Error(JSON.stringify({code:'FILM_REFERENCE_REQUIREMENTS_UNMET',issues:report.issues})),{code:'FILM_REFERENCE_REQUIREMENTS_UNMET',issues:report.issues});}
         const sourceHash='sha256:'+createHash('sha256').update(referenceBytes).digest('hex');
         const {graph:next,rev}=await applyGraphDelta({projectRoot,projectId,phase:'structure',delta:{
           nodes:{upsert:nodes,remove:graph?.nodes.filter(node=>!nodes.some(item=>item.id===node.id)).map(node=>node.id)??[]},
@@ -396,10 +401,14 @@ export function createDraftStructureTool(
       let nodes:readonly StoryNode[]=[];
       let failures:unknown=[];
       for(let attempt=0;attempt<3;attempt++){
-        nodes=await deps.submitStructure(systemPrompt,`${userPrompt}\nConfirmed requirements: ${JSON.stringify(requirements??{})}\n${attempt?`Correct these exact validation failures: ${JSON.stringify(failures)}`:''}`,signal);
+        nodes=await deps.submitStructure(systemPrompt,JSON.stringify({
+          request:userPrompt,confirmedRequirements:requirements??{},
+          ...(attempt?{previousCandidate:nodes,validationIssues:failures,
+            correction:'Correct these failures in the supplied candidate while preserving valid structure and the original author request. Submit the complete corrected node array.'}:{}),
+        }),signal);
         if(!requirements)break;
         const candidate=StoryGraphSchema.parse({...(graph??{schemaVersion:1,projectId,title:projectId}),nodes:[...nodes],endings:graph?.endings.filter(e=>nodes.some(n=>n.id===e.nodeId))??[]});
-        const report=checkFilmRequirements(candidate,requirements);
+        const report=checkFilmRequirements(candidate,requirements,'structure');
         if(report.status==='checks_passed')break;
         failures=report.issues;
         if(attempt===2)throw Object.assign(new Error(JSON.stringify({code:'FILM_STRUCTURE_REQUIREMENTS_UNMET',issues:failures})),{code:'FILM_STRUCTURE_REQUIREMENTS_UNMET',issues:failures});
@@ -467,12 +476,13 @@ export function createRemoveNodeTool(
 ): AgentTool<typeof RemoveNodeParams> {
   return {
     name: "remove_node",
-    description: "Remove a node and its incident choices from the current graph as a versioned edit. Earlier graph revisions remain available. Use to remove an unwanted or unreachable node, then inspect the resulting graph.",
+    description: "Remove a node, choices leading to it and ending registrations pointing to it as one versioned edit. Earlier graph revisions remain available. Use to remove an unwanted or unreachable node, then inspect the resulting graph.",
     label: "Remove Node",
     parameters: RemoveNodeParams,
     async execute(_id, params: Static<typeof RemoveNodeParams>) {
-      const { rev } = await applyGraphDelta({ projectRoot, projectId, delta: buildRemoveNodeDelta(params.nodeId) });
-      return textResult(`Node ${params.nodeId} removed (rev ${rev}).`, { kind: "graph_updated", rev });
+      const { graph, rev } = await applyGraphDelta({ projectRoot, projectId, delta: buildRemoveNodeDelta(params.nodeId) });
+      const details={kind:'graph_updated' as const,rev,removedNodeId:params.nodeId,remainingEndingIds:graph.endings.map(ending=>ending.id)};
+      return textResult(JSON.stringify(details), details);
     },
   };
 }

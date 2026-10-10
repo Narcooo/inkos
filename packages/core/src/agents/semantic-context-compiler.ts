@@ -50,7 +50,7 @@ export class SemanticContextCompilerAgent extends BaseAgent {
           ].join("\n\n"),
         },
       ], {
-        temperature: 0.1,
+
         maxTokens: Math.min(this.ctx.client.defaults.maxTokens, perChunkOutput),
       });
       const content = response.content.trim();
@@ -71,7 +71,7 @@ export class SemanticContextCompilerAgent extends BaseAgent {
           content: `${input.language === "en" ? "Token budget" : "Token 预算"}: ${input.maxTokens}\n\n${content}`,
         },
       ], {
-        temperature: 0.1,
+
         maxTokens: Math.min(this.ctx.client.defaults.maxTokens, Math.max(256, input.maxTokens)),
       });
       content = response.content.trim();

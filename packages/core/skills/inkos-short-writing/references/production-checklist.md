@@ -19,12 +19,11 @@
 - Calculate ages, generations and elapsed years together; a family relationship must be possible on the same timeline as school, work and historical events.
 - Check recurring objects for incompatible locations, holders or uses across the actual scene sequence. Distinguish a contradiction from an ordinary action omitted between scenes. Require added explanation when the omission breaks a decisive cause, character choice or payoff, rather than for every routine movement or technical operation.
 - Mobile paragraphs remain readable without turning prose into fragments.
-- Title and synopsis promise only events the manuscript actually delivers.
 
 ## Packaging
 
 - For amounts, quantities, timing and responsibility, use the manuscript's final evidence-backed conclusion. Earlier estimates and a character's suspicions are not established outcomes. If a precise number cannot be verified, describe the conflict and payoff without inventing or inflating it.
-- Ground sales claims in scenes actually present. Do not market an unresolved review finding as a proven strength or promise unverified quality. Describe the story's concrete conflict and payoff.
+- Check each sales claim against the manuscript's enacted scenes and final state. A character planning, being invited to or hoping for an event does not establish that it happened; retain the future or uncertain status in the copy. Strengthen the pitch through the actual conflict and payoff, not an additional scene or an unsupported quality claim.
 
 ## Revision
 

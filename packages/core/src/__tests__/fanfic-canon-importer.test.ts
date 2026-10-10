@@ -16,6 +16,17 @@ const ZERO_USAGE = {
 } as const;
 
 describe("FanficCanonImporter", () => {
+  it("retains the complete original source without a model call when it fits", async () => {
+    const agent = new FanficCanonImporter({client: TEST_CLIENT, model: "test-model", projectRoot: process.cwd()});
+    const chat = vi.spyOn(agent as unknown as {chat: (...args: unknown[]) => Promise<unknown>}, "chat");
+    const submit = vi.spyOn(agent as unknown as {submitStructured: (...args: unknown[]) => Promise<unknown>}, "submitStructured");
+    const source = "# Arrival\n\nEli is the curator. She keeps Nora's blue notebook.\n\n# Departure\n\nNora asks Eli to return it.\n";
+    const result = await agent.importFromText(source, "Gallery", "canon", "en");
+    expect(result.fullDocument.endsWith(source)).toBe(true);
+    expect(chat).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
+  });
+
   it("semantically compiles long source chunks instead of truncating the tail", async () => {
     const agent = new FanficCanonImporter({
       client: TEST_CLIENT,
@@ -49,6 +60,8 @@ describe("FanficCanonImporter", () => {
     const result = await agent.importFromText(source, "长原作", "canon");
 
     expect(chatSpy).toHaveBeenCalledTimes(2);
+    expect(chatSpy.mock.calls.map(call=>call[1])).toEqual([{professionalGuidance:false},{professionalGuidance:false}]);
+    expect(submitSpy.mock.calls[0]?.[2]).toEqual({professionalGuidance:false});
     const secondChunkMessages = chatSpy.mock.calls[1]?.[0] as Array<{ role: string; content: string }>;
     expect(secondChunkMessages[1]?.content).toContain("TAIL_CANON_MARKER");
     const finalMessages = submitSpy.mock.calls[0]?.[0] as Array<{ role: string; content: string }>;

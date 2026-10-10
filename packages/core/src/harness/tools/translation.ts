@@ -16,12 +16,14 @@ import { mergeActivatedSkillGuidance } from "../../skills/activations.js";
 import { activatedSkillIds } from "../../skills/activations.js";
 import type { ActionPayload } from "../../interaction/action-envelope.js";
 import { safeChildPath } from "../../utils/path-safety.js";
+import { CreationSourceReferences } from "../../agent/creation-source.js";
 
 function textResult<T>(text: string, details: T): AgentToolResult<T> {
   return { content: [{ type: "text", text }], details };
 }
 
 const TranslationCreateParams = Type.Object({
+  sources: Type.Optional(CreationSourceReferences),
   filePath: Type.Optional(Type.String({ description: "Project-relative EPUB/PDF/TXT/Markdown source file path. Omit when sourceText is supplied." })),
   sourceText: Type.Optional(Type.String({ minLength: 1, description: "Complete source text supplied in chat; the host persists it as a source artifact." })),
   glossary: Type.Optional(Type.Array(Type.Object({ source: Type.String(), target: Type.String(), note: Type.Optional(Type.String()) }))),
@@ -38,11 +40,12 @@ export function createTranslationCreateTool(
   return {
     name: "translation_create",
     label: "Create Translation Work",
-    description: "Create a translation Work from sourceText supplied in chat or a project-relative EPUB/PDF/TXT/Markdown file. Persist the original source and supplied glossary.",
+    description: "Create a translation Work from ordered registered source artifacts, author-pasted sourceText, or a project-relative EPUB/PDF/TXT/Markdown file. For existing Works pass sources, never retype their prose. Persist exact source versions and the supplied glossary.",
     parameters: TranslationCreateParams,
     async execute(_toolCallId, params: Static<typeof TranslationCreateParams>) {
       const payload = options.actionPayload?.translationCreate;
       const result = await createTranslationProjectFromFile(projectRoot, {
+        sources: payload?.sources ?? params.sources,
         filePath: payload?.filePath ?? params.filePath,
         sourceText: payload?.sourceText ?? params.sourceText,
         glossary: payload?.glossary ?? params.glossary,
