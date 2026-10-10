@@ -319,9 +319,9 @@ ${reviseFrom.userFeedback || "（无）"}
       {role:"system",content:input.language==="en"
         ? "List the named people who shape the opening conflict. Submit only their names and major/minor roles. Do not expand unnamed occupational groups into invented biographies."
         : "列出影响开篇冲突的具名人物，只提交姓名和主要/次要角色级别，不把无名岗位群体扩写成虚构人物。"},
-      {role:"user",content:castContext},
+      {role:"user",content:JSON.stringify({storyFrame:outline.storyFrame,volumeMap:outline.volumeMap,bookRules:details.bookRules})},
     ],{name:"submit_foundation_cast_index",label:"Identify opening cast",description:"Submit the names and tiers of the opening cast.",parameters:FoundationCastIndexToolSchema},
-    {maxTokens:Math.min(2048,this.ctx.client.defaults.maxTokens)});
+    {maxTokens:Math.min(2048,this.ctx.client.defaults.maxTokens),professionalGuidance:false});
     const {result:cards} = await this.submitStructured([
       {role:"system",content:input.language==="en"
         ? "Create concise character cards for the named people who shape the opening conflict. Ground each card in the supplied story. Give present motive, knowledge, relationship pressure and limits in about 80–120 words; avoid repeating the plot or expanding unnamed occupational groups into full biographies."
