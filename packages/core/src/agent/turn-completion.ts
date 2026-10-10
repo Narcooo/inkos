@@ -1,11 +1,12 @@
 import { Type, type Static } from "@sinclair/typebox";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
-import type { ActionResult, WorkManifest } from "../harness/contracts.js";
+import type { ActionResult } from "../harness/contracts.js";
 import { loadWorkManifest } from "../harness/work-store.js";
 import { readArtifactRevision } from "../harness/artifact-reader.js";
 import { posix } from "node:path";
 import { StateManager } from "../state/manager.js";
 import { readBookExportSource } from "../interaction/export-artifact.js";
+import {bindChapterReviewObservations} from '../harness/operation-receipts.js';
 
 export const TURN_COMPLETION_TOOL = "finish_turn";
 export const TurnCompletionSchema = Type.Object({
@@ -18,6 +19,7 @@ export const TURN_COMPLETION_GUIDANCE = `## Turn completion
 The host independently identifies explicitly requested professional content reviews and exports from the original request. These requirements appear in request-delivery context after the first production action. Once sources exist, use bind_delivery_sources to bind every intended source to its existing step ID, including all requested chapters or companion artifacts. Keep the requirements through recovery. Structural inspection does not perform professional content review. Do not add unrequested operations.
 Use finish_turn to return the final response after answering the request, delivering its requested actions, or identifying a concrete blocker or necessary user decision.
 Announcing planned work is not completion. When work remains possible, call the relevant execution tool and continue from saved results.
+Professional review findings are evidence to assess against the author request and source, not commands to rewrite until every opinion disappears. Address supported defects within the requested scope and report genuine remaining findings or uncertainty. Completing requested operations does not certify literary quality or market readiness. Do not claim a clean review when findings remain.
 Use answered only for information or discussion; delivered for completed action results; needs_input for a necessary user decision; blocked when the request cannot currently proceed.
 Call finish_turn alone after other operations finish. Ground delivery claims in actual tool results. A recoverable tool error does not complete the original request.`;
 
@@ -62,7 +64,19 @@ export class TurnArtifactDeliveries {
   observe(result: ActionResult, parameters: unknown = {}) {
     const data = result.data as Record<string, unknown> | undefined;
     const historical = parameters && typeof parameters === "object" && "revisionId" in parameters;
-    const observations=Array.isArray(data?.observations)?data.observations as ActionResult["observations"]:result.observations;
+    const rawObservations=Array.isArray(data?.observations)?data.observations as ActionResult["observations"]:result.observations;
+    const reviewSources=(result.operationReceipts??[]).filter(receipt=>receipt.operation==='review').flatMap(receipt=>receipt.sources);
+    const chapterTargets=new Map<number,NonNullable<ActionResult['observations'][number]['target']>>();
+    const chapters=Array.isArray(data?.reviewedChapters)?data.reviewedChapters:[];
+    for(const chapter of chapters){
+      const prefix=`source/chapters/${String(chapter.chapterNumber).padStart(4,'0')}_`;
+      const source=reviewSources.find(source=>{
+        const path=source.path??result.artifacts.find(artifact=>artifact.workId===source.workId&&artifact.artifactId===source.artifactId&&artifact.revisionId===source.revisionId)?.path;
+        return path?.startsWith(prefix)&&path.endsWith('.md');
+      })??(chapters.length===1&&reviewSources.length===1?reviewSources[0]:undefined);
+      if(source)chapterTargets.set(chapter.chapterNumber,{workId:source.workId,artifactId:source.artifactId,revisionId:source.revisionId});
+    }
+    const observations=data?bindChapterReviewObservations(data,rawObservations,chapterTargets):rawObservations;
     for(const receipt of result.operationReceipts??[]){
       if(receipt.operation!=='review')continue;
       for(const source of receipt.sources){
@@ -105,7 +119,14 @@ export class TurnArtifactDeliveries {
     }
   }
 
-  async validate(projectRoot: string, creation?: {workId:string;baselineWork:WorkManifest|null;sourceQuote:string}) {
+  qualityFindings() {
+    return [...this.receipts.values()].filter(receipt=>receipt.qualityIssues?.length).map(receipt=>({
+      workId:receipt.workId,artifactId:receipt.artifactId,revisionId:receipt.revisionId,
+      observations:structuredClone(receipt.qualityIssues!),
+    }));
+  }
+
+  async validate(projectRoot: string) {
     const missing = [...this.requiredOperations].filter(([key]) => !this.receipts.has(key)).map(([,operation]) => operation);
     for (const workId of this.requiredBookExports) {
       if (!this.bookExports.has(workId)) missing.push({workId, artifactId: "chapters", operation: "export"});
@@ -160,15 +181,6 @@ export class TurnArtifactDeliveries {
       code:'TURN_REVISION_SCOPE_UNRESOLVED',scopeViolations,
       instruction:'The current review identifies changes outside the author-authorized region. Restore the protected material and re-review the current revision before claiming delivery. If the finding is disputed, verify the before/current sources and obtain a corrected review; do not broaden permission to satisfy a content suggestion.',
     })),{code:'TURN_REVISION_SCOPE_UNRESOLVED'});
-    if(creation){
-      const baseline=creation.baselineWork;
-      const findings=[...this.receipts.values()].filter(receipt=>receipt.workId===creation.workId&&receipt.qualityIssues?.length
-        &&!(baseline?.id===receipt.workId&&baseline.artifacts.some(artifact=>artifact.id===receipt.artifactId)));
-      if(findings.length)throw Object.assign(new Error(JSON.stringify({
-        code:'TURN_NEW_CONTENT_REVIEW_UNRESOLVED',sourceQuote:creation.sourceQuote,findings,
-        instruction:'The requested new content still has current review findings. Verify them against the original request, current sources and actual checks. Correct supported defects within scope and re-review; for an unsupported or stylistic claim, obtain a corrected evidence-based review instead of changing the work to satisfy it. Refresh requested exports after changes. Do not alter protected existing content. Report a concrete blocker if resolution cannot proceed.',
-      })),{code:'TURN_NEW_CONTENT_REVIEW_UNRESOLVED'});
-    }
   }
 }
 
@@ -176,6 +188,8 @@ export function createTurnCompletionTool(options: {
   readonly state: () => { readonly activeActions: number; readonly hasDelivery: boolean; readonly deliveryFailed: boolean };
   readonly complete: (result: TurnCompletion) => void;
   readonly validateDelivery?: (signal?:AbortSignal) => Promise<void>;
+  readonly qualityFindings?: () => ReturnType<TurnArtifactDeliveries['qualityFindings']>;
+  readonly language?: string;
 }): AgentTool<typeof TurnCompletionSchema> {
   return {
     name: TURN_COMPLETION_TOOL,
@@ -191,8 +205,16 @@ export function createTurnCompletionTool(options: {
         throw Object.assign(new Error("Delivery requires successful production or artifact results. Continue unfinished work or report the concrete blocker."), { code: "TURN_DELIVERY_UNPROVEN" });
       }
       if (input.status === "delivered" || input.status === "answered" && state.hasDelivery) await options.validateDelivery?.(signal);
-      options.complete(input);
-      return { content: [{ type: "text", text: input.message }], details: { kind: "turn_completion", ...input } };
+      const qualityFindings=options.qualityFindings?.()??[];
+      const summaries=qualityFindings.flatMap(finding=>finding.observations.map(observation=>observation.summary));
+      const completion=summaries.length?{...input,message:[input.message,
+        options.language==='zh'?'审稿保留意见（对应上述版本）：':'Remaining review findings for the recorded source versions:',
+        summaries.map(summary=>`- ${summary}`).join('\n'),
+      ].join('\n\n')}:input;
+      options.complete(completion);
+      return { content: [{ type: "text", text: completion.message }], details: { kind: "turn_completion", ...completion,
+        ...(qualityFindings.length?{qualityFindings}:{}),
+      } };
     },
   };
 }

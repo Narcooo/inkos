@@ -13,7 +13,7 @@ it('retains a confirmed primary mutation but does not report delivery when its r
   let calls=0,artifactId='',sessionId:string|undefined;
   const upstream=createServer(async(req,res)=>{
     const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));const body=JSON.parse(Buffer.concat(chunks).toString());
-    if(body.tools[0].function.name==='submit_requested_operations'){res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{role:'assistant',tool_calls:[{id:'scope',type:'function',function:{name:'submit_requested_operations',arguments:JSON.stringify({newContentQuote:'',contentReviewQuote:'review the graph',exportQuote:''})}}]}}]}));return;}
+    if(body.tools[0].function.name==='submit_requested_operations'){res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{role:'assistant',tool_calls:[{id:'scope',type:'function',function:{name:'submit_requested_operations',arguments:JSON.stringify({contentReviewQuote:'review the graph',exportQuote:''})}}]}}]}));return;}
     const name=calls++===0?'bind_delivery_sources':'finish_turn';
     const args=name==='bind_delivery_sources'?{steps:[{id:'review',targets:[{workId:'film',artifactId}]}]}:{status:'blocked',message:'The requested content review has not completed.'};
     res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{role:'assistant',tool_calls:[{id:'call-'+calls,type:'function',function:{name,arguments:JSON.stringify(args)}}]}}]}));

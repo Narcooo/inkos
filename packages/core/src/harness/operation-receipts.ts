@@ -6,6 +6,17 @@ import {toPosixPath} from '../utils/posix-path.js';
 import {chapterReviewContentHash} from '../utils/chapter-review-hash.js';
 import type {Observation} from '../models/observation.js';
 
+/** The producer's chapter groups establish finding ownership, including when
+ * replaying recorded actions whose findings predate explicit target binding. */
+export function bindChapterReviewObservations(details:Record<string,any>,observations:readonly Observation[],chapterTargets:ReadonlyMap<number,NonNullable<Observation['target']>>):Observation[]{
+  const chapters=Array.isArray(details.reviewedChapters)?details.reviewedChapters:[];
+  const groups=Array.isArray(details.chapters)&&details.chapters.every((chapter:any)=>Array.isArray(chapter.observations))
+    ?details.chapters:chapters.length===1?[{chapterNumber:chapters[0].chapterNumber,observations}]:[];
+  const targets=groups.flatMap((chapter:any)=>chapter.observations.map(()=>chapterTargets.get(chapter.chapterNumber)));
+  return targets.length===observations.length?observations.map((observation,index)=>
+    observation.target||!targets[index]?observation:{...observation,target:targets[index]}):[...observations];
+}
+
 /** Only domain-produced completion facts become receipts. Reading, technical
  * inspection and a model's narrative claim do not establish an operation. */
 export async function resolveOperationEvidence(root:string,details:unknown,observations:readonly Observation[]){
@@ -60,10 +71,5 @@ export async function resolveOperationEvidence(root:string,details:unknown,obser
   // A batch exposes one flattened findings list, but each finding belongs to
   // its chapter review. Bind by the producer's chapter grouping before those
   // findings reach per-artifact delivery checks.
-  const groups=Array.isArray(data.chapters)&&data.chapters.every((chapter:any)=>Array.isArray(chapter.observations))
-    ?data.chapters:chapters.length===1?[{chapterNumber:chapters[0].chapterNumber,observations}]:[];
-  const targets=groups.flatMap((chapter:any)=>chapter.observations.map(()=>chapterTargets.get(chapter.chapterNumber)));
-  const bound=targets.length===observations.length?observations.map((observation,index)=>
-    observation.target||!targets[index]?observation:{...observation,target:targets[index]}):[...observations];
-  return {operationReceipts:OperationReceiptSchema.array().parse(receipts),observations:bound};
+  return {operationReceipts:OperationReceiptSchema.array().parse(receipts),observations:bindChapterReviewObservations(data,observations,chapterTargets)};
 }

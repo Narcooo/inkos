@@ -1143,11 +1143,11 @@ async function runAgentSessionUnlocked(
         tools: [...visibleTools,createDeliveryRequirementsTool({root:projectRoot,ledger:()=>cached!.requestDelivery,ensure:signal=>cached!.ensureDelivery(signal),save:()=>cached!.persistDelivery()}), createTurnCompletionTool({
           state: () => cached ?? { activeActions: 0, hasDelivery: false, deliveryFailed: false },
           complete: result => { if (!cached) throw new Error("Session unavailable"); cached.turnCompletion = result; },
+          qualityFindings:()=>cached!.artifactDeliveries.qualityFindings(),
+          language,
           validateDelivery: async signal => {
             await cached!.ensureDelivery(signal);
-            const sourceQuote=cached!.requestDelivery.snapshot().newContentQuote;
-            const episode=cached!.currentEpisode;
-            await cached!.artifactDeliveries.validate(projectRoot,sourceQuote&&episode?.work?{workId:episode.work.id,baselineWork:episode.baselineWork??null,sourceQuote}:undefined);
+            await cached!.artifactDeliveries.validate(projectRoot);
             await cached!.requestDelivery.validate(projectRoot);
           },
         })],

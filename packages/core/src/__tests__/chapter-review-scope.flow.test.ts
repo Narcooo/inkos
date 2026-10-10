@@ -60,13 +60,17 @@ it('keeps batch review findings on their own chapter and clears them after that 
    deliveries.observe(ActionResultSchema.parse({status:'success',summary:'Chapter review completed.',artifacts:[],...evidence,data:{...data,observations:evidence.observations}}));
   };
   await observe(details);
-  const creation={workId:'book',baselineWork:null,sourceQuote:'Create two chapters and review them.'};
-  const failure=await deliveries.validate(root,creation).catch(error=>error);
-  expect(failure.code).toBe('TURN_NEW_CONTENT_REVIEW_UNRESOLVED');
-  expect(JSON.parse(failure.message).findings.map((finding:any)=>({artifactId:finding.artifactId,codes:finding.qualityIssues.map((item:any)=>item.code)})))
+  const restored=new TurnArtifactDeliveries();
+  const recordedSources=before.artifacts.map(artifact=>{const revision=artifact.revisions.find(r=>r.id===artifact.currentRevisionId)!;return{workId:'book',artifactId:artifact.id,revisionId:revision.id,path:revision.path};});
+  const recordedReceipts=(await resolveOperationEvidence(root,details,details.observations)).operationReceipts;
+  restored.observe(ActionResultSchema.parse({status:'success',summary:'Recorded batch before source binding.',artifacts:recordedSources,operationReceipts:recordedReceipts,observations:details.observations,data:details}));
+  expect(restored.qualityFindings()).toEqual(deliveries.qualityFindings());
+  await expect(deliveries.validate(root)).resolves.toBeUndefined();
+  expect(deliveries.qualityFindings().map(finding=>({artifactId:finding.artifactId,codes:finding.observations.map(item=>item.code)})))
     .toEqual([{artifactId:target.id,codes:[issue.code]}]);
   bodies[1]='Nora hands the gallery key to Eli.';await persist();
   await observe({kind:'chapter_revision',workId:'book',reviewedChapters:[{chapterNumber:2,contentHash:chapterReviewContentHash(bodies[1],2)}],observations:[]});
-  await expect(deliveries.validate(root,creation)).resolves.toBeUndefined();
+  await expect(deliveries.validate(root)).resolves.toBeUndefined();
+  expect(deliveries.qualityFindings()).toEqual([]);
  }finally{await rm(root,{recursive:true,force:true});}
 });
