@@ -24,6 +24,7 @@ export const ShortStageSchema = z.object({
 export const ShortProductionStateSchema = z.object({
   version: z.literal(2),
   intent: z.string(),
+  outlineSource: z.object({workId:z.string(),artifactId:z.string(),revisionId:z.string(),checksum:z.string()}).strict().optional(),
   target: z.object({
     title:z.string().min(1).optional(),
     chapterCount:z.number().int().positive(),

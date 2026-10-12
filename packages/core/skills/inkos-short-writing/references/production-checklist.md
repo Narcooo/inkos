@@ -8,6 +8,7 @@
 - Opening creates a concrete emotional or practical deficit.
 - Evidence and setup exist before each major reversal.
 - When timestamps or quantities carry decisive evidence, establish one reference timeline and identify what each record measures. Apply any clock offset consistently, then check that every alleged cause still precedes its effect under the same conversion.
+- For recurring amounts or counts, identify the payer, recipient, period, included items and whether the value is an estimate, a subset or a final total. Keep those meanings consistent as the story develops. An opening that previews a later reckoning must use that reckoning's established facts; an earlier character estimate can differ when its limited knowledge is clear.
 - Ending delivers the promised emotional result and cost.
 
 ## During whole-story review
@@ -16,6 +17,7 @@
 - Later chapters do not collapse into summary.
 - Chapter transitions preserve causality.
 - Names, facts, objects, and evidence remain consistent.
+- Read the independent opening together with the relevant final scenes. For each concrete promise about a quantity or outcome, compare its scope and certainty with the manuscript evidence, using the calculation tool for arithmetic when available. Report incompatible claims about the same quantity or event with both source passages. A supported estimate becoming precise, a subset differing from a total, or an explicitly mistaken character is not itself a contradiction. Keep unresolved ambiguity as uncertainty rather than inventing a missing explanation.
 - Calculate ages, generations and elapsed years together; a family relationship must be possible on the same timeline as school, work and historical events.
 - Check recurring objects for incompatible locations, holders or uses across the actual scene sequence. Distinguish a contradiction from an ordinary action omitted between scenes. Require added explanation when the omission breaks a decisive cause, character choice or payoff, rather than for every routine movement or technical operation.
 - Mobile paragraphs remain readable without turning prose into fragments.

@@ -10,6 +10,7 @@ import {
 } from "../utils/length-metrics.js";
 import {
   type ShortFictionLanguage,
+  type ShortFictionReferencePromptInput,
   buildShortFictionDraftReviewSystemPrompt,
   buildShortFictionDraftReviewUserPrompt,
   buildShortFictionOutlineSystemPrompt,
@@ -104,7 +105,7 @@ export interface ShortRevisionProgress {
   readonly completed: ReadonlyArray<number>;
 }
 
-export interface ShortFictionReference {
+export interface ShortFictionReference extends ShortFictionReferencePromptInput {
   readonly path?: string;
   readonly text: string;
 }

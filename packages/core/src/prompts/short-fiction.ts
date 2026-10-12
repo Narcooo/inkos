@@ -2,7 +2,11 @@ import type {ShortFictionMeasurements} from "../agents/short-fiction.js";
 
 export type ShortFictionLanguage = "zh" | "en";
 
-export interface ShortFictionReferencePromptInput { readonly text?: string; }
+export interface ShortFictionReferencePromptInput {
+  readonly text?: string;
+  readonly notes?: string;
+  readonly source?: {readonly workId:string;readonly artifactId:string;readonly revisionId:string;readonly checksum:string};
+}
 export interface ShortFictionOutlinePromptInput {
   readonly title?: string;
   readonly direction: string;
@@ -46,7 +50,9 @@ export function buildShortFictionOutlineUserPrompt(input: ShortFictionOutlinePro
     language === "en"
       ? `${input.chapterCount} chapters; about ${input.charsPerChapter} words per chapter.`
       : `${input.chapterCount} 章；每章约 ${input.charsPerChapter} 字。`,
-    ...(reference ? ["", language === "en" ? "## Reference" : "## 参考材料", reference] : []),
+    ...(reference ? ["", language === "en" ? "## Reference material (source data)" : "## 参考材料（来源数据）",
+      ...(input.reference?.source ? [JSON.stringify(input.reference.source)] : []), reference] : []),
+    ...(input.reference?.notes?.trim() ? ["", language === "en" ? "## Reference instructions" : "## 参考使用要求", input.reference.notes] : []),
   ].join("\n");
 }
 export function buildShortFictionWriterSystemPrompt(language: ShortFictionLanguage = "zh"): string {

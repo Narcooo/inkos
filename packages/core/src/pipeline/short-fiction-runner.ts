@@ -325,6 +325,21 @@ async function shortDraftRecoveryError(error:unknown,options:ShortFictionRunOpti
   return Object.assign(new Error(`${error instanceof Error?error.message:String(error)}\nPersisted draft checkpoint: ${JSON.stringify(recovery)}`,{cause:error}),{code:(error as {code?:string})?.code??"SHORT_DRAFT_FAILED",recovery});
 }
 
+/** Resolve registered bytes, not a mutable working copy or a coordinator's summary. */
+async function shortOutlineReference(root:string,workId:string|undefined,notes:ShortFictionReference|undefined):Promise<ShortFictionReference|undefined> {
+  if (!workId) return notes;
+  let work;
+  try { work = await loadWorkManifest(root,workId); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return notes; throw error; }
+  const artifact = work.artifacts.find(item => item.revisions.some(revision =>
+    revision.id === item.currentRevisionId && revision.path === 'source/source-material.md'));
+  if (!artifact) return notes;
+  const {bytes,revision} = await readArtifactRevision({projectRoot:root,workId,artifactId:artifact.id});
+  const source = {workId,artifactId:artifact.id,revisionId:revision.id,checksum:revision.checksum};
+  recordExecutionEvidence('source-material-used',{worker:'short-fiction-outline',source,lineage:work.lineage});
+  return {text:bytes.toString('utf8'),path:revision.path,source,notes:notes?.text};
+}
+
 async function produceShort(options: ShortFictionRunOptions, root: string, providedStoryId: string | undefined, revisedDraft?: ShortFictionBatchDraft): Promise<ShortFictionRunResult>;
 async function produceShort(options: ShortFictionRunOptions, root: string, providedStoryId: string | undefined, revisedDraft: ShortFictionBatchDraft | undefined, stopAfter: ShortProductionStage): Promise<ShortProductionStageResult>;
 async function produceShort(
@@ -353,6 +368,7 @@ async function produceShort(
   let baseDir: string;
   let workTitle: string;
   let sourceBefore: ReadonlyMap<string, string>;
+  let outlineSource: ShortFictionReference['source'];
   if (providedStoryId && resumedOutline?.trim()) {
     storyId = providedStoryId;
     baseDir = shortWorkBaseDir(storyId);
@@ -363,13 +379,15 @@ async function produceShort(
     options.onProgress?.("Resuming from existing outline (skipping outline stages)...");
   } else {
     options.onProgress?.("Creating short fiction outline...");
+    const reference = await shortOutlineReference(root,providedStoryId,options.reference);
+    outlineSource = reference?.source;
     const outlineAgent = new ShortFictionOutlineAgent(options.runtimes.planner);
     const outlineV1 = await outlineAgent.createOutline({
       title: options.title,
       direction: options.direction,
       chapterCount,
       charsPerChapter,
-      reference: options.reference,
+      reference,
       language,
     });
 
@@ -385,6 +403,7 @@ async function produceShort(
   options={...options,title:workTitle};
   minimum={...minimum,title:workTitle};
   let productionState: ShortProductionState = {
+    outlineSource: outlineSource ?? previousState?.outlineSource,
     version: 2, target: { title:workTitle,chapterCount, charsPerChapter, minChapterLength:minimum.minChapterLength,maxChapterLength: options.maxChapterLength,openingHookChars:options.openingHookChars, language,
       coverRequired: !stopAfter && !options.revisionRequest ? options.cover !== false || undefined : previousState?.target?.coverRequired,
     }, intent: previousState?.intent ?? (options.revisionRequest ? "" : options.direction),
