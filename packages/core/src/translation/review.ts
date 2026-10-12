@@ -19,7 +19,7 @@ export class TranslationReviewAgent extends BaseAgent {
         `segment_${segment.index}_target`,Type.String({minLength:1,description:`Translate original segment ${segment.index} completely.`}),
       ])),{additionalProperties:false});
       const {result}=await this.submitStructured([
-        {role:'system',content:'Read and translate the original segments with the activated translation Skill. Preserve meaning, quantities, negation, attribution, chronology and uncertainty. Use the full original passage for context and return only the requested segments in the named fields.'},
+        {role:'system',content:'Prepare the independent source reading using the activated translation Skill. Return only the requested segments in the named fields.'},
         {role:'user',content:JSON.stringify({sourceLanguage:request.sourceLanguage,targetLanguage:request.targetLanguage,
           ...(request.sourceChapterTitle?{chapterTitle:request.sourceChapterTitle}:{}),
           glossary:request.glossary,originals,requestedIndices:batch.map(segment=>segment.index)})},
@@ -44,8 +44,7 @@ export class TranslationReviewAgent extends BaseAgent {
     if(request.glossary.length)sources.set('glossary',JSON.stringify(request.glossary,null,2));
     const referenceByIndex=new Map(references.map(reference=>[reference.index,reference.target]));
     const {result}=await this.submitSourcedReview([
-      {role:'system',content:'Review the translation with the activated translation Skill. Compare the target against the original meaning, including quantities, negation, attribution, chronology, omissions and terminology. Valid idiomatic or stylistic differences are not errors. The original source is authoritative; retain substantive ambiguity when the context does not resolve it. Cite original and target passages for each translation issue. Do not rewrite.'},
-      {role:'system',content:'Each segment includes an independent source-only reading as a fallible comparison aid, not authority or a replacement target. Differences alone do not establish an error. When the two readings differ in meaning, check which agrees with the original; record a substantive unresolved ambiguity as an observation. Cite the original and current target, never the independent reading.'},
+      {role:'system',content:'Review the supplied segment pairs using the activated translation Skill. Submit findings only. Cite original and target sources for each issue; independent readings are comparison inputs and cannot be cited as evidence.'},
       {role:'user',content:JSON.stringify({sourceLanguage:request.sourceLanguage,targetLanguage:request.targetLanguage,chapterTitle:request.chapterTitle})},
       {role:'user',content:request.segments.map(segment=>[
         `## Segment ${segment.index}`,

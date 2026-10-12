@@ -9,6 +9,10 @@ import {createLLMClient} from '../llm/provider.js';
 import {createLLMTranslationModel,createTranslationProjectFromFile,runTranslationProject} from '../translation/index.js';
 import {loadTranslationChapter,loadTranslationManifest,saveTranslationProgress} from '../translation/run-store.js';
 import {syncWorkSourceArtifacts} from '../harness/source-sync.js';
+import {loadWorkManifest} from '../harness/work-store.js';
+import {createBuiltInWorkProfileRegistry} from '../harness/builtin-profiles.js';
+import {withExecutionEvidence} from '../harness/execution-evidence.js';
+import {loadAvailableAgentSkills} from '../skills/builtin-loader.js';
 
 it('reads originals independently, persists only verified source pairs and retains the accepted translation when review fails',async()=>{
   const root=await mkdtemp(join(tmpdir(),'inkos-translation-review-'));
@@ -46,8 +50,21 @@ it('reads originals independently, persists only verified source pairs and retai
     const sourceBefore=await readFile(join(root,info.sourcePath));
     const client=createLLMClient({service:'custom',provider:'openai',configSource:'studio',model:'fixture',apiKey:'fixture',baseUrl:`http://127.0.0.1:${(server.address() as {port:number}).port}/v1`,apiFormat:'chat',stream:false,thinkingBudget:0});
     const model=createLLMTranslationModel({client,model:'fixture',projectRoot:root});
-    const result=await runTranslationProject(root,created.manifest.id,{model});
+    const profile=createBuiltInWorkProfileRegistry(root).require('translation');
+    const work=await loadWorkManifest(root,created.manifest.id);
+    const skill=(await loadAvailableAgentSkills({projectRoot:root})).skills.find(skill=>skill.id==='inkos-translation')!;
+    const skillHash=createHash('sha256').update(skill.body).digest('hex');
+    const methods:Array<{worker:string;skills:Array<{id:string;hash:string}>}>=[];
+    const review=()=>withExecutionEvidence((type,payload)=>{
+      if(type==='skills-applied')methods.push(payload as typeof methods[number]);
+    },()=>runTranslationProject(root,created.manifest.id,{model}),profile,work,'Review the current translation without changing it.');
+    const result=await review();
     expect(result).toMatchObject({translatedSegments:0,reviewedChapters:1,pendingSegments:0});
+    expect(methods).toHaveLength(2);
+    expect(methods.every(method=>method.skills.some(skill=>skill.id==='inkos-translation'&&skill.hash===skillHash))).toBe(true);
+    // Verify the loaded asset reaches the actual provider payload, beyond the
+    // activation receipt. This compares the complete method, not sample prose.
+    expect(calls.every(call=>call.messages.some((message:any)=>message.role==='system'&&message.content.includes(skill.body.trim())))).toBe(true);
     const reading=JSON.parse(calls[0].messages.findLast((message:any)=>message.role==='user').content);
     expect(reading).toMatchObject({chapterTitle:source.title,originals:source.segments.map(({index,source})=>({index,source})),requestedIndices:[1,2]});
     expect(calls[0].messages.every((message:any)=>targets.every(target=>!message.content.includes(target)))).toBe(true);
@@ -65,7 +82,7 @@ it('reads originals independently, persists only verified source pairs and retai
     expect(await readFile(join(root,info.sourcePath))).toEqual(sourceBefore);
 
     referenceFails=true;
-    await expect(runTranslationProject(root,created.manifest.id,{model})).rejects.toMatchObject({code:'TRANSLATION_TARGET_EMPTY'});
+    await expect(review()).rejects.toMatchObject({code:'TRANSLATION_TARGET_EMPTY'});
     expect(calls.filter(call=>call.tools[0].function.name==='submit_translation_source_reading')).toHaveLength(4);
     expect(await readFile(join(root,result.reportPath),'utf8')).toBe(report);
     expect(await readFile(join(root,info.translatedPath))).toEqual(before);

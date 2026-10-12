@@ -170,6 +170,10 @@ The host does not rewrite malformed prose into a passing result.
 
 ## Verification recorded on 2026-09-25
 
+This section records that historical candidate. Current design alignment,
+evidence boundaries and the next acceptance goals are maintained in
+[the 2026-10-12 progress review](../docs/harness-result-first-redesign.md#20-目标与进度审查2026-10-12).
+
 The frozen `delivery-verification-2026-09-25` candidate has source digest
 `7fe5443820cf7e566c68765ce9f3d86ca6820c76d7fdb5b5874d52d011456232`.
 Its 758 source files match implementation commit `7e60e13`. Subsequent Windows
