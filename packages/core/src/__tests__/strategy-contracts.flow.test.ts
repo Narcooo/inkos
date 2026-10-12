@@ -162,7 +162,7 @@ it("composes a new Profile, creates its Work and resumes an independent outline 
   await writeFile(join(root,'works/composed/source/outline/v001.md'),'Existing outline fixture');
   const stage = createShortProductionStageTools(pipeline,root,'composed')[0]!;
   const result = await executeExplicitCapabilityTool({projectRoot:root,workId:'composed',tool:stage,binding:{capabilityId:'short-fiction',actionId:stage.name,profileId:custom.id,risk:'recoverable-write'},
-    parameters:{workId:'composed',direction:'Fixture direction',chapters:2,charsPerChapter:10}});
+    parameters:{workId:'composed',direction:'Fixture direction',chapters:2,charsPerChapter:10,minChapterLength:null,maxChapterLength:null,openingHookChars:null}});
   expect(result.status).toBe('success');
   const work = await loadWorkManifest(root,'composed');
   expect({profile:work.profileId,title:work.title,language:work.language}).toEqual({profile:custom.id,title:'Author title',language:'en'});

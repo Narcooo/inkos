@@ -277,7 +277,7 @@ it('packages the current manuscript while preserving its separate delivery issue
   const candidate=withCandidate.artifacts.find(a=>a.revisions.some(r=>r.path==="source/notes.md"))!;
   const pipeline={createAgentContext:()=>runtime,runWithAgentContext:async(_context:unknown,task:()=>Promise<unknown>)=>task()};
   const registry=createProductionCapabilityRegistry({pipeline:pipeline as never,projectRoot:root,sessionId:"stage-scope",profileId:"short-fiction",work:withCandidate,language:"en",playWorldExists:false,sameSessionProposal:false,allowSystemFileRead:false});
-  await registry.invoke("short-fiction","review_short_fiction",{projectRoot:root,episodeId:"stage-scope",work:withCandidate,profile:createBuiltInWorkProfileRegistry(root).require("short-fiction")},{workId:"short"});
+  await registry.invoke("short-fiction","review_short_fiction",{projectRoot:root,episodeId:"stage-scope",work:withCandidate,profile:createBuiltInWorkProfileRegistry(root).require("short-fiction")},{workId:"short",minChapterLength:null,maxChapterLength:null,openingHookChars:null});
   expect((await loadWorkManifest(root,"short")).artifacts.find(a=>a.id===candidate.id)?.currentRevisionId).toBeNull();
 });
 
@@ -309,11 +309,21 @@ it("exposes the outline and partial draft during generation without marking them
   const context = { projectRoot: root, model: "test", client: { defaults: { maxTokens: 4096 } } } as never;
   const options = { projectRoot: root, storyId: "short", direction: "Write a story", language: "en" as const, chapterCount: 2, charsPerChapter: 40, cover: false, runtimes: { planner: context, writer: context, draftReview: context, package: context } };
   await runShortFictionStage({...options,stage:"outline"});
-  await expect(runShortFictionStage({...options,stage:"draft"})).rejects.toMatchObject({ code: "MODEL_STREAM_IDLE", recovery:{workId:"short",path:"works/short/source/drafts/v001-partial/draft.json",persistedChapterNumbers:[1],validChapterNumbers:[1],incompleteChapterNumbers:[2],requestedChapterCount:2} });
+  let recoveryParameters:unknown;
+  await expect(runShortFictionStage({...options,stage:"draft"}).catch(error=>{
+    recoveryParameters=error.recovery?.parameters;throw error;
+  })).rejects.toMatchObject({ code: "MODEL_STREAM_IDLE", recovery:{workId:"short",path:"works/short/source/drafts/v001-partial/draft.json",persistedChapterNumbers:[1],validChapterNumbers:[1],incompleteChapterNumbers:[2],requestedChapterCount:2} });
   await expect(reviseShortFictionProduction(options)).rejects.toMatchObject({
-    code:"SHORT_MANUSCRIPT_NOT_READY",recovery:{action:"short-fiction__draft_short_fiction",parameters:{workId:"short"}},
+    code:"SHORT_MANUSCRIPT_NOT_READY",recovery:{action:"short-fiction__draft_short_fiction",parameters:{workId:"short",minChapterLength:null,maxChapterLength:null,openingHookChars:null}},
   });
-  await runShortFictionProduction({...options,retryStages:["review","package"]});
+  const work=await loadWorkManifest(root,'short');
+  const pipeline={createAgentContext:()=>context,runWithAgentContext:async(_context:unknown,task:()=>Promise<unknown>)=>task()};
+  const registry=createProductionCapabilityRegistry({pipeline:pipeline as never,projectRoot:root,sessionId:'partial-recovery',profileId:work.profileId,work,language:'en',playWorldExists:false,sameSessionProposal:false,allowSystemFileRead:false});
+  await registry.invoke('short-fiction','draft_short_fiction',{projectRoot:root,episodeId:'partial-recovery',work,profile:createBuiltInWorkProfileRegistry(root).require(work.profileId)},recoveryParameters);
+  for(const action of ['review_short_fiction','package_short_fiction']){
+    const current=await loadWorkManifest(root,'short');
+    await registry.invoke('short-fiction',action,{projectRoot:root,episodeId:'partial-recovery',work:current,profile:createBuiltInWorkProfileRegistry(root).require(current.profileId)},recoveryParameters);
+  }
   expect(ShortFictionWriterAgent.prototype.continueDraft).toHaveBeenCalledOnce();
   expect((await inspect()).artifacts).toContainEqual(expect.objectContaining({ path: "works/short/source/final/short-story.json", status: "current" }));
   const revisions = (await loadWorkManifest(root,"short")).artifacts.flatMap(artifact=>artifact.revisions);

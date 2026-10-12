@@ -80,7 +80,7 @@ describe("guardedPiNonStreaming", () => {
       if(names.includes('finish_turn')){
         mainCalls++;
         if(mainCalls===1)return reply('workspace__inspect_work',{workId:'recovery'});
-        if(mainCalls===2){expect(transitions).toEqual([]);return reply('short-fiction__draft_short_fiction',{workId:'recovery'});}
+        if(mainCalls===2){expect(transitions).toEqual([]);return reply('short-fiction__draft_short_fiction',{workId:'recovery',minChapterLength:null,maxChapterLength:null,openingHookChars:null});}
         expect(names).toContain('visual__generate_cover');
         return reply('finish_turn',{status:mainCalls===3?'delivered':'blocked',message:'The requested cover is still missing.'});
       }

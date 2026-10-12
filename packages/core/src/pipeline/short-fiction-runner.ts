@@ -321,7 +321,7 @@ async function shortDraftRecoveryError(error:unknown,options:ShortFictionRunOpti
   const state=await readShortProductionState(options.projectRoot,base);
   const target={...state?.target,...Object.fromEntries(Object.entries(options).filter(([,value])=>value!==undefined))};
   const incompleteChapterNumbers=findIncompleteShortFictionChapters(partial,shortDraftMinimum(target as ShortFictionRunOptions));
-  const recovery={action:"short-fiction__draft_short_fiction",parameters:{workId:options.storyId},workId:options.storyId,path:projectPath(path),persistedChapterNumbers:partial.chapters.filter(chapter=>chapter.title.trim()&&chapter.content.trim()).map(chapter=>chapter.number),validChapterNumbers:partial.chapters.filter(chapter=>!incompleteChapterNumbers.includes(chapter.number)).map(chapter=>chapter.number),incompleteChapterNumbers,requestedChapterCount:target.chapterCount};
+  const recovery={action:"short-fiction__draft_short_fiction",parameters:{workId:options.storyId,minChapterLength:null,maxChapterLength:null,openingHookChars:null},workId:options.storyId,path:projectPath(path),persistedChapterNumbers:partial.chapters.filter(chapter=>chapter.title.trim()&&chapter.content.trim()).map(chapter=>chapter.number),validChapterNumbers:partial.chapters.filter(chapter=>!incompleteChapterNumbers.includes(chapter.number)).map(chapter=>chapter.number),incompleteChapterNumbers,requestedChapterCount:target.chapterCount};
   return Object.assign(new Error(`${error instanceof Error?error.message:String(error)}\nPersisted draft checkpoint: ${JSON.stringify(recovery)}`,{cause:error}),{code:(error as {code?:string})?.code??"SHORT_DRAFT_FAILED",recovery});
 }
 
@@ -725,7 +725,7 @@ async function reviseShortFictionWithLock(options: ShortFictionRunOptions & { re
   let draft = await tryReadShortFictionDraft(options.projectRoot,join(base,"final","short-story.json"));
   if(!draft) throw Object.assign(new Error("Complete the saved draft before revising the accepted manuscript."),{
     code:"SHORT_MANUSCRIPT_NOT_READY",
-    recovery:{action:"short-fiction__draft_short_fiction",parameters:{workId:work.id},
+    recovery:{action:"short-fiction__draft_short_fiction",parameters:{workId:work.id,minChapterLength:null,maxChapterLength:null,openingHookChars:null},
       reason:"The saved draft checkpoint is not an accepted manuscript. Complete and repair it through the draft stage while preserving the existing Work contract."},
   });
   const language = work.language === "en" ? "en" : "zh";

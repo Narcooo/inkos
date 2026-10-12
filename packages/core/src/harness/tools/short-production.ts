@@ -13,10 +13,10 @@ const Parameters = Type.Object({
   direction: Type.Optional(Type.String({description:"Creative direction for outline generation, or additional instructions for the requested packaging stage. Existing story intent remains unchanged."})),
   chapters: Type.Optional(Type.Integer({ minimum: 1 })),
   charsPerChapter: Type.Optional(Type.Integer({ minimum: 1 })),
-  minChapterLength: Type.Optional(Type.Integer({minimum:1,description:"The lower end of the requested per-chapter range. Omit to preserve the existing Work contract."})),
-  openingHookChars: Type.Optional(Type.Integer({minimum:1,description:"Requested independent opening scene length. Omit to preserve the existing Work contract."})),
+  minChapterLength: Type.Union([Type.Integer({minimum:1}),Type.Null()],{description:"Lower end of the author's requested per-chapter range, including approximate ranges. Use null only when no lower bound was given, or to inherit the saved Work contract in a later stage."}),
+  openingHookChars: Type.Union([Type.Integer({minimum:1}),Type.Null()],{description:"Requested independent opening scene length. Use 200 for an approximately 200-character opening. Use null only when none was requested, or to inherit the saved Work contract in a later stage."}),
   maxChaptersPerCall: Type.Optional(Type.Integer({ minimum: 1 })),
-  maxChapterLength: Type.Optional(Type.Integer({minimum:1,description:"Explicit per-chapter maximum in native length units: non-whitespace characters including punctuation for Chinese, words for English. Omit when no hard upper bound is requested."})),
+  maxChapterLength: Type.Union([Type.Integer({minimum:1}),Type.Null()],{description:"Upper end of the author's requested per-chapter range, including approximate ranges, in native length units. Use null only when no upper bound was given, or to inherit the saved Work contract in a later stage."}),
   reviewScope: Type.Optional(Type.String()),
 });
 
@@ -43,8 +43,8 @@ export function createShortProductionStageTools(pipeline: PipelineRunner, root: 
       if (stage === "outline" && !direction.trim()) throw new Error("An outline needs a creative direction");
       const result = await pipeline.runWithAgentContext({ signal, activatedSkills: skills }, () => runShortFictionStage({
         projectRoot: root, storyId: params.workId, title, direction, stage, language, chapterCount: params.chapters,
-        minChapterLength:params.minChapterLength,openingHookChars:params.openingHookChars,
-        charsPerChapter: params.charsPerChapter, maxChapterLength: params.maxChapterLength, maxChaptersPerCall: params.maxChaptersPerCall ?? profile.production.maxChaptersPerCall,
+        minChapterLength:params.minChapterLength??undefined,openingHookChars:params.openingHookChars??undefined,
+        charsPerChapter: params.charsPerChapter, maxChapterLength: params.maxChapterLength??undefined, maxChaptersPerCall: params.maxChaptersPerCall ?? profile.production.maxChaptersPerCall,
         minChapterLengthRatio: profile.production.minChapterLengthRatio, reviewScope: params.reviewScope,
         signal, onProgress: message => onUpdate?.({ content: [{ type: "text", text: message }], details: { stage } }),
         runtimes: { planner: pipeline.createAgentContext("short-outline"), writer: pipeline.createAgentContext("short-writer"),
