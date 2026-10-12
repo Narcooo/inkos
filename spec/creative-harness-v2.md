@@ -59,6 +59,13 @@ export-only and information-only requests do not inherit old review obligations.
   not prove a finding. Prior critique and delegated suggestions are rechecked
   against current text and author constraints, not promoted to new requirements.
   The review session has a bounded number of model turns.
+- Translation review reads the original independently before comparing it with
+  the current target. Original, target and the fallible independent reading are
+  aligned by segment. Translation issues require verified original and target
+  excerpts; the independent reading cannot serve as evidence or replace the
+  published translation. Review reports retain those excerpts and bind findings
+  to the reviewed target revision. Failed review preserves the prior report,
+  source, target and glossary.
 - Chapter review findings retain the reviewed prose hash. A later revision can
   reuse content issues only when that hash matches the current prose; stale or
   unbound findings and execution issues do not become writing instructions.

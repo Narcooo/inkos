@@ -101,6 +101,7 @@ export async function runTranslationProject(
         sourceLanguage: manifest.sourceLanguage,
         targetLanguage: manifest.targetLanguage,
         chapterTitle: completedChapter.title,
+        sourceChapterTitle: source.title,
         segments: completedChapter.segments,
         glossary,
       });
@@ -112,6 +113,9 @@ export async function runTranslationProject(
       for (const observation of review.observations) {
         reportLines.push(`- ${observation.code}: ${observation.summary}`);
         for (const evidence of observation.evidence) reportLines.push(`  - evidence: ${evidence}`);
+        for (const reference of observation.sourceRefs ?? []) {
+          reportLines.push(`  - source: ${reference.sourceId}`, "", ...reference.quote.split("\n").map(line=>`    > ${line}`));
+        }
       }
       reportLines.push("");
     }

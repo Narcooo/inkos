@@ -4,7 +4,7 @@ import { Type } from "@sinclair/typebox";
 import { prepareWorkerMessages } from "../agents/base.js";
 import type { ActivatedSkillGuidance } from "../agent/skill-tool.js";
 import type { TranslationModelPort, TranslationSegment } from "./types.js";
-import { ObservationToolSchema } from "../agents/review-tool.js";
+import { TranslationReviewAgent } from "./review.js";
 
 const TranslationResultToolSchema = Type.Object({
   chapterTitle: Type.Optional(Type.String()),
@@ -20,17 +20,14 @@ const TranslationResultToolSchema = Type.Object({
   }))),
 });
 
-const TranslationReviewToolSchema = Type.Object({
-  summary: Type.String(),
-  observations: Type.Array(ObservationToolSchema),
-});
-
 export function createLLMTranslationModel(input: {
   readonly client: LLMClient;
   readonly model: string;
   readonly maxTokens?: number;
   readonly activatedSkills?: ReadonlyArray<ActivatedSkillGuidance>;
   readonly signal?: AbortSignal;
+  readonly projectRoot?: string;
+  readonly bookId?: string;
 }): TranslationModelPort {
   return {
     async reviseSegment(request){
@@ -85,38 +82,7 @@ export function createLLMTranslationModel(input: {
       };
     },
     async reviewChapter(request) {
-      const parsed = await runWorkerAgentTool(input.client, input.model, await prepareWorkerMessages(input, [
-        {
-          role: "system",
-          content: [
-            "Review the translation with the activated translation Skill.",
-            "Submit the review summary and evidence-backed observations through the review result tool. An empty observations array is valid.",
-          ].join("\n"),
-        },
-        {
-          role: "user",
-          content: JSON.stringify({
-            sourceLanguage: request.sourceLanguage,
-            targetLanguage: request.targetLanguage,
-            chapterTitle: request.chapterTitle,
-            glossary: request.glossary,
-            segments: request.segments.map((segment) => ({
-              index: segment.index,
-              source: segment.source,
-              target: segment.target ?? "",
-            })),
-          }, null, 2),
-        },
-      ], 4096, "translation-review"), {
-        name: "submit_translation_review",
-        label: "Submit translation review",
-        description: "Submit the translation review.",
-        parameters: TranslationReviewToolSchema,
-      }, {  maxTokens: 4096, signal: input.signal });
-      return {
-        summary: parsed.summary,
-        observations: parsed.observations,
-      };
+      return new TranslationReviewAgent({...input,projectRoot:input.projectRoot??''}).review(request);
     },
   };
 }

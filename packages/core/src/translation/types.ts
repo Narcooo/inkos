@@ -170,6 +170,7 @@ export interface TranslationModelPort {
     readonly sourceLanguage: string;
     readonly targetLanguage: string;
     readonly chapterTitle: string;
+    readonly sourceChapterTitle?: string;
     readonly segments: ReadonlyArray<TranslationSegment>;
     readonly glossary: ReadonlyArray<TranslationGlossaryTerm>;
   }) => Promise<{
