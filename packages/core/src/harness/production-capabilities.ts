@@ -300,13 +300,15 @@ export function createProductionCapabilityRegistry(
     ...(environment.work && createBuiltInWorkProfileRegistry(environment.projectRoot).require(environment.work.profileId).capabilityIds.includes("short-fiction") ? [writeAction(createShortFictionReviseTool(environment.pipeline,environment.projectRoot,environment.work.id,{
       defaultSkills:environment.profileSkills?.(environment.work?.profileId ?? "short-fiction"),activeSkills:environment.activeSkills,
     }))] : []),
-    confirmedAction(createShortFictionRunTool(environment.pipeline, environment.projectRoot, {
+    // Free-text authorship uses explicit stages after Work/source creation.
+    // Keep the combined entry point for the confirmed legacy action only.
+    ...(environment.confirmedCreation ? [confirmedAction(createShortFictionRunTool(environment.pipeline, environment.projectRoot, {
       actionPayload: environment.actionPayload,
       activeWorkId: environment.work?.id,
       language: lang,
       defaultSkills: environment.profileSkills?.(environment.work?.profileId ?? "short-fiction"),
       activeSkills: environment.activeSkills,
-    })),
+    }))] : []),
   ]);
   registerToolCapability(registry, "script", "Script creation", [
     ...scopedProduction(createScriptCreationTool(environment.pipeline, environment.projectRoot, {

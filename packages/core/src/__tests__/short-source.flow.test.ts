@@ -35,7 +35,14 @@ it('delivers the registered short-story reference to the planner and retains its
     const reference='# Sample analysis\nA missing key exposes the keeper’s unpaid work. The receipt pays off the opening promise.\n';
     const parent=await syncWorkSourceArtifacts({projectRoot:root,workId:'sample',accept:true,writes:[{relativePath:'works/sample/source/analysis.md',content:reference}]});
     const original=parent.artifacts[0]!;
-    const registry=createProductionCapabilityRegistry({pipeline,projectRoot:root,sessionId:'flow',profileId:'workspace-default',work:null,language:'en',playWorldExists:false,sameSessionProposal:false,allowSystemFileRead:false});
+    const environment={pipeline,projectRoot:root,sessionId:'flow',profileId:'workspace-default',work:null,language:'en',playWorldExists:false,sameSessionProposal:false,allowSystemFileRead:false};
+    const registry=createProductionCapabilityRegistry(environment);
+    expect(registry.get('short-fiction')!.actions.map(action=>action.id)).not.toContain('short_fiction_run');
+    expect(createProductionCapabilityRegistry({...environment,confirmedCreation:true}).get('short-fiction')!.actions.map(action=>action.id)).toContain('short_fiction_run');
+    const unboundPlan=createShortProductionStageTools(pipeline,root).find(tool=>tool.name==='plan_short_fiction')!;
+    await expect(unboundPlan.execute('missing',{workId:'story',chapters:1})).rejects.toMatchObject({code:'WORK_TARGET_REQUIRED',recovery:{action:'workspace__create_work'}});
+    expect(calls).toHaveLength(0);
+    await expect(readFile(join(root,'works/story/work.json'))).rejects.toMatchObject({code:'ENOENT'});
     await createProfileWorkTools(root,registry).find(tool=>tool.name==='create_work')!.execute('create',{
       workId:'story',title:'The key',profileId:'short-fiction',language:'en',intent:'Write an original keeper story.',
       source:{workId:'sample',artifactId:original.id,revisionId:original.currentRevisionId!},
@@ -47,7 +54,7 @@ it('delivers the registered short-story reference to the planner and retains its
     const events:Array<{type:string;payload:any}>=[];
     const profile=createBuiltInWorkProfileRegistry(root).require('short-fiction');
     const plan=createShortProductionStageTools(pipeline,root,work.id).find(tool=>tool.name==='plan_short_fiction')!;
-    const run=()=>withExecutionEvidence((type,payload)=>events.push({type,payload}),()=>plan.execute('plan',{workId:work.id,direction:'Write an original keeper story.',chapters:1,charsPerChapter:100}),profile,work);
+    const run=()=>withExecutionEvidence((type,payload)=>events.push({type,payload}),()=>plan.execute('plan',{workId:work.id,chapters:1,charsPerChapter:100}),profile,work);
     await expect(run()).rejects.toThrow();
     expect(calls).toHaveLength(1);
     await syncWorkSourceArtifacts({projectRoot:root,workId:'sample',accept:true,writes:[{relativePath:'works/sample/source/analysis.md',content:'A later interpretation of the sample.'}]});
@@ -69,6 +76,7 @@ it('delivers the registered short-story reference to the planner and retains its
     expect(events.filter(event=>event.type==='source-material-used').map(event=>event.payload)).toEqual([1,2].map(()=>({worker:'short-fiction-outline',source,lineage:work.lineage})));
     const state=JSON.parse(await readFile(join(root,'works/story/source/production-state.json'),'utf8'));
     expect(state.outlineSource).toEqual(source);
+    expect(state.intent).toBe(work.metadata.intent);
     expect((await loadWorkManifest(root,'story')).lineage).toEqual(work.lineage);
     const methods=await hydrateActivatedSkillGuidance(resolveProfileSkillActivations((await loadAvailableAgentSkills({projectRoot:root})).skills,profile),'');
     const method=methods!.find(item=>item.skill.id==='inkos-short-writing')!;

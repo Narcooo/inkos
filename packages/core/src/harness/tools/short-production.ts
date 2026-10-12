@@ -28,15 +28,18 @@ export function createShortProductionStageTools(pipeline: PipelineRunner, root: 
     description: `Execute only the ${stage} stage of a short-fiction Work. Earlier artifacts must exist. Return persisted results and execution observations.`,
     async execute(_id, params, signal, onUpdate) {
       if (activeWorkId && activeWorkId !== params.workId) throw new Error("Action must target the active Work");
-      let profileId = "short-fiction";
-      let language: "zh" | "en" = "zh";
-      let title:string|undefined;
-      try { const work = await loadWorkManifest(root, params.workId); profileId = work.profileId;title=work.title; language = work.language === "en" ? "en" : "zh"; } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-      const profile = createBuiltInWorkProfileRegistry(root).require(profileId);
+      const work = await loadWorkManifest(root, params.workId).catch(error=>{
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        throw Object.assign(new Error('Create the Work and bind its selected source revisions before short-fiction production.'),{
+          code:'WORK_TARGET_REQUIRED',recovery:{action:'workspace__create_work',reason:'Create the requested Work with its Profile, title, brief and any selected source revisions, then run the requested production stage.'},
+        });
+      });
+      const title=work.title, language=work.language==='en'?'en':'zh';
+      const profile = createBuiltInWorkProfileRegistry(root).require(work.profileId);
       if (!profile.capabilityIds.includes("short-fiction")) throw new Error("This Work does not declare short-fiction capability");
       const skills = resolveProfileSkillActivations((await loadAvailableAgentSkills({ projectRoot: root })).skills, profile);
       const existing = await readShortProductionState(root, `works/${params.workId}/source`);
-      const direction = params.direction ?? existing?.intent ?? "";
+      const direction = params.direction ?? existing?.intent ?? (typeof work.metadata.intent==='string'?work.metadata.intent:"");
       if (stage === "outline" && !direction.trim()) throw new Error("An outline needs a creative direction");
       const result = await pipeline.runWithAgentContext({ signal, activatedSkills: skills }, () => runShortFictionStage({
         projectRoot: root, storyId: params.workId, title, direction, stage, language, chapterCount: params.chapters,
