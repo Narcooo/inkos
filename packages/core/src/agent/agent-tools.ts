@@ -3078,7 +3078,7 @@ export function createReadTool(
 
   return {
     name: "read",
-    description: "Read a registered artifact by ID (defaults to the bound Work and accepted revision). Returns full-document measurements and JSON collection counts alongside a page of text with exact 1-based line numbers. If contentScope is page_excerpt, follow nextRead before claiming content is absent; the page is not the complete document or a parseable JSON replacement. Line-number prefixes are addresses, not part of the source. For external inputs only: " + description,
+    description: "Read a registered artifact by ID (defaults to the bound Work and accepted revision). PNG/JPEG images return the actual pixels with verified source identity for visual inspection. Text returns full-document measurements and JSON collection counts alongside a page with exact 1-based line numbers. If contentScope is page_excerpt, follow nextRead before claiming content is absent; the page is not the complete document or a parseable JSON replacement. Line-number prefixes are addresses, not part of the source. For external inputs only: " + description,
     label: "Read File",
     parameters: ReadParams,
     async execute(
@@ -3092,6 +3092,13 @@ export function createReadTool(
         const workId = params.workId ?? options.workId;
         if (!workId) throw Object.assign(new Error("Select a Work from workspace__list_works."), { code: "WORK_REQUIRED" });
         const { artifact, revision, bytes } = await readArtifactRevision({ projectRoot, workId, artifactId: params.artifactId, revisionId: params.revisionId });
+        if (revision.contentType === 'image/png' || revision.contentType === 'image/jpeg') {
+          if(params.startLine!==undefined||params.lineCount!==undefined)throw Object.assign(new Error('Read the complete image without text pagination.'),{code:'ARTIFACT_IMAGE_PAGINATION'});
+          if(bytes.length>10*1024*1024)throw Object.assign(new Error('The registered image exceeds the 10 MiB visual observation limit.'),{code:'ARTIFACT_IMAGE_TOO_LARGE',byteLength:bytes.length});
+          const details={kind:'artifact_image_read',workId,artifactId:artifact.id,revisionId:revision.id,path:revision.path,
+            status:revision.status,checksum:revision.checksum,mimeType:revision.contentType,byteLength:bytes.length,contentScope:'full_artifact'};
+          return {content:[{type:'text',text:JSON.stringify(details)},{type:'image',mimeType:revision.contentType,data:bytes.toString('base64')}],details};
+        }
         if (!revision.contentType.startsWith("text/") && !["application/json", "application/yaml"].includes(revision.contentType)) {
           throw Object.assign(new Error("Use the artifact viewer for this binary revision."), { code: "ARTIFACT_NOT_TEXT" });
         }

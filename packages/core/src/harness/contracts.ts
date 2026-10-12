@@ -168,6 +168,7 @@ export const ActionResultSchema = z.object({
   status: z.literal("success"),
   summary: z.string().min(1),
   content: z.string().optional(),
+  images: z.array(z.object({type:z.literal('image'),data:z.string().min(1),mimeType:z.string().startsWith('image/')})).optional(),
   artifacts: z.array(ActionArtifactRefSchema),
   observations: z.array(ActionObservationSchema),
   operationReceipts: z.array(OperationReceiptSchema).optional(),

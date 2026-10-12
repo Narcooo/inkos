@@ -66,7 +66,7 @@ export function createCapabilityPiTools(
         failedReads.delete(retryKey);
         await options.onResult?.(capability.id, action.id, result);
         return {
-          content: [{ type: "text", text: renderActionResultForAgent(result) }],
+          content: [{ type: "text", text: renderActionResultForAgent(result) }, ...(result.images ?? [])],
           // Studio renders domain-owned result cards (proposed_action, play
           // scene, chapter revision, etc.). The harness ActionResult remains
           // authoritative in the Episode ledger; Pi events expose its domain

@@ -563,6 +563,7 @@ async function normalizeToolResult(
     .map((item) => item.text)
     .join("\n")
     .trim();
+  const images = result.content.filter(item => item.type === 'image');
   const details = result.details;
   const isError = (result as { isError?: boolean }).isError === true;
   const workIds = new Set<string>();
@@ -618,6 +619,7 @@ async function normalizeToolResult(
     status: "success",
     summary,
     ...(content ? { content } : {}),
+    ...(images.length ? {images} : {}),
     artifacts,
     observations,
     ...(operationReceipts.length ? {operationReceipts} : {}),

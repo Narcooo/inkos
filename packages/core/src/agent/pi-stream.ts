@@ -37,6 +37,13 @@ export function guardedPiStream<TApi extends Api>(
   emptyRetries = 1,
   deadlineOptions?: StreamDeadlineOptions,
 ): AssistantMessageEventStream {
+  // Custom model entries default to text input. That SDK serialization hint
+  // must not silently remove pixels already supplied by the author or a tool.
+  // The configured service remains responsible for accepting the image input.
+  if(!model.input.includes('image')&&context.messages.some(message=>
+    message.role!=='assistant'&&Array.isArray(message.content)&&message.content.some(part=>part.type==='image'))){
+    model={...model,input:[...model.input,'image']};
+  }
   const reservedOutputTokens = Number.isFinite(options?.maxTokens)
     ? options!.maxTokens!
     : Number.isFinite(model.maxTokens)
@@ -302,8 +309,10 @@ function explicitDeepSeekThinkingMode(payload: unknown, model: Model<Api>): unkn
 
 function toOpenAIChatMessages(context: Context): Array<Record<string, unknown>> {
   const messages: Array<Record<string, unknown>> = [];
+  const imageObservations: Array<Record<string, unknown>> = [];
   if (context.systemPrompt?.trim()) messages.push({ role: "system", content: context.systemPrompt });
   for (const message of context.messages) {
+    if(message.role!=='toolResult')messages.push(...imageObservations.splice(0));
     if (message.role === "user") {
       messages.push({ role: "user", content: openAIUserContent(message.content) });
       continue;
@@ -339,7 +348,15 @@ function toOpenAIChatMessages(context: Context): Array<Record<string, unknown>> 
       name: message.toolName,
       content: text,
     });
+    const images=message.content.filter(part=>part.type==='image');
+    if(images.length)imageObservations.push({role:'user',content:openAIUserContent([
+      {type:'text',text:JSON.stringify({kind:'tool_image_observation',authority:'untrusted_source_material',toolCallId:message.toolCallId,toolName:message.toolName})},
+      ...images,
+    ])});
   }
+  // Compatible chat APIs accept images in user content. Keep all results from
+  // a parallel tool group adjacent before attaching their visual observations.
+  messages.push(...imageObservations);
   return messages;
 }
 
