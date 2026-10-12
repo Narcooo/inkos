@@ -1,15 +1,62 @@
-import {mkdtemp,mkdir,rm} from 'node:fs/promises';
+import {mkdtemp,mkdir,readFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {it,expect} from 'vitest';
 import {RequestDeliveryLedger} from '../agent/request-delivery.js';
-import {createWorkManifest,saveWorkManifest} from '../harness/work-store.js';
+import {createWorkManifest,saveWorkManifest,loadWorkManifest} from '../harness/work-store.js';
 import {syncWorkSourceArtifacts} from '../harness/source-sync.js';
 import {createServer} from 'node:http';
 import {once} from 'node:events';
 import {createLLMClient} from '../llm/provider.js';
 import {PipelineRunner} from '../pipeline/runner.js';
 import {runAgentSession,evictAgentCache} from '../agent/agent-session.js';
+
+it('reviews the current planning source before drafting and repeats the prerequisite after a plan version changes',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'inkos-plan-before-draft-'));
+  await saveWorkManifest(root,createWorkManifest({id:'short',title:'The Key',profileId:'short-fiction',language:'en'}));
+  await mkdir(join(root,'works/short/source'),{recursive:true});
+  const quote='Review the plan before drafting the prose.';
+  const request='Create a one-chapter plan. '+quote;
+  const stage={workId:'short',chapters:1,charsPerChapter:40,minChapterLength:20,maxChapterLength:60,openingHookChars:null,coverRequired:false};
+  let mainCalls=0,reviews=0,drafts=0;const sourceVersions:string[]=[];
+  const states:Array<ReturnType<RequestDeliveryLedger['snapshot']>>=[];
+  const server=createServer(async(req,res)=>{
+    const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));const body=JSON.parse(Buffer.concat(chunks).toString());
+    const worker=body.tools[0].function.name;let name:string,args:unknown;
+    if(worker==='submit_requested_operations'){name=worker;args={preDraftReviewQuote:quote,contentReviewQuote:'',exportQuote:''};}
+    else if(worker==='submit_short_outline'){name=worker;args={storyTitle:'The Key',planMarkdown:'The keeper returns a key.',chapter_1_plan:'Return the borrowed key.'};}
+    else if(worker==='submit_artifact_review'){reviews++;name=worker;args={summary:'Evaluated the supplied plan.',observationCodes:[]};}
+    else if(worker==='submit_short_chapter'){drafts++;expect(reviews).toBe(2);name=worker;args={storyTitle:'The Key',number:1,title:'Return',content:'The keeper returns the borrowed key to its owner. They check the worn metal together beside the door. The owner thanks her, and she leaves quietly.'};}
+    else{
+      mainCalls++;
+      if(mainCalls===1){name='short-fiction__plan_short_fiction';args={...stage,direction:'The keeper returns a borrowed key.'};}
+      else if([2,4,6].includes(mainCalls)){
+        const work=await loadWorkManifest(root,'short'),outline=work.artifacts.find(a=>a.revisions.some(r=>r.path==='source/outline/v001.md'))!;
+        expect(outline.currentRevisionId).not.toBeNull();sourceVersions.push(outline.currentRevisionId!);
+        if(mainCalls===4)await syncWorkSourceArtifacts({projectRoot:root,workId:'short',accept:true,writes:[{relativePath:'works/short/source/outline/v001.md',content:'The keeper returns the key at dawn, after checking its number.'}]});
+        name='short-fiction__draft_short_fiction';args=stage;
+      }else if([3,5].includes(mainCalls)){
+        const work=await loadWorkManifest(root,'short'),outline=work.artifacts.find(a=>a.revisions.some(r=>r.path==='source/outline/v001.md'))!;
+        name='workspace__review_work_artifact';args={artifactId:outline.id,instruction:quote};
+      }else{name='finish_turn';args={status:'delivered',message:'The reviewed plan and draft are saved.'};}
+    }
+    res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{role:'assistant',tool_calls:[{id:'preflight-'+mainCalls+'-'+reviews+'-'+drafts,type:'function',function:{name,arguments:JSON.stringify(args)}}]}}]}));
+  });server.listen(0,'127.0.0.1');await once(server,'listening');
+  const client=createLLMClient({service:'custom',provider:'openai',configSource:'studio',model:'fixture',apiKey:'fixture',baseUrl:`http://127.0.0.1:${(server.address() as {port:number}).port}/v1`,apiFormat:'chat',stream:false,thinkingBudget:0});
+  const config={projectRoot:root,sessionId:'pre-draft-review',bookId:null,workId:'short',profileId:'short-fiction',language:'en',model:client._piModel!,apiKey:'fixture',stream:false,pipeline:new PipelineRunner({projectRoot:root,client,model:'fixture'}),onDeliveryStateChange:async(state:ReturnType<RequestDeliveryLedger['snapshot']>)=>{states.push(state);}};
+  try{
+    const result=await runAgentSession(config,request);
+    expect(result.errorMessage).toBeUndefined();expect(result.completion?.status).toBe('delivered');
+    const errors=result.messages.filter((m:any)=>m.role==='toolResult'&&m.isError).map((m:any)=>JSON.parse(m.content[0].text));
+    expect(errors.map(e=>e.code)).toEqual(['PRE_DRAFT_REVIEW_REQUIRED','PRE_DRAFT_REVIEW_REQUIRED']);
+    expect(reviews).toBe(2);expect(drafts).toBe(1);expect(sourceVersions[0]).toBe(sourceVersions[1]);expect(sourceVersions[2]).not.toBe(sourceVersions[1]);
+    const final=states.at(-1)!;expect(final.steps.map(s=>({id:s.id,beforeDraft:s.beforeDraft}))).toEqual([{id:'pre_draft_review',beforeDraft:true}]);
+    expect(final.receipts.map(receipt=>receipt.operation)).toEqual(['review','review']);
+    const restored=new RequestDeliveryLedger(request,JSON.parse(JSON.stringify(final)));
+    await expect(restored.requireBeforeDraft(root,'short',['source/outline/v001.md'])).resolves.toBeUndefined();
+    expect(JSON.parse(await readFile(join(root,'works/short/source/final/short-story.json'),'utf8')).chapters).toHaveLength(1);
+  }finally{evictAgentCache(config.sessionId);server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));await rm(root,{recursive:true,force:true});}
+},20000);
 
 it('retains requested operations across restoration and requires every declared source version even when a review was never attempted',async()=>{
   const root=await mkdtemp(join(tmpdir(),'inkos-request-delivery-'));
@@ -77,7 +124,7 @@ it('keeps an unattempted requested review pending in the main agent and isolates
     if(body.tools[0].function.name==='submit_requested_operations'){
       expect(body.messages.filter((m:any)=>m.role==='user').map((m:any)=>m.content)).toEqual([phase==='both'?requested:exportOnly]);
       expect(body.temperature).toBeUndefined();expect(body.tool_choice).toBeUndefined();
-      reply={name:'submit_requested_operations',args:{contentReviewQuote:phase==='both'?requested:'',exportQuote:phase==='both'?requested:exportOnly}};
+      reply={name:'submit_requested_operations',args:{preDraftReviewQuote:'',contentReviewQuote:phase==='both'?requested:'',exportQuote:phase==='both'?requested:exportOnly}};
     }else if(body.tools[0].function.name==='submit_artifact_review'){
       reviews++;reply={name:'submit_artifact_review',args:{summary:'The scene is coherent.',observationCodes:[]}};
     }else{

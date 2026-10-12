@@ -21,10 +21,11 @@ const Parameters = Type.Object({
   reviewScope: Type.Optional(Type.String()),
 });
 
-export function createShortProductionStageTools(pipeline: PipelineRunner, root: string, activeWorkId?: string): Array<AgentTool<typeof Parameters> & { readonly artifactsCommitted: true }> {
+export function createShortProductionStageTools(pipeline: PipelineRunner, root: string, activeWorkId?: string): Array<AgentTool<typeof Parameters> & { readonly artifactsCommitted: true; readonly draftSourcePaths?:ReadonlyArray<string> }> {
   const stages: Array<[ShortProductionStage, string]> = [["outline", "plan_short_fiction"], ["draft", "draft_short_fiction"], ["review", "review_short_fiction"], ["package", "package_short_fiction"]];
   return stages.map(([stage, name]) => ({
     artifactsCommitted: true,
+    ...(stage==='draft'?{draftSourcePaths:['source/outline/v001.md']}:{}),
     name, label: `Short fiction: ${stage}`, parameters: Parameters,
     description: `Execute only the ${stage} stage of a short-fiction Work. Earlier artifacts must exist. Return persisted results and execution observations.`,
     async execute(_id, params, signal, onUpdate) {

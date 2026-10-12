@@ -124,7 +124,7 @@ export interface ProductionCapabilityEnvironment {
   readonly confirmedCreation?: boolean;
 }
 
-type ProductionAgentTool = AgentTool<any, any> & { readonly artifactsCommitted?: boolean; readonly managesWorkLock?: boolean };
+type ProductionAgentTool = AgentTool<any, any> & { readonly artifactsCommitted?: boolean; readonly managesWorkLock?: boolean; readonly draftSourcePaths?:ReadonlyArray<string> };
 
 function withoutInlineImportSource(tool:ReturnType<typeof createImportChaptersTool>):ProductionAgentTool {
   return {...tool,parameters:Type.Omit(tool.parameters,['sourceText'],{additionalProperties:false})};
@@ -521,6 +521,7 @@ function toolBackedAction(spec: ProductionToolAction) {
     risk,
     requiresConfirmation,
     managesWorkLock: tool.managesWorkLock,
+    draftSourcePaths: tool.draftSourcePaths,
     parameters: tool.parameters ?? Type.Any(),
     async execute(context: CapabilityExecutionContext, input: unknown): Promise<ActionResult> {
       const before = await loadKnownWork(context.projectRoot, context.work?.id);

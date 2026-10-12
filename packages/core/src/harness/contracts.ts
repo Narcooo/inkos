@@ -151,6 +151,7 @@ export type OperationReceipt = z.infer<typeof OperationReceiptSchema>;
 export const DeliveryTargetSchema=ActionArtifactRefSchema.omit({path:true}).extend({version:z.enum(['current','fixed']).default('current')});
 export const DeliveryRequirementSchema=z.object({
   id:z.string().min(1),operation:z.enum(['review','export']),sourceQuote:z.string().trim().min(1),
+  beforeDraft:z.literal(true).optional(),
   targets:z.array(DeliveryTargetSchema).default([]),
 }).strict();
 export const RequestDeliveryStateSchema=z.object({

@@ -26,7 +26,7 @@ it('preserves inline author permission through length failure and resume, and ch
   const root=await mkdtemp(join(tmpdir(),'inkos-short-inline-'));roots.push(root);
   const draft={storyTitle:'旧馆',openingHook:'灯还亮着。',rawContent:'',chapters:[
     {number:1,title:'原始档案',content:'她在2031年登记了这本旧书。',charCount:0},
-    {number:2,title:'核对',content:'“别动旁边的记录。”他说。\n\n该册修复于1999年，评级三级。\n\n她收好台账，关上柜门。',charCount:0},
+    {number:2,title:'核对',content:'“别动旁边的记录。”他说。\n\n该册修复于1999年，评级三级。\n\n她收好台账，关上柜门。\n\n1999年那册的修复档，她明天再来取。',charCount:0},
     {number:3,title:'旧标题',content:'“档案已经收好了。”她说。',charCount:0},
   ]};
   const base='works/short/source';const raw=JSON.stringify(draft);
@@ -40,11 +40,12 @@ it('preserves inline author permission through length failure and resume, and ch
   const server=createServer(async(req,res)=>{
     const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));
     const body=JSON.parse(Buffer.concat(chunks).toString());const name=body.tools[0].function.name;calls.push({name,body});
+    if(name==='submit_author_edit_scope')expect(JSON.parse(body.messages.find((m:any)=>m.role==='user').content).documentIdentity).toEqual({kind:'chapter',chapterNumber:2,title:'核对'});
     const args=name==='submit_short_author_scope'?{wholeManuscript:false,chapterNumbers:[2],chapterTitleNumbers:[3],opening:false,outline:false}
       :name==='submit_short_revision_plan'?{revisionBrief:'Correct the year and add its cause.',chapter_2_instruction:'Correct the year; add an explanation and polish dialogue.',chapter_3_instruction:'Rename the title.'}
       :name==='submit_edit_location'?{kind:'reference',boundary:'none',count:0,target:'Only the repair year in chapter 2.'}
-      :name==='submit_author_edit_scope'?{wholeDocument:false,selections:[{unitId:'p2.l1',text:'1999'}],reason:'Only the year is editable.'}
-      :name==='submit_chapter_range_replacements'?{selection_0_text:allowCompletion?'2031':'2031年，因为发生了额外事件'}
+      :name==='submit_author_edit_scope'?{wholeDocument:false,selections:[{unitId:'p2.l1',text:'1999'},{unitId:'p4.l1',text:'1999'}],reason:'Only the two references to the repair year are editable.'}
+      :name==='submit_chapter_range_replacements'?{selection_0_text:allowCompletion?'2031':'2031年，因为发生了额外事件',selection_1_text:'2031'}
       :name==='submit_short_revision_title'?{title:'归档'}
       :name==='submit_short_fiction_review'?{summary:'Reviewed current sources.',observationCodes:[]}
       :name==='submit_short_package'?{title:draft.storyTitle,intro:'她核对了一册旧书。',sellingPoints:['旧档案'],coverPrompt:'一本旧书'}:undefined;
@@ -63,12 +64,12 @@ it('preserves inline author permission through length failure and resume, and ch
     allowCompletion=true;
     await withExecutionEvidence(()=>{},()=>reviseShortFictionProduction({...options,direction:'',resumeOperationId:checkpoint.operationId}),undefined,baseline,'Continue the saved operation.');
     const result=JSON.parse(await readFile(join(root,base,'final/short-story.json'),'utf8'));
-    expect(result.chapters.map((c:any)=>({number:c.number,title:c.title,content:c.content}))).toEqual(draft.chapters.map(c=>({number:c.number,title:c.number===3?'归档':c.title,content:c.number===2?c.content.replace('1999','2031'):c.content})));
+    expect(result.chapters.map((c:any)=>({number:c.number,title:c.title,content:c.content}))).toEqual(draft.chapters.map(c=>({number:c.number,title:c.number===3?'归档':c.title,content:c.number===2?c.content.replaceAll('1999','2031'):c.content})));
     expect(result.openingHook).toBe(draft.openingHook);expect(result.storyTitle).toBe(draft.storyTitle);
     expect(calls.filter(c=>c.name==='submit_edit_location')).toHaveLength(1);
     expect(calls.filter(c=>c.name==='submit_author_edit_scope')).toHaveLength(1);
     const replacements=calls.filter(c=>c.name==='submit_chapter_range_replacements');
-    for(const {body}of replacements)expect(Object.keys(body.tools[0].function.parameters.properties)).toEqual(['selection_0_text']);
+    for(const {body}of replacements)expect(Object.keys(body.tools[0].function.parameters.properties)).toEqual(['selection_0_text','selection_1_text']);
     const finalInput=replacements.at(-1)!.body.messages.filter((m:any)=>m.role==='user').map((m:any)=>{try{return JSON.parse(m.content);}catch{return null;}}).find((m:any)=>m?.instruction===request);
     expect(finalInput.instruction).toBe(request);
     expect(finalInput.references.map((reference:any)=>reference.source)).toEqual(['original-manuscript']);
@@ -336,7 +337,7 @@ it('packages the current manuscript while preserving its separate delivery issue
   expect((await loadWorkManifest(root,"short")).artifacts.find(a=>a.id===candidate.id)?.currentRevisionId).toBeNull();
 });
 
-it("exposes the outline and partial draft during generation without marking them final", async () => {
+it("exposes the completed outline for review while preserving partial draft recovery", async () => {
   const root = await mkdtemp(join(tmpdir(), "inkos-short-discovery-")); roots.push(root);
   const complete = { storyTitle: "Story", rawContent: "", chapters: [1, 2].map(number => ({
     number, title: `Chapter ${number}`, content: Array(40).fill("word").join(" "), charCount: 40,
@@ -350,12 +351,12 @@ it("exposes the outline and partial draft during generation without marking them
   vi.spyOn(ShortFictionOutlineAgent.prototype, "createOutline").mockResolvedValue({ storyTitle: "Story", rawContent: "Complete outline" });
   vi.spyOn(ShortFictionWriterAgent.prototype, "writeDraft").mockImplementationOnce(async input => {
     expect((await inspect()).artifacts).toContainEqual(expect.objectContaining({
-      path: "works/short/source/outline/v001.md", status: "candidate",
+      path: "works/short/source/outline/v001.md", status: "current",
     }));
     await input.onBatchComplete?.({ ...complete, chapters: [complete.chapters[0]!, { number: 2, title: "", content: "", charCount: 0 }] }, [1]);
     const partial = (await inspect()).artifacts;
     expect(partial).toContainEqual(expect.objectContaining({ path: "works/short/source/drafts/v001-partial/draft.json", status: "candidate" }));
-    expect(partial.every(artifact => artifact.status === "candidate")).toBe(true);
+    expect(partial.filter(artifact=>artifact.path.startsWith('works/short/source/drafts/')).every(artifact => artifact.status === "candidate")).toBe(true);
     throw Object.assign(new Error("model interrupted"), { code: "MODEL_STREAM_IDLE" });
   });
   vi.spyOn(ShortFictionWriterAgent.prototype, "continueDraft").mockResolvedValue(complete);
@@ -364,6 +365,11 @@ it("exposes the outline and partial draft during generation without marking them
   const context = { projectRoot: root, model: "test", client: { defaults: { maxTokens: 4096 } } } as never;
   const options = { projectRoot: root, storyId: "short", direction: "Write a story", language: "en" as const, chapterCount: 2, charsPerChapter: 40, cover: false, runtimes: { planner: context, writer: context, draftReview: context, package: context } };
   await runShortFictionStage({...options,stage:"outline"});
+  const outlinePath=join(root,'works/short/source/outline/v001.md'),savedOutline=await readFile(outlinePath);
+  await writeFile(outlinePath,'Unregistered outline edit.');
+  await expect(runShortFictionStage({...options,stage:'draft'})).rejects.toMatchObject({code:'DRAFT_SOURCE_CHANGED'});
+  expect(ShortFictionWriterAgent.prototype.writeDraft).not.toHaveBeenCalled();
+  await writeFile(outlinePath,savedOutline);
   let recoveryParameters:unknown;
   await expect(runShortFictionStage({...options,stage:"draft"}).catch(error=>{
     recoveryParameters=error.recovery?.parameters;throw error;

@@ -44,7 +44,7 @@ export class SourceLocatorAgent extends BaseAgent {
       const selected=location.boundary==='first'?paragraphs.slice(0,location.count):paragraphs.slice(-location.count);
       return{wholeDocument:false,selections:selected.map(unit=>({unitId:unit.id,text:''})),reason:`Author requested ${location.boundary} ${location.count} paragraph(s) of the supplied document.`};
     }
-    const request=authorTextScopeRequest(content,location.target);
+    const request=authorTextScopeRequest(content,location.target,identity);
     const selected=await this.submitStructured(request.messages,request.tool,{maxTokens:Math.min(8192,this.ctx.client.defaults.maxTokens),professionalGuidance:false});
     return selected.result;
   }

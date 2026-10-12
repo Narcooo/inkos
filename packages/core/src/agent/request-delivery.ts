@@ -3,6 +3,7 @@ import {z} from 'zod';
 import type {AgentTool} from '@mariozechner/pi-agent-core';
 import {DeliveryTargetSchema,OperationReceiptSchema,RequestDeliveryStateSchema,type OperationReceipt,type RequestDeliveryState} from '../harness/contracts.js';
 import {readArtifactRevision} from '../harness/artifact-reader.js';
+import {loadWorkManifest} from '../harness/work-store.js';
 
 import type {LLMClient} from '../llm/provider.js';
 import {runWorkerAgentTool} from './worker-agent.js';
@@ -19,10 +20,11 @@ const Target=Type.Object({workId:Type.String({minLength:1}),artifactId:Type.Stri
   revisionId:Type.Optional(Type.String({minLength:1,description:'An exact version. With current, a matching current revision is accepted as a reference and normalized to a current-version binding. Required with fixed.'})),
 },{additionalProperties:false});
 const RequestOperations=Type.Object({
-  contentReviewQuote:Type.String({description:'Exact affirmative instruction for professional or editorial evaluation of the CREATIVE CONTENT: story, characterization, prose, or translation quality. Technical validation, schema checks, counts and reachability are excluded. Use an empty string when no such evaluation is requested.'}),
+  preDraftReviewQuote:Type.String({description:'Exact affirmative instruction to evaluate an outline or story plan BEFORE drafting its prose. Preserve the ordering words. Use an empty string when this pre-draft review was not requested.'}),
+  contentReviewQuote:Type.String({description:'Exact affirmative instruction for professional or editorial evaluation of the CREATIVE CONTENT: story, characterization, prose, or translation quality. Keep an additional manuscript review separate from a pre-draft outline review. Technical validation, schema checks, counts and reachability are excluded. Use an empty string when no additional evaluation is requested.'}),
   exportQuote:Type.String({description:'Exact affirmative instruction to produce a separate delivery copy or delivery format. Saving generated source artifacts, saving edits, and preserving versions are persistence, not an additional export. Use an empty string when export is not requested.'}),
 },{additionalProperties:false});
-type RequestedOperations={reviewQuote:string|null;exportQuote:string|null};
+type RequestedOperations={preDraftReviewQuote?:string|null;reviewQuote:string|null;exportQuote:string|null};
 
 /** Interpret only the author instruction, independently of execution history.
  * The executor cannot erase an unattempted operation from its own completion scope. */
@@ -33,7 +35,7 @@ export async function interpretDeliveryRequirements(client:LLMClient,authorReque
   ],{name:'submit_requested_operations',label:'Identify requested delivery operations',description:'Extract explicit creative-content evaluation and export instructions using the precise field definitions. Leave an absent instruction empty.',parameters:RequestOperations,
     validate:result=>{for(const [field,quote] of Object.entries(result))if(quote&&!authorRequest.includes(quote))throw Object.assign(new Error(JSON.stringify({code:'DELIVERY_REQUIREMENT_SOURCE_MISMATCH',field,received:quote,instruction:'Copy an exact quotation from the author request, or use an empty string when this operation was not requested.'})),{code:'DELIVERY_REQUIREMENT_SOURCE_MISMATCH'});return result;},
   },{signal}));
-  return{reviewQuote:result.contentReviewQuote||null,exportQuote:result.exportQuote||null};
+  return{preDraftReviewQuote:result.preDraftReviewQuote||null,reviewQuote:result.contentReviewQuote||null,exportQuote:result.exportQuote||null};
 }
 
 export const DeliveryRequirementsParameters=Type.Object({
@@ -58,6 +60,10 @@ export class RequestDeliveryLedger {
   initialize(operations:RequestedOperations){
     if(this.state.declared)return;
     const steps:RequestDeliveryState['steps']=[];
+    if(operations.preDraftReviewQuote){
+      if(!this.state.authorRequest.includes(operations.preDraftReviewQuote))throw Object.assign(new Error('Requirement must cite the author request.'),{code:'DELIVERY_REQUIREMENT_SOURCE_MISMATCH'});
+      steps.push({id:'pre_draft_review',operation:'review',beforeDraft:true,sourceQuote:operations.preDraftReviewQuote,targets:[]});
+    }
     for(const operation of ['review','export'] as const){
       const sourceQuote=operations[`${operation}Quote`];
       if(sourceQuote===null)continue;
@@ -78,6 +84,7 @@ export class RequestDeliveryLedger {
       const previousTargets=step.targets;
       step.targets=targets;
       for(const target of step.targets){
+        if(step.beforeDraft&&target.version==='fixed')throw Object.assign(new Error('A review before drafting must follow the current planning source.'),{code:'DELIVERY_PREFLIGHT_HISTORY_UNSUPPORTED'});
         if(step.operation==='export'&&target.version==='fixed')throw Object.assign(new Error(JSON.stringify({code:'DELIVERY_EXPORT_HISTORY_UNSUPPORTED',instruction:'Exports follow current sources. Set version to current or omit it.'})),{code:'DELIVERY_EXPORT_HISTORY_UNSUPPORTED'});
         if(target.version==='fixed'&&!target.revisionId)throw Object.assign(new Error(JSON.stringify({code:'DELIVERY_REVISION_REQUIRED',instruction:'A fixed snapshot review needs its exact revisionId.'})),{code:'DELIVERY_REVISION_REQUIRED'});
         if(target.version==='current'){
@@ -104,10 +111,9 @@ export class RequestDeliveryLedger {
     for(const receipt of validated)if(!existing.has(key(receipt))){existing.add(key(receipt));this.state.receipts.push(receipt);changed=true;}
     return changed;
   }
-  async validate(root:string){
-    this.requireDeclaration();
+  private async missing(root:string,steps:RequestDeliveryState['steps']){
     const missing:Array<{stepId:string;operation:string;target?:z.infer<typeof TargetSchema>;reason:string}>=[];
-    for(const step of this.state.steps){
+    for(const step of steps){
       if(!step.targets.length){missing.push({stepId:step.id,operation:step.operation,reason:'unbound_sources'});continue;}
       for(const target of step.targets){
         const {revision}=await readArtifactRevision({projectRoot:root,...target});
@@ -115,6 +121,29 @@ export class RequestDeliveryLedger {
         if(!executed)missing.push({stepId:step.id,operation:step.operation,target,reason:'current_source_receipt_missing'});
       }
     }
+    return missing;
+  }
+  async requireBeforeDraft(root:string,workId:string,paths:ReadonlyArray<string>){
+    this.requireDeclaration();
+    const step=this.state.steps.find(step=>step.beforeDraft);
+    if(!step)return;
+    const work=await loadWorkManifest(root,workId);
+    const targets=paths.map(path=>{
+      const artifact=work.artifacts.find(artifact=>artifact.revisions.some(revision=>revision.id===artifact.currentRevisionId&&revision.path===path));
+      if(!artifact)throw Object.assign(new Error('Create the planning source before drafting.'),{code:'DRAFT_SOURCE_REQUIRED',workId,path});
+      return{workId,artifactId:artifact.id,version:'current' as const};
+    });
+    await this.bind(root,{steps:[{id:step.id,targets:[...step.targets,...targets.filter(target=>!step.targets.some(item=>sameTarget(item,target)))]}]});
+    const missing=await this.missing(root,this.state.steps.filter(step=>step.beforeDraft));
+    if(missing.length){
+      const target=missing[0]?.target;
+      const recovery=target?{action:'workspace__review_work_artifact',workId:target.workId,parameters:{artifactId:target.artifactId,instruction:step.sourceQuote},reason:'Review the current planning source, then retry drafting. Findings remain professional advice; this prerequisite checks that the requested review happened.'}:undefined;
+      throw Object.assign(new Error(JSON.stringify({code:'PRE_DRAFT_REVIEW_REQUIRED',missing,recovery})),{code:'PRE_DRAFT_REVIEW_REQUIRED',recovery});
+    }
+  }
+  async validate(root:string){
+    this.requireDeclaration();
+    const missing=await this.missing(root,this.state.steps);
     if(missing.length)throw Object.assign(new Error(JSON.stringify({code:'REQUEST_DELIVERY_INCOMPLETE',missing,
       instruction:'Bind every intended source, then complete the missing operation on its required version. Structural checks do not satisfy content review. A successful export does not replace an unperformed review. Report a concrete blocker if the operation cannot proceed.'})),{code:'REQUEST_DELIVERY_INCOMPLETE'});
   }

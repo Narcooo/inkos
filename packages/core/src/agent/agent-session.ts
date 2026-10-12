@@ -1064,6 +1064,11 @@ async function runAgentSessionUnlocked(
         cached.activeActions++;
         try {
           if(capabilities.resolve(capabilityId,actionId).action.risk!=='read')await cached.ensureDelivery(signal);
+          const draftSources=capabilities.resolve(capabilityId,actionId).action.draftSourcePaths;
+          if(draftSources?.length&&cached.workId){
+            try{await cached.requestDelivery.requireBeforeDraft(projectRoot,cached.workId,draftSources);}
+            finally{await cached.persistDelivery();}
+          }
           await cached.artifactDeliveries.requireOperations(projectRoot, cached.workId, capabilityId, actionId, parameters);
           const result = await cached.harnessRuntime.executeAction({
             handle,

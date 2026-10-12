@@ -363,6 +363,17 @@ async function produceShort(
   const resumedOutline = providedStoryId
     ? await tryReadProjectText(root, join(shortWorkBaseDir(providedStoryId), "outline", "v001.md"))
     : undefined;
+  if(providedStoryId&&stopAfter==='draft'&&resumedOutline!==undefined){
+    const work=await loadWorkManifest(root,providedStoryId);
+    const artifact=work.artifacts.find(artifact=>artifact.revisions.some(revision=>revision.id===artifact.currentRevisionId&&revision.path==='source/outline/v001.md'));
+    if(artifact){
+      const {bytes,revision}=await readArtifactRevision({projectRoot:root,workId:providedStoryId,artifactId:artifact.id});
+      if(resumedOutline!==bytes.toString('utf8'))throw Object.assign(new Error('The working outline differs from its registered version. Resolve that source before drafting.'),{
+        code:'DRAFT_SOURCE_CHANGED',workId:providedStoryId,artifactId:artifact.id,revisionId:revision.id,
+        recovery:{action:'workspace__inspect_work',parameters:{workId:providedStoryId},reason:'Select or register the intended outline version, review that version when requested, then retry drafting.'},
+      });
+    }
+  }
 
   let outlineMarkdown: string;
   let storyId: string;
@@ -421,12 +432,12 @@ async function produceShort(
       ? ["source/reviews/draft-v001.md", "source/reviews/draft-warning.md", "source/production-state.json"]
       : stage === "package"
       ? ["source/final/sales-package.json", "source/final/sales-package.md", "source/final/cover-prompt.md", "source/reviews/package-v001.md", "source/reviews/package-warning.md", "source/production-state.json"]
-      : stage === "draft" ? [...shortManuscriptPaths(finalDraft), ...await changedWorkSourcePaths(root, storyId, sourceBefore)] : [];
-    await syncWorkSourceArtifacts({ projectRoot: root, workId: storyId, accept: stage !== "outline", acceptPaths, title: stage === "outline" ? workTitle : finalDraft.storyTitle });
+      : stage === "draft" ? [...shortManuscriptPaths(finalDraft), ...await changedWorkSourcePaths(root, storyId, sourceBefore)]
+      : ["source/outline/v001.md", "source/production-state.json"];
+    await syncWorkSourceArtifacts({ projectRoot: root, workId: storyId, accept: true, acceptPaths, title: stage === "outline" ? workTitle : finalDraft.storyTitle });
     const stageStatus = (stage === "review" || stage === "package") && productionState.stages[stage]?.status === "failed" ? "failed" : "completed";
     return { storyId, stage, stageStatus, delivery:productionState.delivery,coverRequired:productionState.target?.coverRequired,
       ...(stage==='review'&&stageStatus==='completed'?{reviewedArtifact:productionState.stages.review?.reviewedArtifact}:{}),
-      ...(stage==='draft'?{exportSourcePaths:[projectPath(join(baseDir,'final','short-story.json'))]}:{}),
       observations: [...Object.values(productionState.stages).flatMap(item => item?.observations ?? []),...(productionState.delivery?.observations??[]).filter(o=>SHORT_DELIVERY_CONTRACT_CODES.has(o.code))], artifactPaths: paths.map(path => projectPath(join(baseDir, path))) };
   };
   if (stopAfter === "outline") return stageResult("outline", ["outline/v001.md"]);
@@ -945,7 +956,6 @@ function buildShortRunResult(
     ...(coverArtifacts.stageResults?.review?.status==='completed'
       &&coverArtifacts.stageResults.review.inputHash===coverArtifacts.delivery?.inputHash
       ?{reviewedArtifact:coverArtifacts.stageResults.review.reviewedArtifact}:{}),
-    exportSourcePaths:[projectPath(join(baseDir,'final','short-story.json'))],
     delivery:coverArtifacts.delivery,
     observations,
     outlinePath: projectPath(join(baseDir, "outline", "v001.md")),

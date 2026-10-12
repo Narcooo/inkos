@@ -92,11 +92,11 @@ export class ReviserAgent extends BaseAgent {
       if(options.authorSource){
         scopeSource=body(options.authorSource.content);
         authorized=await resolveAuthorTextPermission({projectRoot:this.ctx.projectRoot,...options.authorSource,
-          originalContent:scopeSource,currentContent:chapterContent,authorRequest,selectorVersion:2,select});
+          originalContent:scopeSource,currentContent:chapterContent,authorRequest,selectorVersion:3,select});
       }else if(originalArtifact?.currentRevisionId&&baseline){
         const original=await readArtifactRevision({projectRoot:this.ctx.projectRoot,workId:baseline.id,artifactId:originalArtifact.id,revisionId:originalArtifact.currentRevisionId});
         scopeSource=body(original.bytes.toString('utf8'));
-        authorized=await resolveAuthorTextPermission({projectRoot:this.ctx.projectRoot,workId:baseline.id,artifactId:originalArtifact.id,revisionId:original.revision.id,originalContent:scopeSource,currentContent:chapterContent,authorRequest,selectorVersion:2,select});
+        authorized=await resolveAuthorTextPermission({projectRoot:this.ctx.projectRoot,workId:baseline.id,artifactId:originalArtifact.id,revisionId:original.revision.id,originalContent:scopeSource,currentContent:chapterContent,authorRequest,selectorVersion:3,select});
       }else authorized=authorTextScopeContract(chapterContent,await select(chapterContent,authorRequest));
     }
     const scopedAuthorRequest = authorRequest && authorized && 'startOffset' in authorized.ranges[0]!
