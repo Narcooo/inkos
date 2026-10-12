@@ -25,6 +25,7 @@ import {PipelineRunner} from '../pipeline/runner.js';
 import {createBuiltInWorkProfileRegistry} from '../harness/builtin-profiles.js';
 import {loadWorkManifest, listWorkManifests, createWorkManifest, saveWorkManifest} from '../harness/work-store.js';
 import {createBookFoundationTool} from '../harness/tools/longform-production.js';
+import {createShortProductionStageTools} from '../harness/tools/short-production.js';
 import {WriterAgent} from '../agents/writer.js';
 import {ContinuityAuditor} from '../agents/continuity.js';
 import {readShortProductionState} from '../pipeline/short-production-state.js';
@@ -80,7 +81,7 @@ describe("guardedPiNonStreaming", () => {
       if(names.includes('finish_turn')){
         mainCalls++;
         if(mainCalls===1)return reply('workspace__inspect_work',{workId:'recovery'});
-        if(mainCalls===2){expect(transitions).toEqual([]);return reply('short-fiction__draft_short_fiction',{workId:'recovery',minChapterLength:null,maxChapterLength:null,openingHookChars:null});}
+        if(mainCalls===2){expect(transitions).toEqual([]);return reply('short-fiction__draft_short_fiction',{workId:'recovery',minChapterLength:null,maxChapterLength:null,openingHookChars:null,coverRequired:null});}
         expect(names).toContain('visual__generate_cover');
         return reply('finish_turn',{status:mainCalls===3?'delivered':'blocked',message:'The requested cover is still missing.'});
       }
@@ -94,8 +95,14 @@ describe("guardedPiNonStreaming", () => {
       return reply(name,args);
     });
     try{
-      const entry=createShortFictionRunTool(pipeline,root,{language:'en'});
-      await expect(entry.execute('initial',{storyId:'recovery',title:'Recovery',direction:'Return a receipt.',chapters:1,charsPerChapter:25,minChapterLength:20,maxChapterLength:30,openingHookChars:10,cover:true})).rejects.toMatchObject({code:'WORKER_MODEL_ERROR'});
+      await saveWorkManifest(root,createWorkManifest({id:'recovery',title:'Recovery',profileId:'short-fiction',language:'en',metadata:{intent:'Return a receipt.'}}));
+      await mkdir(join(root,'works/recovery/source'),{recursive:true});
+      const stages=createShortProductionStageTools(pipeline,root,'recovery');
+      const planned=await stages.find(tool=>tool.name==='plan_short_fiction')!.execute('plan',{workId:'recovery',chapters:1,charsPerChapter:25,minChapterLength:20,maxChapterLength:30,openingHookChars:10,coverRequired:true});
+      const plannedDeliveries=new TurnArtifactDeliveries();
+      plannedDeliveries.observe({status:'success',summary:'Planned',artifacts:[],observations:[],data:planned.details});
+      await expect(plannedDeliveries.validate(root)).rejects.toMatchObject({code:'TURN_REQUIRED_ARTIFACT_MISSING',workId:'recovery',artifactRole:'cover'});
+      await expect(stages.find(tool=>tool.name==='draft_short_fiction')!.execute('initial',{workId:'recovery',minChapterLength:null,maxChapterLength:null,openingHookChars:null,coverRequired:null})).rejects.toMatchObject({code:'WORKER_MODEL_ERROR'});
       expect((await readShortProductionState(root,'works/recovery/source'))?.target?.coverRequired).toBe(true);
       recover=true;
       const result=await runAgentSession({projectRoot:root,sessionId:'recovery-session',bookId:null,workId:null,profileId:'short-fiction',sessionKind:'short',language:'en',model,apiKey:'fixture',stream:false,pipeline,

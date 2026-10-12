@@ -42,7 +42,7 @@ it('delivers the registered short-story reference to the planner and retains its
     expect(createProductionCapabilityRegistry({...environment,confirmedCreation:true}).get('short-fiction')!.actions.map(action=>action.id)).toContain('short_fiction_run');
     const unboundPlan=createShortProductionStageTools(pipeline,root).find(tool=>tool.name==='plan_short_fiction')!;
     expect(Value.Check(unboundPlan.parameters,{workId:'story',chapters:1})).toBe(false);
-    await expect(unboundPlan.execute('missing',{workId:'story',chapters:1,minChapterLength:null,maxChapterLength:null,openingHookChars:null})).rejects.toMatchObject({code:'WORK_TARGET_REQUIRED',recovery:{action:'workspace__create_work'}});
+    await expect(unboundPlan.execute('missing',{workId:'story',chapters:1,minChapterLength:null,maxChapterLength:null,openingHookChars:null,coverRequired:null})).rejects.toMatchObject({code:'WORK_TARGET_REQUIRED',recovery:{action:'workspace__create_work'}});
     expect(calls).toHaveLength(0);
     await expect(readFile(join(root,'works/story/work.json'))).rejects.toMatchObject({code:'ENOENT'});
     await createProfileWorkTools(root,registry).find(tool=>tool.name==='create_work')!.execute('create',{
@@ -56,7 +56,7 @@ it('delivers the registered short-story reference to the planner and retains its
     const events:Array<{type:string;payload:any}>=[];
     const profile=createBuiltInWorkProfileRegistry(root).require('short-fiction');
     const plan=createShortProductionStageTools(pipeline,root,work.id).find(tool=>tool.name==='plan_short_fiction')!;
-    const run=()=>withExecutionEvidence((type,payload)=>events.push({type,payload}),()=>plan.execute('plan',{workId:work.id,chapters:1,charsPerChapter:100,minChapterLength:90,maxChapterLength:120,openingHookChars:20}),profile,work);
+    const run=()=>withExecutionEvidence((type,payload)=>events.push({type,payload}),()=>plan.execute('plan',{workId:work.id,chapters:1,charsPerChapter:100,minChapterLength:90,maxChapterLength:120,openingHookChars:20,coverRequired:true}),profile,work);
     await expect(run()).rejects.toThrow();
     expect(calls).toHaveLength(1);
     await syncWorkSourceArtifacts({projectRoot:root,workId:'sample',accept:true,writes:[{relativePath:'works/sample/source/analysis.md',content:'A later interpretation of the sample.'}]});
@@ -79,10 +79,10 @@ it('delivers the registered short-story reference to the planner and retains its
     const state=JSON.parse(await readFile(join(root,'works/story/source/production-state.json'),'utf8'));
     expect(state.outlineSource).toEqual(source);
     expect(state.intent).toBe(work.metadata.intent);
-    expect(state.target).toMatchObject({chapterCount:1,charsPerChapter:100,minChapterLength:90,maxChapterLength:120,openingHookChars:20});
+    expect(state.target).toMatchObject({chapterCount:1,charsPerChapter:100,minChapterLength:90,maxChapterLength:120,openingHookChars:20,coverRequired:true});
     // Later stages can inherit the saved bounds explicitly, without weakening
     // them when a request only resumes or inspects the existing production.
-    await plan.execute('resume',{workId:work.id,minChapterLength:null,maxChapterLength:null,openingHookChars:null});
+    await plan.execute('resume',{workId:work.id,minChapterLength:null,maxChapterLength:null,openingHookChars:null,coverRequired:null});
     expect(JSON.parse(await readFile(join(root,'works/story/source/production-state.json'),'utf8')).target).toEqual(state.target);
     expect(calls).toHaveLength(2);
     expect((await loadWorkManifest(root,'story')).lineage).toEqual(work.lineage);

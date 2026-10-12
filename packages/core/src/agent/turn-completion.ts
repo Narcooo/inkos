@@ -90,7 +90,7 @@ export class TurnArtifactDeliveries {
     }
     if (!data || typeof data !== "object" || typeof data.workId !== "string") return;
     const delivery = data.delivery as {target?:{coverRequired?:boolean}} | undefined;
-    if (delivery?.target?.coverRequired === true) this.requiredCovers.add(data.workId);
+    if (data.coverRequired === true || delivery?.target?.coverRequired === true) this.requiredCovers.add(data.workId);
     if (["chapter_written", "chapters_written", "chapter_revision"].includes(String(data.kind)) && delivery) {
       const chapters = this.chaptersWithLengthChecks.get(data.workId) ?? new Set<number>();
       const items = Array.isArray(data.chapters) ? data.chapters : [data];

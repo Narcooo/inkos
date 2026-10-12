@@ -10,6 +10,7 @@ import { createBuiltInWorkProfileRegistry } from "../builtin-profiles.js";
 
 const Parameters = Type.Object({
   workId: Type.String({ minLength: 1 }),
+  coverRequired: Type.Union([Type.Boolean(),Type.Null()],{description:"Whether the author's final delivery requires a generated cover image. Use true for a requested cover image, false for an explicitly text-only delivery, or null to inherit the saved requirement. A cover prompt alone is not a cover image. This records the requirement; image generation uses the visual action."}),
   direction: Type.Optional(Type.String({description:"Creative direction for outline generation, or additional instructions for the requested packaging stage. Existing story intent remains unchanged."})),
   chapters: Type.Optional(Type.Integer({ minimum: 1 })),
   charsPerChapter: Type.Optional(Type.Integer({ minimum: 1 })),
@@ -43,6 +44,7 @@ export function createShortProductionStageTools(pipeline: PipelineRunner, root: 
       if (stage === "outline" && !direction.trim()) throw new Error("An outline needs a creative direction");
       const result = await pipeline.runWithAgentContext({ signal, activatedSkills: skills }, () => runShortFictionStage({
         projectRoot: root, storyId: params.workId, title, direction, stage, language, chapterCount: params.chapters,
+        coverRequired:params.coverRequired??undefined,
         minChapterLength:params.minChapterLength??undefined,openingHookChars:params.openingHookChars??undefined,
         charsPerChapter: params.charsPerChapter, maxChapterLength: params.maxChapterLength??undefined, maxChaptersPerCall: params.maxChaptersPerCall ?? profile.production.maxChaptersPerCall,
         minChapterLengthRatio: profile.production.minChapterLengthRatio, reviewScope: params.reviewScope,

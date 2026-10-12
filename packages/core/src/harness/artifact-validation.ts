@@ -55,7 +55,7 @@ export function validatedArtifactWrites(work: WorkManifest, path: string, conten
     throw Object.assign(new ArtifactValidationError("ARTIFACT_DERIVED", "Draft checkpoints are maintained by short-fiction production. Use the available draft or manuscript operation.", hasManuscript ? "source/final/short-story.json" : undefined), {
       recovery: hasManuscript
         ? {action:"short-fiction__revise_short_fiction",parameters:{...(chapter?{chapterNumbers:[Number(chapter[1])]}:{})},reason:"Apply the user request to the accepted manuscript and regenerate its projections."}
-        : {action:"short-fiction__draft_short_fiction",parameters:{workId:work.id,minChapterLength:null,maxChapterLength:null,openingHookChars:null},reason:"Complete and repair the saved draft; no accepted manuscript exists yet."},
+        : {action:"short-fiction__draft_short_fiction",parameters:{workId:work.id,minChapterLength:null,maxChapterLength:null,openingHookChars:null,coverRequired:null},reason:"Complete and repair the saved draft; no accepted manuscript exists yet."},
     });
   }
   if (shortManuscript && path.startsWith("source/final/")) {
