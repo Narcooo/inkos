@@ -8,9 +8,58 @@ import {expect,it} from 'vitest';
 import {createLLMClient} from '../llm/provider.js';
 import {ReviserAgent} from '../agents/reviser.js';
 import {chapterRevisionCandidate} from '../pipeline/chapter-revision-candidate.js';
-import {buildLengthSpec} from '../utils/length-metrics.js';
+import {buildLengthSpec,countChapterLength} from '../utils/length-metrics.js';
 import {WriterAgent} from '../agents/writer.js';
 import {createInitialRuntimeState,loadRuntimeStateSnapshot} from '../state/runtime-state-store.js';
+
+it('measures both replacement fields and corrects excess and shortage without changing protected prose',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'inkos-scoped-budget-'));
+ const source='她关门。\n\n他看向桌上的账本。\n\n窗外下着雨，屋里无人说话。\n';
+ const protectedText=source.split('\n\n').at(-1)!;
+ const drafts=[
+  {range_0_content:'她关上门，手指攥紧了门把。\n',range_1_content:'他低头翻开桌上的账本，纸页在指间不停发颤。\n'},
+  {range_0_content:'关门。\n',range_1_content:'看账本。\n'},
+  {range_0_content:'她攥紧门把。\n',range_1_content:'他翻开账本，手发颤。\n'},
+ ];
+ const spec=buildLengthSpec(28,'zh',{minChapterLength:26,maxChapterLength:30});
+ const feedback:any[]=[],candidates:string[]=[];let attempts=0;
+ const server=createServer(async(req,res)=>{
+  const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));
+  const body=JSON.parse(Buffer.concat(chunks).toString()),name=body.tools[0].function.name;
+  const error=body.messages.filter((message:any)=>message.role==='tool').at(-1);
+  if(error)feedback.push(JSON.parse(error.content));
+  const args=name==='submit_chapter_edit_ranges'
+   ?{ranges:[{startLine:1,endLine:1},{startLine:3,endLine:3}]}
+   :drafts[attempts++];
+  res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{tool_calls:[{id:'budget-'+attempts,type:'function',function:{name,arguments:JSON.stringify(args)}}]}}]}));
+ });server.listen(0,'127.0.0.1');await once(server,'listening');
+ try{
+  const sourcePath=join(root,'accepted.md');await writeFile(sourcePath,source);
+  const checkpoint=await chapterRevisionCandidate({projectRoot:root,bookId:'work',chapterNumber:1,source,authorRequest:'Revise the first two paragraphs; preserve the last.',lengthSpec:spec});
+  const client=createLLMClient({provider:'openai',service:'custom',configSource:'studio',apiFormat:'chat',stream:false,model:'fixture',apiKey:'fixture',baseUrl:`http://127.0.0.1:${(server.address() as {port:number}).port}/v1`,thinkingBudget:0});
+  const result=await new ReviserAgent({client,model:'fixture',projectRoot:root}).reviseChapter(root,source,1,[],'spot-fix',undefined,{
+   language:'zh',contextPackage:{chapter:1,selectedContext:[]},lengthSpec:spec,
+   onCandidate:async content=>{candidates.push(content);await checkpoint.record(content);expect(await readFile(sourcePath,'utf8')).toBe(source);},
+  });
+  expect(attempts).toBe(3);expect(feedback).toHaveLength(2);
+  for(const [index,entry] of feedback.entries()){
+   const count=countChapterLength(candidates[index]!,'zh_chars');
+   expect(entry).toMatchObject({code:'CHAPTER_LENGTH_OUT_OF_RANGE',candidateCommitted:false,
+    measurements:{count,countingMode:'zh_chars'},replacementBudget:{
+     reduceByAtLeast:Math.max(0,count-30),increaseByAtLeast:Math.max(0,26-count),
+    },fieldLengths:Object.entries(drafts[index]!).map(([field,text],i)=>({field,
+     originalCount:countChapterLength(source.split('\n\n')[i]!,'zh_chars'),
+     submittedCount:countChapterLength(text,'zh_chars'),
+    })),
+   });
+  }
+  expect(candidates.every(content=>content.endsWith('\n\n'+protectedText))).toBe(true);
+  expect(result.revisedContent).toBe(drafts[2]!.range_0_content+'\n'+drafts[2]!.range_1_content+'\n'+protectedText);
+  expect(result.wordCount).toBeGreaterThanOrEqual(26);expect(result.wordCount).toBeLessThanOrEqual(30);
+  expect(checkpoint.current()).toMatchObject({content:result.revisedContent,distance:0});
+  expect(await readFile(sourcePath,'utf8')).toBe(source);
+ }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));await rm(root,{recursive:true,force:true});}
+},20000);
 
 it('resumes the closest rejected revision after recreation without adopting it or reusing it for changed requests or sources',async()=>{
  const root=await mkdtemp(join(tmpdir(),'inkos-revision-recovery-')),source='source '.repeat(30),sourcePath=join(root,'accepted.md');

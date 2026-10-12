@@ -67,6 +67,11 @@ export-only and information-only requests do not inherit old review obligations.
   story fact or an additional author requirement. Localized writers use the
   author request, factual references and current review evidence. Whole-chapter
   revisions retain the detailed instruction within the original authority.
+- Scoped chapter revisions share one replacement-length budget across all
+  authorized selections. Failed submissions report each field's source and
+  replacement count and the complete required reduction or increase. The
+  assembled chapter remains the authoritative length check. Recovery retains
+  the closest candidate and the original edit permission.
 - Local revisions preserve content outside the author's permitted range. The
   request's original baseline remains available across retries for comparison.
   Conversational agents edit through the scoped revision action; raw artifact

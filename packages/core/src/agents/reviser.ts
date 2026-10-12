@@ -163,7 +163,13 @@ export class ReviserAgent extends BaseAgent {
       ...(lengthSpec.maxChapterLength===undefined?{}:{maximum:lengthSpec.maxChapterLength-fixedLength}),
     }:undefined;
     if(replacementBudget?.maximum!==undefined&&replacementBudget.maximum<0)throw Object.assign(new Error('The protected text alone exceeds the chapter maximum. These edit ranges cannot satisfy both scope and length constraints.'),{code:'CHAPTER_EDIT_SCOPE_CONFLICT',replacementBudget});
-    const { result, usage } = await this.submitStructured([...messages,{role:'user',content:JSON.stringify({editableRanges:contract.ranges,replacementBudget,instruction:'Submit only replacement text in each named field. These selections identify the original authorized source, even if the current revision split a selection into multiple paragraphs. Continue improving the current prose within that same permission. The replacement budget is shared by all fields, not per field. For non-whitespace-characters, punctuation, Latin letters and digits also count; only whitespace is excluded. Keep the original trailing newline when present. Preserve all source bytes outside the selected ranges.'})}], {
+    const replacementFields=Object.keys(contract.parameters.properties);
+    const fieldLengths=(replacements:Record<string,string>)=>lengthSpec
+      ? replacementFields.map((field,index)=>({field,
+          originalCount:countChapterLength(contract.ranges[index]!.content,lengthSpec.countingMode),
+          submittedCount:countChapterLength(replacements[field]!,lengthSpec.countingMode)}))
+      : undefined;
+    const { result, usage } = await this.submitStructured([...messages,{role:'user',content:JSON.stringify({editableRanges:contract.ranges,replacementBudget,instruction:'Submit only replacement text in each named field. These selections identify the original authorized source, even if the current revision split a selection into multiple paragraphs. Continue improving the current prose within that same permission. The replacement budget is shared by all fields, not per field. Allocate it across the selections before writing. Rephrase redundant wording to make room for the requested change while preserving established facts. For non-whitespace-characters, punctuation, Latin letters and digits also count; only whitespace is excluded. Keep the original trailing newline when present. Preserve all source bytes outside the selected ranges.'})}], {
       name: "submit_chapter_range_replacements",
       label: "Submit chapter range replacements",
       description: "Submit replacement prose only within the author-authorized source selections, using their named fields.",
@@ -178,8 +184,9 @@ export class ReviserAgent extends BaseAgent {
           const sourceLength=lengthSpec?countChapterLength(originalChapter,lengthSpec.countingMode):undefined;
           const submittedLength=lengthSpec&&fixedLength!==undefined?countChapterLength(candidate,lengthSpec.countingMode)-fixedLength:undefined;
           const measuredBudget=replacementBudget&&submittedLength!==undefined?{...replacementBudget,submittedLength,
+            increaseByAtLeast:Math.max(0,replacementBudget.minimum-submittedLength),
             ...(replacementBudget.maximum===undefined?{}:{reduceByAtLeast:Math.max(0,submittedLength-replacementBudget.maximum)})}:replacementBudget;
-          throw Object.assign(new Error(JSON.stringify({code:failure.code,...failure.delivery,scope:'selected_ranges',replacementBudget:measuredBudget,source:{length:sourceLength,unchangedByThisAttempt:true},candidateCommitted:false,instruction:'The rejected replacement has not changed the source chapter. Adjust only the selected replacement fields to their combined budget. submittedLength measures their actual added length; reduceByAtLeast is the minimum reduction needed to fit. Do not include or rewrite protected surrounding text.'})),{code:failure.code,delivery:failure.delivery,replacementBudget:measuredBudget});
+          throw Object.assign(new Error(JSON.stringify({code:failure.code,...failure.delivery,scope:'selected_ranges',replacementBudget:measuredBudget,fieldLengths:fieldLengths(result),source:{length:sourceLength,unchangedByThisAttempt:true},candidateCommitted:false,instruction:'Revise only the named replacement fields. Their individual counts locate the excess or shortage; the assembled chapter measurement is authoritative. Meet the entire measured reduction or increase in the next submission, not just part of it. Rephrase the selected passages when small deletions cannot recover enough space; preserve facts and the requested creative effect. Do not repeat the rejected wording unchanged or modify protected surrounding text.'})),{code:failure.code,delivery:failure.delivery,replacementBudget:measuredBudget});
         }
         return result;
       },
