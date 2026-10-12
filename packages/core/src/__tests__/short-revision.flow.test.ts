@@ -22,6 +22,34 @@ const roots:string[]=[];
 beforeEach(()=>{vi.spyOn(ShortFictionDraftReviewerAgent.prototype,'reviewPackage').mockResolvedValue({summary:'Reviewed package facts.',observations:[]});});
 afterEach(async()=>{vi.restoreAllMocks();await Promise.all(roots.splice(0).map(root=>rm(root,{recursive:true,force:true})));});
 
+it('requires package and manuscript evidence before accepting a package issue',async()=>{
+  vi.mocked(ShortFictionDraftReviewerAgent.prototype.reviewPackage).mockRestore();
+  const root=await mkdtemp(join(tmpdir(),'inkos-package-sources-'));roots.push(root);
+  const draft={storyTitle:'The receipt',rawContent:'',chapters:[{number:1,title:'Return',content:'Nora returns the receipt to Eli.',charCount:6}]};
+  const sales={title:draft.storyTitle,intro:'Nora burns the receipt.',sellingPoints:['A choice'],coverPrompt:'A receipt',rawContent:''};
+  const requests:any[]=[];
+  const finding={code:'PACKAGE_EVENT',assessment:'issue',category:'quality',summary:'The package describes a different action.'};
+  const manuscript={sourceId:'manuscript',startLine:5,endLine:5};
+  const packageRef={sourceId:'package',startLine:5,endLine:5};
+  const server=createServer(async(req,res)=>{
+    const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));
+    const body=JSON.parse(Buffer.concat(chunks).toString());requests.push(body);
+    const step=requests.length;
+    const name=step<4?'record_review_observation':'submit_short_package_review';
+    const args=step<4?{...finding,sourceRefs:step===1?[manuscript]:step===2?[packageRef]:[packageRef,manuscript]}:{summary:'One factual package mismatch.',observationCodes:[finding.code]};
+    res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{tool_calls:[{id:'package-'+step,type:'function',function:{name,arguments:JSON.stringify(args)}}]}}]}));
+  });server.listen(0,'127.0.0.1');await once(server,'listening');
+  try{
+    const client=createLLMClient({service:'custom',provider:'openai',configSource:'studio',model:'fixture',apiKey:'fixture',baseUrl:`http://127.0.0.1:${(server.address() as {port:number}).port}/v1`,apiFormat:'chat',stream:false,thinkingBudget:0});
+    const before=JSON.stringify({draft,sales});
+    const result=await new ShortFictionDraftReviewerAgent({client,model:'fixture',projectRoot:root}).reviewPackage({draft,sales,language:'en'});
+    const feedback=requests.at(-1).messages.filter((message:any)=>message.role==='tool').map((message:any)=>JSON.parse(message.content));
+    expect(feedback.map((value:any)=>value.code)).toEqual(['SHORT_PACKAGE_REVIEW_PAIR_REQUIRED','SHORT_PACKAGE_REVIEW_PAIR_REQUIRED',finding.code]);
+    expect(result.observations).toMatchObject([{...finding,sourceRefs:[{sourceId:'package',quote:sales.intro},{sourceId:'manuscript',quote:draft.chapters[0]!.content}]}]);
+    expect(JSON.stringify({draft,sales})).toBe(before);
+  }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));}
+},20000);
+
 it('resumes the closest unfinished opening without rewriting saved chapters',async()=>{
   const root=await mkdtemp(join(tmpdir(),'inkos-opening-recovery-'));roots.push(root);
   const words=(n:number)=>Array(n).fill('word').join(' ');

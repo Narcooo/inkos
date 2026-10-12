@@ -543,7 +543,16 @@ export class ShortFictionDraftReviewerAgent extends BaseAgent {
         : '核对销售包装对完整成稿的事实承诺：人物、行动、时间、关系与结果。只要仍然服务这本故事，允许商业化压缩、情绪隐喻和象征性封面构图。区分已经发生的事件、意图与未来可能。只有包装确实作出无依据或冲突的事实承诺时才报硬伤，同时引用包装原句与相关正文依据。不要审正文质量，也不要把不确定推断当作事实。只登记问题和实质性的不确定之处，符合正文的陈述无需逐条登记。只审稿，不改写。'},
       {role:'user',content:[...sources].map(([id,text])=>`## Source: ${id}\n${numberReviewSource(text)}`).join('\n\n')},
     ],sources,{name:'submit_short_package_review',label:'Review package fidelity',description:'Submit source-grounded findings about the package factual promises.'},
-    {maxTokens:Math.min(4096,safeShortFictionOutputBudget(this.ctx.client.defaults.maxTokens)),categoryRequired:true});
+    {maxTokens:Math.min(4096,safeShortFictionOutputBudget(this.ctx.client.defaults.maxTokens)),categoryRequired:true,validateObservations:observations=>{
+      const unpaired=observations.filter(observation=>observation.assessment==='issue'&&(
+        !observation.sourceRefs.some(reference=>reference.sourceId==='package')||
+        !observation.sourceRefs.some(reference=>reference.sourceId==='manuscript')
+      )).map(observation=>observation.code);
+      if(unpaired.length)throw Object.assign(new Error(JSON.stringify({
+        code:'SHORT_PACKAGE_REVIEW_PAIR_REQUIRED',observationCodes:unpaired,
+        instruction:'Cite the sales-package claim and manuscript evidence establishing each package issue, or withdraw it. A manuscript-only critique is outside this review.',
+      })),{code:'SHORT_PACKAGE_REVIEW_PAIR_REQUIRED'});
+    }});
     return response.result;
   }
 }
