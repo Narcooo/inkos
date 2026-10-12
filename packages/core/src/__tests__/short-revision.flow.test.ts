@@ -71,6 +71,8 @@ it('preserves inline author permission through length failure and resume, and ch
     for(const {body}of replacements)expect(Object.keys(body.tools[0].function.parameters.properties)).toEqual(['selection_0_text']);
     const finalInput=replacements.at(-1)!.body.messages.filter((m:any)=>m.role==='user').map((m:any)=>{try{return JSON.parse(m.content);}catch{return null;}}).find((m:any)=>m?.instruction===request);
     expect(finalInput.instruction).toBe(request);
+    expect(finalInput.references.map((reference:any)=>reference.source)).toEqual(['original-manuscript']);
+    expect(finalInput.revisionGuidance.authority).toBe('advice_within_author_scope');
     expect(calls.filter(c=>c.name==='submit_short_revision_title')).toHaveLength(1);
   }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));}
 },20000);

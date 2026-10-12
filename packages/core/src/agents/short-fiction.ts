@@ -282,11 +282,11 @@ export class ShortFictionWriterAgent extends BaseAgent {
         let content=chapter.content,title=chapter.title;
         if(input.authorScope.chapterNumbers.includes(chapter.number)){
           const revised=await new ReviserAgent(this.ctx).reviseChapter('',content,chapter.number,[],'spot-fix',undefined,{
-            language:input.language??'zh',chapterTitle:original.title,instruction:chapterPlan.instruction,
+            language:input.language??'zh',chapterTitle:original.title,
+            instruction:JSON.stringify({revisionBrief:plan.revisionBrief,chapterInstruction:chapterPlan.instruction}),
             authorSource:{...input.authorSource,content:original.content},
             contextPackage:{chapter:chapter.number,selectedContext:[
               {source:'original-manuscript',reason:'Preserve established facts in the other chapters.',excerpt:JSON.stringify(otherChapters),protection:'protected'},
-              {source:'revision-plan',reason:'Apply proposed changes only inside the original author permission.',excerpt:plan.revisionBrief,protection:'protected'},
             ]},
             lengthSpec:buildLengthSpec(input.charsPerChapter,input.language,{minChapterLength:input.minChapterLength??1,maxChapterLength:input.maxChapterLength}),
             onCandidate:async candidate=>{
