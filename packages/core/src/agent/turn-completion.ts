@@ -78,6 +78,14 @@ export class TurnArtifactDeliveries {
     }
     const observations=data?bindChapterReviewObservations(data,rawObservations,chapterTargets):rawObservations;
     for(const receipt of result.operationReceipts??[]){
+      if(receipt.operation==='export'){
+        for(const source of receipt.sources){
+          const key=JSON.stringify([source.workId,source.artifactId,'export']);
+          this.requiredOperations.set(key,{workId:source.workId,artifactId:source.artifactId,operation:'export'});
+          this.receipts.set(key,{workId:source.workId,artifactId:source.artifactId,revisionId:source.revisionId,operation:'export'});
+        }
+        continue;
+      }
       if(receipt.operation!=='review')continue;
       for(const source of receipt.sources){
         const key=JSON.stringify([source.workId,source.artifactId,'review']);

@@ -7,9 +7,11 @@ import { assertGenericArtifactEditable } from '../artifact-edit-policy.js';
 import { loadWorkManifest } from "../work-store.js";
 import { syncWorkSourceArtifacts } from "../source-sync.js";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import { readArtifactRevision } from "../artifact-reader.js";
 import { changedSourceRegion } from "../../utils/source-text.js";
+import JSZip from 'jszip';
+import {RelativeArtifactPathSchema} from '../contracts.js';
 
 const ExportWorkParams = Type.Object({
   artifactId: Type.String({ minLength: 1, description: "Exact current Markdown artifact ID from inspect_work." }),
@@ -36,6 +38,43 @@ export function createExportWorkTool(projectRoot: string, workId: string): Agent
       });
       return { content: [{ type: "text", text: `Exported ${work.title}: works/${workId}/${outputPath}` }],
         details: { kind: "work_exported", workId, sourceArtifactId: artifact!.id, sourceRevisionId: revision.id, path: outputPath } };
+    },
+  };
+}
+
+const ExportPackageParams=Type.Object({
+  sourceRefs:Type.Array(Type.Object({artifactId:Type.String({minLength:1}),revisionId:Type.String({minLength:1})},{additionalProperties:false}),{
+    minItems:1,description:'Every current source artifact to include, using exact versions from inspect_work. For a complete short-fiction delivery, include the full manuscript Markdown, sales-package Markdown and requested cover image. Include other files only when requested.',
+  }),
+},{additionalProperties:false});
+
+export function createExportWorkPackageTool(projectRoot:string,workId:string):AgentTool<typeof ExportPackageParams>&{readonly artifactsCommitted:true}{
+  return{artifactsCommitted:true,name:'export_work_package',label:'Export delivery package',parameters:ExportPackageParams,
+    description:'Create one downloadable ZIP containing the selected current source files and their version manifest. Copies verified bytes without rewriting content. Include every requested deliverable explicitly; this action does not generate or review missing content. Report the returned included-file list and package location. Content descriptions require reading those sources; export success does not establish a review result.',
+    async execute(_id,params){
+      if(new Set(params.sourceRefs.map(source=>source.artifactId)).size!==params.sourceRefs.length)throw Object.assign(new Error('Select each source artifact once.'),{code:'WORK_PACKAGE_DUPLICATE_SOURCE'});
+      const work=await loadWorkManifest(projectRoot,workId),zip=new JSZip();
+      const sources=[];
+      for(const ref of params.sourceRefs){
+        const {artifact,revision,bytes}=await readArtifactRevision({projectRoot,workId,artifactId:ref.artifactId});
+        if(revision.id!==ref.revisionId)throw Object.assign(new Error('A selected source changed. Inspect current sources before exporting the package.'),{code:'ARTIFACT_REVISION_CONFLICT',artifactId:ref.artifactId,expectedRevisionId:ref.revisionId,currentRevisionId:revision.id});
+        if(!revision.path.startsWith('source/')||revision.path.startsWith('source/exports/'))throw Object.assign(new Error('Package current source artifacts, not earlier export copies.'),{code:'WORK_PACKAGE_SOURCE_REQUIRED'});
+        const entry=revision.path.slice('source/'.length);
+        if(!RelativeArtifactPathSchema.safeParse(entry).success||entry!==posix.normalize(entry)||entry.includes('\\'))throw Object.assign(new Error('Package entries require canonical relative paths.'),{code:'WORK_PACKAGE_ENTRY_INVALID'});
+        sources.push({artifactId:artifact.id,revisionId:revision.id,checksum:revision.checksum,path:revision.path,entry,byteLength:bytes.length,bytes});
+      }
+      sources.sort((a,b)=>a.entry<b.entry?-1:a.entry>b.entry?1:0);
+      const manifestEntry='inkos-package.json';
+      if(sources.some(source=>source.entry===manifestEntry)||new Set(sources.map(source=>source.entry)).size!==sources.length)throw Object.assign(new Error('Package source paths collide.'),{code:'WORK_PACKAGE_ENTRY_CONFLICT'});
+      const includedSources=sources.map(({bytes,...source})=>source);
+      const fileOptions={date:new Date(1980,0,1),createFolders:false,unixPermissions:0o644};
+      for(const source of sources)zip.file(source.entry,source.bytes,fileOptions);
+      zip.file(manifestEntry,JSON.stringify({version:1,workId,title:work.title,sources:includedSources},null,2)+'\n',fileOptions);
+      const bytes=await zip.generateAsync({type:'nodebuffer',compression:'DEFLATE',compressionOptions:{level:6},platform:'UNIX'});
+      const path='source/exports/delivery.zip';
+      await syncWorkSourceArtifacts({projectRoot,workId,accept:true,acceptPaths:[path],writes:[{relativePath:`works/${workId}/${path}`,content:bytes}]});
+      return{content:[{type:'text',text:`Exported ${work.title}: works/${workId}/${path}\nIncluded files:\n${includedSources.map(source=>'- '+source.entry).join('\n')}`}],
+        details:{kind:'work_package_exported',workId,path,includedSources,manifestEntry,byteLength:bytes.length,checksum:'sha256:'+createHash('sha256').update(bytes).digest('hex'),exportSourcePaths:sources.map(source=>source.path)}};
     },
   };
 }

@@ -68,7 +68,7 @@ import {
   createTranslationRunTool,
   createTranslationRevisionTool,
 } from "./tools/translation.js";
-import { createReplaceWorkArtifactTool, createExportWorkTool } from "./tools/work-artifacts.js";
+import { createReplaceWorkArtifactTool, createExportWorkTool, createExportWorkPackageTool } from "./tools/work-artifacts.js";
 import { createFilmAuthoringTools, filmLLMDepsFromClient } from "../agent/film-authoring-tools.js";
 import {
   createNarrativeForecastCreateTool,
@@ -225,6 +225,7 @@ export function createProductionCapabilityRegistry(
     workspaceTools.push(committedAction(createReplaceWorkArtifactTool(environment.projectRoot, environment.work.id)));
     workspaceTools.push(committedAction(createDeliverWorkArtifactTool(environment.pipeline, environment.projectRoot, environment.work.id)));
     workspaceTools.push(committedAction(createExportWorkTool(environment.projectRoot, environment.work.id)));
+    workspaceTools.push(committedAction(createExportWorkPackageTool(environment.projectRoot, environment.work.id)));
   }
   if (environment.work) workspaceTools.push(...createArtifactMethodTools(environment.pipeline, environment.projectRoot, environment.work.id).map(committedAction));
   if (environment.intentSkillTool) workspaceTools.push(readAction(environment.intentSkillTool));

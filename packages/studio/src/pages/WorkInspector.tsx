@@ -1,6 +1,6 @@
 import { CreativeMethodsEditor } from "./CreativeMethodsEditor";
 import { useMemo, useState, useRef } from "react";
-import { ArrowLeft, Clock3, FileText, GitCommitHorizontal, Loader2, Pencil, Save, X } from "lucide-react";
+import { ArrowLeft, Clock3, Download, FileText, GitCommitHorizontal, Loader2, Pencil, Save, X } from "lucide-react";
 import { fetchJson, useApi } from "../hooks/use-api";
 import { tr } from "../lib/app-language";
 
@@ -41,6 +41,10 @@ interface RevisionPayload {
   readonly artifactId: string;
   readonly content?: string;
   readonly dataUrl?: string;
+}
+
+function revisionDownloadHref(payload:RevisionPayload):string{
+  return payload.dataUrl??`data:${payload.revision.contentType};charset=utf-8,${encodeURIComponent(payload.content??'')}`;
 }
 
 function revisionDifference(current: string, selected: string): string {
@@ -186,14 +190,20 @@ export function WorkInspector({ workId, onBack, onChat }: {
                 const revision = selectedArtifact?.revisions.find(revision => revision.id === event.target.value);
                 if (selectedArtifact && revision) void openRevision(selectedArtifact, revision);
               }}>{selectedArtifact?.revisions.map(revision => <option key={revision.id} value={revision.id}>{revision.status} · {revision.createdAt} · {revision.id}</option>)}</select>
+              <a href={revisionDownloadHref(selected)} download={selected.revision.path.split('/').pop() || 'artifact'} className="inline-flex items-center gap-2 rounded border border-border px-3 py-2 text-sm"><Download size={15} />{tr("下载所选版本", "Download selected revision")}</a>
               {selectedArtifact?.currentRevisionId && selectedArtifact.currentRevisionId !== selected.revision.id && <button className="rounded border border-border px-3 py-2 text-sm" onClick={() => void compareCurrent()}>{tr("比较当前版本", "Compare with current")}</button>}
               {selectedArtifact?.currentRevisionId !== selected.revision.id && (!selectedArtifact?.currentRevisionId || comparison) && <button className="rounded bg-primary px-3 py-2 text-sm text-primary-foreground" onClick={() => void adoptRevision()}>{tr("采用这个版本", "Adopt this revision")}</button>}
               {operationError && <p role="alert" className="w-full text-sm text-destructive">{operationError}</p>}
             </div>}
             {comparison?.content !== undefined && selected?.content !== undefined && <details className="mb-4 rounded border border-border p-3" open><summary>{tr("变更内容：− 当前，+ 所选", "Changes: − current, + selected")}</summary><pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap font-mono text-xs">{revisionDifference(comparison.content, selected.content)}</pre></details>}
-            {comparison && <section className="mb-6 rounded border border-border p-4"><h3 className="mb-3 font-semibold">{tr("当前版本", "Current revision")}</h3>{comparison.dataUrl ? <img src={comparison.dataUrl} alt={tr("当前版本", "Current revision")} /> : <pre className="max-h-96 overflow-auto whitespace-pre-wrap text-sm">{comparison.content}</pre>}<h3 className="mt-4 font-semibold">{tr("下面是所选版本", "Selected revision below")}</h3></section>}
-            {previewLoading ? <Loader2 className="animate-spin text-primary" /> : selected?.dataUrl ? (
+            {comparison && <section className="mb-6 rounded border border-border p-4"><h3 className="mb-3 font-semibold">{tr("当前版本", "Current revision")}</h3>{comparison.dataUrl && comparison.revision.contentType.startsWith('image/') ? <img src={comparison.dataUrl} alt={tr("当前版本", "Current revision")} /> : comparison.content!==undefined ? <pre className="max-h-96 overflow-auto whitespace-pre-wrap text-sm">{comparison.content}</pre> : <a href={revisionDownloadHref(comparison)} download={comparison.revision.path.split('/').pop() || 'artifact'}>{tr("下载当前版本", "Download current revision")}</a>}<h3 className="mt-4 font-semibold">{tr("下面是所选版本", "Selected revision below")}</h3></section>}
+            {previewLoading ? <Loader2 className="animate-spin text-primary" /> : selected?.dataUrl && selected.revision.contentType.startsWith('image/') ? (
               <img src={selected.dataUrl} alt={selected.revision.path} className="h-auto w-full rounded-xl" />
+            ) : selected?.dataUrl ? (
+              <div className="rounded-xl border border-border p-6">
+                <div className="break-all font-medium">{selected.revision.path.split('/').pop()}</div>
+                <p className="mt-2 text-sm text-muted-foreground">{tr("此文件可下载后打开。", "Download this file to open it.")}</p>
+              </div>
             ) : (
               <>
                 <div className="mb-5 flex items-start justify-between gap-4">
