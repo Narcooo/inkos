@@ -22,6 +22,59 @@ const roots:string[]=[];
 beforeEach(()=>{vi.spyOn(ShortFictionDraftReviewerAgent.prototype,'reviewPackage').mockResolvedValue({summary:'Reviewed package facts.',observations:[]});});
 afterEach(async()=>{vi.restoreAllMocks();await Promise.all(roots.splice(0).map(root=>rm(root,{recursive:true,force:true})));});
 
+it('preserves inline author permission through length failure and resume, and changes only an explicitly selected title',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'inkos-short-inline-'));roots.push(root);
+  const draft={storyTitle:'旧馆',openingHook:'灯还亮着。',rawContent:'',chapters:[
+    {number:1,title:'原始档案',content:'她在2031年登记了这本旧书。',charCount:0},
+    {number:2,title:'核对',content:'“别动旁边的记录。”他说。\n\n该册修复于1999年，评级三级。\n\n她收好台账，关上柜门。',charCount:0},
+    {number:3,title:'旧标题',content:'“档案已经收好了。”她说。',charCount:0},
+  ]};
+  const base='works/short/source';const raw=JSON.stringify(draft);
+  const writes=[{relativePath:base+'/outline/v001.md',content:'核对同一册书的修复日期。'},
+    {relativePath:base+'/final/short-story.json',content:raw},
+    {relativePath:base+'/production-state.json',content:JSON.stringify({version:2,intent:'核对旧档案',target:{chapterCount:3,charsPerChapter:50,minChapterLength:1,maxChapterLength:draft.chapters[1]!.content.replace(/\s/g,'').length,language:'zh'},stages:{}})}];
+  const initial=createInitialWorkManifestWrite({workId:'short',title:draft.storyTitle,profileId:'short-fiction',language:'zh',writes});
+  await commitAtomicFileSet({rootDir:root,writes:[...writes,initial.write]});
+  const baseline=await syncWorkSourceArtifacts({projectRoot:root,workId:'short',accept:true});
+  const calls:Array<{name:string;body:any}>=[];let allowCompletion=false;
+  const server=createServer(async(req,res)=>{
+    const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));
+    const body=JSON.parse(Buffer.concat(chunks).toString());const name=body.tools[0].function.name;calls.push({name,body});
+    const args=name==='submit_short_author_scope'?{wholeManuscript:false,chapterNumbers:[2],chapterTitleNumbers:[3],opening:false,outline:false}
+      :name==='submit_short_revision_plan'?{revisionBrief:'Correct the year and add its cause.',chapter_2_instruction:'Correct the year; add an explanation and polish dialogue.',chapter_3_instruction:'Rename the title.'}
+      :name==='submit_edit_location'?{kind:'reference',boundary:'none',count:0,target:'Only the repair year in chapter 2.'}
+      :name==='submit_author_edit_scope'?{wholeDocument:false,selections:[{unitId:'p2.l1',text:'1999'}],reason:'Only the year is editable.'}
+      :name==='submit_chapter_range_replacements'?{selection_0_text:allowCompletion?'2031':'2031年，因为发生了额外事件'}
+      :name==='submit_short_revision_title'?{title:'归档'}
+      :name==='submit_short_fiction_review'?{summary:'Reviewed current sources.',observationCodes:[]}
+      :name==='submit_short_package'?{title:draft.storyTitle,intro:'她核对了一册旧书。',sellingPoints:['旧档案'],coverPrompt:'一本旧书'}:undefined;
+    res.writeHead(args?200:400,{'Content-Type':'application/json'});res.end(JSON.stringify(args?{choices:[{finish_reason:'tool_calls',message:{tool_calls:[{id:'inline-'+calls.length,type:'function',function:{name,arguments:JSON.stringify(args)}}]}}]}:{error:{message:'Unexpected operation'}}));
+  });server.listen(0,'127.0.0.1');await once(server,'listening');
+  try{
+    const client=createLLMClient({service:'custom',provider:'openai',configSource:'studio',model:'fixture',apiKey:'fixture',baseUrl:`http://127.0.0.1:${(server.address() as {port:number}).port}/v1`,apiFormat:'chat',stream:false,thinkingBudget:0});
+    const runtime={client,model:'fixture',projectRoot:root};
+    const request='只把第2章该册修复年份改成2031，其余正文、标点和标题保持原样；第3章仅把标题改成归档。';
+    const options={projectRoot:root,storyId:'short',direction:request,cover:false,runtimes:{planner:runtime,writer:runtime,draftReview:runtime,package:runtime}};
+    await expect(withExecutionEvidence(()=>{},()=>reviseShortFictionProduction(options),undefined,baseline,request)).rejects.toMatchObject({code:'CHAPTER_LENGTH_OUT_OF_RANGE'});
+    expect(await readFile(join(root,base,'final/short-story.json'),'utf8')).toBe(raw);
+    const checkpoint=JSON.parse(await readFile(join(root,'.inkos/short-revisions/short.json'),'utf8'));
+    expect(checkpoint.progress.completed).toEqual([]);
+    expect(checkpoint.authorSource.revisionId).toBe(baseline.artifacts.find(a=>a.revisions.some(r=>r.path==='source/final/short-story.json'))!.currentRevisionId);
+    allowCompletion=true;
+    await withExecutionEvidence(()=>{},()=>reviseShortFictionProduction({...options,direction:'',resumeOperationId:checkpoint.operationId}),undefined,baseline,'Continue the saved operation.');
+    const result=JSON.parse(await readFile(join(root,base,'final/short-story.json'),'utf8'));
+    expect(result.chapters.map((c:any)=>({number:c.number,title:c.title,content:c.content}))).toEqual(draft.chapters.map(c=>({number:c.number,title:c.number===3?'归档':c.title,content:c.number===2?c.content.replace('1999','2031'):c.content})));
+    expect(result.openingHook).toBe(draft.openingHook);expect(result.storyTitle).toBe(draft.storyTitle);
+    expect(calls.filter(c=>c.name==='submit_edit_location')).toHaveLength(1);
+    expect(calls.filter(c=>c.name==='submit_author_edit_scope')).toHaveLength(1);
+    const replacements=calls.filter(c=>c.name==='submit_chapter_range_replacements');
+    for(const {body}of replacements)expect(Object.keys(body.tools[0].function.parameters.properties)).toEqual(['selection_0_text']);
+    const finalInput=replacements.at(-1)!.body.messages.filter((m:any)=>m.role==='user').map((m:any)=>{try{return JSON.parse(m.content);}catch{return null;}}).find((m:any)=>m?.instruction===request);
+    expect(finalInput.instruction).toBe(request);
+    expect(calls.filter(c=>c.name==='submit_short_revision_title')).toHaveLength(1);
+  }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));}
+},20000);
+
 it('requires package and manuscript evidence before accepting a package issue',async()=>{
   vi.mocked(ShortFictionDraftReviewerAgent.prototype.reviewPackage).mockRestore();
   const root=await mkdtemp(join(tmpdir(),'inkos-package-sources-'));roots.push(root);

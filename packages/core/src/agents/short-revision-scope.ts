@@ -3,7 +3,8 @@ import type {ShortFictionBatchDraft} from './short-fiction.js';
 
 export const ShortAuthorScopeSchema = Type.Object({
   wholeManuscript: Type.Boolean({description:'True only when the author permits rewriting or restructuring the whole manuscript.'}),
-  chapterNumbers: Type.Array(Type.Integer({minimum:1})),
+  chapterNumbers: Type.Array(Type.Integer({minimum:1}), {description:'Existing chapters whose prose the author permits editing. A selected chapter can still contain protected text.'}),
+  chapterTitleNumbers: Type.Optional(Type.Array(Type.Integer({minimum:1}), {description:'Only chapters whose titles the author explicitly permits changing. Omit when titles are protected.'})),
   opening: Type.Boolean({description:'Permission to change the independent opening scene.'}),
   outline: Type.Boolean({description:'Permission to change the saved story plan.'}),
 }, {additionalProperties:false});
@@ -17,7 +18,7 @@ export function shortAuthorScopeRequest(draft:ShortFictionBatchDraft, authorRequ
     ],
     tool:{name:'submit_short_author_scope',label:'Locate authorized manuscript parts',description:'Select only the manuscript parts the author permits changing.',parameters:ShortAuthorScopeSchema,
       validate:(scope:ShortAuthorScope)=>{
-        if(scope.chapterNumbers.some(number=>!draft.chapters.some(chapter=>chapter.number===number))) {
+        if([...scope.chapterNumbers,...(scope.chapterTitleNumbers??[])].some(number=>!draft.chapters.some(chapter=>chapter.number===number))) {
           throw Object.assign(new Error('Select existing chapter numbers.'),{code:'SHORT_REVISION_OUT_OF_SCOPE'});
         }
         return scope;
@@ -27,10 +28,10 @@ export function shortAuthorScopeRequest(draft:ShortFictionBatchDraft, authorRequ
 
 export function assertShortAuthorScope(scope:ShortAuthorScope, before:ShortFictionBatchDraft, after:ShortFictionBatchDraft, beforeOutline:string, afterOutline:string):void {
   if(scope.wholeManuscript)return;
-  const preserved=before.chapters.filter(chapter=>!scope.chapterNumbers.includes(chapter.number));
-  const changedChapters=preserved.filter(chapter=>{
+  const changedChapters=before.chapters.filter(chapter=>{
     const next=after.chapters.find(item=>item.number===chapter.number);
-    return !next||next.title!==chapter.title||next.content!==chapter.content;
+    return !next||(!scope.chapterTitleNumbers?.includes(chapter.number)&&next.title!==chapter.title)
+      ||(!scope.chapterNumbers.includes(chapter.number)&&next.content!==chapter.content);
   }).map(chapter=>chapter.number);
   const changedParts=[
     ...(before.storyTitle!==after.storyTitle?['title']:[]),

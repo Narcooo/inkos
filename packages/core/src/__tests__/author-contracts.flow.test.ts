@@ -28,6 +28,8 @@ it('revises an opening and selected chapter, then applies an author-requested ch
         :stage==='mixed'?{revisionBrief:'Change the opening and second scene.',openingHook:'Two cups stood beside a folded letter.',chapter_2_instruction:'Let the customer leave the letter.'}
         :{revisionBrief:'Retain the first and last scenes.',outlineMarkdown:'The stall opens, then closes.',chapter_2_sourceNumber:3})
       :name==='submit_short_author_scope'?{wholeManuscript:false,chapterNumbers:[2],opening:true,outline:false}
+      :name==='submit_edit_location'?{kind:'document',boundary:'none',count:0,target:''}
+      :name==='submit_chapter_range_replacements'?{range_0_content:Array(34).fill('revised').join(' ')}
       :name==='submit_short_revision_chapter'?{title:'Scene 2',content:Array(34).fill('revised').join(' ')}
       :name==='submit_short_fiction_review'||name==='submit_short_package_review'?{summary:'Reviewed the supplied scope.',observationCodes:[]}
         :name==='submit_short_package'?{title:'The Tea Stall',intro:'A day at the stall.',sellingPoints:['A small act of care'],coverPrompt:'Two cups at a neighborhood stall.'}:undefined;
@@ -75,7 +77,7 @@ it('revises an opening and selected chapter, then applies an author-requested ch
     const originalManuscript=original.artifacts.find(a=>a.revisions.some(r=>r.path==='source/final/short-story.json'))!;
     const previous=after.artifacts.find(a=>a.id===originalManuscript.id)!.revisions.find(r=>r.id===originalManuscript.currentRevisionId)!;
     expect(createHash('sha256').update(await readFile(join(root,'works/tea',previous.snapshotPath!))).digest('hex')).toBe(previous.checksum.slice(7));
-    expect(calls.filter(name=>name==='submit_short_revision_chapter')).toHaveLength(1);
+    expect(calls.filter(name=>name==='submit_chapter_range_replacements')).toHaveLength(1);
     expect(planNumber).toBe(4);
   }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));await rm(root,{recursive:true,force:true});}
 },20000);

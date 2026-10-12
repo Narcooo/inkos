@@ -132,6 +132,10 @@ export interface ShortFictionDraftInput {
   readonly language?: ShortFictionLanguage;
   readonly chapterNumbers?: readonly number[];
   readonly authorScope?: ShortAuthorScope;
+  readonly authorSource?: {
+    readonly workId:string; readonly artifactId:string; readonly revisionId:string;
+    readonly request:string; readonly draft:ShortFictionBatchDraft;
+  };
   readonly onBatchComplete?: (
     draft: ShortFictionBatchDraft,
     completedChapterNumbers: ReadonlyArray<number>,
@@ -264,13 +268,52 @@ export class ShortFictionWriterAgent extends BaseAgent {
       if(completed.includes(chapterPlan.number)) continue;
       const chapter=draft.chapters.find(item=>item.number===chapterPlan.number)!;
       const originalChapter=chapterPlan.sourceNumber===0?undefined:input.draft.chapters.find(item=>item.number===(chapterPlan.sourceNumber??chapter.number))!;
-      if(!chapterPlan.instruction?.trim()) {
+      const scoped=Boolean(input.authorSource&&input.authorScope&&!input.authorScope.wholeManuscript);
+      if(!chapterPlan.instruction?.trim()&&!scoped) {
         draft={...draft,chapters:draft.chapters.map(item=>item.number===chapter.number?{...originalChapter!,number:chapter.number}:item)};
         completed.push(chapter.number);
         await input.onRevisionProgress?.({plan,draft,completed});
         continue;
       }
       const otherChapters=draft.chapters.filter(item=>item.number!==chapter.number);
+      if(input.authorSource&&input.authorScope&&!input.authorScope.wholeManuscript){
+        const original=input.authorSource.draft.chapters.find(item=>item.number===chapter.number);
+        if(!original)throw Object.assign(new Error('The authorized chapter is absent from the original manuscript.'),{code:'SHORT_REVISION_OUT_OF_SCOPE'});
+        let content=chapter.content,title=chapter.title;
+        if(input.authorScope.chapterNumbers.includes(chapter.number)){
+          const revised=await new ReviserAgent(this.ctx).reviseChapter('',content,chapter.number,[],'spot-fix',undefined,{
+            language:input.language??'zh',chapterTitle:original.title,instruction:chapterPlan.instruction,
+            authorSource:{...input.authorSource,content:original.content},
+            contextPackage:{chapter:chapter.number,selectedContext:[
+              {source:'original-manuscript',reason:'Preserve established facts in the other chapters.',excerpt:JSON.stringify(otherChapters),protection:'protected'},
+              {source:'revision-plan',reason:'Apply proposed changes only inside the original author permission.',excerpt:plan.revisionBrief,protection:'protected'},
+            ]},
+            lengthSpec:buildLengthSpec(input.charsPerChapter,input.language,{minChapterLength:input.minChapterLength??1,maxChapterLength:input.maxChapterLength}),
+            onCandidate:async candidate=>{
+              const distance=(text:string)=>{const count=countChapterLength(text,resolveLengthCountingMode(input.language));return Math.max(0,(input.minChapterLength??1)-count,count-(input.maxChapterLength??Infinity));};
+              const current=draft.chapters.find(item=>item.number===chapter.number)!;
+              if(current.content===original.content||distance(candidate)<distance(current.content)){
+                draft=mergeShortFictionBatch(draft,asShortDraftBatch({storyTitle:input.draft.storyTitle,number:chapter.number,title:original.title,content:candidate}),input.chapterCount,input.language);
+                await input.onRevisionProgress?.({plan,draft,completed});
+              }
+            },
+          });
+          content=revised.revisedContent;
+        }
+        if(input.authorScope.chapterTitleNumbers?.includes(chapter.number)){
+          const result=await this.submitStructured([
+            {role:'system',content:'Revise only this chapter title as requested by the author. Keep its promise grounded in the supplied chapter.'},
+            {role:'user',content:JSON.stringify({authorRequest:input.authorSource.request,chapterNumber:chapter.number,currentTitle:title,content})},
+          ],{name:'submit_short_revision_title',label:'Revise an authorized chapter title',description:'Submit only the requested chapter title.',parameters:Type.Object({title:Type.String({minLength:1})},{additionalProperties:false})});
+          title=result.result.title;
+        }else title=original.title;
+        const bound={storyTitle:input.draft.storyTitle,number:chapter.number,title,content};
+        validateRequestedShortChapter(bound,[chapter.number],{...input,openingHookChars:undefined},true);
+        draft=mergeShortFictionBatch(draft,asShortDraftBatch(bound),input.chapterCount,input.language);
+        completed.push(chapter.number);
+        await input.onRevisionProgress?.({plan,draft,completed});
+        continue;
+      }
       const compressCandidate=async()=>{
         const pending=draft.chapters.find(item=>item.number===chapter.number)!;
         // Preserve the developed candidate. Mechanical compression uses the

@@ -703,6 +703,7 @@ interface ShortRevisionCheckpoint {
   readonly review?: string;
   readonly authorScope?: ShortAuthorScope;
   readonly authorRequest?: string;
+  readonly authorSource?: {readonly workId:string;readonly artifactId:string;readonly revisionId:string};
   readonly request?: Pick<ShortFictionRunOptions, "direction" | "chapterCount" | "charsPerChapter" |
     "minChapterLength" | "maxChapterLength" | "openingHookChars" | "revisionChapterNumbers">;
   readonly progress?: ShortRevisionProgress;
@@ -745,9 +746,14 @@ async function reviseShortFictionWithLock(options: ShortFictionRunOptions & { re
     revision.id===artifact.currentRevisionId&&revision.path==='source/final/short-story.json')):undefined;
   let authorScope=options.resumeOperationId===saved?.operationId&&options.resumeOperationId?saved?.authorScope:undefined;
   const scopeAuthorRequest=authorScope?saved?.authorRequest:authorRequest;
+  const authorSourceRef=options.resumeOperationId===saved?.operationId&&saved?.authorSource?saved.authorSource
+    :originalArtifact?.currentRevisionId?{workId:work.id,artifactId:originalArtifact.id,revisionId:originalArtifact.currentRevisionId}:undefined;
+  const authorOriginal=authorSourceRef&&scopeAuthorRequest?await readArtifactRevision({projectRoot:options.projectRoot,...authorSourceRef}):undefined;
+  const authorSource=authorOriginal&&authorSourceRef&&scopeAuthorRequest?{...authorSourceRef,request:scopeAuthorRequest,
+    draft:ShortFictionBatchDraftSchema.parse(JSON.parse(authorOriginal.bytes.toString('utf8')))}:undefined;
   if(!authorScope&&authorRequest?.trim()&&originalArtifact?.currentRevisionId){
-    const original=await readArtifactRevision({projectRoot:options.projectRoot,workId:work.id,artifactId:originalArtifact.id,revisionId:originalArtifact.currentRevisionId});
-    const scopeKey=shortInputHash({version:1,authorRequest,baseline:original.revision.checksum}).slice('sha256:'.length);
+    const original=authorOriginal!;
+    const scopeKey=shortInputHash({version:2,authorRequest,baseline:original.revision.checksum}).slice('sha256:'.length);
     const scopePath=join('.inkos','short-author-scopes',work.id,`${scopeKey}.json`);
     const savedScope=await tryReadProjectText(options.projectRoot,scopePath);
     authorScope=savedScope?Value.Parse(ShortAuthorScopeSchema,JSON.parse(savedScope)):
@@ -795,9 +801,10 @@ async function reviseShortFictionWithLock(options: ShortFictionRunOptions & { re
   }
   const chapterCount=options.chapterCount===undefined?draft.chapters.length:positiveInteger(options.chapterCount,draft.chapters.length,"chapterCount");
   if(authorScope&&!authorScope.wholeManuscript){
-    const requested=options.revisionChapterNumbers??authorScope.chapterNumbers;
-    if(chapterCount!==draft.chapters.length||requested.some(number=>!authorScope!.chapterNumbers.includes(number)))throw Object.assign(new Error('The requested chapters exceed the original author permission. Review findings do not expand revision scope.'),{
-      code:'SHORT_REVISION_OUT_OF_SCOPE',allowedChapterNumbers:authorScope.chapterNumbers,
+    const allowed=[...new Set([...authorScope.chapterNumbers,...(authorScope.chapterTitleNumbers??[])])];
+    const requested=options.revisionChapterNumbers??allowed;
+    if(chapterCount!==draft.chapters.length||requested.some(number=>!allowed.includes(number)))throw Object.assign(new Error('The requested chapters exceed the original author permission. Review findings do not expand revision scope.'),{
+      code:'SHORT_REVISION_OUT_OF_SCOPE',allowedChapterNumbers:allowed,
     });
     options={...options,revisionChapterNumbers:requested};
   }
@@ -827,7 +834,7 @@ async function reviseShortFictionWithLock(options: ShortFictionRunOptions & { re
   }
   let checkpoint: ShortRevisionCheckpoint = {
     operationId: reuse && saved.operationId ? saved.operationId : randomUUID(), inputHash, sourceHash, review,
-    authorScope,authorRequest:scopeAuthorRequest,
+    authorScope,authorRequest:scopeAuthorRequest,authorSource:authorSourceRef,
     request: {
       direction: revisionOptions.direction, chapterCount, charsPerChapter: revisionOptions.charsPerChapter,
       minChapterLength: minimum.minChapterLength, maxChapterLength: minimum.maxChapterLength,
@@ -843,7 +850,7 @@ async function reviseShortFictionWithLock(options: ShortFictionRunOptions & { re
   const revised = checkpoint.finalization?.result ?? await new ShortFictionWriterAgent(options.runtimes.writer).reviseDraft({
     direction:authorScope?JSON.stringify({authorRequest:scopeAuthorRequest,revisionInstruction:options.direction,permission:authorScope}):options.direction,language,chapterCount,
     charsPerChapter: revisionOptions.charsPerChapter ?? (language==="en"?SHORT_FICTION_EN_DEFAULT_WORDS_PER_CHAPTER:SHORT_FICTION_DEFAULT_CHARS_PER_CHAPTER),
-    minChapterLength:minimum.minChapterLength,maxChapterLength:minimum.maxChapterLength,openingHookChars:minimum.openingHookChars,draft,chapterNumbers,authorScope,
+    minChapterLength:minimum.minChapterLength,maxChapterLength:minimum.maxChapterLength,openingHookChars:minimum.openingHookChars,draft,chapterNumbers,authorScope,authorSource,
     outlineMarkdown,review,resume,
     onRevisionProgress:async(progress)=>{
       checkpoint = { ...checkpoint, progress };

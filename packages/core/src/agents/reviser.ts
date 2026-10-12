@@ -48,6 +48,11 @@ export class ReviserAgent extends BaseAgent {
       readonly instruction?:string;
       readonly targetText?:string;
       readonly candidateText?:string;
+      /** Host-resolved immutable source for a chapter stored inside another artifact. */
+      readonly authorSource?: {
+        readonly workId:string; readonly artifactId:string; readonly revisionId:string;
+        readonly content:string; readonly request:string;
+      };
       readonly contextPackage: ContextPackage;
       readonly lengthSpec?: LengthSpec;
       /** Observe a complete source-bound candidate without adopting it. */
@@ -74,7 +79,7 @@ export class ReviserAgent extends BaseAgent {
           : `\n## 篇幅要求\n${JSON.stringify({...options.lengthSpec,currentCount:countChapterLength(chapterContent,options.lengthSpec.countingMode),unit:"正文非空白字符，含标点，不含标题"})}`)
       : "";
     const systemPrompt = buildRevisionProtocol(mode, options.language);
-    const authorRequest=currentExecutionAuthorRequest();
+    const authorRequest=options.authorSource?.request??currentExecutionAuthorRequest();
     const baseline=currentExecutionBaselineWork();
     const work=currentExecutionWork();
     const prefix=`source/chapters/${String(chapterNumber).padStart(4,'0')}_`;
@@ -82,9 +87,13 @@ export class ReviserAgent extends BaseAgent {
     const predatesRequest=baseline===undefined||Boolean(originalArtifact);
     let authorized:ReturnType<typeof authorTextScopeContract>|undefined;
     let scopeSource=chapterContent;
-    if(authorRequest&&predatesRequest){
+    if(authorRequest&&(options.authorSource||predatesRequest)){
       const select=(source:string,request:string)=>new SourceLocatorAgent(this.ctx).select(source,request,{kind:'chapter',chapterNumber,title:options.chapterTitle});
-      if(originalArtifact?.currentRevisionId&&baseline){
+      if(options.authorSource){
+        scopeSource=body(options.authorSource.content);
+        authorized=await resolveAuthorTextPermission({projectRoot:this.ctx.projectRoot,...options.authorSource,
+          originalContent:scopeSource,currentContent:chapterContent,authorRequest,selectorVersion:2,select});
+      }else if(originalArtifact?.currentRevisionId&&baseline){
         const original=await readArtifactRevision({projectRoot:this.ctx.projectRoot,workId:baseline.id,artifactId:originalArtifact.id,revisionId:originalArtifact.currentRevisionId});
         scopeSource=body(original.bytes.toString('utf8'));
         authorized=await resolveAuthorTextPermission({projectRoot:this.ctx.projectRoot,workId:baseline.id,artifactId:originalArtifact.id,revisionId:original.revision.id,originalContent:scopeSource,currentContent:chapterContent,authorRequest,selectorVersion:2,select});
