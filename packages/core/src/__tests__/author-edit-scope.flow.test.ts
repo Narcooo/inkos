@@ -164,7 +164,7 @@ it.each([
   expect(actionResultFacts(result).editPermission).toEqual(result.editPermission);
   const scopes=requests.filter(r=>r.tools[0].function.name==='submit_author_edit_scope');
   expect(scopes).toHaveLength(2);
-  expect(scopes.every(r=>JSON.parse(r.messages.findLast((m:any)=>m.role==='user').content).authorRequest==='Only the final spoken response; surrounding narration remains protected.')).toBe(true);
+  for(const scope of scopes)expect(JSON.parse(scope.messages.findLast((m:any)=>m.role==='user').content)).toMatchObject({authorRequest,locationHint:'Only the final spoken response; surrounding narration remains protected.'});
   expect(requests.filter(r=>r.tools[0].function.name==='submit_edit_location').every(r=>JSON.parse(r.messages.findLast((m:any)=>m.role==='user').content).authorRequest===authorRequest)).toBe(true);
   const writes=requests.filter(r=>r.tools[0].function.name==='submit_chapter_range_replacements');
   expect(writes).toHaveLength(4);

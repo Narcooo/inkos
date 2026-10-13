@@ -24,6 +24,7 @@ afterEach(async()=>{vi.restoreAllMocks();await Promise.all(roots.splice(0).map(r
 
 it('preserves inline author permission through length failure and resume, and changes only an explicitly selected title',async()=>{
   const root=await mkdtemp(join(tmpdir(),'inkos-short-inline-'));roots.push(root);
+  const request='只把第2章该册修复年份改成2031，其余正文、标点和标题保持原样；第3章仅把标题改成归档。';
   const draft={storyTitle:'旧馆',openingHook:'灯还亮着。',rawContent:'',chapters:[
     {number:1,title:'原始档案',content:'她在2031年登记了这本旧书。',charCount:0},
     {number:2,title:'核对',content:'“别动旁边的记录。”他说。\n\n该册修复于1999年，评级三级。\n\n她收好台账，关上柜门。\n\n1999年那册的修复档，她明天再来取。',charCount:0},
@@ -40,7 +41,7 @@ it('preserves inline author permission through length failure and resume, and ch
   const server=createServer(async(req,res)=>{
     const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));
     const body=JSON.parse(Buffer.concat(chunks).toString());const name=body.tools[0].function.name;calls.push({name,body});
-    if(name==='submit_author_edit_scope')expect(JSON.parse(body.messages.find((m:any)=>m.role==='user').content).documentIdentity).toEqual({kind:'chapter',chapterNumber:2,title:'核对'});
+    if(name==='submit_author_edit_scope')expect(JSON.parse(body.messages.find((m:any)=>m.role==='user').content)).toMatchObject({authorRequest:request,documentIdentity:{kind:'chapter',chapterNumber:2,title:'核对'},locationHint:'Only the repair year in chapter 2.'});
     const args=name==='submit_short_author_scope'?{wholeManuscript:false,chapterNumbers:[2],chapterTitleNumbers:[3],opening:false,outline:false}
       :name==='submit_short_revision_plan'?{revisionBrief:'Correct the year and add its cause.',chapter_2_instruction:'Correct the year; add an explanation and polish dialogue.',chapter_3_instruction:'Rename the title.'}
       :name==='submit_edit_location'?{kind:'reference',boundary:'none',count:0,target:'Only the repair year in chapter 2.'}
@@ -54,7 +55,6 @@ it('preserves inline author permission through length failure and resume, and ch
   try{
     const client=createLLMClient({service:'custom',provider:'openai',configSource:'studio',model:'fixture',apiKey:'fixture',baseUrl:`http://127.0.0.1:${(server.address() as {port:number}).port}/v1`,apiFormat:'chat',stream:false,thinkingBudget:0});
     const runtime={client,model:'fixture',projectRoot:root};
-    const request='只把第2章该册修复年份改成2031，其余正文、标点和标题保持原样；第3章仅把标题改成归档。';
     const options={projectRoot:root,storyId:'short',direction:request,cover:false,runtimes:{planner:runtime,writer:runtime,draftReview:runtime,package:runtime}};
     await expect(withExecutionEvidence(()=>{},()=>reviseShortFictionProduction(options),undefined,baseline,request)).rejects.toMatchObject({code:'CHAPTER_LENGTH_OUT_OF_RANGE'});
     expect(await readFile(join(root,base,'final/short-story.json'),'utf8')).toBe(raw);

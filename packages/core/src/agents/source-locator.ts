@@ -27,6 +27,7 @@ export class SourceLocatorAgent extends BaseAgent {
       /^ {0,3}#{1,6}(?:\s|$)/u.test(text)||/^ {0,3}(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/u.test(text.trimEnd())));
     const {result:location}=await this.submitStructured([
       {role:'system',content:'Identify only the location the author permits editing. Do not plan how to improve the writing. The supplied identity describes the complete document available for this operation; other documents mentioned in the request are not inside it. Use paragraphs for an explicit first/last paragraph or first/last N paragraphs: paragraphs are blank-line-separated text blocks, excluding Markdown headings and horizontal rules, not thematic scenes or narrative sequences. Use document only when the author permits editing the whole supplied document. Otherwise use reference and retain every location qualifier, including speaker, scene, position and whether only speech is editable, while omitting the requested artistic effect. For document/reference set boundary=none and count=0. For document/paragraphs leave target empty.'},
+      {role:'system',content:'Interpret all restrictions for this document together. Permission to change only specified facts, dates, names or words throughout a chapter is reference scope, not document scope. A chapter number is not a paragraph count. An independent opening and a chapter title are separate from chapter prose; permission concerning them does not authorize this chapter\'s first paragraph. Copy the applicable scope qualifiers into target so the text selector can find every matching occurrence in this document.'},
       {role:'user',content:JSON.stringify({authorRequest,documentIdentity:identity,paragraphCount:paragraphs.length})},
     ],{
       name:'submit_edit_location',label:'Locate the author-authorized edit',description:'Resolve the author location without reading or rewriting the prose.',parameters:LocationSchema,
@@ -44,7 +45,7 @@ export class SourceLocatorAgent extends BaseAgent {
       const selected=location.boundary==='first'?paragraphs.slice(0,location.count):paragraphs.slice(-location.count);
       return{wholeDocument:false,selections:selected.map(unit=>({unitId:unit.id,text:''})),reason:`Author requested ${location.boundary} ${location.count} paragraph(s) of the supplied document.`};
     }
-    const request=authorTextScopeRequest(content,location.target,identity);
+    const request=authorTextScopeRequest(content,authorRequest,identity,location.target);
     const selected=await this.submitStructured(request.messages,request.tool,{maxTokens:Math.min(8192,this.ctx.client.defaults.maxTokens),professionalGuidance:false});
     return selected.result;
   }

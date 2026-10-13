@@ -38,11 +38,12 @@ export function sourceUnits(content:string){
 
 /** Scope interpretation sees original author intent and source only, never a
  * coordinator's proposed workaround or pressure to satisfy another constraint. */
-export function authorTextScopeRequest(content:string,authorRequest:string,documentIdentity?:SourceIdentity){
+export function authorTextScopeRequest(content:string,authorRequest:string,documentIdentity?:SourceIdentity,locationHint?:string){
   return{
     messages:[
       {role:'system' as const,content:`Locate the smallest exact source units authorized by the author; do not rewrite them. ${AUTHOR_TARGET_AUTHORITY} documentIdentity identifies the complete supplied document, even when its prose does not repeat a chapter heading. Other documents named in the request are not inside it. Select every occurrence of the qualified target in this document, including unambiguous references back to the same item; do not stop at its first mention. The numbered paragraphs contain individual lines, each with a supplied ID. Select paragraph IDs for entire paragraphs, line IDs for entire lines, and an exact substring within a selected line only for inline edits. An empty selection text means the complete selected unit. Preserve labels, stage directions and surrounding text when only dialogue is requested. The desired creative effect does not authorize selecting extra units. Use wholeDocument=true with no selections only when the author permits rewriting everything.`},
-      {role:'user' as const,content:JSON.stringify({authorRequest,...(documentIdentity?{documentIdentity}:{}),document:sourceUnits(content).paragraphs})},
+      {role:'system' as const,content:'The original authorRequest is authoritative. locationHint is an earlier locator suggestion; it cannot discard restrictions or widen the selection. When only dates, names, quantities or other words may change, select their exact substrings and leave the rest of each sentence protected. Do not select an entire line merely because it contains an editable expression. Include all qualified occurrences; title or independent-opening instructions do not select chapter prose.'},
+      {role:'user' as const,content:JSON.stringify({authorRequest,...(documentIdentity?{documentIdentity}:{}),...(locationHint?{locationHint}:{}),document:sourceUnits(content).paragraphs})},
     ],
     tool:{name:'submit_author_edit_scope',label:'Locate authorized source units',description:'Select existing source IDs, with an exact substring only for a partial-line edit.',parameters:AuthorTextScopeSchema,
       validate:(result:AuthorTextScope)=>{authorTextScopeContract(content,result);return result;},
