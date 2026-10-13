@@ -143,6 +143,7 @@ export interface ShortFictionDraftInput {
 }
 
 export interface ShortFictionDraftReviewInput extends ShortFictionDraftInput {
+  readonly reference?: ShortFictionReference;
   readonly revisionRequest?: string;
   readonly reviewScope?: string;
   readonly draft: ShortFictionBatchDraft;
@@ -564,7 +565,8 @@ export class ShortFictionDraftReviewerAgent extends BaseAgent {
           comparison,
           measurements: measureShortFictionDraft(input.draft,input.language),
           outlineMarkdown: numberReviewSource(input.outlineMarkdown),
-          draftMarkdown: [...sources].filter(([id]) => id !== "outline").map(([id, text]) => `## Source: ${id}\n${numberReviewSource(text)}`).join("\n\n"),
+          reference: input.reference ? {...input.reference,text:numberReviewSource(input.reference.text)} : undefined,
+          draftMarkdown: [...sources].filter(([id]) => id !== "outline" && id !== "reference-material").map(([id, text]) => `## Source: ${id}\n${numberReviewSource(text)}`).join("\n\n"),
         }, input.language) },
       ], sources, {
         name: "submit_short_fiction_review",
@@ -844,6 +846,7 @@ export function shortReviewSources(input: ShortFictionDraftReviewInput): Map<str
     ...(input.draft.openingHook ? [["manuscript-opening", input.draft.openingHook] as [string, string]] : []),
     ...input.draft.chapters.map(chapter => [`manuscript-chapter-${chapter.number}`, chapter.title + "\n" + chapter.content] as [string, string]),
   ]);
+  if(input.reference?.text.trim())sources.set('reference-material',input.reference.text);
   if (input.comparison) {
     const before = input.comparison.draft;
     sources.set("baseline-manuscript-title", before.storyTitle);

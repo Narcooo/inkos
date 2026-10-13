@@ -26,7 +26,7 @@ export interface ShortFictionDraftPromptInput {
   readonly chapterNumbers?: readonly number[];
   readonly previousDraftMarkdown?: string;
 }
-export interface ShortFictionDraftReviewPromptInput extends ShortFictionDraftPromptInput { readonly draftMarkdown: string; readonly revisionRequest?: string; readonly reviewScope?: string; readonly measurements?: ShortFictionMeasurements; readonly comparison?: unknown; }
+export interface ShortFictionDraftReviewPromptInput extends ShortFictionDraftPromptInput { readonly draftMarkdown: string; readonly reference?:ShortFictionReferencePromptInput; readonly revisionRequest?: string; readonly reviewScope?: string; readonly measurements?: ShortFictionMeasurements; readonly comparison?: unknown; }
 export interface ShortFictionPackagePromptInput {
   readonly direction: string;
   readonly draftMarkdown: string;
@@ -92,6 +92,8 @@ export function buildShortFictionDraftReviewUserPrompt(input: ShortFictionDraftR
   return [
     language === "en" ? "## Direction" : "## 创作方向", input.direction,
     "", language === "en" ? "## Source: outline (plan, not manuscript)" : "## Source: outline（大纲）", input.outlineMarkdown,
+    ...(input.reference?.text?.trim() ? ["", "## Source: reference-material", JSON.stringify(input.reference.source ?? {}),
+      language === 'en' ? 'These are the bound original samples and their deconstructions. Compare craft against their actual passages; sample facts are not facts of the new story. Cite this source for claims about the samples. Missing evidence remains unavailable.' : '以下为作品绑定的原始样本及拆稿。对照实际段落判断写法；样本事实不是新故事事实。关于样本的判断须引用此来源，缺少的依据如实留白。',input.reference.text] : []),
     "", language === "en" ? "## Review scope" : "## 审查范围", input.reviewScope ?? "whole-story",
     ...(input.revisionRequest ? ["", language === "en" ? "## Latest revision request" : "## 最近修改请求", input.revisionRequest] : []),
     "", language === "en" ? "## Requested manuscript constraints" : "## 成稿约束",

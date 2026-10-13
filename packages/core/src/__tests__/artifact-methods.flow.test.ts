@@ -9,7 +9,9 @@ import { syncWorkSourceArtifacts } from '../harness/source-sync.js';
 import { createArtifactMethodTools } from '../harness/tools/artifact-methods.js';
 import { createLLMClient } from '../llm/provider.js';
 import { PipelineRunner } from '../pipeline/runner.js';
-import { generateShortFictionCover } from '../pipeline/short-fiction-runner.js';
+import { generateShortFictionCover, runShortFictionStage } from '../pipeline/short-fiction-runner.js';
+import { renderShortFictionDraftMarkdown } from '../agents/short-fiction.js';
+import { numberReviewSource } from '../models/observation.js';
 import { createProductionCapabilityRegistry } from '../harness/production-capabilities.js';
 import { createBuiltInWorkProfileRegistry } from '../harness/builtin-profiles.js';
 import { createGenerateCoverTool, createReadTool } from '../agent/agent-tools.js';
@@ -19,6 +21,57 @@ import { createAdoptWorkRevisionTool } from '../harness/tools/work-artifacts.js'
 import { executeExplicitCapabilityTool } from '../harness/explicit-action.js';
 import { currentExecutionAuthorRequest, withExecutionEvidence } from '../harness/execution-evidence.js';
 import {StoryGraphSchema} from '../interactive-film/graph-schema.js';
+
+it('supplies registered samples to both short-story review paths and records their exact versions',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'inkos-short-review-reference-'));const requests:any[]=[];
+  const server=createServer(async(req,res)=>{
+    const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));
+    const body=JSON.parse(Buffer.concat(chunks).toString('utf8'));requests.push(body);
+    const name=body.tools[0].function.name;
+    res.writeHead(200,{'Content-Type':'application/json'});
+    res.end(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{tool_calls:[{id:'review-'+requests.length,type:'function',function:{name,arguments:JSON.stringify({summary:'Recorded review.',observationCodes:[]})}}]}}]}));
+  });server.listen(0,'127.0.0.1');await once(server,'listening');
+  try{
+    await saveWorkManifest(root,createWorkManifest({id:'short',title:'Receipt',profileId:'short-fiction',language:'en'}));
+    await mkdir(join(root,'works/short/source'),{recursive:true});
+    const draft={storyTitle:'Receipt',rawContent:'',chapters:[{number:1,title:'Return',content:'Mara returns the receipt.',charCount:4}]};
+    const manuscript=renderShortFictionDraftMarkdown(draft,'en'),sample='Original: A clerk returns a stamped letter.\nDeconstruction: The object pays off the opening promise.';
+    const work=await syncWorkSourceArtifacts({projectRoot:root,workId:'short',accept:true,writes:[
+      {relativePath:'works/short/source/source-material.md',content:sample},
+      {relativePath:'works/short/source/outline/v001.md',content:'Mara returns the receipt.'},
+      {relativePath:'works/short/source/final/full.md',content:manuscript},
+      {relativePath:'works/short/source/final/short-story.json',content:JSON.stringify(draft)},
+      {relativePath:'works/short/source/production-state.json',content:JSON.stringify({version:2,intent:'Return the receipt.',target:{chapterCount:1,charsPerChapter:4,minChapterLength:1,language:'en'},stages:{}})},
+    ]});
+    const target=work.artifacts.find(a=>a.revisions.some(r=>r.path==='source/final/full.md'))!;
+    const reference=work.artifacts.find(a=>a.revisions.some(r=>r.path==='source/source-material.md'))!;
+    const version=reference.revisions.find(r=>r.id===reference.currentRevisionId)!;
+    const identity={workId:'short',artifactId:reference.id,revisionId:version.id,checksum:version.checksum};
+    await writeFile(join(root,'works/short/source/source-material.md'),'Unregistered working copy');
+    const client=createLLMClient({service:'custom',provider:'openai',configSource:'studio',model:'fixture',apiKey:'fixture',baseUrl:`http://127.0.0.1:${(server.address() as {port:number}).port}/v1`,apiFormat:'chat',stream:false,thinkingBudget:0});
+    const pipeline=new PipelineRunner({client,model:'fixture',projectRoot:root});
+    const result=await createArtifactMethodTools(pipeline,root,'short')[0]!.execute('review',{artifactId:target.id,instruction:'Compare with the bound sample.'});
+    const genericInput=JSON.parse(requests[0].messages.find((m:any)=>m.role==='user').content);
+    expect(genericInput.sources.find((s:any)=>s.sourceId===reference.id)).toMatchObject({revisionId:version.id,checksum:version.checksum,role:'reference',numberedLines:numberReviewSource(sample)});
+    expect(result.details).toMatchObject({reviewedReferences:[{artifactId:reference.id,revisionId:version.id,checksum:version.checksum}]});
+    const runtime={client,model:'fixture',projectRoot:root};
+    const options={projectRoot:root,storyId:'short',direction:'',stage:'review' as const,runtimes:{planner:runtime,writer:runtime,draftReview:runtime,package:runtime}};
+    await runShortFictionStage(options);
+    const statePath=join(root,'works/short/source/production-state.json');
+    const first=JSON.parse(await readFile(statePath,'utf8')).stages.review;
+    expect(first).toMatchObject({status:'completed',reviewedReference:identity});
+    const input=requests.at(-1).messages.find((m:any)=>m.role==='user').content;
+    expect(input).toContain(numberReviewSource(sample));expect(input).toContain(JSON.stringify(identity));
+    const updated=await syncWorkSourceArtifacts({projectRoot:root,workId:'short',accept:true,writes:[{relativePath:'works/short/source/source-material.md',content:sample+'\nA second payoff uses the same object.'}]});
+    await runShortFictionStage(options);
+    const second=JSON.parse(await readFile(statePath,'utf8')).stages.review;
+    expect(second.reviewedReference.revisionId).toBe(updated.artifacts.find(a=>a.id===reference.id)!.currentRevisionId);
+    expect(second.requestHash).not.toBe(first.requestHash);
+    expect(await readFile(join(root,'works/short/source/final/full.md'),'utf8')).toBe(manuscript);
+    expect(await readFile(join(root,'works/short',version.snapshotPath!),'utf8')).toBe(sample);
+    expect(requests).toHaveLength(3);
+  }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));await rm(root,{recursive:true,force:true});}
+},20000);
 
 it('reviews a pinned graph with deterministic structural facts and persists the same evidence',async()=>{
   const root=await mkdtemp(join(tmpdir(),'inkos-graph-review-'));const requests:any[]=[];

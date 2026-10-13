@@ -187,6 +187,8 @@ export function createArtifactMethodTools(pipeline: PipelineRunner, root: string
           ...(revision.path==='source/storyboard.md'?['source/image-prompts.md']:revision.path==='source/image-prompts.md'?['source/storyboard.md']:[])]
         : profile.capabilityIds.includes('short-fiction')&&['source/final/sales-package.md','source/final/sales-package.json','source/final/cover-prompt.md'].includes(revision.path)
           ? ['source/final/full.md']
+          : mode==='review'&&profile.capabilityIds.includes('short-fiction')&&['source/outline/v001.md','source/final/full.md','source/final/short-story.json'].includes(revision.path)
+            ? ['source/source-material.md']
           : profile.capabilityIds.includes('interactive-film')&&revision.path==='source/story-graph.json'
             ? ['source/delivery-requirements.json'] : [];
       const relatedIds = work.artifacts.filter(item=>item.revisions.some(version=>version.id===item.currentRevisionId&&relatedPaths.includes(version.path))).map(item=>item.id);

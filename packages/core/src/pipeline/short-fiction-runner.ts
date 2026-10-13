@@ -266,7 +266,7 @@ async function loadCompletedShortRun(
     chapterCount: options.chapterCount ?? state.target?.chapterCount,
     charsPerChapter: options.charsPerChapter ?? state.target?.charsPerChapter,
     language: options.language ?? state.target?.language,
-  })) return null;
+  },await shortOutlineReference(root,storyId,options.reference,'short-fiction-review'))) return null;
   if(state?.delivery&&state.stages.package?.reviewHash!==shortPackageReviewHash(state.delivery))return null;
   const observations: Observation[] = state
     ? Object.values(state.stages).flatMap(stage => stage?.observations ?? [])
@@ -276,12 +276,13 @@ async function loadCompletedShortRun(
 }
 
 /** Source identity alone cannot establish that a different review request ran. */
-function shortReviewRequestHash(options: ShortFictionRunOptions): string {
+function shortReviewRequestHash(options: ShortFictionRunOptions,reference?:ShortFictionReference): string {
   const baseline = currentExecutionBaselineWork();
   const artifact = baseline && baseline.id === options.storyId ? baseline.artifacts.find(item => item.revisions.some(revision =>
     revision.id === item.currentRevisionId && revision.path === "source/final/short-story.json")) : undefined;
   return shortInputHash({
-    evidenceVersion: 1,
+    evidenceVersion: 2,
+    reference,
     constraints: shortDraftMinimum(options),
     comparison: {scope:baseline === undefined ? "parent_revision" : "episode_start",artifactId:artifact?.id,revisionId:artifact?.currentRevisionId},
     authorRequest: currentExecutionAuthorRequest(),
@@ -327,7 +328,7 @@ async function shortDraftRecoveryError(error:unknown,options:ShortFictionRunOpti
 }
 
 /** Resolve registered bytes, not a mutable working copy or a coordinator's summary. */
-async function shortOutlineReference(root:string,workId:string|undefined,notes:ShortFictionReference|undefined):Promise<ShortFictionReference|undefined> {
+async function shortOutlineReference(root:string,workId:string|undefined,notes:ShortFictionReference|undefined,worker='short-fiction-outline'):Promise<ShortFictionReference|undefined> {
   if (!workId) return notes;
   let work;
   try { work = await loadWorkManifest(root,workId); }
@@ -337,7 +338,7 @@ async function shortOutlineReference(root:string,workId:string|undefined,notes:S
   if (!artifact) return notes;
   const {bytes,revision} = await readArtifactRevision({projectRoot:root,workId,artifactId:artifact.id});
   const source = {workId,artifactId:artifact.id,revisionId:revision.id,checksum:revision.checksum};
-  recordExecutionEvidence('source-material-used',{worker:'short-fiction-outline',source,lineage:work.lineage});
+  recordExecutionEvidence('source-material-used',{worker,source,lineage:work.lineage});
   return {text:bytes.toString('utf8'),path:revision.path,source,notes:notes?.text};
 }
 
@@ -539,7 +540,8 @@ async function produceShort(
     if (stopAfter !== "package") {
     options.onProgress?.("Reviewing completed short fiction...");
     const draftReviewer = new ShortFictionDraftReviewerAgent(options.runtimes.draftReview);
-    const requestHash = shortReviewRequestHash({...options, ...minimum, storyId, chapterCount, charsPerChapter, language});
+    const reference = await shortOutlineReference(root,storyId,options.reference,'short-fiction-review');
+    const requestHash = shortReviewRequestHash({...options, ...minimum, storyId, chapterCount, charsPerChapter, language},reference);
     let reviewComparison: Omit<NonNullable<ShortFictionDraftReviewInput["comparison"]>, "draft"> | undefined;
     try {
       const baseline = currentExecutionBaselineWork();
@@ -566,6 +568,7 @@ async function produceShort(
         reviewScope: productionState.reviewScope,
         outlineMarkdown,
         draft: draftV1,
+        reference,
         chapterCount,
         charsPerChapter,
         ...minimum,
@@ -591,6 +594,7 @@ async function produceShort(
     productionState = { ...productionState, stages: { ...productionState.stages, review: {
       status: draftReviewWarning ? "failed" : "completed", inputHash, requestHash, updatedAt: new Date().toISOString(),
       ...(!draftReviewWarning?{reviewedArtifact:{artifactId:reviewedArtifact.id,revisionId:reviewedRevision.id}}:{}),
+      ...(!draftReviewWarning&&reference?.source?{reviewedReference:reference.source}:{}),
       comparison: reviewComparison,
       error: draftReviewWarning,
       observations: draftReviewWarning ? [{ code: "draft-review", category: "execution", assessment: "unavailable",
