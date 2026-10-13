@@ -134,6 +134,9 @@ export interface ShortFictionRunResult {
   readonly packageError?: string;
 }
 
+export type ShortFictionRevisionResult = Omit<ShortFictionRunResult,
+  'salesPackagePath' | 'coverPromptPath' | 'coverImagePath' | 'coverError' | 'packageError'>;
+
 export interface ShortFictionCoverOptions {
   readonly projectRoot: string;
   readonly authorRequest?: string;
@@ -430,7 +433,7 @@ async function produceShort(
   const stageResult = async (stage: ShortProductionStage, paths: string[]): Promise<ShortProductionStageResult> => {
     if(stage!=='outline')await refreshDelivery();
     const acceptPaths = stage === "review"
-      ? ["source/reviews/draft-v001.md", "source/reviews/draft-warning.md", "source/production-state.json"]
+      ? ["source/reviews/draft-v001.md", "source/reviews/draft-warning.md", "source/production-state.json",...(revisedDraft?[...shortManuscriptPaths(finalDraft),...await changedWorkSourcePaths(root,storyId,sourceBefore)]:[])]
       : stage === "package"
       ? ["source/final/sales-package.json", "source/final/sales-package.md", "source/final/cover-prompt.md", "source/reviews/package-v001.md", "source/reviews/package-warning.md", "source/production-state.json"]
       : stage === "draft" ? [...shortManuscriptPaths(finalDraft), ...await changedWorkSourcePaths(root, storyId, sourceBefore)]
@@ -602,7 +605,10 @@ async function produceShort(
     } } };
     await writeShortProductionState(root, baseDir, productionState);
     }
-    if (stopAfter === "review") return stageResult("review", [draftReviewWarning ? "reviews/draft-warning.md" : "reviews/draft-v001.md", "production-state.json"]);
+    if (stopAfter === "review") {
+      if(revisedDraft)await writeFinalArtifacts(root,baseDir,finalDraft,language);
+      return stageResult("review", [draftReviewWarning ? "reviews/draft-warning.md" : "reviews/draft-v001.md", "production-state.json"]);
+    }
     if(!reviewOrPackageOnly)await writeFinalArtifacts(root, baseDir, finalDraft, language);
 
     options.onProgress?.("Generating synopsis and cover prompt...");
@@ -728,14 +734,14 @@ interface ShortRevisionCheckpoint {
   };
 }
 
-export async function reviseShortFictionProduction(options: ShortFictionRunOptions & { readonly storyId: string }): Promise<ShortFictionRunResult> {
+export async function reviseShortFictionProduction(options: ShortFictionRunOptions & { readonly storyId: string }): Promise<ShortFictionRevisionResult> {
   await loadWorkManifest(options.projectRoot, options.storyId);
   const release=await new StateManager(options.projectRoot).acquireBookLock(options.storyId);
   try { return await reviseShortFictionWithLock(options); }
   finally { await release(); }
 }
 
-async function reviseShortFictionWithLock(options: ShortFictionRunOptions & { readonly storyId: string }): Promise<ShortFictionRunResult> {
+async function reviseShortFictionWithLock(options: ShortFictionRunOptions & { readonly storyId: string }): Promise<ShortFictionRevisionResult> {
   const work = await loadWorkManifest(options.projectRoot, options.storyId);
   if(!createBuiltInWorkProfileRegistry(options.projectRoot).require(work.profileId).capabilityIds.includes("short-fiction")) throw new Error("Short revision requires a short-fiction Work");
   const base = shortWorkBaseDir(options.storyId);
@@ -803,7 +809,7 @@ async function reviseShortFictionWithLock(options: ShortFictionRunOptions & { re
       throw Object.assign(new Error("The manuscript or outline changed after this revision began. Start an explicit new revision from the current source."), { code: "SHORT_REVISION_SOURCE_CHANGED" });
     }
     if (finalization) {
-      // Completing review/packaging must not rewrite chapters or reset the change baseline.
+      // Completing review must not rewrite chapters or reset the change baseline.
       draft = ShortFictionBatchDraftSchema.parse(finalization.baseline.draft);
       outlineMarkdown = finalization.baseline.outlineMarkdown;
       sourceHash = shortInputHash({ draft, outlineMarkdown });
@@ -888,7 +894,7 @@ async function reviseShortFictionWithLock(options: ShortFictionRunOptions & { re
     textWrite(checkpointPath, JSON.stringify(checkpoint, null, 2)),
   ]});
   try {
-    const result=await produceShort(revisionOptions,options.projectRoot,options.storyId,revised.draft);
+    const result=await produceShort(revisionOptions,options.projectRoot,options.storyId,revised.draft,'review');
     const committedDraft=ShortFictionBatchDraftSchema.parse(JSON.parse(await readFile(safeChildPath(options.projectRoot,join(base,"final","short-story.json")),"utf8")));
     const beforeChapters=new Map(draft.chapters.map(chapter=>[chapter.number,chapter]));
     const afterChapters=new Map(committedDraft.chapters.map(chapter=>[chapter.number,chapter]));
@@ -902,7 +908,9 @@ async function reviseShortFictionWithLock(options: ShortFictionRunOptions & { re
       outlineChanged:outlineMarkdown!==await readFile(safeChildPath(options.projectRoot,join(base,"outline","v001.md")),"utf8"),
     };
     await rm(safeChildPath(options.projectRoot,checkpointPath),{force:true});
-    return {...result,revisionChanges};
+    return {storyId:result.storyId,delivery:result.delivery,reviewedArtifact:result.reviewedArtifact,observations:result.observations,revisionChanges,
+      outlinePath:projectPath(join(base,'outline','v001.md')),draftReviewPath:projectPath(join(base,'reviews',result.stageStatus==='failed'?'draft-warning.md':'draft-v001.md')),
+      finalMarkdownPath:projectPath(join(base,'final','full.md')),finalJsonPath:projectPath(join(base,'final','short-story.json'))};
   }
   catch(error) {
     await syncWorkSourceArtifacts({projectRoot:options.projectRoot,workId:options.storyId,accept:false});

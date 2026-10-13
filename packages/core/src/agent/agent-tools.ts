@@ -1816,7 +1816,7 @@ const ShortRevisionParams = Type.Object({
 export function createShortFictionReviseTool(pipeline:PipelineRunner,projectRoot:string,workId:string,options:SkillAwareProductionOptions={}) {
   return {
     name:"revise_short_fiction",label:"Revise short fiction",
-    description:"Revise an existing complete short-fiction Work from its persisted review and user direction, then review and update its sales package.",
+    description:"Revise an existing complete short-fiction Work within the author's requested scope, then review the revised manuscript. Existing sales packages, cover prompts, images and exports remain unchanged. When the author also requests updated packaging or delivery, perform those separately on the revised manuscript using package_short_fiction, the visual action and export_work_package.",
     parameters:ShortRevisionParams,
     async execute(_id:string,params:Static<typeof ShortRevisionParams>,signal?:AbortSignal,onUpdate?:AgentToolUpdateCallback) {
       const skills=resolveProductionToolSkills(options);

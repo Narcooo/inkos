@@ -71,6 +71,9 @@ it('preserves inline author permission through length failure and resume, and ch
     const replacements=calls.filter(c=>c.name==='submit_chapter_range_replacements');
     for(const {body}of replacements)expect(Object.keys(body.tools[0].function.parameters.properties)).toEqual(['selection_0_text','selection_1_text']);
     const finalInput=replacements.at(-1)!.body.messages.filter((m:any)=>m.role==='user').map((m:any)=>{try{return JSON.parse(m.content);}catch{return null;}}).find((m:any)=>m?.instruction===request);
+    const planningInput=JSON.parse(calls.find(c=>c.name==='submit_short_revision_plan')!.body.messages.find((m:any)=>m.role==='user').content);
+    expect(planningInput.userRequest).toBe(request);
+    expect(planningInput.revisionGuidance.authority).toBe('advice_within_author_scope');
     expect(finalInput.instruction).toBe(request);
     expect(finalInput.references.map((reference:any)=>reference.source)).toEqual(['original-manuscript']);
     expect(finalInput.revisionGuidance.authority).toBe('advice_within_author_scope');
@@ -396,6 +399,11 @@ it("exposes the completed outline for review while preserving partial draft reco
 
 it.each(["resume", "restart", "finalize"] as const)("%s preserves revision ownership through changed retry wording and retains the prior manuscript",async(mode)=>{
   const root=await mkdtemp(join(tmpdir(),"inkos-short-revision-"));roots.push(root);
+  const protectedFiles=new Map([
+    ['source/final/sales-package.json',JSON.stringify({title:'Story',intro:'Original synopsis',sellingPoints:['Original point'],coverPrompt:'Original cover'})],
+    ['source/final/sales-package.md','Original sales package.'],['source/final/cover-prompt.md','Original cover prompt.'],
+    ['source/final/cover.png','saved-image-bytes'],['source/exports/delivery.zip','saved-export-bytes'],
+  ]);
   const draft={storyTitle:"Story",chapters:[1,2].map(number=>({number,title:`Chapter ${number}`,content:Array(40).fill("word").join(" "),charCount:40})),rawContent:""};
   const changed={...draft,chapters:draft.chapters.map(chapter=>({...chapter,content:Array(40).fill("revised").join(" ")}))};
   const initial=createInitialWorkManifestWrite({workId:"short",title:"Story",profileId:"short-fiction",language:"en",writes:[
@@ -404,6 +412,7 @@ it.each(["resume", "restart", "finalize"] as const)("%s preserves revision owner
     {relativePath:"works/short/source/final/full.md",content:renderShortFictionDraftMarkdown(draft,"en")},
   ]});
   await commitAtomicFileSet({rootDir:root,writes:[
+    ...[...protectedFiles].map(([path,content])=>({relativePath:`works/short/${path}`,content})),
     {relativePath:"works/short/source/production-state.json",content:JSON.stringify({version:2,intent:"Original intent",target:{chapterCount:2,charsPerChapter:40,maxChapterLength:60,language:"en"},stages:{}})},
     {relativePath:"works/short/source/outline/v001.md",content:"Original outline"},
     {relativePath:"works/short/source/final/short-story.json",content:JSON.stringify(draft)},
@@ -487,7 +496,7 @@ it.each(["resume", "restart", "finalize"] as const)("%s preserves revision owner
   expect(reviewState.comparison).toEqual({scope:reviewInput.comparison!.scope,before:reviewInput.comparison!.before,after:reviewInput.comparison!.after});
   expect((result.data as {kind:string}).kind).toBe("short_fiction_revised");
   expect(actionObservation(result).facts.revisionChanges).toEqual({chapterNumbers:[1,2],openingChanged:false,titleChanged:false,outlineChanged:true});
-  expect(pack.mock.calls[0]?.[0].draft.chapters).toEqual(changed.chapters);
+  expect(pack).not.toHaveBeenCalled();
   const after=await loadWorkManifest(root,"short");
   const artifact=after.artifacts.find(a=>a.id===original.id)!;
   expect(artifact.currentRevisionId).not.toBe(original.currentRevisionId);
@@ -495,5 +504,11 @@ it.each(["resume", "restart", "finalize"] as const)("%s preserves revision owner
   const bytes=await readFile(join(root,"works/short/source/final/full.md"));
   expect(`sha256:${createHash("sha256").update(bytes).digest("hex")}`).toBe(artifact.revisions.find(r=>r.id===artifact.currentRevisionId)?.checksum);
   expect(`sha256:${createHash("sha256").update(await readFile(join(root,"works/short",previous.snapshotPath!))).digest("hex")}`).toBe(previous.checksum);
-  expect(result.artifacts.some(a=>a.path==="source/final/sales-package.json")).toBe(true);
+  for(const [path,content]of protectedFiles){
+    expect(await readFile(join(root,'works/short',path),'utf8')).toBe(content);
+    const original=before.artifacts.find(a=>a.revisions.some(r=>r.path===path))!;
+    expect(after.artifacts.find(a=>a.id===original.id)!.currentRevisionId).toBe(original.currentRevisionId);
+    expect(result.artifacts.some(a=>a.path===path)).toBe(false);
+  }
+  expect(result.data).not.toHaveProperty('salesPackagePath');
 });
