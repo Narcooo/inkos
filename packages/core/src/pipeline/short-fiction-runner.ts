@@ -774,7 +774,7 @@ async function reviseShortFictionWithLock(options: ShortFictionRunOptions & { re
     draft:ShortFictionBatchDraftSchema.parse(JSON.parse(authorOriginal.bytes.toString('utf8')))}:undefined;
   if(!authorScope&&authorRequest?.trim()&&originalArtifact?.currentRevisionId){
     const original=authorOriginal!;
-    const scopeKey=shortInputHash({version:2,authorRequest,baseline:original.revision.checksum}).slice('sha256:'.length);
+    const scopeKey=shortInputHash({version:3,authorRequest,baseline:original.revision.checksum}).slice('sha256:'.length);
     const scopePath=join('.inkos','short-author-scopes',work.id,`${scopeKey}.json`);
     const savedScope=await tryReadProjectText(options.projectRoot,scopePath);
     authorScope=savedScope?Value.Parse(ShortAuthorScopeSchema,JSON.parse(savedScope)):
@@ -868,7 +868,7 @@ async function reviseShortFictionWithLock(options: ShortFictionRunOptions & { re
     ...(savedText && options.restartPendingRevision ? [textWrite(join(".inkos", "short-revisions", "archive", `${randomUUID()}.json`), savedText)] : []),
     textWrite(checkpointPath, JSON.stringify(checkpoint, null, 2)),
   ] });
-  const revised = checkpoint.finalization?.result ?? await new ShortFictionWriterAgent(options.runtimes.writer).reviseDraft({
+  const revised = checkpoint.finalization?.result ?? await new ShortFictionWriterAgent(options.runtimes.writer,options.runtimes.planner).reviseDraft({
     direction:authorScope?JSON.stringify({authorRequest:scopeAuthorRequest,revisionInstruction:options.direction,permission:authorScope}):options.direction,language,chapterCount,
     charsPerChapter: revisionOptions.charsPerChapter ?? (language==="en"?SHORT_FICTION_EN_DEFAULT_WORDS_PER_CHAPTER:SHORT_FICTION_DEFAULT_CHARS_PER_CHAPTER),
     minChapterLength:minimum.minChapterLength,maxChapterLength:minimum.maxChapterLength,openingHookChars:minimum.openingHookChars,draft,chapterNumbers,authorScope,authorSource,

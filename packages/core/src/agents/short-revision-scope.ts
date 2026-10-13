@@ -14,6 +14,7 @@ export function shortAuthorScopeRequest(draft:ShortFictionBatchDraft, authorRequ
   return {
     messages:[
       {role:'system' as const,content:'Identify which existing manuscript parts the author permits changing. Select chapter numbers from the supplied manuscript. Reviewing the whole story or refreshing sales packaging does not authorize rewriting it. A desired emotional or commercial effect does not expand an explicit selected chapter range. An opening-only or outline-only edit has no selected chapters. Select wholeManuscript only for an affirmative whole-manuscript rewrite or restructuring request; otherwise preserve unselected parts. Do not write a revision or diagnose quality.'},
+      {role:'system' as const,content:'Editing specified words, dates, facts or passages across every chapter still has wholeManuscript=false: list every affected chapter and preserve its other prose. Whole-story coverage does not imply unrestricted rewriting. Permission to correct prose does not by itself include changing the saved outline.'},
       {role:'user' as const,content:JSON.stringify({authorRequest,manuscript:draft})},
     ],
     tool:{name:'submit_short_author_scope',label:'Locate authorized manuscript parts',description:'Select only the manuscript parts the author permits changing.',parameters:ShortAuthorScopeSchema,

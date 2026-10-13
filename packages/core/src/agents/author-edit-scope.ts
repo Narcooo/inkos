@@ -38,12 +38,12 @@ export function sourceUnits(content:string){
 
 /** Scope interpretation sees original author intent and source only, never a
  * coordinator's proposed workaround or pressure to satisfy another constraint. */
-export function authorTextScopeRequest(content:string,authorRequest:string,documentIdentity?:SourceIdentity,locationHint?:string){
+export function authorTextScopeRequest(content:string,authorRequest:string,documentIdentity?:SourceIdentity){
   return{
     messages:[
       {role:'system' as const,content:`Locate the smallest exact source units authorized by the author; do not rewrite them. ${AUTHOR_TARGET_AUTHORITY} documentIdentity identifies the complete supplied document, even when its prose does not repeat a chapter heading. Other documents named in the request are not inside it. Select every occurrence of the qualified target in this document, including unambiguous references back to the same item; do not stop at its first mention. The numbered paragraphs contain individual lines, each with a supplied ID. Select paragraph IDs for entire paragraphs, line IDs for entire lines, and an exact substring within a selected line only for inline edits. An empty selection text means the complete selected unit. Preserve labels, stage directions and surrounding text when only dialogue is requested. The desired creative effect does not authorize selecting extra units. Use wholeDocument=true with no selections only when the author permits rewriting everything.`},
-      {role:'system' as const,content:'The original authorRequest is authoritative. locationHint is an earlier locator suggestion; it cannot discard restrictions or widen the selection. When only dates, names, quantities or other words may change, select their exact substrings and leave the rest of each sentence protected. Do not select an entire line merely because it contains an editable expression. Include all qualified occurrences; title or independent-opening instructions do not select chapter prose.'},
-      {role:'user' as const,content:JSON.stringify({authorRequest,...(documentIdentity?{documentIdentity}:{}),...(locationHint?{locationHint}:{}),document:sourceUnits(content).paragraphs})},
+      {role:'system' as const,content:'Read the entire original authorRequest to identify each distinct permitted target in this document. Do not reduce a request with several corrections to the last or most salient one. When only dates, names, quantities or other words may change, copy their exact substrings and leave the rest of each sentence protected. Do not select an entire line merely because it contains an editable expression. For these reference targets, never use an empty text shortcut: a whole paragraph is selectable only if authorized as a whole, and its text must then be copied exactly. Include all qualified occurrences; title or independent-opening instructions do not select chapter prose.'},
+      {role:'user' as const,content:JSON.stringify({authorRequest,...(documentIdentity?{documentIdentity}:{}),document:sourceUnits(content).paragraphs})},
     ],
     tool:{name:'submit_author_edit_scope',label:'Locate authorized source units',description:'Select existing source IDs, with an exact substring only for a partial-line edit.',parameters:AuthorTextScopeSchema,
       validate:(result:AuthorTextScope)=>{authorTextScopeContract(content,result);return result;},
@@ -64,6 +64,28 @@ export function authorTextScopeContract(content:string,result:AuthorTextScope){
     return{...unit,text:selection.text||unit.text,singleLine:selection.unitId.includes('.l')||inlineFragment};
   });
   return textScopedSelectionEditContract(content,selections);
+}
+
+/** Independent requested targets may overlap; their union never adds source bytes. */
+export function mergeAuthorTextScopes(content:string,scopes:readonly AuthorTextScope[]):AuthorTextScope{
+  const spans=scopes.flatMap(scope=>{
+    if(scope.wholeDocument)throw new Error('Reference targets require source selections');
+    return scope.selections.length?(authorTextScopeContract(content,scope) as ReturnType<typeof textScopedSelectionEditContract>).ranges:[];
+  }).map(span=>({startOffset:span.startOffset,endOffset:span.endOffset,singleLine:span.singleLine})).sort((a,b)=>a.startOffset-b.startOffset);
+  const merged:typeof spans=[];
+  for(const span of spans){
+    const previous=merged.at(-1);
+    if(previous&&span.startOffset<previous.endOffset){previous.endOffset=Math.max(previous.endOffset,span.endOffset);previous.singleLine=Boolean(previous.singleLine&&span.singleLine);}
+    else merged.push({...span});
+  }
+  const lines=splitSourceLines(content),offsets=[0];for(const line of lines)offsets.push(offsets.at(-1)!+line.length);
+  const units=[...sourceUnits(content).byId].map(([id,unit])=>({id,start:offsets[unit.startLine-1]!,end:offsets[unit.endLine]!,line:id.includes('.l')}));
+  const selections=merged.map(span=>{
+    const unit=units.filter(unit=>unit.start<=span.startOffset&&unit.end>=span.endOffset)
+      .sort((a,b)=>(a.line===Boolean(span.singleLine)?0:1)-(b.line===Boolean(span.singleLine)?0:1)||(a.end-a.start)-(b.end-b.start))[0]!;
+    return{unitId:unit.id,text:content.slice(span.startOffset,span.endOffset)};
+  });
+  return{wholeDocument:false,selections,reason:scopes.map(scope=>scope.reason).join('\n')};
 }
 
 /** Report the same source selections enforced by the host to the coordinator. */

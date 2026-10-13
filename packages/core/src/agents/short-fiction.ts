@@ -1,5 +1,7 @@
-import { BaseAgent } from "./base.js";
+import { BaseAgent, type AgentContext } from "./base.js";
 import { ReviserAgent } from "./reviser.js";
+import {createStoryIntervalTool} from './story-interval.js';
+import {createReviewCalculationTool} from './review-calculation.js';
 import {shortAuthorScopeRequest, type ShortAuthorScope} from './short-revision-scope.js';
 import { z } from "zod";
 import { Type, type Static } from "@sinclair/typebox";
@@ -179,6 +181,7 @@ export class ShortFictionOutlineAgent extends BaseAgent {
         label: "Submit short-fiction outline",
         description: "Submit the story title and complete readable plan.",
         parameters: shortOutlineToolSchema(input.chapterCount,input.title),
+        supportingTools:[createStoryIntervalTool(),createReviewCalculationTool()],
       }, {  maxTokens: Math.min(8192, safeShortFictionOutputBudget(this.ctx.client.defaults.maxTokens)) });
 
     return {
@@ -191,6 +194,7 @@ export class ShortFictionOutlineAgent extends BaseAgent {
 }
 
 export class ShortFictionWriterAgent extends BaseAgent {
+  constructor(ctx:AgentContext,private readonly planningContext?:AgentContext){super(ctx);}
   get name(): string {
     return "short-fiction-writer";
   }
@@ -208,7 +212,7 @@ export class ShortFictionWriterAgent extends BaseAgent {
   }): Promise<{draft:ShortFictionBatchDraft;outlineMarkdown:string}> {
     const submittedPlan: Static<typeof ShortRevisionPlanSchema> = input.resume?.plan ?? (input.chapterNumbers?.length === 1 && !input.authorScope?.opening && !input.authorScope?.outline ? {
       revisionBrief:input.direction,chapters:input.chapterNumbers.map(number=>({number,instruction:input.direction})),
-    } : await this.planRevision(input));
+    } : await (this.planningContext?new ShortFictionWriterAgent(this.planningContext):this).planRevision(input));
     const plan={...submittedPlan,outlineMarkdown:submittedPlan.outlineMarkdown??input.outlineMarkdown};
     return this.applyRevisionPlan(input,plan);
   }
@@ -228,11 +232,11 @@ export class ShortFictionWriterAgent extends BaseAgent {
       {role:"user",content:JSON.stringify({title:input.draft.storyTitle,userRequest:input.authorSource?.request??input.direction,
         ...(input.authorSource?{revisionGuidance:{source:'coordinator',instruction:input.direction,authority:'advice_within_author_scope'}}:{}),
         requiredChapterCount:input.chapterCount,allowedChapterNumbers:input.chapterNumbers,outline:input.outlineMarkdown,review:input.review,originalManuscript:input.draft.chapters,openingHook:input.draft.openingHook,...(input.openingHookChars?{openingHookTarget:openingHookLengthContract(input.openingHookChars,input.language)}:{})})},
-    ],{name:"submit_short_revision_plan",label:"Plan requested revision",description:"Submit only affected chapters, opening scene or outline.",parameters:shortRevisionPlanSubmissionSchema(input.chapterCount,input.draft.chapters.length),validate:(plan)=>{
+    ],{name:"submit_short_revision_plan",label:"Plan requested revision",description:"Submit only affected chapters, opening scene or outline.",parameters:shortRevisionPlanSubmissionSchema(input.chapterCount,input.draft.chapters.length),maxTurns:6,supportingTools:[createStoryIntervalTool(),createReviewCalculationTool()],validate:(plan)=>{
       this.validateRevisionPlan(normalize(plan),input);
       return plan;
     }},
-    {maxTokens:Math.min(8192,this.ctx.client.defaults.maxTokens)});
+    {maxTokens:Math.min(16384,this.ctx.client.defaults.maxTokens)});
     return normalize(result);
   }
 
@@ -266,12 +270,13 @@ export class ShortFictionWriterAgent extends BaseAgent {
     let draft=input.resume?.draft ?? input.draft;
     if(draft.chapters.length!==input.chapterCount)draft={...draft,chapters:Array.from({length:input.chapterCount},(_,index)=>draft.chapters.find(chapter=>chapter.number===index+1)??{number:index+1,title:"",content:"",charCount:0})};
     const completed=[...(input.resume?.completed ?? [])];
+    const restructuring=input.chapterCount!==input.draft.chapters.length||plan.chapters.some(chapter=>chapter.sourceNumber!==undefined&&chapter.sourceNumber!==chapter.number);
+    const scoped=Boolean(input.authorSource&&input.authorScope&&(!input.authorScope.wholeManuscript||!restructuring));
     await input.onRevisionProgress?.({plan,draft,completed});
     for(const chapterPlan of plan.chapters) {
       if(completed.includes(chapterPlan.number)) continue;
       const chapter=draft.chapters.find(item=>item.number===chapterPlan.number)!;
       const originalChapter=chapterPlan.sourceNumber===0?undefined:input.draft.chapters.find(item=>item.number===(chapterPlan.sourceNumber??chapter.number))!;
-      const scoped=Boolean(input.authorSource&&input.authorScope&&!input.authorScope.wholeManuscript);
       if(!chapterPlan.instruction?.trim()&&!scoped) {
         draft={...draft,chapters:draft.chapters.map(item=>item.number===chapter.number?{...originalChapter!,number:chapter.number}:item)};
         completed.push(chapter.number);
@@ -279,11 +284,11 @@ export class ShortFictionWriterAgent extends BaseAgent {
         continue;
       }
       const otherChapters=draft.chapters.filter(item=>item.number!==chapter.number);
-      if(input.authorSource&&input.authorScope&&!input.authorScope.wholeManuscript){
+      if(scoped&&input.authorSource&&input.authorScope){
         const original=input.authorSource.draft.chapters.find(item=>item.number===chapter.number);
         if(!original)throw Object.assign(new Error('The authorized chapter is absent from the original manuscript.'),{code:'SHORT_REVISION_OUT_OF_SCOPE'});
         let content=chapter.content,title=chapter.title;
-        if(input.authorScope.chapterNumbers.includes(chapter.number)){
+        if(input.authorScope.chapterNumbers.includes(chapter.number)||(input.authorScope.wholeManuscript&&input.authorScope.chapterNumbers.length===0)){
           const revised=await new ReviserAgent(this.ctx).reviseChapter('',content,chapter.number,[],'spot-fix',undefined,{
             language:input.language??'zh',chapterTitle:original.title,
             instruction:JSON.stringify({revisionBrief:plan.revisionBrief,chapterInstruction:chapterPlan.instruction}),
@@ -352,6 +357,7 @@ export class ShortFictionWriterAgent extends BaseAgent {
           : "按已激活的 Skill、用户修改要求与修订方案修改指定章节，提交本章标题和完整正文，并满足给定篇幅范围。把修改落实为故事中的行动与对白；章号引用、审稿意见和修改说明留在方案中，不写进故事正文。"},
         {role:"user",content:JSON.stringify({storyTitle:input.draft.storyTitle,userRequest:input.direction,chapterNumber:chapter.number,currentLength:countChapterLength(chapterPlan.sourceNumber===0&&!retainedCandidate?"":chapter.content,resolveLengthCountingMode(input.language)),targetLength:input.charsPerChapter,minLength:input.minChapterLength,maxLength:input.maxChapterLength,lengthUnit:input.language==="en"?"words":"non-whitespace characters including punctuation",corrections:plan.revisionBrief,outline:plan.outlineMarkdown,instruction:chapterPlan.instruction,...(chapterPlan.sourceNumber!==undefined&&chapterPlan.sourceNumber!==chapter.number?{originalChapter}:{}),currentChapter:chapterPlan.sourceNumber===0&&!retainedCandidate?undefined:chapter,otherChapters})},
       ],{name:"submit_short_revision_chapter",label:"Revise one chapter",description:`Submit the title and prose for chapter ${chapter.number}.`,parameters:ShortRevisionChapterToolSchema,
+        supportingTools:[createStoryIntervalTool(),createReviewCalculationTool()],
         validate:async(result)=>{
           const bound = {...result,storyTitle:input.draft.storyTitle,number:chapter.number};
           validateRequestedShortChapter(bound,[chapter.number],{...input,openingHookChars:undefined});

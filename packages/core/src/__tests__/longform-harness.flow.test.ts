@@ -92,7 +92,7 @@ describe("long-form harness mini-flow", () => {
       const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));const body=JSON.parse(Buffer.concat(chunks).toString());const name=body.tools[0].function.name;calls.push(name);
       const delta=chapterOutput(1).runtimeStateDelta!;const {chapter:_chapter,...summary}=delta.chapterSummary!;
       const args=name==='submit_chapter_length_bounds'?{target:0,minimum:0,maximum:0,sourceQuote:''}
-        :name==='submit_edit_location'?{kind:'paragraphs',boundary:'last',count:1,target:''}
+        :name==='submit_edit_location'?{kind:'paragraphs',boundary:'last',count:1,targets:[]}
         :name==='submit_chapter_range_replacements'?{selection_0_text:replacement}
         :{postSettlement:'The witness is outside.',factOps:failProjection?'{malformed}':delta.factOps,hookOps:delta.hookOps,newHookCandidates:[],chapterSummary:{...summary,title:'Return'}};
       res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{tool_calls:[{id:'resume-'+calls.length,type:'function',function:{name,arguments:JSON.stringify(args)}}]}}]}));

@@ -28,7 +28,7 @@ it('revises an opening and selected chapter, then applies an author-requested ch
         :stage==='mixed'?{revisionBrief:'Change the opening and second scene.',openingHook:'Two cups stood beside a folded letter.',chapter_2_instruction:'Let the customer leave the letter.'}
         :{revisionBrief:'Retain the first and last scenes.',outlineMarkdown:'The stall opens, then closes.',chapter_2_sourceNumber:3})
       :name==='submit_short_author_scope'?{wholeManuscript:false,chapterNumbers:[2],opening:true,outline:false}
-      :name==='submit_edit_location'?{kind:'document',boundary:'none',count:0,target:''}
+      :name==='submit_edit_location'?{kind:'document',boundary:'none',count:0,targets:[]}
       :name==='submit_chapter_range_replacements'?{range_0_content:Array(34).fill('revised').join(' ')}
       :name==='submit_short_revision_chapter'?{title:'Scene 2',content:Array(34).fill('revised').join(' ')}
       :name==='submit_short_fiction_review'||name==='submit_short_package_review'?{summary:'Reviewed the supplied scope.',observationCodes:[]}

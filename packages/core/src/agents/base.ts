@@ -12,6 +12,7 @@ import type { Logger } from "../utils/logger.js";
 import { SourcedReviewIndexToolSchema, ArtifactReviewIndexToolSchema } from "./review-tool.js";
 import { resolveObservationSources } from "../models/observation.js";
 import { createReviewCalculationTool } from './review-calculation.js';
+import {createStoryIntervalTool} from './story-interval.js';
 import {
   hydrateActivatedSkillGuidance,
   type ActivatedSkillGuidance,
@@ -117,7 +118,7 @@ export abstract class BaseAgent {
             instruction:'These are the actual selected excerpts. Check that they support this finding before keeping its code in the final review.'};
           return {content:[{type:'text',text:JSON.stringify(receipt)}],details:receipt};
         },
-      },createReviewCalculationTool()],
+      },createReviewCalculationTool(),createStoryIntervalTool()],
       validate: result => {
         const unknownCodes=result.observationCodes.filter(code=>!recorded.has(code));
         if(unknownCodes.length || new Set(result.observationCodes).size!==result.observationCodes.length)throw Object.assign(new Error(JSON.stringify({

@@ -35,6 +35,8 @@
 
 - Start from the author's revision request. Preserve the title, conflict, ending and scene functions that the author has not asked to change.
 - Identify affected chapters and a shared correction plan before revising. Keep ages, generations, dates and object transfers consistent across them.
+- Resolve each conflicting event against the enacted scenes and the author's preserved anchors before assigning replacement dates. Carry the chosen event history through every affected recollection, title and opening. Do not retain one incompatible clock in the plan while correcting another in the prose. If an exact date is unsupported and not required, use a supported relative relation instead of inventing precision.
+- For a claimed or repaired interval stated with weeks and weekdays, use `calculate_story_interval` before submitting the plan or replacement. Include known times of day at both ends when exactness depends on them. Read its remainder: a nonzero day, hour or minute remainder cannot be called an exact whole number of weeks. Different clock origins must be reconciled from the story before calculating. Compatible lower bounds remain valid; prefer natural relative language when exact precision does not serve the scene.
 - Preserve the scenes that establish decisive evidence and meaningful handoffs. Repair the actual causal gap with the smallest sufficient change and carry it through adjacent transitions.
 - Judge the whole manuscript against its creative intent; separately verify the latest requested repairs. Label each finding as an issue, a resolved prior issue, or a neutral observation and give concrete evidence.
 

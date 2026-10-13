@@ -1,5 +1,7 @@
 import {authorTextScopeContract,authorEditPermission} from './author-edit-scope.js';
 import {SourceLocatorAgent} from './source-locator.js';
+import {createStoryIntervalTool} from './story-interval.js';
+import {createReviewCalculationTool} from './review-calculation.js';
 import {currentExecutionAuthorRequest,currentExecutionBaselineWork,currentExecutionWork} from '../harness/execution-evidence.js';
 import {resolveAuthorTextPermission} from '../harness/author-text-permission.js';
 import {readArtifactRevision} from '../harness/artifact-reader.js';
@@ -92,11 +94,11 @@ export class ReviserAgent extends BaseAgent {
       if(options.authorSource){
         scopeSource=body(options.authorSource.content);
         authorized=await resolveAuthorTextPermission({projectRoot:this.ctx.projectRoot,...options.authorSource,
-          originalContent:scopeSource,currentContent:chapterContent,authorRequest,selectorVersion:4,select});
+          originalContent:scopeSource,currentContent:chapterContent,authorRequest,selectorVersion:6,select});
       }else if(originalArtifact?.currentRevisionId&&baseline){
         const original=await readArtifactRevision({projectRoot:this.ctx.projectRoot,workId:baseline.id,artifactId:originalArtifact.id,revisionId:originalArtifact.currentRevisionId});
         scopeSource=body(original.bytes.toString('utf8'));
-        authorized=await resolveAuthorTextPermission({projectRoot:this.ctx.projectRoot,workId:baseline.id,artifactId:originalArtifact.id,revisionId:original.revision.id,originalContent:scopeSource,currentContent:chapterContent,authorRequest,selectorVersion:4,select});
+        authorized=await resolveAuthorTextPermission({projectRoot:this.ctx.projectRoot,workId:baseline.id,artifactId:originalArtifact.id,revisionId:original.revision.id,originalContent:scopeSource,currentContent:chapterContent,authorRequest,selectorVersion:6,select});
       }else authorized=authorTextScopeContract(chapterContent,await select(chapterContent,authorRequest));
     }
     const scopedAuthorRequest = authorRequest && authorized && 'startOffset' in authorized.ranges[0]!
@@ -183,6 +185,7 @@ export class ReviserAgent extends BaseAgent {
       label: "Submit chapter range replacements",
       description: "Submit replacement prose only within the author-authorized source selections, using their named fields.",
       parameters: contract.parameters,
+      supportingTools:[createStoryIntervalTool(),createReviewCalculationTool()],
       validate: async result => {
         const candidate=contract.apply(result);
         await onCandidate?.(candidate);
