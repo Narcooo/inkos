@@ -142,7 +142,7 @@ export class TurnArtifactDeliveries {
     }));
   }
 
-  async validate(projectRoot: string, coverRequested = false) {
+  async validate(projectRoot: string, coverRequested = false, currentWorkId?: string | null) {
     const missing = [...this.requiredOperations].filter(([key]) => !this.receipts.has(key)).map(([,operation]) => operation);
     for (const workId of this.requiredBookExports) {
       if (!this.bookExports.has(workId)) missing.push({workId, artifactId: "chapters", operation: "export"});
@@ -167,7 +167,10 @@ export class TurnArtifactDeliveries {
       })), {code: "TURN_DELIVERY_STALE"});
     }
     const works = new Map<string, Awaited<ReturnType<typeof loadWorkManifest>>>();
-    for (const workId of coverRequested ? this.requiredCovers : []) {
+    const coverWorkIds = coverRequested
+      ? new Set([...this.requiredCovers, ...(currentWorkId ? [currentWorkId] : [])])
+      : [];
+    for (const workId of coverWorkIds) {
       const work = await loadWorkManifest(projectRoot, workId);
       works.set(workId, work);
       const cover = work.artifacts.find(artifact => artifact.revisions.some(revision => {

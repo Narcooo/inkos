@@ -1,5 +1,5 @@
 import { loadWorkManifest } from "../work-store.js";
-import { Type } from "@sinclair/typebox";
+import { Type, type Static } from "@sinclair/typebox";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import type { PipelineRunner } from "../../pipeline/runner.js";
 import { runShortFictionStage, type ShortProductionStage } from "../../pipeline/short-fiction-runner.js";
@@ -21,12 +21,18 @@ const Parameters = Type.Object({
   reviewScope: Type.Optional(Type.String()),
 });
 
-export function createShortProductionStageTools(pipeline: PipelineRunner, root: string, activeWorkId?: string): Array<AgentTool<typeof Parameters> & { readonly artifactsCommitted: true; readonly draftSourcePaths?:ReadonlyArray<string> }> {
+const OutlineParameters=Type.Omit(Parameters,['maxChaptersPerCall','reviewScope']);
+const DraftParameters=Type.Object({workId:Parameters.properties.workId,...Type.Partial(Type.Omit(Parameters,['workId','reviewScope'])).properties});
+const ReviewParameters=Type.Pick(Parameters,['workId','reviewScope']);
+const PackageParameters=Type.Pick(Parameters,['workId','direction']);
+type StageParameters=typeof OutlineParameters|typeof DraftParameters|typeof ReviewParameters|typeof PackageParameters;
+
+export function createShortProductionStageTools(pipeline: PipelineRunner, root: string, activeWorkId?: string): Array<AgentTool<StageParameters> & { readonly artifactsCommitted: true; readonly draftSourcePaths?:ReadonlyArray<string> }> {
   const stages: Array<[ShortProductionStage, string]> = [["outline", "plan_short_fiction"], ["draft", "draft_short_fiction"], ["review", "review_short_fiction"], ["package", "package_short_fiction"]];
   return stages.map(([stage, name]) => ({
     artifactsCommitted: true,
     ...(stage==='draft'?{draftSourcePaths:['source/outline/v001.md']}:{}),
-    name, label: `Short fiction: ${stage}`, parameters: Parameters,
+    name, label: `Short fiction: ${stage}`, parameters: stage==='outline'?OutlineParameters:stage==='draft'?DraftParameters:stage==='review'?ReviewParameters:PackageParameters,
     description: `Execute only the ${stage} stage of a short-fiction Work. Earlier artifacts must exist. Return persisted results and execution observations.`,
     async execute(_id, params, signal, onUpdate) {
       if (activeWorkId && activeWorkId !== params.workId) throw new Error("Action must target the active Work");
@@ -41,14 +47,15 @@ export function createShortProductionStageTools(pipeline: PipelineRunner, root: 
       if (!profile.capabilityIds.includes("short-fiction")) throw new Error("This Work does not declare short-fiction capability");
       const skills = resolveProfileSkillActivations((await loadAvailableAgentSkills({ projectRoot: root })).skills, profile);
       const existing = await readShortProductionState(root, `works/${params.workId}/source`);
-      const direction = params.direction ?? existing?.intent ?? (typeof work.metadata.intent==='string'?work.metadata.intent:"");
+      const production:Partial<Static<typeof Parameters>>=stage==='outline'||stage==='draft'?params:{};
+      const direction = ('direction' in params?params.direction:undefined) ?? existing?.intent ?? (typeof work.metadata.intent==='string'?work.metadata.intent:"");
       if (stage === "outline" && !direction.trim()) throw new Error("An outline needs a creative direction");
       const result = await pipeline.runWithAgentContext({ signal, activatedSkills: skills }, () => runShortFictionStage({
-        projectRoot: root, storyId: params.workId, title, direction, stage, language, chapterCount: params.chapters,
-        coverRequired:params.coverRequired??undefined,
-        minChapterLength:params.minChapterLength??undefined,openingHookChars:params.openingHookChars??undefined,
-        charsPerChapter: params.charsPerChapter, maxChapterLength: params.maxChapterLength??undefined, maxChaptersPerCall: params.maxChaptersPerCall ?? profile.production.maxChaptersPerCall,
-        minChapterLengthRatio: profile.production.minChapterLengthRatio, reviewScope: params.reviewScope,
+        projectRoot: root, storyId: params.workId, title, direction, stage, language, chapterCount: production.chapters,
+        coverRequired:production.coverRequired??undefined,
+        minChapterLength:production.minChapterLength??undefined,openingHookChars:production.openingHookChars??undefined,
+        charsPerChapter: production.charsPerChapter, maxChapterLength: production.maxChapterLength??undefined, maxChaptersPerCall: production.maxChaptersPerCall ?? profile.production.maxChaptersPerCall,
+        minChapterLengthRatio: profile.production.minChapterLengthRatio, reviewScope: 'reviewScope' in params?params.reviewScope:undefined,
         signal, onProgress: message => onUpdate?.({ content: [{ type: "text", text: message }], details: { stage } }),
         runtimes: { planner: pipeline.createAgentContext("short-outline"), writer: pipeline.createAgentContext("short-writer"),
           draftReview: pipeline.createAgentContext("short-draft-review"), package: pipeline.createAgentContext("short-package") },

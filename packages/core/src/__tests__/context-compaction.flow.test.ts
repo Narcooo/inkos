@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {adaptRestoredAgentMessagesForModel} from '../interaction/session-transcript-restore.js';
 import { afterEach, describe, expect, it } from "vitest";
 import {
   ContextSourceRegistry,
@@ -15,6 +16,36 @@ import {
 } from "../harness/index.js";
 
 describe("context assembly mini-flow", () => {
+  it('keeps restored execution records in chronological history and includes them in the conversation budget',async()=>{
+    const model={api:'openai-completions',provider:'openai',id:'fixture'};
+    const current={role:'user',content:'Export the current draft without editing it.',timestamp:5};
+    const evidence={kind:'artifact_reviewed',artifactId:'draft',revisionId:'r1',observations:[{code:'EARLIER_REVIEW',assessment:'issue'}],sourceText:'A complete paragraph from an earlier version. '.repeat(300)};
+    const history=adaptRestoredAgentMessagesForModel([
+      {role:'user',content:'Review the earlier draft.',timestamp:1},
+      {role:'assistant',api:model.api,provider:model.provider,model:model.id,stopReason:'toolUse',timestamp:2,content:[{type:'toolCall',id:'review-1',name:'review_work_artifact',arguments:{artifactId:'draft'}}]},
+      {role:'toolResult',toolCallId:'review-1',toolName:'review_work_artifact',isError:false,timestamp:3,content:[{type:'text',text:JSON.stringify(evidence)}]},
+      {role:'system',content:'A prior host status note.',timestamp:4},
+    ] as never,model);
+    expect(history.map(message=>message.role)).toEqual(['user','assistant','assistant']);
+    const record=JSON.parse((history[1] as any).content[0].text);
+    expect(record).toMatchObject({kind:'historical_tool_results',results:[{toolCallId:'review-1',toolName:'review_work_artifact',isError:false}]});
+    expect(JSON.parse(record.results[0].text)).toEqual(evidence);
+    let compactions=0;
+    const transform=createHarnessContextTransform({projectRoot:'/tmp',work:null,profile:createBuiltInWorkProfileRegistry().require('workspace-default'),budgetTokens:400,
+      conversationCompactor:async request=>{
+        compactions++;expect(request.intent).toBe(current.content);
+        const records=request.history.split('\n').map(line=>JSON.parse(line));
+        expect(records.map(record=>record.role)).toEqual(['user','assistant','assistant']);
+        expect(JSON.parse(records[1].content[0].text)).toEqual(record);
+        return JSON.stringify({reviewed:{artifactId:'draft',revisionId:'r1'},exported:false});
+      },
+    });
+    const result=await transform([...history,current] as never);
+    expect(compactions).toBe(1);expect(result.at(-1)).toEqual(current);
+    expect(result.every(message=>['user','assistant','toolResult'].includes(message.role))).toBe(true);
+    expect(history[1]).toMatchObject({role:'assistant',model:'historical-execution-record',timestamp:3});
+  });
+
   it('retains exact progress and recent failures without recompacting the same completed history',async()=>{
     let calls=0;
     const transform=createHarnessContextTransform({projectRoot:'/tmp',work:null,profile:createBuiltInWorkProfileRegistry().require('workspace-default'),budgetTokens:2000,

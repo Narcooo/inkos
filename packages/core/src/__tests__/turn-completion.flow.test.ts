@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
-import { runAgentSession, abortAgentSession } from "../agent/agent-session.js";
+import { runAgentSession, abortAgentSession, evictAgentCache } from "../agent/agent-session.js";
 import { loadBookSession } from "../interaction/book-session-store.js";
 import { readTranscriptEvents } from "../interaction/session-transcript.js";
 import { listWorkManifests } from "../harness/work-store.js";
@@ -84,11 +84,16 @@ it("answers a question, rejects an unevidenced delivery, creates a Work and rest
     expect(answer.errorMessage).toBeUndefined();
     expect(await listWorkManifests(root)).toHaveLength(0);
     expect((await loadBookSession(root, config.sessionId))?.messages.filter(m => m.role === "assistant").map(m => m.content)).toEqual([answer.responseText]);
+    evictAgentCache(config.sessionId);
     const delivery = await runAgentSession(config, "Create an empty script Work called Gallery.");
     expect(delivery).toMatchObject({ workId: "gallery", profileId: "script", completion: { status: "delivered" } });
     expect(delivery.errorMessage).toBeUndefined();
     expect(await listWorkManifests(root)).toHaveLength(1);
     expect(requests).toHaveLength(4);
+    expect(requests[1].messages.filter((message:any)=>message.role==='system')).toEqual(requests[0].messages.filter((message:any)=>message.role==='system'));
+    expect(requests[1].messages.filter((message:any)=>message.role==='assistant').some((message:any)=>{
+      try{return JSON.parse(message.content).kind==='historical_tool_results';}catch{return false;}
+    })).toBe(true);
     expect(requests.every(request => request.tool_choice === undefined)).toBe(true);
     const events = await readTranscriptEvents(root, config.sessionId);
     const rejected = events.filter(e => e.type === "message" && e.role === "toolResult").map(e => e.type === "message" ? e.message as any : null);

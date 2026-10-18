@@ -121,6 +121,7 @@ describe("guardedPiNonStreaming", () => {
       // without inheriting it as an operation to perform now.
       await expect(deliveries.validate(root,false)).resolves.toBeUndefined();
       await expect(deliveries.validate(root,true)).rejects.toMatchObject({code:'TURN_REQUIRED_ARTIFACT_MISSING',workId:'recovery',artifactRole:'cover'});
+      await expect(new TurnArtifactDeliveries().validate(root,true,'recovery')).rejects.toMatchObject({code:'TURN_REQUIRED_ARTIFACT_MISSING',workId:'recovery',artifactRole:'cover'});
       // A synthetic registered image tests the delivery receipt boundary, not image quality.
       await writeFile(join(root,'works/recovery/source/final/cover.png'),Buffer.from('fixture-image'));
       await syncWorkSourceArtifacts({projectRoot:root,workId:'recovery',accept:true});

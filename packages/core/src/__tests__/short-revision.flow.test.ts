@@ -19,6 +19,8 @@ import { withExecutionEvidence } from "../harness/execution-evidence.js";
 import {createLLMClient} from '../llm/provider.js';
 import {PipelineRunner} from '../pipeline/runner.js';
 import {createArtifactMethodTools} from '../harness/tools/artifact-methods.js';
+import {createShortProductionStageTools} from '../harness/tools/short-production.js';
+import {Value} from '@sinclair/typebox/value';
 
 const roots:string[]=[];
 beforeEach(()=>{vi.spyOn(ShortFictionDraftReviewerAgent.prototype,'reviewPackage').mockResolvedValue({summary:'Reviewed package facts.',observations:[]});});
@@ -50,14 +52,16 @@ it('renames only an authorized book title, resumes its saved candidate, and pres
     const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));
     const body=JSON.parse(Buffer.concat(chunks).toString()),name=body.tools[0].function.name;calls.push(name);
     const args=name==='submit_short_author_scope'?{wholeManuscript:!allowTitle,storyTitle:allowTitle,chapterNumbers:allowTitle?[]:[1,2],opening:false,outline:false}
-      :name==='submit_short_revision_plan'?{revisionBrief:'Revise the book title only.',storyTitle:allowTitle?requestedTitle:'Unauthorized title'}:undefined;
+      :name==='submit_short_revision_plan'?{revisionBrief:'Revise the book title only.',storyTitle:allowTitle?requestedTitle:'Unauthorized title'}
+      :name==='submit_short_package'?{title:requestedTitle,intro:'Nora returns a lost key.',sellingPoints:['A quiet choice.'],coverPrompt:'The owner receives a key.'}:undefined;
     res.writeHead(args?200:400,{'Content-Type':'application/json'});res.end(JSON.stringify(args?{choices:[{finish_reason:'tool_calls',message:{tool_calls:[{id:'title-'+calls.length,type:'function',function:{name,arguments:JSON.stringify(args)}}]}}]}:{error:{message:'Unexpected fixture operation'}}));
   });server.listen(0,'127.0.0.1');await once(server,'listening');
   try{
     const client=createLLMClient({service:'custom',provider:'openai',configSource:'studio',model:'fixture',apiKey:'fixture',baseUrl:`http://127.0.0.1:${(server.address() as {port:number}).port}/v1`,apiFormat:'chat',stream:false,thinkingBudget:0});
     const runtime={client,model:'fixture',projectRoot:root};
     const request='Only rename the book to match the actual story. Keep the opening, chapter titles, prose, outline and existing delivery assets unchanged.';
-    const generic=createArtifactMethodTools(new PipelineRunner({projectRoot:root,client,model:'fixture'}),root,'short')[1]!;
+    const pipeline=new PipelineRunner({projectRoot:root,client,model:'fixture'});
+    const generic=createArtifactMethodTools(pipeline,root,'short')[1]!;
     for(const path of ['source/final/short-story.json','source/final/full.md',`source/final/${oldTitle}.md`]){
       const artifact=baseline.artifacts.find(a=>a.revisions.some(r=>r.path===path))!;
       await expect(generic.execute('generic',{artifactId:artifact.id,instruction:request})).rejects.toMatchObject({code:'ARTIFACT_DOMAIN_ACTION_REQUIRED',recovery:{action:'short-fiction__revise_short_fiction'}});
@@ -100,6 +104,13 @@ it('renames only an authorized book title, resumes its saved candidate, and pres
     expect((await loadWorkManifest(root,'short')).title).toBe(requestedTitle);
     expect(JSON.parse(await readFile(join(root,base,'final/short-story.json'),'utf8')).chapters).toEqual(saved.chapters);
     expect(await readFile(join(root,base,'final/sales-package.md'),'utf8')).toBe(protectedFiles.get('final/sales-package.md'));
+    const stages=createShortProductionStageTools(pipeline,root,'short'),args={workId:'short',direction:'Package the current manuscript.'};
+    expect(Value.Check(stages.find(tool=>tool.name==='plan_short_fiction')!.parameters,{workId:'short'})).toBe(false);
+    for(const name of ['draft_short_fiction','review_short_fiction','package_short_fiction'])expect(Value.Check(stages.find(tool=>tool.name===name)!.parameters,{workId:'short'})).toBe(true);
+    const packaged=await stages.find(tool=>tool.name==='package_short_fiction')!.execute('package',args);
+    expect(packaged.details).toMatchObject({stageStatus:'completed',delivery:{target:{title:requestedTitle,chapterCount:2,minChapterLength:1,maxChapterLength:30,coverRequired:true}}});
+    expect(JSON.parse(await readFile(join(root,base,'final/short-story.json'),'utf8')).chapters).toEqual(saved.chapters);
+    expect(JSON.parse(await readFile(join(root,base,'final/sales-package.json'),'utf8')).title).toBe(requestedTitle);
   }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));}
 },20000);
 

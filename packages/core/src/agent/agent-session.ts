@@ -968,14 +968,7 @@ async function runAgentSessionUnlocked(
 
   if (!cached) {
     const restoredHistory = await restoreAgentMessagesFromTranscript(projectRoot, sessionId, sessionKind);
-    const restoredMessages = adaptRestoredAgentMessagesForModel(restoredHistory, model);
-    const restoredSystemContext = restoredMessages.flatMap((message) => {
-      const raw = message as unknown as { readonly role?: unknown; readonly content?: unknown };
-      return raw.role === "system" && typeof raw.content === "string" ? [raw.content] : [];
-    });
-    const initialAgentMessages = restoredMessages.filter((message) => (
-      (message as unknown as { readonly role?: unknown }).role !== "system"
-    ));
+    const initialAgentMessages = adaptRestoredAgentMessagesForModel(restoredHistory, model);
     const turnSkills = new Map<string, ActivatedSkillGuidance>(
       effectiveSkillResolution.usedSkills.map((skill) => [skill.id, { skill, resources: [] }]),
     );
@@ -1134,15 +1127,12 @@ async function runAgentSessionUnlocked(
         : {}),
       ...(config.resumeAction ? { resumeAfterAction: true } : {}),
     });
-    const restoredContextBlock = restoredSystemContext.length > 0
-      ? `\n\n## Restored execution context\n${restoredSystemContext.join("\n\n")}`
-      : "";
     const agent = new Agent({
       beforeToolCall: preserveToolArgumentTypes,
       toolExecution: 'sequential',
       initialState: {
         model,
-        systemPrompt: [baseSystemPrompt, TURN_COMPLETION_GUIDANCE, restoredContextBlock, config.backgroundTaskContext]
+        systemPrompt: [baseSystemPrompt, TURN_COMPLETION_GUIDANCE, config.backgroundTaskContext]
           .filter(Boolean)
           .join("\n\n"),
         tools: [...visibleTools,createDeliveryRequirementsTool({root:projectRoot,ledger:()=>cached!.requestDelivery,ensure:signal=>cached!.ensureDelivery(signal),save:()=>cached!.persistDelivery()}), createTurnCompletionTool({
@@ -1152,7 +1142,7 @@ async function runAgentSessionUnlocked(
           language,
           validateDelivery: async signal => {
             await cached!.ensureDelivery(signal);
-            await cached!.artifactDeliveries.validate(projectRoot,cached!.requestDelivery.requiresCover);
+            await cached!.artifactDeliveries.validate(projectRoot,cached!.requestDelivery.requiresCover,cached!.workId);
             await cached!.requestDelivery.validate(projectRoot);
           },
         })],

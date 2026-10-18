@@ -106,13 +106,13 @@ describe("session transcript restore", () => {
     ]}});
     await appendTranscriptEvent(projectRoot,{...base,uuid:'result',seq:4,timestamp:4,role:'toolResult',toolCallId:'finished',message:{role:'toolResult',toolCallId:'finished',toolName:'workspace__export_work',content:[{type:'text',text:'{}'}],isError:false,timestamp:4}});
     const restored=await restoreAgentMessagesFromTranscript(projectRoot,'s1','work');
-    expect(restored.map(message=>message.role)).toEqual(['user','assistant','toolResult','system']);
+    expect(restored.map(message=>message.role)).toEqual(['user','assistant','toolResult','assistant']);
     expect((restored[1] as any).content.map((part:any)=>part.id)).toEqual(['finished']);
     expect(restored[2]).toMatchObject({toolCallId:'finished',isError:false});
     await appendTranscriptEvent(projectRoot,{type:'request_failed',version:1,sessionId:'s1',requestId:'partial',seq:5,timestamp:5,error:'CONNECTION_ERROR'});
     const failed = await restoreAgentMessagesFromTranscript(projectRoot, 's1', 'work');
     expect(failed.slice(0, 3)).toEqual(restored.slice(0, 3));
-    expect(failed.at(-1)).toMatchObject({ role: 'system', timestamp: 5 });
+    expect(failed.at(-1)).toMatchObject({ role: 'assistant', model: 'historical-execution-record', timestamp: 5 });
   });
 
   it("恢复 committed 工具轮次的原生 pi 消息", async () => {
@@ -848,7 +848,7 @@ describe("session transcript restore", () => {
     expect((adapted[0] as any).content).toEqual(messages[0].content);
   });
 
-  it("同模型恢复时也把历史工具回合折叠成 system 状态摘要", () => {
+  it("同模型恢复时将历史工具回合保留为按序的执行记录", () => {
     const messages = [
       {
         role: "assistant",
@@ -882,8 +882,9 @@ describe("session transcript restore", () => {
     const body = JSON.stringify(adapted);
     expect(adapted).toEqual([
       expect.objectContaining({
-        role: "system",
-        content: expect.stringContaining("[Historical tool results]"),
+        role: "assistant",
+        model: "historical-execution-record",
+        content: [{type:"text",text:expect.any(String)}],
       }),
     ]);
     expect(body).toContain("read");
@@ -955,13 +956,13 @@ describe("session transcript restore", () => {
     });
 
     const body = JSON.stringify(adapted);
-    expect(body).toContain("[Historical tool results]");
+    expect((adapted[0] as any).model).toBe("historical-execution-record");
     expect(body).toContain("result");
     expect(body).not.toContain(TOOL_RESULT_BRIDGE_TEXT);
     expect(body).not.toContain("\"toolResult\"");
   });
 
-  it("跨模型恢复时把原生工具回合降级为 system 历史摘要", () => {
+  it("跨模型恢复时将原生工具回合转换为按序的执行记录", () => {
     const messages = [
       {
         role: "assistant",
@@ -1006,8 +1007,9 @@ describe("session transcript restore", () => {
     expect(body).not.toContain("\"toolResult\"");
     expect(adapted).toEqual([
       expect.objectContaining({
-        role: "system",
-        content: expect.stringContaining("[Historical tool results]"),
+        role: "assistant",
+        model: "historical-execution-record",
+        content: [{type:"text",text:expect.any(String)}],
       }),
     ]);
     expect(body).toContain("read");
@@ -1050,8 +1052,9 @@ describe("session transcript restore", () => {
     const body = JSON.stringify(adapted);
     expect(adapted).toEqual([
       expect.objectContaining({
-        role: "system",
-        content: expect.stringContaining("[Historical tool results]"),
+        role: "assistant",
+        model: "historical-execution-record",
+        content: [{type:"text",text:expect.any(String)}],
       }),
     ]);
     expect(body).toContain("ls");
@@ -1094,8 +1097,9 @@ describe("session transcript restore", () => {
     expect(adapted.some((message: any) => message.role === "toolResult")).toBe(false);
     expect(adapted).toEqual([
       expect.objectContaining({
-        role: "system",
-        content: expect.stringContaining("[Historical tool results]"),
+        role: "assistant",
+        model: "historical-execution-record",
+        content: [{type:"text",text:expect.any(String)}],
       }),
     ]);
     expect(body).toContain("ls");
@@ -1139,7 +1143,8 @@ describe("session transcript restore", () => {
     expect(body).not.toContain("deepseek reasoning");
     expect(body).not.toContain("\"toolCall\"");
     expect(body).toContain("先看角色。");
-    expect(body).toContain("[Historical tool results]");
+    const record=adapted.find((message:any)=>message.model==='historical-execution-record') as any;
+    expect(JSON.parse(record.content[0].text)).toMatchObject({kind:'historical_tool_results',results:[{toolName:'read',toolCallId:'tool-1',isError:false,text:'林默资料'}]});
     expect(body).toContain("林默资料");
   });
 

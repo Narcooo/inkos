@@ -26,11 +26,23 @@ can supply receipts for the content they actually reviewed; unavailable reviews
 cannot. Requirements remain in the protected model context and survive Work
 transitions and failed-request restoration. A new request gets its own scope;
 export-only and information-only requests do not inherit old review obligations.
+Restored tool outcomes and prior host status notes remain chronological assistant
+history, with structured tool identity and error status. They are never appended
+to the current system policy or represented as new user requests. The same rule
+applies when restoring the same model and when switching providers. Historical
+records participate in the conversation budget and compaction; durable receipts
+and artifact versions remain the authority for actual execution outcomes.
 Cover delivery is also identified from the current author's request. A saved
 Work-level cover requirement survives partial production, but does not force
 image generation during a later manuscript-only revision or review. Retrying
 the original request preserves its cover obligation. Older saved request ledgers
 re-extract this scope without dropping their review/export bindings or receipts.
+Short-fiction planning records the applicable creation constraints. Later draft
+calls may inherit them; review takes a Work and review scope, and packaging takes
+a Work and packaging direction. Review and packaging do not require placeholder
+chapter-length, opening-length or cover arguments, nor can those stages change
+the persisted manuscript constraints. An explicitly requested cover is checked
+for the active Work even when an earlier production target did not require one.
 
 ## Artifacts, edits, and recovery
 

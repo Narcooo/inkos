@@ -72,44 +72,17 @@ const emptyUsage = {
 export const TOOL_RESULT_BRIDGE_TEXT = "[Completed tool-result boundary]";
 const EXPIRED_SKILL_RESULT_TEXT = "Skill instructions expired after their original turn.";
 
-function toolResultBridgeMessage(timestamp: number): AgentMessage {
+function historicalContextMessage(record: Record<string, unknown>, timestamp: number): AgentMessage {
   return {
     role: "assistant",
-    content: [{ type: "text", text: TOOL_RESULT_BRIDGE_TEXT }],
+    content: [{ type: "text", text: JSON.stringify(record) }],
     api: "openai-completions",
     provider: "inkos",
-    model: "synthetic-tool-result-bridge",
+    model: "historical-execution-record",
     usage: emptyUsage,
     stopReason: "stop",
     timestamp,
-  } as AgentMessage;
-}
-
-function addToolResultBridges(messages: AgentMessage[]): AgentMessage[] {
-  const bridged: AgentMessage[] = [];
-
-  for (let i = 0; i < messages.length; i++) {
-    const message = messages[i];
-    bridged.push(message);
-
-    if (!isObject(message) || message.role !== "toolResult") continue;
-
-    const next = messages[i + 1];
-    if (isObject(next) && (next.role === "toolResult" || next.role === "assistant")) continue;
-
-    const timestamp = typeof message.timestamp === "number" ? message.timestamp + 1 : Date.now();
-    bridged.push(toolResultBridgeMessage(timestamp));
-  }
-
-  return bridged;
-}
-
-function systemMessage(content: string, timestamp: number): AgentMessage {
-  return {
-    role: "system",
-    content,
-    timestamp,
-  } as unknown as AgentMessage;
+  };
 }
 
 export function cleanRestoredAgentMessages(messages: AgentMessage[]): AgentMessage[] {
@@ -147,14 +120,6 @@ interface TargetModelIdentity {
   readonly compat?: unknown;
 }
 
-function requiresAssistantAfterToolResult(target: TargetModelIdentity): boolean {
-  return !!(
-    target.compat &&
-    typeof target.compat === "object" &&
-    (target.compat as { requiresAssistantAfterToolResult?: unknown }).requiresAssistantAfterToolResult === true
-  );
-}
-
 function isSameAssistantModel(message: Record<string, unknown>, target: TargetModelIdentity): boolean {
   return (
     typeof message.api === "string" &&
@@ -172,8 +137,8 @@ export function adaptRestoredAgentMessagesForModel(
 ): AgentMessage[] {
   const adapted: AgentMessage[] = [];
 
-  const pushToolResultsAsSystem = (toolResults: AgentMessage[]) => {
-    const lines = toolResults.flatMap((message) => {
+  const pushHistoricalToolResults = (toolResults: AgentMessage[]) => {
+    const results = toolResults.map((message) => {
       const raw: Record<string, unknown> = isObject(message) ? message : {};
       const toolName = typeof raw.toolName === "string" ? raw.toolName : "tool";
       const toolCallId = typeof raw.toolCallId === "string" ? raw.toolCallId : "unknown";
@@ -187,7 +152,7 @@ export function adaptRestoredAgentMessagesForModel(
         .filter(Boolean)
         .join("\n")
         .trim() || "(empty tool result)";
-      return [`- ${toolName} (${toolCallId}):`, text];
+      return { toolName, toolCallId, isError: raw.isError === true, text };
     });
     const timestamp = toolResults.reduce((max, message) => {
       if (isObject(message) && typeof message.timestamp === "number") {
@@ -195,11 +160,7 @@ export function adaptRestoredAgentMessagesForModel(
       }
       return max;
     }, 0) || Date.now();
-    adapted.push(systemMessage([
-      "[Historical tool results]",
-      "These are completed historical tool results. They are state context, not a new user request.",
-      ...lines,
-    ].join("\n"), timestamp));
+    adapted.push(historicalContextMessage({ kind: "historical_tool_results", results }, timestamp));
   };
 
   for (let index = 0; index < messages.length; index++) {
@@ -214,15 +175,10 @@ export function adaptRestoredAgentMessagesForModel(
         typeof content[0].text === "string" &&
         content[0].text.trim() === TOOL_RESULT_BRIDGE_TEXT;
       const previous = adapted[adapted.length - 1];
-      const previousRole = isObject(previous)
-        ? (previous as Record<string, unknown>).role
-        : undefined;
       if (
         isBridge &&
         isObject(previous) &&
-        (previousRole === "user" || previousRole === "system") &&
-        typeof previous.content === "string" &&
-        (previous.content.startsWith("[Tool results]") || previous.content.startsWith("[Historical tool results]"))
+        previous.role === "assistant" && previous.model === "historical-execution-record"
       ) {
         continue;
       }
@@ -286,28 +242,33 @@ export function adaptRestoredAgentMessagesForModel(
         nextIndex += 1;
       }
       if (toolResults.length > 0) {
-        pushToolResultsAsSystem(toolResults);
+        pushHistoricalToolResults(toolResults);
         index = nextIndex - 1;
       }
       continue;
     }
 
     if (message.role === "toolResult") {
-      pushToolResultsAsSystem([message]);
+      pushHistoricalToolResults([message]);
       continue;
     }
 
+    const legacy = message as { role: string; content: unknown; timestamp?: number };
+    if (legacy.role === "system") {
+      adapted.push(historicalContextMessage(
+        { kind: "historical_host_note", text: legacy.content },
+        typeof legacy.timestamp === "number" ? legacy.timestamp : Date.now(),
+      ));
+      continue;
+    }
     adapted.push(message);
   }
 
-  const filtered = adapted.filter((message) => {
+  return adapted.filter((message) => {
     if (!isObject(message) || message.role !== "assistant") return true;
     return hasTextContent(message) || hasToolCallContent(message);
   });
 
-  return requiresAssistantAfterToolResult(target)
-    ? addToolResultBridges(filtered)
-    : filtered;
 }
 
 export function committedMessageEvents(events: TranscriptEvent[], sessionKind?: SessionKind): MessageEvent[] {
@@ -458,8 +419,8 @@ export async function restoreAgentMessagesFromTranscript(
       })
       .map((event) => sanitizeRestoredSkillMessage(event.message as AgentMessage)),
   );
-  if (interrupted.length) restored.push(systemMessage(
-    'Some earlier requests were interrupted. Their completed tool call/result pairs are retained as historical execution evidence; unfinished calls were discarded. These individual outcomes do not mean the whole request completed.',
+  if (interrupted.length) restored.push(historicalContextMessage(
+    {kind:'interrupted_requests',text:'Some earlier requests were interrupted. Their completed tool call/result pairs are retained as historical execution evidence; unfinished calls were discarded. These individual outcomes do not mean the whole request completed.'},
     events.at(-1)?.timestamp ?? Date.now(),
   ));
   return restored;
