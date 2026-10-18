@@ -44,6 +44,8 @@ Thanks to [ByteDance Volcano Engine](https://www.volcengine.com/activity/ai618?u
 
 > 💡 **One key for global frontier models** — pair InkOS with [**kkaiapi**](https://en.kkaiapi.com/): an OpenAI-compatible gateway for Claude, GPT, Gemini, DeepSeek, Kimi, Qwen, GLM, and image models. Add it as a custom service with base URL `https://api.kkaiapi.com/v1`, then switch models in Studio without juggling multiple provider accounts.
 
+[Web research search providers](docs/research-search.md)
+
 ## v2.0.0 Unified Pi Agent Harness and Professional Creation Kernel
 
 Preview a 1.x upgrade with `inkos work migrate --json`, then apply it with `inkos work migrate --apply`. Migration converts book defaults, rules and state snapshots while retaining the original directories and unspecified historical values. The original files retain retired writing settings; 2.0 uses Profile action policies. Projects missing runtime state enter the library as drafts requiring reconstruction.

@@ -15,6 +15,7 @@ test-project/
 .worktrees/
 docs/*
 !docs/harness-result-first-redesign.md
+!docs/research-search.md
 novel-to-comic-research.docx
 .pnpm-store/
 tmp/

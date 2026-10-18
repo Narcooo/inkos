@@ -36,6 +36,8 @@ InkOS は、物語創作と多言語翻訳のための AI Agent システムで�
 
 > 💡 **主要モデルをキー 1 本で** —— InkOS には [**kkaiapi**](https://en.kkaiapi.com/) の併用がおすすめです。Claude / GPT / Gemini / DeepSeek / Kimi / Qwen / GLM と画像モデルを扱える OpenAI 互換ゲートウェイとして、base URL `https://api.kkaiapi.com/v1` をカスタムサービスに設定すれば、複数プロバイダーのアカウントを行き来せずに Studio でモデルを切り替えられます。
 
+[Web リサーチの検索プロバイダー](docs/research-search.md)
+
 ## v2.0.0 統一 Pi Agent Harness と専門創作カーネル
 
 1.x からの移行は `inkos work migrate --json` で確認し、`inkos work migrate --apply` で実行します。書籍の既定値、ルール、状態スナップショットを変換し、元のディレクトリと未記入の履歴情報を保持します。旧執筆設定は原本に残り、2.0 は Profile の操作方針を使います。実行状態が不足する作品は、再構築が必要な下書きとして登録されます。
