@@ -16,6 +16,7 @@ import { resolveProfileSkillActivations } from "../../skills/activations.js";
 import { syncWorkSourceArtifacts } from "../source-sync.js";
 import { createReplaceWorkArtifactTool, createExportWorkTool } from "./work-artifacts.js";
 import { validatedArtifactWrites } from "../artifact-validation.js";
+import {assertGenericArtifactEditable} from '../artifact-edit-policy.js';
 import { changedSourceRegion, measureSourceText, splitSourceLines } from "../../utils/source-text.js";
 import {textRangeEditContract,textScopedSelectionEditContract,TextEditRangeSchema,type TextEditRange} from '../../utils/text-range-edits.js';
 import { readArtifactRevision } from "../artifact-reader.js";
@@ -157,6 +158,7 @@ export function createArtifactMethodTools(pipeline: PipelineRunner, root: string
       const baselineWork = currentExecutionBaselineWork();
       updateExecutionWork(work);
       if (mode === "revise") {
+        assertGenericArtifactEditable(work,revision.path,profile,'generated-revision');
         validatedArtifactWrites(work, revision.path, content, profile);
       }
       const sources = new Map([[artifact.id, content]]);

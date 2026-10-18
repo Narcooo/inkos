@@ -94,6 +94,24 @@ re-extract this scope without dropping their review/export bindings or receipts.
   The same boundary covers raw chapter patches and replacements. Generated
   chapter revisions default to source-bound edits with the persisted length
   contract; a whole-chapter rewrite is an explicit authoring choice.
+- Short-fiction book-title changes require separate permission from the original
+  author request. A title-only revision preserves chapter prose, chapter headings,
+  opening, and the exact outline bytes. The existing revision checkpoint retains
+  the generated title across interruption; recovery does not generate it again.
+  Successful publication updates the Work title, manuscript title and production
+  contract together with their registered versions. A replaced title-named copy
+  becomes historical; the canonical full manuscript remains available. Managed
+  package filenames are reserved, so a matching book title cannot overwrite them.
+  Existing sales copy, cover and exports remain at their recorded versions until
+  the author requests those separate stages.
+  Generic generated edits of the short manuscript or its rendered copies return
+  the native revision action before invoking a writer. They cannot bypass author
+  scope by regenerating a serialized manuscript. Explicit host replacements and
+  historical-version adoption retain their validated projection commit.
+- A short-fiction stage reports its own observations and current measurable
+  manuscript constraints. Earlier packaging or cover observations stay in
+  persisted production history and are not re-emitted as findings of a later
+  manuscript revision or review.
 - Short-fiction reviews receive the persisted length requirements and a verified
   request-baseline comparison. Changed chapters have citable earlier text;
   unchanged chapters are compared in full without duplicating their text in the

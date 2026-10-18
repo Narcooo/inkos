@@ -383,6 +383,7 @@ async function produceShort(
   let storyId: string;
   let baseDir: string;
   let workTitle: string;
+  let previousWorkTitle: string | undefined;
   let sourceBefore: ReadonlyMap<string, string>;
   let outlineSource: ShortFictionReference['source'];
   if (providedStoryId && resumedOutline?.trim()) {
@@ -391,7 +392,8 @@ async function produceShort(
     sourceBefore = await captureWorkSourceState(root, storyId);
     outlineMarkdown = resumedOutline;
     await ensureShortWork(root, storyId, options.title?.trim() || storyId, language);
-    workTitle = options.title?.trim() || (await loadWorkManifest(root, storyId)).title;
+    previousWorkTitle = (await loadWorkManifest(root, storyId)).title;
+    workTitle = options.title?.trim() || previousWorkTitle;
     options.onProgress?.("Resuming from existing outline (skipping outline stages)...");
   } else {
     options.onProgress?.("Creating short fiction outline...");
@@ -438,11 +440,13 @@ async function produceShort(
       ? ["source/final/sales-package.json", "source/final/sales-package.md", "source/final/cover-prompt.md", "source/reviews/package-v001.md", "source/reviews/package-warning.md", "source/production-state.json"]
       : stage === "draft" ? [...shortManuscriptPaths(finalDraft), ...await changedWorkSourcePaths(root, storyId, sourceBefore)]
       : ["source/outline/v001.md", "source/production-state.json"];
+    const previousTitlePath=previousWorkTitle?shortTitlePath(previousWorkTitle):undefined;
+    if(previousTitlePath&&previousWorkTitle!==workTitle)acceptPaths.push(previousTitlePath);
     await syncWorkSourceArtifacts({ projectRoot: root, workId: storyId, accept: true, acceptPaths, title: stage === "outline" ? workTitle : finalDraft.storyTitle });
     const stageStatus = (stage === "review" || stage === "package") && productionState.stages[stage]?.status === "failed" ? "failed" : "completed";
     return { storyId, stage, stageStatus, delivery:productionState.delivery,coverRequired:productionState.target?.coverRequired,
       ...(stage==='review'&&stageStatus==='completed'?{reviewedArtifact:productionState.stages.review?.reviewedArtifact}:{}),
-      observations: [...Object.values(productionState.stages).flatMap(item => item?.observations ?? []),...(productionState.delivery?.observations??[]).filter(o=>SHORT_DELIVERY_CONTRACT_CODES.has(o.code))], artifactPaths: paths.map(path => projectPath(join(baseDir, path))) };
+      observations: [...(stage==='review'||stage==='package'?productionState.stages[stage]?.observations??[]:[]),...(productionState.delivery?.observations??[]).filter(o=>SHORT_DELIVERY_CONTRACT_CODES.has(o.code))], artifactPaths: paths.map(path => projectPath(join(baseDir, path))) };
   };
   if (stopAfter === "outline") return stageResult("outline", ["outline/v001.md"]);
   let finalDraft: ShortFictionBatchDraft;
@@ -536,7 +540,7 @@ async function produceShort(
     const reviewedHash = `sha256:${createHash("sha256").update(await readFile(safeChildPath(root, join(baseDir, "drafts", "v001", "draft.json")))).digest("hex")}`;
     const reviewedRevision = reviewedArtifact.revisions.find(revision => revision.checksum === reviewedHash)!;
     if (stopAfter === "draft") {
-      await writeFinalArtifacts(root, baseDir, finalDraft, language);
+      await writeFinalArtifacts(root, baseDir, finalDraft, language,previousWorkTitle);
       return stageResult("draft", ["final/short-story.json", "final/full.md"]);
     }
     const inputHash = shortInputHash({ draft: draftV1, outline: outlineMarkdown, intent: productionState.intent });
@@ -606,10 +610,10 @@ async function produceShort(
     await writeShortProductionState(root, baseDir, productionState);
     }
     if (stopAfter === "review") {
-      if(revisedDraft)await writeFinalArtifacts(root,baseDir,finalDraft,language);
+      if(revisedDraft)await writeFinalArtifacts(root,baseDir,finalDraft,language,previousWorkTitle);
       return stageResult("review", [draftReviewWarning ? "reviews/draft-warning.md" : "reviews/draft-v001.md", "production-state.json"]);
     }
-    if(!reviewOrPackageOnly)await writeFinalArtifacts(root, baseDir, finalDraft, language);
+    if(!reviewOrPackageOnly)await writeFinalArtifacts(root, baseDir, finalDraft, language,previousWorkTitle);
 
     options.onProgress?.("Generating synopsis and cover prompt...");
     await refreshDelivery();
@@ -711,7 +715,7 @@ async function produceShort(
   await refreshDelivery();
   const observations = [...Object.values(productionState.stages).flatMap(stage => stage?.observations ?? []),...(productionState.delivery?.observations??[]).filter(o=>SHORT_DELIVERY_CONTRACT_CODES.has(o.code))];
   await syncWorkSourceArtifacts({ projectRoot: root, workId: storyId, accept: true, title: finalDraft.storyTitle,
-    acceptPaths: [...shortManuscriptPaths(finalDraft), ...await changedWorkSourcePaths(root, storyId, sourceBefore)],
+    acceptPaths: [...shortManuscriptPaths(finalDraft),...(previousWorkTitle&&shortTitlePath(previousWorkTitle)?[shortTitlePath(previousWorkTitle)!]:[]), ...await changedWorkSourcePaths(root, storyId, sourceBefore)],
   });
 
   return buildShortRunResult(storyId, baseDir, observations, { ...coverArtifacts, packageError: packageWarning, stageResults: productionState.stages,delivery:productionState.delivery });
@@ -774,7 +778,7 @@ async function reviseShortFictionWithLock(options: ShortFictionRunOptions & { re
     draft:ShortFictionBatchDraftSchema.parse(JSON.parse(authorOriginal.bytes.toString('utf8')))}:undefined;
   if(!authorScope&&authorRequest?.trim()&&originalArtifact?.currentRevisionId){
     const original=authorOriginal!;
-    const scopeKey=shortInputHash({version:3,authorRequest,baseline:original.revision.checksum}).slice('sha256:'.length);
+    const scopeKey=shortInputHash({version:4,authorRequest,baseline:original.revision.checksum}).slice('sha256:'.length);
     const scopePath=join('.inkos','short-author-scopes',work.id,`${scopeKey}.json`);
     const savedScope=await tryReadProjectText(options.projectRoot,scopePath);
     authorScope=savedScope?Value.Parse(ShortAuthorScopeSchema,JSON.parse(savedScope)):
@@ -838,7 +842,7 @@ async function reviseShortFictionWithLock(options: ShortFictionRunOptions & { re
   const minimum = shortDraftMinimum(revisionOptions);
   const chapterNumbers=options.revisionChapterNumbers;
   if(chapterNumbers?.some(number=>!Number.isInteger(number)||number<1||number>draft.chapters.length)) throw new Error("Invalid revision chapter scope");
-  const inputHash=createHash("sha256").update(JSON.stringify({revisionPlanVersion:6,draft,outlineMarkdown,review,direction:options.direction,target:revisionOptions.charsPerChapter,chapterCount,chapterNumbers,minimum})).digest("hex");
+  const inputHash=createHash("sha256").update(JSON.stringify({revisionPlanVersion:7,draft,outlineMarkdown,review,direction:options.direction,target:revisionOptions.charsPerChapter,chapterCount,chapterNumbers,minimum})).digest("hex");
   const reuse = saved && !options.restartPendingRevision && (options.resumeOperationId || saved.inputHash === inputHash);
   if (saved && !reuse && !options.restartPendingRevision) {
     throw Object.assign(new Error("A revision is already pending. Resume it by ID or explicitly replace it; changed retry wording does not discard its progress."), {
@@ -883,18 +887,19 @@ async function reviseShortFictionWithLock(options: ShortFictionRunOptions & { re
     throw Object.assign(failure, { recovery: recovery(checkpoint) });
   });
   if(authorScope)assertShortAuthorScope(authorScope,draft,revised.draft,outlineMarkdown,revised.outlineMarkdown);
-  const outlineWrite = textWrite(join(base, "outline", "v001.md"), revised.outlineMarkdown);
+  if(revised.draft.storyTitle!==draft.storyTitle&&!authorScope?.storyTitle)throw Object.assign(new Error('Changing the book title requires original author permission.'),{code:'SHORT_REVISION_OUT_OF_SCOPE',changedParts:['title']});
+  const outlineWrite = revised.outlineMarkdown===outlineMarkdown?undefined:textWrite(join(base, "outline", "v001.md"), revised.outlineMarkdown);
   checkpoint = { ...checkpoint, finalization: {
     baseline: { draft, outlineMarkdown },
-    result: { draft: revised.draft, outlineMarkdown: String(outlineWrite.content) },
+    result: { draft: revised.draft, outlineMarkdown: outlineWrite?String(outlineWrite.content):outlineMarkdown },
   } };
   await commitAtomicFileSet({rootDir:options.projectRoot,writes:[
-    outlineWrite,
+    ...(outlineWrite?[outlineWrite]:[]),
     textWrite(join(base,"drafts","v001","draft.json"),JSON.stringify(revised.draft,null,2)),
     textWrite(checkpointPath, JSON.stringify(checkpoint, null, 2)),
   ]});
   try {
-    const result=await produceShort(revisionOptions,options.projectRoot,options.storyId,revised.draft,'review');
+    const result=await produceShort({...revisionOptions,title:revised.draft.storyTitle},options.projectRoot,options.storyId,revised.draft,'review');
     const committedDraft=ShortFictionBatchDraftSchema.parse(JSON.parse(await readFile(safeChildPath(options.projectRoot,join(base,"final","short-story.json")),"utf8")));
     const beforeChapters=new Map(draft.chapters.map(chapter=>[chapter.number,chapter]));
     const afterChapters=new Map(committedDraft.chapters.map(chapter=>[chapter.number,chapter]));
@@ -1124,14 +1129,18 @@ async function writeFinalArtifacts(
   baseDir: string,
   draft: ShortFictionBatchDraft,
   language: ShortFictionLanguage = "zh",
+  previousTitle?: string,
 ): Promise<void> {
   const finalDir = join(baseDir, "final");
   const markdown = renderShortFictionDraftMarkdown(draft, language);
+  const namedPath=shortTitlePath(draft.storyTitle);
+  const previousPath=previousTitle?shortTitlePath(previousTitle):undefined;
+  const relativeAlias=(path:string)=>join(baseDir,path.slice('source/'.length));
   await commitAtomicFileSet({
     rootDir: root,
     writes: [
       textWrite(join(finalDir, "full.md"), markdown),
-      textWrite(join(finalDir, `${safeFileName(draft.storyTitle)}.md`), markdown),
+      ...(namedPath?[textWrite(relativeAlias(namedPath),markdown)]:[]),
       textWrite(join(finalDir, "short-story.json"), JSON.stringify(draft, null, 2)),
       ...draft.chapters.map((chapter) => textWrite(
         join(finalDir, "chapters", `${String(chapter.number).padStart(4, "0")}.md`),
@@ -1142,13 +1151,20 @@ async function writeFinalArtifacts(
         ].join("\n"),
       )),
     ],
-    deletes:await obsoleteChapterFiles(root,join(finalDir,"chapters"),draft.chapters),
+    deletes:[...await obsoleteChapterFiles(root,join(finalDir,"chapters"),draft.chapters),
+      ...(previousPath&&previousPath!==namedPath?[relativeAlias(previousPath)]:[])],
   });
+}
+
+function shortTitlePath(title:string):string|undefined {
+  const name=`${safeFileName(title)}.md`;
+  if(['full.md','sales-package.md','cover-prompt.md'].includes(name.toLowerCase()))return undefined;
+  return `source/final/${name}`;
 }
 
 function shortManuscriptPaths(draft: ShortFictionBatchDraft): string[] {
   return ["source/outline/v001.md", "source/final/full.md", "source/final/short-story.json",
-    projectPath(join("source/final", `${safeFileName(draft.storyTitle)}.md`)),
+    ...(shortTitlePath(draft.storyTitle)?[shortTitlePath(draft.storyTitle)!]:[]),
     ...draft.chapters.map(chapter => `source/final/chapters/${String(chapter.number).padStart(4, "0")}.md`),
   ];
 }

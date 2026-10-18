@@ -53,6 +53,7 @@ export const ShortPackageToolSchema = Type.Object({
 });
 
 export const ShortRevisionPlanSchema = Type.Object({
+  storyTitle: Type.Optional(Type.String({minLength:1,description:'Revised book title grounded in the current manuscript, only when explicitly authorized by the author. Omit to preserve it.'})),
   revisionBrief: Type.String({minLength:1,description:"Resolve shared facts and event order once for the selected revision. State the chosen corrections that all affected chapters must follow, rather than repeating unresolved alternatives. Preserve author constraints and facts outside the requested change."}),
   outlineMarkdown: Type.Optional(Type.String({minLength:1,description:"Update the complete outline when it contradicts the chosen, authorized corrections. Omit when it remains valid, including local prose edits. Preserve unrelated events and structure."})),
   openingHook: Type.Optional(Type.String()),
@@ -63,8 +64,9 @@ export const ShortRevisionPlanSchema = Type.Object({
   })),
 });
 
-export function shortRevisionPlanSubmissionSchema(chapterCount:number,sourceChapterCount=chapterCount) {
+export function shortRevisionPlanSubmissionSchema(chapterCount:number,sourceChapterCount=chapterCount,allowStoryTitle=false) {
   return Type.Object({
+    ...(allowStoryTitle?{storyTitle:ShortRevisionPlanSchema.properties.storyTitle}:{}),
     revisionBrief:ShortRevisionPlanSchema.properties.revisionBrief,
     outlineMarkdown:ShortRevisionPlanSchema.properties.outlineMarkdown,
     openingHook:ShortRevisionPlanSchema.properties.openingHook,

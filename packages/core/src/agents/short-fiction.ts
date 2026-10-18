@@ -210,7 +210,7 @@ export class ShortFictionWriterAgent extends BaseAgent {
     readonly resume?: ShortRevisionProgress;
     readonly onRevisionProgress?: (progress: ShortRevisionProgress) => Promise<void>;
   }): Promise<{draft:ShortFictionBatchDraft;outlineMarkdown:string}> {
-    const submittedPlan: Static<typeof ShortRevisionPlanSchema> = input.resume?.plan ?? (input.chapterNumbers?.length === 1 && !input.authorScope?.opening && !input.authorScope?.outline ? {
+    const submittedPlan: Static<typeof ShortRevisionPlanSchema> = input.resume?.plan ?? (input.chapterNumbers?.length === 1 && !input.authorScope?.opening && !input.authorScope?.outline && !input.authorScope?.storyTitle ? {
       revisionBrief:input.direction,chapters:input.chapterNumbers.map(number=>({number,instruction:input.direction})),
     } : await (this.planningContext?new ShortFictionWriterAgent(this.planningContext):this).planRevision(input));
     const plan={...submittedPlan,outlineMarkdown:submittedPlan.outlineMarkdown??input.outlineMarkdown};
@@ -219,6 +219,7 @@ export class ShortFictionWriterAgent extends BaseAgent {
 
   private async planRevision(input:ShortFictionDraftInput & {readonly draft:ShortFictionBatchDraft;readonly review:string}):Promise<Static<typeof ShortRevisionPlanSchema>> {
     const normalize = (result: Record<string, unknown>): Static<typeof ShortRevisionPlanSchema> => ({
+      storyTitle:typeof result.storyTitle==='string'?result.storyTitle.trim():undefined,
       revisionBrief:result.revisionBrief as string,
       outlineMarkdown:typeof result.outlineMarkdown==="string"?result.outlineMarkdown:undefined,
       openingHook:result.openingHook as string|undefined,
@@ -229,10 +230,10 @@ export class ShortFictionWriterAgent extends BaseAgent {
     });
     const {result}=await this.submitStructured([
       {role:"system",content:"Plan only the changes required by the author's current request. Omit unchanged chapter fields, the opening scene and the outline. An opening-only edit needs no chapter edits. Chapter fields refer to FINAL slots: sourceNumber copies an original chapter unchanged, and an instruction revises that slot. Use sourceNumber 0 and a writing instruction for a new scene. When restructuring, provide the updated complete outline and map every displaced slot; each unchanged source scene can appear once. Use the supplied final chapter count, which includes the author's explicit updates. Preserve all other author constraints, chronology and scope. Reviewer and coordinator suggestions are candidate diagnoses, not permission or established story facts. Verify their proposed corrections against the original manuscript and the author's request before using them."},
-      {role:"user",content:JSON.stringify({title:input.draft.storyTitle,userRequest:input.authorSource?.request??input.direction,
+      {role:"user",content:JSON.stringify({title:input.draft.storyTitle,userRequest:input.authorSource?.request??input.direction,allowedParts:input.authorScope,
         ...(input.authorSource?{revisionGuidance:{source:'coordinator',instruction:input.direction,authority:'advice_within_author_scope'}}:{}),
         requiredChapterCount:input.chapterCount,allowedChapterNumbers:input.chapterNumbers,outline:input.outlineMarkdown,review:input.review,originalManuscript:input.draft.chapters,openingHook:input.draft.openingHook,...(input.openingHookChars?{openingHookTarget:openingHookLengthContract(input.openingHookChars,input.language)}:{})})},
-    ],{name:"submit_short_revision_plan",label:"Plan requested revision",description:"Submit only affected chapters, opening scene or outline.",parameters:shortRevisionPlanSubmissionSchema(input.chapterCount,input.draft.chapters.length),maxTurns:6,supportingTools:[createStoryIntervalTool(),createReviewCalculationTool()],validate:(plan)=>{
+    ],{name:"submit_short_revision_plan",label:"Plan requested revision",description:"Submit only authorized changes to the book title, chapters, opening scene or outline.",parameters:shortRevisionPlanSubmissionSchema(input.chapterCount,input.draft.chapters.length,input.authorScope?.storyTitle),maxTurns:6,supportingTools:[createStoryIntervalTool(),createReviewCalculationTool()],validate:(plan)=>{
       this.validateRevisionPlan(normalize(plan),input);
       return plan;
     }},
@@ -242,12 +243,15 @@ export class ShortFictionWriterAgent extends BaseAgent {
 
   private validateRevisionPlan(plan:Static<typeof ShortRevisionPlanSchema>,input:ShortFictionDraftInput & {draft:ShortFictionBatchDraft}):void {
     const sourceCount=input.draft.chapters.length;
+    if(plan.storyTitle!==undefined&&!plan.storyTitle.trim())throw Object.assign(new Error('A revised book title must contain text.'),{code:'SHORT_REVISION_PLAN_INVALID'});
+    if(plan.storyTitle!==undefined&&plan.storyTitle!==input.draft.storyTitle&&!input.authorScope?.storyTitle)throw Object.assign(new Error('The book title is outside the author-authorized scope.'),{code:'SHORT_REVISION_OUT_OF_SCOPE'});
     if(input.chapterNumbers&&plan.chapters.some(chapter=>!input.chapterNumbers!.includes(chapter.number)))throw Object.assign(new Error("The plan changes a chapter outside the author's selected scope."),{code:"SHORT_REVISION_OUT_OF_SCOPE"});
     if(input.chapterNumbers?.length&&!input.authorScope?.opening&&plan.openingHook!==undefined&&plan.openingHook.trim()!==(input.draft.openingHook??""))throw Object.assign(new Error("The opening is outside the selected chapter scope."),{code:"SHORT_REVISION_OUT_OF_SCOPE"});
     if(input.openingHookChars&&plan.openingHook!==undefined&&plan.openingHook.trim()!==(input.draft.openingHook??""))validateOpeningHook(plan.openingHook,input.openingHookChars,input.language);
     if(!plan.chapters.length&&input.chapterCount===sourceCount
+      &&(plan.storyTitle===undefined||plan.storyTitle===input.draft.storyTitle)
       &&(plan.openingHook===undefined||plan.openingHook.trim()===(input.draft.openingHook??""))
-      &&(plan.outlineMarkdown===undefined||plan.outlineMarkdown===input.outlineMarkdown))throw Object.assign(new Error("Select a changed chapter, opening scene or outline."),{code:"SHORT_REVISION_PLAN_EMPTY"});
+      &&(plan.outlineMarkdown===undefined||plan.outlineMarkdown===input.outlineMarkdown))throw Object.assign(new Error("Select an authorized change to the book title, chapters, opening scene or outline."),{code:"SHORT_REVISION_PLAN_EMPTY"});
     if(new Set(plan.chapters.map(chapter=>chapter.number)).size!==plan.chapters.length
       ||plan.chapters.some(chapter=>chapter.number<1||chapter.number>input.chapterCount
         ||(chapter.sourceNumber!==undefined&&(chapter.sourceNumber<0||chapter.sourceNumber>sourceCount))
@@ -391,7 +395,7 @@ export class ShortFictionWriterAgent extends BaseAgent {
       completed.push(chapter.number);
       await input.onRevisionProgress?.({plan,draft,completed});
     }
-    draft={...draft,openingHook:plan.openingHook===undefined?draft.openingHook:plan.openingHook.trim()||undefined};
+    draft={...draft,storyTitle:plan.storyTitle??draft.storyTitle,openingHook:plan.openingHook===undefined?draft.openingHook:plan.openingHook.trim()||undefined};
     return {draft:{...draft,rawContent:renderShortFictionDraftMarkdown(draft,input.language)},outlineMarkdown:plan.outlineMarkdown};
   }
 

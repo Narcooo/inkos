@@ -3,6 +3,7 @@ import type {ShortFictionBatchDraft} from './short-fiction.js';
 
 export const ShortAuthorScopeSchema = Type.Object({
   wholeManuscript: Type.Boolean({description:'True only when the author permits rewriting or restructuring the whole manuscript.'}),
+  storyTitle: Type.Optional(Type.Boolean({description:'True only when the author explicitly permits changing the book title. Prose revision, review and packaging alone do not grant this permission.'})),
   chapterNumbers: Type.Array(Type.Integer({minimum:1}), {description:'Existing chapters whose prose the author permits editing. A selected chapter can still contain protected text.'}),
   chapterTitleNumbers: Type.Optional(Type.Array(Type.Integer({minimum:1}), {description:'Only chapters whose titles the author explicitly permits changing. Omit when titles are protected.'})),
   opening: Type.Boolean({description:'Permission to change the independent opening scene.'}),
@@ -14,7 +15,7 @@ export function shortAuthorScopeRequest(draft:ShortFictionBatchDraft, authorRequ
   return {
     messages:[
       {role:'system' as const,content:'Identify which existing manuscript parts the author permits changing. Select chapter numbers from the supplied manuscript. Reviewing the whole story or refreshing sales packaging does not authorize rewriting it. A desired emotional or commercial effect does not expand an explicit selected chapter range. An opening-only or outline-only edit has no selected chapters. Select wholeManuscript only for an affirmative whole-manuscript rewrite or restructuring request; otherwise preserve unselected parts. Do not write a revision or diagnose quality.'},
-      {role:'system' as const,content:'Editing specified words, dates, facts or passages across every chapter still has wholeManuscript=false: list every affected chapter and preserve its other prose. Whole-story coverage does not imply unrestricted rewriting. Permission to correct prose does not by itself include changing the saved outline.'},
+      {role:'system' as const,content:'Editing specified words, dates, facts or passages across every chapter still has wholeManuscript=false: list every affected chapter and preserve its other prose. Whole-story coverage does not imply unrestricted rewriting. Permission to correct prose does not by itself include changing the saved outline or book title. A book-title-only request selects storyTitle and no chapters, chapter titles, opening or outline.'},
       {role:'user' as const,content:JSON.stringify({authorRequest,manuscript:draft})},
     ],
     tool:{name:'submit_short_author_scope',label:'Locate authorized manuscript parts',description:'Select only the manuscript parts the author permits changing.',parameters:ShortAuthorScopeSchema,
@@ -28,6 +29,7 @@ export function shortAuthorScopeRequest(draft:ShortFictionBatchDraft, authorRequ
 }
 
 export function assertShortAuthorScope(scope:ShortAuthorScope, before:ShortFictionBatchDraft, after:ShortFictionBatchDraft, beforeOutline:string, afterOutline:string):void {
+  if(!scope.storyTitle&&before.storyTitle!==after.storyTitle)throw Object.assign(new Error('The book title is outside the author-authorized scope.'),{code:'SHORT_REVISION_OUT_OF_SCOPE',changedChapters:[],changedParts:['title']});
   if(scope.wholeManuscript)return;
   const changedChapters=before.chapters.filter(chapter=>{
     const next=after.chapters.find(item=>item.number===chapter.number);
@@ -35,7 +37,6 @@ export function assertShortAuthorScope(scope:ShortAuthorScope, before:ShortFicti
       ||(!scope.chapterNumbers.includes(chapter.number)&&next.content!==chapter.content);
   }).map(chapter=>chapter.number);
   const changedParts=[
-    ...(before.storyTitle!==after.storyTitle?['title']:[]),
     ...(!scope.opening&&(before.openingHook??'')!==(after.openingHook??'')?['opening']:[]),
     ...(!scope.outline&&beforeOutline!==afterOutline?['outline']:[]),
     ...(before.chapters.length!==after.chapters.length?['chapterCount']:[]),

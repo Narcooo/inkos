@@ -17,10 +17,91 @@ import { createBuiltInWorkProfileRegistry } from "../harness/builtin-profiles.js
 import { actionObservation } from "../harness/action-observation.js";
 import { withExecutionEvidence } from "../harness/execution-evidence.js";
 import {createLLMClient} from '../llm/provider.js';
+import {PipelineRunner} from '../pipeline/runner.js';
+import {createArtifactMethodTools} from '../harness/tools/artifact-methods.js';
 
 const roots:string[]=[];
 beforeEach(()=>{vi.spyOn(ShortFictionDraftReviewerAgent.prototype,'reviewPackage').mockResolvedValue({summary:'Reviewed package facts.',observations:[]});});
 afterEach(async()=>{vi.restoreAllMocks();await Promise.all(roots.splice(0).map(root=>rm(root,{recursive:true,force:true})));});
+
+it('renames only an authorized book title, resumes its saved candidate, and preserves prose and earlier delivery assets',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'inkos-title-revision-'));roots.push(root);
+  const base='works/short/source',oldTitle='The Quiet Gate',newTitle='The Returned Key';
+  const draft={storyTitle:oldTitle,openingHook:'A key waits on the counter.',rawContent:'',chapters:[
+    {number:1,title:'Arrival',content:'Nora finds a key under the counter and asks Eli who lost it.',charCount:14},
+    {number:2,title:'Return',content:'Eli recognizes his key. Nora hands it back, and they close the shop.',charCount:14},
+  ]};
+  const protectedFiles=new Map([
+    ['outline/v001.md','Nora finds a key and returns it to Eli.'],
+    ['final/sales-package.json',JSON.stringify({title:oldTitle,intro:'Original copy.'})],
+    ['final/sales-package.md','Original sales copy.'],['final/cover-prompt.md','Original cover brief.'],
+    ['final/cover.png','original-image'],['exports/delivery.zip','original-export'],
+  ]);
+  const raw=JSON.stringify(draft),markdown=renderShortFictionDraftMarkdown(draft,'en');
+  const writes=[...[...protectedFiles].map(([path,content])=>({relativePath:base+'/'+path,content})),
+    {relativePath:base+'/final/short-story.json',content:raw},{relativePath:base+'/final/full.md',content:markdown},
+    {relativePath:base+`/final/${oldTitle}.md`,content:markdown},
+    {relativePath:base+'/production-state.json',content:JSON.stringify({version:2,intent:'A lost key returns to its owner.',target:{title:oldTitle,chapterCount:2,charsPerChapter:14,minChapterLength:1,maxChapterLength:30,coverRequired:true,language:'en'},stages:{package:{status:'completed',inputHash:'older-manuscript',updatedAt:'2026-01-01T00:00:00.000Z',observations:[{code:'OLD_PACKAGE_NOTICE',assessment:'observation',category:'quality',summary:'An earlier package observation.',evidence:[]}]}}})},
+  ];
+  await commitAtomicFileSet({rootDir:root,writes:[...writes,createInitialWorkManifestWrite({workId:'short',title:oldTitle,profileId:'short-fiction',language:'en',writes}).write]});
+  const baseline=await syncWorkSourceArtifacts({projectRoot:root,workId:'short',accept:true});
+  let allowTitle=true,requestedTitle=newTitle,controller=new AbortController();const calls:string[]=[];
+  const server=createServer(async(req,res)=>{
+    const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));
+    const body=JSON.parse(Buffer.concat(chunks).toString()),name=body.tools[0].function.name;calls.push(name);
+    const args=name==='submit_short_author_scope'?{wholeManuscript:!allowTitle,storyTitle:allowTitle,chapterNumbers:allowTitle?[]:[1,2],opening:false,outline:false}
+      :name==='submit_short_revision_plan'?{revisionBrief:'Revise the book title only.',storyTitle:allowTitle?requestedTitle:'Unauthorized title'}:undefined;
+    res.writeHead(args?200:400,{'Content-Type':'application/json'});res.end(JSON.stringify(args?{choices:[{finish_reason:'tool_calls',message:{tool_calls:[{id:'title-'+calls.length,type:'function',function:{name,arguments:JSON.stringify(args)}}]}}]}:{error:{message:'Unexpected fixture operation'}}));
+  });server.listen(0,'127.0.0.1');await once(server,'listening');
+  try{
+    const client=createLLMClient({service:'custom',provider:'openai',configSource:'studio',model:'fixture',apiKey:'fixture',baseUrl:`http://127.0.0.1:${(server.address() as {port:number}).port}/v1`,apiFormat:'chat',stream:false,thinkingBudget:0});
+    const runtime={client,model:'fixture',projectRoot:root};
+    const request='Only rename the book to match the actual story. Keep the opening, chapter titles, prose, outline and existing delivery assets unchanged.';
+    const generic=createArtifactMethodTools(new PipelineRunner({projectRoot:root,client,model:'fixture'}),root,'short')[1]!;
+    for(const path of ['source/final/short-story.json','source/final/full.md',`source/final/${oldTitle}.md`]){
+      const artifact=baseline.artifacts.find(a=>a.revisions.some(r=>r.path===path))!;
+      await expect(generic.execute('generic',{artifactId:artifact.id,instruction:request})).rejects.toMatchObject({code:'ARTIFACT_DOMAIN_ACTION_REQUIRED',recovery:{action:'short-fiction__revise_short_fiction'}});
+    }
+    expect(calls).toHaveLength(0);
+    const options={projectRoot:root,storyId:'short',direction:request,runtimes:{planner:runtime,writer:runtime,draftReview:runtime,package:runtime}};
+    const review=vi.spyOn(ShortFictionDraftReviewerAgent.prototype,'reviewDraft').mockImplementationOnce(async()=>{controller.abort();throw controller.signal.reason;}).mockResolvedValue({summary:'Reviewed renamed manuscript.',observations:[]});
+    await expect(withExecutionEvidence(()=>{},()=>reviseShortFictionProduction({...options,signal:controller.signal}),undefined,baseline,request)).rejects.toMatchObject({name:'AbortError'});
+    const checkpoint=JSON.parse(await readFile(join(root,'.inkos/short-revisions/short.json'),'utf8'));
+    expect(checkpoint.finalization.result.draft.storyTitle).toBe(newTitle);
+    expect((await loadWorkManifest(root,'short')).title).toBe(oldTitle);
+    expect(await readFile(join(root,base,'final/short-story.json'),'utf8')).toBe(raw);
+    controller=new AbortController();
+    const result=await withExecutionEvidence(()=>{},()=>reviseShortFictionProduction({...options,direction:'',signal:controller.signal,resumeOperationId:checkpoint.operationId}),undefined,baseline,'Continue the saved operation.');
+    const current=await loadWorkManifest(root,'short'),saved=JSON.parse(await readFile(join(root,base,'final/short-story.json'),'utf8'));
+    expect(current.title).toBe(newTitle);expect(saved.storyTitle).toBe(newTitle);
+    expect(saved.chapters).toEqual(draft.chapters);expect(saved.openingHook).toBe(draft.openingHook);
+    expect(result.revisionChanges).toEqual({chapterNumbers:[],openingChanged:false,titleChanged:true,outlineChanged:false});
+    expect(result.delivery?.target).toMatchObject({title:newTitle,coverRequired:true});
+    expect(result.observations.map(o=>o.code)).not.toContain('OLD_PACKAGE_NOTICE');
+    expect(JSON.parse(await readFile(join(root,base,'production-state.json'),'utf8')).stages.package.observations).toMatchObject([{code:'OLD_PACKAGE_NOTICE'}]);
+    expect(review.mock.calls.at(-1)![0]).toMatchObject({title:newTitle,draft:{storyTitle:newTitle},comparison:{draft:{storyTitle:oldTitle}}});
+    expect(calls.filter(name=>name==='submit_short_revision_plan')).toHaveLength(1);
+    const oldNamed=baseline.artifacts.find(a=>a.revisions.some(r=>r.path===`source/final/${oldTitle}.md`))!;
+    expect(current.artifacts.find(a=>a.id===oldNamed.id)!.currentRevisionId).toBeNull();
+    expect(await readFile(join(root,'works/short',oldNamed.revisions[0]!.snapshotPath!),'utf8')).toBe(markdown);
+    await expect(readFile(join(root,base,`final/${oldTitle}.md`))).rejects.toMatchObject({code:'ENOENT'});
+    expect(await readFile(join(root,base,`final/${newTitle}.md`))).toEqual(await readFile(join(root,base,'final/full.md')));
+    for(const [path,content]of protectedFiles){
+      expect(await readFile(join(root,base,path),'utf8')).toBe(content);
+      const old=baseline.artifacts.find(a=>a.revisions.some(r=>r.path==='source/'+path))!;
+      expect(current.artifacts.find(a=>a.id===old.id)!.currentRevisionId).toBe(old.currentRevisionId);
+    }
+    allowTitle=false;
+    await expect(withExecutionEvidence(()=>{},()=>reviseShortFictionProduction({...options,direction:'Revise the prose only. Keep the book title.'}),undefined,current,'Revise the prose only. Keep the book title.')).rejects.toMatchObject({code:'WORKER_SCHEMA_INVALID'});
+    expect((await loadWorkManifest(root,'short')).title).toBe(newTitle);
+    expect(JSON.parse(await readFile(join(root,base,'final/short-story.json'),'utf8'))).toEqual(saved);
+    allowTitle=true;requestedTitle='sales-package';
+    await withExecutionEvidence(()=>{},()=>reviseShortFictionProduction({...options,restartPendingRevision:true}),undefined,current,request);
+    expect((await loadWorkManifest(root,'short')).title).toBe(requestedTitle);
+    expect(JSON.parse(await readFile(join(root,base,'final/short-story.json'),'utf8')).chapters).toEqual(saved.chapters);
+    expect(await readFile(join(root,base,'final/sales-package.md'),'utf8')).toBe(protectedFiles.get('final/sales-package.md'));
+  }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));}
+},20000);
 
 it('preserves inline author permission through a broad manuscript flag, length failure and resume',async()=>{
   const root=await mkdtemp(join(tmpdir(),'inkos-short-inline-'));roots.push(root);
