@@ -4,6 +4,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import type { SearchResult } from "./web-search.js";
+import { fetchWithProxy } from "./proxy-fetch.js";
 
 const ENDPOINT = "https://search.parallel.ai/mcp";
 const USER_AGENT = "InkOS/2.0.0 (+https://github.com/Narcooo/inkos)";
@@ -38,7 +39,7 @@ async function callParallelTool(
   const client = new Client({ name: "inkos", version: "2.0.0" });
   const transport = new StreamableHTTPClientTransport(new URL(ENDPOINT), {
     requestInit: { headers: { "User-Agent": USER_AGENT } },
-    fetch: (input, init) => fetch(input, {
+    fetch: (input, init) => fetchWithProxy(input, {
       ...init,
       signal: AbortSignal.any([signal, ...(init?.signal ? [init.signal] : [])]),
     }),
