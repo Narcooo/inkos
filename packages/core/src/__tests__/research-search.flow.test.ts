@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createProductionCapabilityRegistry } from "../harness/production-capabilities.js";
 import { createBuiltInWorkProfileRegistry } from "../harness/builtin-profiles.js";
@@ -110,7 +110,9 @@ async function harness(config?: unknown) {
       handle, capabilityId, actionId, parameters, signal, source: "agent",
     }),
   });
-  return { root, profiles, runtime, handle, tool: tools.find(tool => tool.name === "workspace__research_web")! };
+  return { root, profiles, runtime, handle,
+    reader: tools.find(tool => tool.name === "workspace__read")!,
+    tool: tools.find(tool => tool.name === "workspace__research_web")! };
 }
 
 function research(tool: Awaited<ReturnType<typeof harness>>["tool"], signal?: AbortSignal) {
@@ -120,10 +122,13 @@ function research(tool: Awaited<ReturnType<typeof harness>>["tool"], signal?: Ab
 describe("production research search routing", () => {
   it.each([false, true])("uses anonymous Parallel through the dispatcher and saves consumed excerpts (SSE=%s)", async useSse => {
     sse = useSse;
-    const { root, tool } = await harness();
+    const { root, tool, reader } = await harness();
     const result = await research(tool);
     expect(result.details).toMatchObject({ sources: [{ url: SOURCE, excerpt: "Couriers changed horses at relay stations." }], partialFailures: [] });
     const details = result.details as { reportPath: string };
+    expect(JSON.stringify(result.content)).toContain(details.reportPath);
+    const consumed = await reader.execute("read-research", { path: relative(root, details.reportPath) });
+    expect(JSON.stringify(consumed.content)).toContain("Couriers changed horses at relay stations.");
     expect(await readFile(details.reportPath, "utf-8")).toContain("Couriers changed horses at relay stations.");
     expect(await readdir(root)).toEqual([".inkos"]);
     expect(requests.filter(r => r.body.method === "tools/call").map(r => r.body.params?.name)).toEqual(["web_search", "web_fetch"]);
