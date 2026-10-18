@@ -106,20 +106,20 @@ export function ServiceConfigSourceCard({ onChange }: { onChange?: () => void })
 
   return (
     <div className="rounded-xl border border-border/40 bg-card/70 p-4 space-y-3">
-      <div className="flex items-center justify-between gap-3">
-        <div>
+      <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
           <div className="text-sm font-medium">{tr("LLM 配置来源", "LLM config source")}</div>
           <div className="text-xs text-muted-foreground/70 mt-1">
             {tr("Studio 运行时：", "Studio runtime:")}
             <span className="text-foreground"> {tr("使用服务页配置和 Studio 密钥", "uses service page config and Studio keys")}</span>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:flex-nowrap">
           <button
             type="button"
             onClick={() => void switchSource("studio")}
             disabled={saving !== null || importing || configSource === "studio"}
-            className="rounded-lg border border-border/50 px-3 py-1.5 text-xs hover:bg-secondary/50 disabled:opacity-50"
+            className="rounded-lg border border-border/50 px-3 py-2.5 text-xs hover:bg-secondary/50 disabled:opacity-50 sm:py-1.5"
           >
             {saving === "studio" ? tr("切换中…", "Switching…") : tr("使用 Studio 配置", "Use Studio config")}
           </button>
@@ -128,7 +128,7 @@ export function ServiceConfigSourceCard({ onChange }: { onChange?: () => void })
               type="button"
               onClick={() => void importEnvConfig()}
               disabled={saving !== null || importing}
-              className="rounded-lg border border-border/50 bg-secondary/40 px-3 py-1.5 text-xs hover:bg-secondary/70 disabled:opacity-50"
+              className="rounded-lg border border-border/50 bg-secondary/40 px-3 py-2.5 text-xs hover:bg-secondary/70 disabled:opacity-50 sm:py-1.5"
             >
               {importing ? tr("导入中…", "Importing…") : tr("导入检测到的配置", "Import detected config")}
             </button>

@@ -11,23 +11,23 @@ export function LanguageSelector({ onSelect }: { onSelect: (lang: "zh" | "en") =
   };
 
   return (
-    <div className="min-h-screen bg-background flex flex-col items-center justify-center px-8">
+    <div className="min-h-screen bg-background flex flex-col items-center justify-center px-5 py-12 sm:px-8">
       {/* Logo — cinematic scale */}
-      <div className="mb-16 text-center">
+      <div className="mb-8 sm:mb-16 text-center">
         <div className="flex items-baseline justify-center gap-1.5 mb-4">
-          <span className="font-serif text-6xl italic text-primary">Ink</span>
-          <span className="text-5xl font-semibold tracking-tight text-foreground">OS</span>
+          <span className="font-serif text-5xl sm:text-6xl italic text-primary">Ink</span>
+          <span className="text-4xl sm:text-5xl font-semibold tracking-tight text-foreground">OS</span>
         </div>
         <div className="text-base text-muted-foreground tracking-widest uppercase">Studio</div>
       </div>
 
       {/* Language cards — generous, distinct, immersive */}
-      <div className="flex gap-8 mb-16">
+      <div className="flex w-full max-w-2xl flex-col gap-5 sm:flex-row sm:gap-8 mb-10 sm:mb-16">
         <button
           onClick={() => handleSelect("zh")}
           onMouseEnter={() => setHovering("zh")}
           onMouseLeave={() => setHovering(null)}
-          className={`group w-80 border rounded-lg p-10 text-left transition-all duration-300 ${
+          className={`group w-full border rounded-lg p-6 sm:p-10 text-left transition-all duration-300 ${
             selected === "zh"
               ? "border-primary bg-primary/10 scale-[1.02]"
               : hovering === "zh"
@@ -48,7 +48,7 @@ export function LanguageSelector({ onSelect }: { onSelect: (lang: "zh" | "en") =
           onClick={() => handleSelect("en")}
           onMouseEnter={() => setHovering("en")}
           onMouseLeave={() => setHovering(null)}
-          className={`group w-80 border rounded-lg p-10 text-left transition-all duration-300 ${
+          className={`group w-full border rounded-lg p-6 sm:p-10 text-left transition-all duration-300 ${
             selected === "en"
               ? "border-primary bg-primary/10 scale-[1.02]"
               : hovering === "en"

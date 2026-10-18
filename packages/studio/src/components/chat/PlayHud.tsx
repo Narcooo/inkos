@@ -422,7 +422,9 @@ export function PlayHud(props: {
   if (!open) return null;
 
   return (
-    <aside className="absolute bottom-28 right-0 top-0 z-20 flex w-[380px] max-w-[calc(100vw-1rem)] flex-col border-l border-border/40 bg-card/95 backdrop-blur shadow-xl">
+    // Phones cannot fit a 380px HUD beside the chat, so below `sm` it becomes a
+    // full-height sheet anchored to the bottom edge the input row owns.
+    <aside className="absolute bottom-24 right-0 top-0 z-20 flex w-full flex-col border-l border-border/40 bg-card/95 backdrop-blur shadow-xl sm:bottom-28 sm:w-[380px] sm:max-w-[calc(100vw-1rem)]">
       {imageError ? <div role="alert" className="border-b border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{imageError}</div> : null}
       <header className="relative flex min-w-0 items-center gap-2.5 overflow-hidden border-b border-border/40 px-4 py-3">
         <span aria-hidden className="pointer-events-none absolute inset-x-0 -bottom-px h-px bg-gradient-to-r from-transparent via-primary/50 to-transparent" />
@@ -445,11 +447,11 @@ export function PlayHud(props: {
           </div>
         </div>
         {view?.time?.value ? (
-          <span className="max-w-[122px] shrink-0 truncate rounded-full bg-secondary/60 px-2.5 py-1 text-[15px] leading-6 text-muted-foreground" title={view.time.note ?? view.time.value}>
+          <span className="max-w-[92px] sm:max-w-[122px] shrink-0 truncate rounded-full bg-secondary/60 px-2.5 py-1 text-[15px] leading-6 text-muted-foreground" title={view.time.note ?? view.time.value}>
             {view.time.value}
           </span>
         ) : null}
-        <button type="button" onClick={() => { onClose(); setSelectedHoldingId(null); setSelectedFacingId(null); }} className="shrink-0 text-muted-foreground hover:text-foreground" title={isZh ? "收起" : "Collapse"}>
+        <button type="button" onClick={() => { onClose(); setSelectedHoldingId(null); setSelectedFacingId(null); }} className="-m-1 shrink-0 rounded-lg p-2 text-muted-foreground hover:text-foreground" title={isZh ? "收起" : "Collapse"}>
           <X size={15} />
         </button>
       </header>

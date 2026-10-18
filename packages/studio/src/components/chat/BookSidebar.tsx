@@ -4,6 +4,7 @@ import type { TFunction } from "../../hooks/use-i18n";
 import type { SSEMessage } from "../../hooks/use-sse";
 import { useChatStore } from "../../store/chat";
 import { fetchJson } from "../../hooks/use-api";
+import { tr } from "../../lib/app-language";
 import { PanelRightClose, PanelRightOpen, ArrowLeft, Loader2, Pencil, Save, X } from "lucide-react";
 import { Streamdown } from "streamdown";
 import { cjk } from "@streamdown/cjk";
@@ -287,7 +288,7 @@ export function BookSidebarToggle({ bookId, theme, t, sse }: BookSidebarProps) {
     <>
       <button
         onClick={() => setOpen(true)}
-        className="fixed right-3 top-[72px] z-20 lg:hidden w-8 h-8 rounded-lg bg-card border border-border/40 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
+        className="fixed right-3 top-[64px] z-20 lg:hidden h-10 w-10 rounded-lg bg-card border border-border/40 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors shadow-sm"
       >
         <PanelRightOpen size={14} />
       </button>
@@ -296,13 +297,17 @@ export function BookSidebarToggle({ bookId, theme, t, sse }: BookSidebarProps) {
         <div className="fixed inset-0 z-40 lg:hidden" onClick={() => setOpen(false)}>
           <div className="absolute inset-0 bg-black/20 backdrop-blur-sm" />
           <aside
-            className="absolute right-0 top-0 h-full w-[420px] max-w-[85vw] bg-background border-l border-border/20 overflow-y-auto"
+            className="absolute right-0 top-0 h-full w-full pb-[env(safe-area-inset-bottom)] bg-background border-l border-border/20 overflow-y-auto sm:w-[420px] sm:max-w-[85vw] sm:pb-0"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between px-3 py-2 border-b border-border/20">
               <span className="text-[15px] leading-6 font-medium text-muted-foreground">书籍信息</span>
-              <button onClick={() => setOpen(false)} className="text-muted-foreground hover:text-foreground">
-                <PanelRightClose size={14} />
+              <button
+                onClick={() => setOpen(false)}
+                aria-label={tr("关闭面板", "Close panel")}
+                className="-m-1.5 rounded-lg p-1.5 text-muted-foreground hover:text-foreground"
+              >
+                <PanelRightClose size={16} />
               </button>
             </div>
             {sidebarView === "artifact" ? (

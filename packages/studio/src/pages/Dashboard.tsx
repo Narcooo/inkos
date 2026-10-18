@@ -191,10 +191,10 @@ export function Dashboard({ nav, sse, theme, t }: { nav: Nav; sse: { messages: R
   }
 
   return (
-    <div className="space-y-12">
+    <div className="space-y-8 sm:space-y-12">
       {!hasServices && (
-        <div className="rounded-lg border border-border/60 bg-card px-5 py-4 mb-8 flex items-center justify-between gap-4">
-          <div>
+        <div className="rounded-lg border border-border/60 bg-card px-5 py-4 mb-6 sm:mb-8 flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+          <div className="min-w-0">
             <div className="text-sm font-medium">还没有配置 AI 模型</div>
             <div className="text-xs text-muted-foreground mt-0.5">配好一个服务商才能开始创作</div>
           </div>
@@ -206,9 +206,9 @@ export function Dashboard({ nav, sse, theme, t }: { nav: Nav; sse: { messages: R
           </button>
         </div>
       )}
-      <div className="flex items-end justify-between border-b border-border/40 pb-8">
-        <div>
-          <h1 className="font-serif text-4xl mb-2">{t("dash.title")}</h1>
+      <div className="flex flex-col items-start gap-4 border-b border-border/40 pb-6 sm:flex-row sm:items-end sm:justify-between sm:pb-8">
+        <div className="min-w-0">
+          <h1 className="font-serif text-3xl sm:text-4xl mb-2">{t("dash.title")}</h1>
           <p className="text-sm text-muted-foreground">{t("dash.subtitle")}</p>
         </div>
         <button
@@ -229,7 +229,7 @@ export function Dashboard({ nav, sse, theme, t }: { nav: Nav; sse: { messages: R
               key={book.id}
               className={`paper-sheet group relative rounded-2xl fade-in ${staggerClass} ${menuOpenBookId === book.id ? "z-50" : ""}`}
             >
-              <div className="p-8 flex items-start justify-between">
+              <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-start sm:justify-between sm:gap-6 sm:p-8">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-3 mb-3">
                     <div className="p-2 rounded-lg bg-primary/5 text-primary">
@@ -278,7 +278,7 @@ export function Dashboard({ nav, sse, theme, t }: { nav: Nav; sse: { messages: R
                   </div>
                 </div>
 
-                <div className="flex items-center gap-3 shrink-0 ml-6">
+                <div className="flex shrink-0 items-center gap-3 sm:ml-6">
                   <button
                     onClick={async () => {
                       try { await postApi(`/books/${book.id}/write-next`); }
@@ -357,13 +357,13 @@ export function Dashboard({ nav, sse, theme, t }: { nav: Nav; sse: { messages: R
 
       {/* Modern writing progress panel */}
       {writingBooks.size > 0 && logEvents.length > 0 && (
-        <div className="glass-panel rounded-2xl p-8 border-primary/20 bg-primary/[0.02] shadow-2xl shadow-primary/5 fade-in">
-          <div className="flex items-center justify-between mb-6">
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-primary text-primary-foreground shadow-lg shadow-primary/20">
+        <div className="glass-panel rounded-2xl p-5 sm:p-8 border-primary/20 bg-primary/[0.02] shadow-2xl shadow-primary/5 fade-in">
+          <div className="flex flex-col items-start gap-3 mb-6 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="shrink-0 p-2 rounded-lg bg-primary text-primary-foreground shadow-lg shadow-primary/20">
                 <Flame size={18} className="animate-pulse" />
               </div>
-              <div>
+              <div className="min-w-0">
                 <h3 className="text-sm font-bold uppercase tracking-widest text-primary"> Manuscript Foundry</h3>
                 <p className="text-xs text-muted-foreground mt-0.5">Real-time LLM generation tracking</p>
               </div>
