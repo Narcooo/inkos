@@ -41,10 +41,11 @@ vi.mock("../utils/proxy-fetch.js", () => ({
     if(body.tools?.[0]?.function?.name==='submit_requested_operations'){
       const request=body.messages.findLast((m:any)=>m.role==='user').content;
       const operations:Record<string,unknown>={
-        'Create the script and complete its review and export.':{preDraftReviewQuote:'',contentReviewQuote:'review and export.',exportQuote:'review and export.'},
-        'Create and export a script':{preDraftReviewQuote:'',contentReviewQuote:'',exportQuote:'export a script'},
+        'Resume the saved draft and deliver its requested cover.':{coverQuote:'deliver its requested cover.',preDraftReviewQuote:'',contentReviewQuote:'',exportQuote:''},
+        'Create the script and complete its review and export.':{coverQuote:'',preDraftReviewQuote:'',contentReviewQuote:'review and export.',exportQuote:'review and export.'},
+        'Create and export a script':{coverQuote:'',preDraftReviewQuote:'',contentReviewQuote:'',exportQuote:'export a script'},
       };
-      return new Response(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{tool_calls:[{id:'scope',type:'function',function:{name:'submit_requested_operations',arguments:JSON.stringify(operations[request]??{preDraftReviewQuote:'',contentReviewQuote:'',exportQuote:''})}}]}}]}));
+      return new Response(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{tool_calls:[{id:'scope',type:'function',function:{name:'submit_requested_operations',arguments:JSON.stringify(operations[request]??{coverQuote:'',preDraftReviewQuote:'',contentReviewQuote:'',exportQuote:''})}}]}}]}));
     }
     return fetchWithProxyMock(url,init);
   },
@@ -101,7 +102,7 @@ describe("guardedPiNonStreaming", () => {
       const planned=await stages.find(tool=>tool.name==='plan_short_fiction')!.execute('plan',{workId:'recovery',chapters:1,charsPerChapter:25,minChapterLength:20,maxChapterLength:30,openingHookChars:10,coverRequired:true});
       const plannedDeliveries=new TurnArtifactDeliveries();
       plannedDeliveries.observe({status:'success',summary:'Planned',artifacts:[],observations:[],data:planned.details});
-      await expect(plannedDeliveries.validate(root)).rejects.toMatchObject({code:'TURN_REQUIRED_ARTIFACT_MISSING',workId:'recovery',artifactRole:'cover'});
+      await expect(plannedDeliveries.validate(root,true)).rejects.toMatchObject({code:'TURN_REQUIRED_ARTIFACT_MISSING',workId:'recovery',artifactRole:'cover'});
       await expect(stages.find(tool=>tool.name==='draft_short_fiction')!.execute('initial',{workId:'recovery',minChapterLength:null,maxChapterLength:null,openingHookChars:null,coverRequired:null})).rejects.toMatchObject({code:'WORKER_MODEL_ERROR'});
       expect((await readShortProductionState(root,'works/recovery/source'))?.target?.coverRequired).toBe(true);
       recover=true;
@@ -116,11 +117,14 @@ describe("guardedPiNonStreaming", () => {
       expect(state.target?.coverRequired).toBe(true);
       const deliveries=new TurnArtifactDeliveries();
       deliveries.observe({status:'success',summary:'Recovered',artifacts:[],observations:[],data:{workId:'recovery',delivery:state.delivery}});
-      await expect(deliveries.validate(root)).rejects.toMatchObject({code:'TURN_REQUIRED_ARTIFACT_MISSING',workId:'recovery',artifactRole:'cover'});
+      // A later manuscript-only request retains the Work's cover requirement
+      // without inheriting it as an operation to perform now.
+      await expect(deliveries.validate(root,false)).resolves.toBeUndefined();
+      await expect(deliveries.validate(root,true)).rejects.toMatchObject({code:'TURN_REQUIRED_ARTIFACT_MISSING',workId:'recovery',artifactRole:'cover'});
       // A synthetic registered image tests the delivery receipt boundary, not image quality.
       await writeFile(join(root,'works/recovery/source/final/cover.png'),Buffer.from('fixture-image'));
       await syncWorkSourceArtifacts({projectRoot:root,workId:'recovery',accept:true});
-      await expect(deliveries.validate(root)).resolves.toBeUndefined();
+      await expect(deliveries.validate(root,true)).resolves.toBeUndefined();
     }finally{evictAgentCache('recovery-session');await rm(root,{recursive:true,force:true});}
   });
   it('keeps a native creation entry focused on its selected producer without executing it automatically',async()=>{

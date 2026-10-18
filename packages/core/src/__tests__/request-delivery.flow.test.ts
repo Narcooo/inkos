@@ -23,7 +23,7 @@ it('reviews the current planning source before drafting and repeats the prerequi
   const server=createServer(async(req,res)=>{
     const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));const body=JSON.parse(Buffer.concat(chunks).toString());
     const worker=body.tools[0].function.name;let name:string,args:unknown;
-    if(worker==='submit_requested_operations'){name=worker;args={preDraftReviewQuote:quote,contentReviewQuote:'',exportQuote:''};}
+    if(worker==='submit_requested_operations'){name=worker;args={coverQuote:'',preDraftReviewQuote:quote,contentReviewQuote:'',exportQuote:''};}
     else if(worker==='submit_short_outline'){name=worker;args={storyTitle:'The Key',planMarkdown:'The keeper returns a key.',chapter_1_plan:'Return the borrowed key.'};}
     else if(worker==='submit_artifact_review'){reviews++;name=worker;args={summary:'Evaluated the supplied plan.',observationCodes:[]};}
     else if(worker==='submit_short_chapter'){drafts++;expect(reviews).toBe(2);name=worker;args={storyTitle:'The Key',number:1,title:'Return',content:'The keeper returns the borrowed key to its owner. They check the worn metal together beside the door. The owner thanks her, and she leaves quietly.'};}
@@ -82,6 +82,19 @@ it('retains requested operations across restoration and requires every declared 
     expect(upgraded.interpretationComplete).toBe(true);
     expect(upgraded.snapshot().steps).toEqual(restored.snapshot().steps);
     expect(upgraded.snapshot().receipts).toEqual(restored.snapshot().receipts);
+    const {coverQuote: _oldCover, ...beforeCoverScope}=restored.snapshot();
+    const oldRequest=new RequestDeliveryLedger(request,beforeCoverScope);
+    expect(oldRequest.interpretationComplete).toBe(false);
+    oldRequest.initialize({reviewQuote:null,exportQuote:null,coverQuote:null});
+    expect(oldRequest.interpretationComplete).toBe(true);
+    expect(oldRequest.requiresCover).toBe(false);
+    expect(oldRequest.snapshot().steps).toEqual(restored.snapshot().steps);
+    expect(oldRequest.snapshot().receipts).toEqual(restored.snapshot().receipts);
+    const coverOnly=new RequestDeliveryLedger('Deliver the saved cover.');
+    coverOnly.initialize({coverQuote:'Deliver the saved cover.',reviewQuote:null,exportQuote:null});
+    const restoredCover=new RequestDeliveryLedger('Deliver the saved cover.',JSON.parse(JSON.stringify(coverOnly.snapshot())));
+    expect(restoredCover.hasRequirements).toBe(true);
+    expect(restoredCover.requiresCover).toBe(true);
     await expect(restored.validate(root)).rejects.toMatchObject({code:'REQUEST_DELIVERY_INCOMPLETE'});
     await restored.bind(root,{steps:[{id:'export',targets}]});
     expect(restored.snapshot().steps.map(step=>step.operation)).toEqual(['review','export']);
@@ -124,7 +137,7 @@ it('keeps an unattempted requested review pending in the main agent and isolates
     if(body.tools[0].function.name==='submit_requested_operations'){
       expect(body.messages.filter((m:any)=>m.role==='user').map((m:any)=>m.content)).toEqual([phase==='both'?requested:exportOnly]);
       expect(body.temperature).toBeUndefined();expect(body.tool_choice).toBeUndefined();
-      reply={name:'submit_requested_operations',args:{preDraftReviewQuote:'',contentReviewQuote:phase==='both'?requested:'',exportQuote:phase==='both'?requested:exportOnly}};
+      reply={name:'submit_requested_operations',args:{coverQuote:'',preDraftReviewQuote:'',contentReviewQuote:phase==='both'?requested:'',exportQuote:phase==='both'?requested:exportOnly}};
     }else if(body.tools[0].function.name==='submit_artifact_review'){
       reviews++;reply={name:'submit_artifact_review',args:{summary:'The scene is coherent.',observationCodes:[]}};
     }else{

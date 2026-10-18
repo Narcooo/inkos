@@ -26,6 +26,11 @@ can supply receipts for the content they actually reviewed; unavailable reviews
 cannot. Requirements remain in the protected model context and survive Work
 transitions and failed-request restoration. A new request gets its own scope;
 export-only and information-only requests do not inherit old review obligations.
+Cover delivery is also identified from the current author's request. A saved
+Work-level cover requirement survives partial production, but does not force
+image generation during a later manuscript-only revision or review. Retrying
+the original request preserves its cover obligation. Older saved request ledgers
+re-extract this scope without dropping their review/export bindings or receipts.
 
 ## Artifacts, edits, and recovery
 
@@ -69,6 +74,9 @@ export-only and information-only requests do not inherit old review obligations.
 - Chapter review findings retain the reviewed prose hash. A later revision can
   reuse content issues only when that hash matches the current prose; stale or
   unbound findings and execution issues do not become writing instructions.
+  Completion summaries include only findings for the current registered revision,
+  including when the request ends blocked before its normal delivery checks.
+  Earlier findings remain in their original review and execution records.
 - Existing-chapter context carries the original author request separately from
   the coordinator's revision instructions. A synthesized task memo is not a
   story fact or an additional author requirement. Localized writers use the

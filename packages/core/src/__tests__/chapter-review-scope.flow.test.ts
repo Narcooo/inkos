@@ -64,13 +64,13 @@ it('keeps batch review findings on their own chapter and clears them after that 
   const recordedSources=before.artifacts.map(artifact=>{const revision=artifact.revisions.find(r=>r.id===artifact.currentRevisionId)!;return{workId:'book',artifactId:artifact.id,revisionId:revision.id,path:revision.path};});
   const recordedReceipts=(await resolveOperationEvidence(root,details,details.observations)).operationReceipts;
   restored.observe(ActionResultSchema.parse({status:'success',summary:'Recorded batch before source binding.',artifacts:recordedSources,operationReceipts:recordedReceipts,observations:details.observations,data:details}));
-  expect(restored.qualityFindings()).toEqual(deliveries.qualityFindings());
+  expect(await restored.qualityFindings(root)).toEqual(await deliveries.qualityFindings(root));
   await expect(deliveries.validate(root)).resolves.toBeUndefined();
-  expect(deliveries.qualityFindings().map(finding=>({artifactId:finding.artifactId,codes:finding.observations.map(item=>item.code)})))
+  expect((await deliveries.qualityFindings(root)).map(finding=>({artifactId:finding.artifactId,codes:finding.observations.map(item=>item.code)})))
     .toEqual([{artifactId:target.id,codes:[issue.code]}]);
   bodies[1]='Nora hands the gallery key to Eli.';await persist();
   await observe({kind:'chapter_revision',workId:'book',reviewedChapters:[{chapterNumber:2,contentHash:chapterReviewContentHash(bodies[1],2)}],observations:[]});
   await expect(deliveries.validate(root)).resolves.toBeUndefined();
-  expect(deliveries.qualityFindings()).toEqual([]);
+  expect(await deliveries.qualityFindings(root)).toEqual([]);
  }finally{await rm(root,{recursive:true,force:true});}
 });

@@ -1148,11 +1148,11 @@ async function runAgentSessionUnlocked(
         tools: [...visibleTools,createDeliveryRequirementsTool({root:projectRoot,ledger:()=>cached!.requestDelivery,ensure:signal=>cached!.ensureDelivery(signal),save:()=>cached!.persistDelivery()}), createTurnCompletionTool({
           state: () => cached ?? { activeActions: 0, hasDelivery: false, deliveryFailed: false },
           complete: result => { if (!cached) throw new Error("Session unavailable"); cached.turnCompletion = result; },
-          qualityFindings:()=>cached!.artifactDeliveries.qualityFindings(),
+          qualityFindings:()=>cached!.artifactDeliveries.qualityFindings(projectRoot),
           language,
           validateDelivery: async signal => {
             await cached!.ensureDelivery(signal);
-            await cached!.artifactDeliveries.validate(projectRoot);
+            await cached!.artifactDeliveries.validate(projectRoot,cached!.requestDelivery.requiresCover);
             await cached!.requestDelivery.validate(projectRoot);
           },
         })],
@@ -1162,7 +1162,7 @@ async function runAgentSessionUnlocked(
         projectRoot,
         work,
         profile,
-        requestDelivery:()=>{const {declared,steps,receipts}=cached!.requestDelivery.snapshot();return{declared,steps,receipts};},
+        requestDelivery:()=>{const {declared,coverQuote,steps,receipts}=cached!.requestDelivery.snapshot();return{declared,coverQuote,steps,receipts};},
         budgetTokens: agentContextBudget(model),
         semanticCompiler: async (request) => ({
           content: await compileHarnessContextText({

@@ -127,14 +127,22 @@ export class TurnArtifactDeliveries {
     }
   }
 
-  qualityFindings() {
-    return [...this.receipts.values()].filter(receipt=>receipt.qualityIssues?.length).map(receipt=>({
+  async qualityFindings(projectRoot:string) {
+    const works=new Map<string,Awaited<ReturnType<typeof loadWorkManifest>>>();
+    const current=[];
+    for(const receipt of this.receipts.values()){
+      if(!receipt.qualityIssues?.length)continue;
+      if(!works.has(receipt.workId))works.set(receipt.workId,await loadWorkManifest(projectRoot,receipt.workId));
+      const artifact=works.get(receipt.workId)!.artifacts.find(item=>item.id===receipt.artifactId);
+      if(artifact?.currentRevisionId===receipt.revisionId)current.push(receipt);
+    }
+    return current.map(receipt=>({
       workId:receipt.workId,artifactId:receipt.artifactId,revisionId:receipt.revisionId,
       observations:structuredClone(receipt.qualityIssues!),
     }));
   }
 
-  async validate(projectRoot: string) {
+  async validate(projectRoot: string, coverRequested = false) {
     const missing = [...this.requiredOperations].filter(([key]) => !this.receipts.has(key)).map(([,operation]) => operation);
     for (const workId of this.requiredBookExports) {
       if (!this.bookExports.has(workId)) missing.push({workId, artifactId: "chapters", operation: "export"});
@@ -159,7 +167,7 @@ export class TurnArtifactDeliveries {
       })), {code: "TURN_DELIVERY_STALE"});
     }
     const works = new Map<string, Awaited<ReturnType<typeof loadWorkManifest>>>();
-    for (const workId of this.requiredCovers) {
+    for (const workId of coverRequested ? this.requiredCovers : []) {
       const work = await loadWorkManifest(projectRoot, workId);
       works.set(workId, work);
       const cover = work.artifacts.find(artifact => artifact.revisions.some(revision => {
@@ -167,7 +175,7 @@ export class TurnArtifactDeliveries {
         return revision.id === artifact.currentRevisionId && revision.contentType.startsWith("image/")
           && path.name === "cover" && ["source", "source/final"].includes(path.dir);
       }));
-      if (!cover) throw Object.assign(new Error("The saved production request requires a cover image. Generate the registered cover or report the concrete blocker before claiming delivery."), {
+      if (!cover) throw Object.assign(new Error("This request requires a cover image. Generate the registered cover or report the concrete blocker before claiming delivery."), {
         code: "TURN_REQUIRED_ARTIFACT_MISSING", workId, artifactRole: "cover",
       });
       const {bytes} = await readArtifactRevision({projectRoot,workId,artifactId:cover.id});
@@ -213,7 +221,7 @@ export function createTurnCompletionTool(options: {
         throw Object.assign(new Error("Delivery requires successful production or artifact results. Continue unfinished work or report the concrete blocker."), { code: "TURN_DELIVERY_UNPROVEN" });
       }
       if (input.status === "delivered" || input.status === "answered" && state.hasDelivery) await options.validateDelivery?.(signal);
-      const qualityFindings=options.qualityFindings?.()??[];
+      const qualityFindings=await options.qualityFindings?.()??[];
       const summaries=qualityFindings.flatMap(finding=>finding.observations.map(observation=>observation.summary));
       const completion=summaries.length?{...input,message:[input.message,
         options.language==='zh'?'审稿保留意见（对应上述版本）：':'Remaining review findings for the recorded source versions:',

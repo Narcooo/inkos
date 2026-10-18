@@ -23,7 +23,7 @@ it('retains quality findings with completed operations while still requiring cur
     const work=await syncWorkSourceArtifacts({projectRoot:root,workId:'work',accept:true,writes:[{relativePath:'works/work/source/script.md',content:'Nora leaves at noon.\nEarlier that evening, she arrives.\n'}]});
     const artifact=work.artifacts[0]!,deliveries=new TurnArtifactDeliveries();
     const observe=(assessment:'issue'|'observation'|'resolved')=>deliveries.observe(ActionResultSchema.parse({status:'success',summary:'Chronology review',artifacts:[],observations:[{code:'CHRONOLOGY',category:'quality',assessment,summary:'The time references conflict.',sourceRefs:[{sourceId:artifact.id,quote:'Nora leaves at noon.\nEarlier that evening, she arrives.'}]}],data:{kind:'artifact_reviewed',workId:work.id,artifactId:artifact.id,revisionId:artifact.currentRevisionId}}));
-    const finish=createTurnCompletionTool({state:()=>({activeActions:0,hasDelivery:true,deliveryFailed:false}),validateDelivery:()=>deliveries.validate(root),qualityFindings:()=>deliveries.qualityFindings(),complete:()=>{}});
+    const finish=createTurnCompletionTool({state:()=>({activeActions:0,hasDelivery:true,deliveryFailed:false}),validateDelivery:()=>deliveries.validate(root),qualityFindings:()=>deliveries.qualityFindings(root),complete:()=>{}});
     observe('issue');
     await expect(finish.execute('new',{status:'delivered',message:'The requested operations are complete; the review records a chronology concern.'})).resolves.toMatchObject({details:{status:'delivered',qualityFindings:[{
       workId:work.id,artifactId:artifact.id,revisionId:artifact.currentRevisionId,observations:[{code:'CHRONOLOGY',category:'quality',assessment:'issue'}],
@@ -32,16 +32,20 @@ it('retains quality findings with completed operations while still requiring cur
     await expect(finish.execute('corrected-review',{status:'delivered',message:'Review corrected against the source.'})).resolves.toMatchObject({details:{status:'delivered'}});
     observe('resolved');
     await expect(deliveries.validate(root)).resolves.toBeUndefined();
-    expect(deliveries.qualityFindings()).toEqual([]);
+    expect(await deliveries.qualityFindings(root)).toEqual([]);
     const source={workId:work.id,artifactId:artifact.id,revisionId:artifact.currentRevisionId!};
     const pipelineReview=ActionResultSchema.parse({status:'success',summary:'Pipeline review',artifacts:[],operationReceipts:[{operation:'review',sources:[source]}],observations:[{code:'CHRONOLOGY',category:'quality',assessment:'issue',summary:'Chronology conflict in the new content.',sourceRefs:[],target:source}],data:{kind:'short_fiction_created',workId:work.id}});
     deliveries.observe(pipelineReview);
     await expect(deliveries.validate(root)).resolves.toBeUndefined();
-    expect(deliveries.qualityFindings()).toMatchObject([{...source,observations:pipelineReview.observations}]);
+    expect(await deliveries.qualityFindings(root)).toMatchObject([{...source,observations:pipelineReview.observations}]);
     deliveries.observe({...pipelineReview,observations:[]});
-    expect(deliveries.qualityFindings()).toEqual([]);
+    expect(await deliveries.qualityFindings(root)).toEqual([]);
+    deliveries.observe(pipelineReview);
     await syncWorkSourceArtifacts({projectRoot:root,workId:'work',accept:true,writes:[{relativePath:'works/work/source/script.md',content:'Nora arrives at noon and leaves that evening.\n'}]});
     await expect(deliveries.validate(root)).rejects.toMatchObject({code:'TURN_DELIVERY_STALE'});
+    const blocked=await finish.execute('blocked-after-revision',{status:'blocked',message:'The current version still needs review.'});
+    expect(blocked.details).not.toHaveProperty('qualityFindings');
+    expect(pipelineReview.observations).toHaveLength(1);
   }finally{await rm(root,{recursive:true,force:true});}
 });
 
@@ -58,7 +62,7 @@ it("answers a question, rejects an unevidenced delivery, creates a Work and rest
     const chunks = []; for await (const chunk of request) chunks.push(chunk);
     const body=JSON.parse(Buffer.concat(chunks).toString("utf8"));
     if(body.tools[0].function.name==='submit_requested_operations'){
-      response.writeHead(200,{'Content-Type':'application/json'});response.end(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{tool_calls:[{id:'scope',type:'function',function:{name:'submit_requested_operations',arguments:JSON.stringify({preDraftReviewQuote:'',contentReviewQuote:'',exportQuote:''})}}]}}]}));return;
+      response.writeHead(200,{'Content-Type':'application/json'});response.end(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{tool_calls:[{id:'scope',type:'function',function:{name:'submit_requested_operations',arguments:JSON.stringify({coverQuote:'',preDraftReviewQuote:'',contentReviewQuote:'',exportQuote:''})}}]}}]}));return;
     }
     requests.push(body);
     const reply = replies[requests.length - 1];
@@ -139,7 +143,7 @@ it("retries an interrupted model message once without executing its provisional 
     if(!scope)requests.push(body);
     const attempt=requests.length;
     const name=scope?'submit_requested_operations':attempt<=2?'workspace__create_work':'finish_turn';
-    const args=scope?{preDraftReviewQuote:'',contentReviewQuote:'',exportQuote:''}:attempt<=2?{workId:attempt===1?'provisional':'gallery',profileId:'script',title:'Gallery',language:'en',intent:'Create an empty script Work.'}:{status:'delivered',message:'The Work is ready.'};
+    const args=scope?{coverQuote:'',preDraftReviewQuote:'',contentReviewQuote:'',exportQuote:''}:attempt<=2?{workId:attempt===1?'provisional':'gallery',profileId:'script',title:'Gallery',language:'en',intent:'Create an empty script Work.'}:{status:'delivered',message:'The Work is ready.'};
     response.writeHead(200,{'Content-Type':'text/event-stream'});
     response.write(`data: ${JSON.stringify({id:'reply-'+attempt,object:'chat.completion.chunk',choices:[{index:0,delta:{role:'assistant',tool_calls:[{index:0,id:!scope&&attempt===1?'provisional-call':'complete-'+attempt,type:'function',function:{name,arguments:JSON.stringify(args)}}]},finish_reason:null}]})}\n\n`);
     if(!scope&&attempt===1)return; // Complete arguments alone are not a terminal result.

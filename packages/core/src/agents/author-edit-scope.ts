@@ -45,9 +45,6 @@ export function authorTextScopeRequest(content:string,authorRequest:string,docum
       {role:'system' as const,content:'Read the entire original authorRequest to identify each distinct permitted target in this document. Do not reduce a request with several corrections to the last or most salient one. When only dates, names, quantities or other words may change, copy their exact substrings and leave the rest of each sentence protected. Do not select an entire line merely because it contains an editable expression. For these reference targets, never use an empty text shortcut: a whole paragraph is selectable only if authorized as a whole, and its text must then be copied exactly. Include all qualified occurrences; title or independent-opening instructions do not select chapter prose.'},
       {role:'user' as const,content:JSON.stringify({authorRequest,...(documentIdentity?{documentIdentity}:{}),document:sourceUnits(content).paragraphs})},
     ],
-    tool:{name:'submit_author_edit_scope',label:'Locate authorized source units',description:'Select existing source IDs, with an exact substring only for a partial-line edit.',parameters:AuthorTextScopeSchema,
-      validate:(result:AuthorTextScope)=>{authorTextScopeContract(content,result);return result;},
-    },
   };
 }
 
