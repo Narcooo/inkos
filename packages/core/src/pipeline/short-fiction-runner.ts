@@ -1149,6 +1149,10 @@ async function generateImageFromPromptImpl(request: ShortFictionCoverRequest, pr
   if (request.api === "images") {
     return generateImagesCover(request, prompt, size, signal, reference);
   }
+  if (request.api === "minimax") {
+    if (reference) throw new Error("MiniMax cover generation currently accepts text prompts only.");
+    return generateMiniMaxCover(request, prompt, size, signal);
+  }
 
   const endpoint = request.endpoint ?? `${request.baseUrl.replace(/\/+$/u, "")}/responses`;
   const response = await fetch(endpoint, {
@@ -1204,12 +1208,14 @@ export async function resolveCoverGenerationRequest(input: {
     const endpoint = resolveCoverEndpoint(input.coverEndpoint, input.coverBaseUrl);
     const baseUrl = input.coverBaseUrl || process.env.INKOS_COVER_BASE_URL || endpoint
       .replace(/\/responses\/?$/u, "")
-      .replace(/\/images\/generations\/?$/u, "");
+      .replace(/\/images\/generations\/?$/u, "")
+      .replace(/\/image_generation\/?$/u, "");
     const requestedModel = input.coverModel || process.env.INKOS_COVER_MODEL;
-    const preset = ["kkaiapi", "openai", "google"].map(resolveCoverProviderPreset)
+    const isMiniMax = /\/image_generation\/?$/u.test(endpoint);
+    const preset = isMiniMax ? resolveCoverProviderPreset("minimax") : ["kkaiapi", "openai", "google"].map(resolveCoverProviderPreset)
       .find(provider => provider && normalizeCoverBaseUrl(baseUrl) === provider.baseUrl);
     return {
-      api: endpoint.includes("/responses") ? "responses" : "images",
+      api: isMiniMax ? "minimax" : endpoint.includes("/responses") ? "responses" : "images",
       baseUrl,
       endpoint,
       model: preset ? normalizeCoverModelReference(requestedModel, preset) : requestedModel || "gpt-image-2",
@@ -1261,6 +1267,45 @@ async function resolveProjectCoverApiKey(root: string, service: string): Promise
     || secrets.services[service]?.apiKey
     || process.env[`${service.replace(/[^a-zA-Z0-9]/g, "_").toUpperCase()}_API_KEY`]
     || "";
+}
+
+async function generateMiniMaxCover(
+  request: ShortFictionCoverRequest,
+  prompt: string,
+  size: string,
+  signal?: AbortSignal,
+): Promise<{ readonly buffer: Buffer; readonly extension: "png" | "jpg" }> {
+  const dimensions = /^(\d+)x(\d+)$/u.exec(size)?.slice(1).map(Number);
+  if (!dimensions || dimensions.some(value => value < 512 || value > 2048 || value % 8 !== 0)) {
+    throw new Error("MiniMax cover size must use dimensions from 512 to 2048, divisible by 8.");
+  }
+  const [width, height] = dimensions;
+  const endpoint = request.endpoint ?? `${request.baseUrl.replace(/\/+$/u, "")}/image_generation`;
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${request.apiKey}`,
+      ...agentTrajectoryHeaders(endpoint, request.trace, 1, { effort: "disabled" }),
+    },
+    body: JSON.stringify({ model: request.model, prompt, width, height, n: 1, response_format: "url" }),
+    signal,
+  });
+  const text = await response.text();
+  if (!response.ok) throw new Error(`MiniMax cover generation failed: HTTP ${response.status} ${text}`);
+  let payload: { data?: { image_urls?: unknown }; base_resp?: { status_code?: number; status_msg?: string } } | null;
+  try {
+    payload = JSON.parse(text);
+  } catch (error) {
+    throw new Error(`MiniMax cover generation returned non-JSON response: ${String(error)}`);
+  }
+  if (payload?.base_resp?.status_code !== undefined && payload.base_resp.status_code !== 0) {
+    throw new Error(`MiniMax cover generation failed: ${payload.base_resp.status_code} ${payload.base_resp.status_msg ?? ""}`);
+  }
+  const urls = payload?.data?.image_urls;
+  const url = Array.isArray(urls) ? urls.find((value: unknown) => typeof value === "string" && value.trim()) : undefined;
+  if (typeof url !== "string") throw new Error("MiniMax cover generation response did not include an image URL.");
+  return downloadGeneratedCoverImage(url.trim(), request.apiKey, endpoint, signal);
 }
 
 async function generateImagesCover(
@@ -1466,6 +1511,9 @@ function resolveCoverEndpoint(coverEndpoint?: string, coverBaseUrl?: string): st
   const baseUrl = coverBaseUrl || process.env.INKOS_COVER_BASE_URL;
   if (!baseUrl) {
     throw new Error("cover endpoint is required. Set INKOS_COVER_BASE_URL or disable cover generation.");
+  }
+  if (["api.minimax.io", "api.minimaxi.com"].includes(new URL(baseUrl).hostname)) {
+    return `${baseUrl.replace(/\/+$/u, "")}/image_generation`;
   }
   return `${baseUrl.replace(/\/+$/u, "")}/images/generations`;
 }

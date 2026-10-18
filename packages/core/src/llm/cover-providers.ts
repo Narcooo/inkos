@@ -1,10 +1,10 @@
-export type CoverProviderId = "kkaiapi" | "openai" | "google";
+export type CoverProviderId = "kkaiapi" | "openai" | "google" | "minimax";
 
 export interface CoverProviderPreset {
   readonly service: CoverProviderId;
   readonly label: string;
   readonly baseUrl: string;
-  readonly api: "responses" | "images" | "gemini";
+  readonly api: "responses" | "images" | "gemini" | "minimax";
   readonly defaultModel: string;
   readonly models: readonly string[];
 }
@@ -33,6 +33,14 @@ export const COVER_PROVIDER_PRESETS: readonly CoverProviderPreset[] = [
     api: "gemini",
     defaultModel: "gemini-3.1-flash-image-preview",
     models: ["gemini-3.1-flash-image-preview", "gemini-2.5-flash-image"],
+  },
+  {
+    service: "minimax",
+    label: "MiniMax",
+    baseUrl: "https://api.minimax.io/v1",
+    api: "minimax",
+    defaultModel: "image-01",
+    models: ["image-01"],
   },
 ];
 
