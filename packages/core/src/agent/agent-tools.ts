@@ -5,6 +5,7 @@ import type { PipelineRunner } from "../pipeline/runner.js";
 import { defaultChapterLength } from "../utils/length-metrics.js";
 import { mkdir, readFile, writeFile, readdir, rm, stat } from "node:fs/promises";
 import { basename, isAbsolute, join, resolve } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
 import { StateManager } from "../state/manager.js";
 import { deleteLatestChapter } from "../state/chapter-delete.js";
 import { assertSafeBookId, deriveBookIdFromTitle } from "../utils/book-id.js";
@@ -42,7 +43,7 @@ import {
   type ActionPayload,
 } from "../interaction/action-envelope.js";
 import { ResearchSearchConfigSchema } from "../models/project.js";
-import { searchWeb } from "../utils/web-search.js";
+import { fetchResearchUrl, searchWeb } from "../utils/web-search.js";
 import { runAsWorkflowTrajectory } from "../llm/agent-trajectory.js";
 import type { ActivatedSkillGuidance } from "./skill-tool.js";
 import {
@@ -764,7 +765,8 @@ const ResearchWebParams = Type.Object({
 
 type ResearchWebParamsType = Static<typeof ResearchWebParams>;
 
-export function createResearchWebTool(projectRoot: string): AgentTool<typeof ResearchWebParams> {
+export function createResearchWebTool(projectRoot: string, sessionId: string = randomUUID()): AgentTool<typeof ResearchWebParams> {
+  const researchSessionId = createHash("sha256").update(sessionId).digest("hex");
   return {
     name: "research_web",
     description:
@@ -775,25 +777,23 @@ export function createResearchWebTool(projectRoot: string): AgentTool<typeof Res
     async execute(
       _toolCallId: string,
       params: ResearchWebParamsType,
-      _signal?: AbortSignal,
+      signal?: AbortSignal,
       onUpdate?: AgentToolUpdateCallback,
     ): Promise<AgentToolResult<unknown>> {
       onUpdate?.(textResult(`Researching: ${params.topic}`));
       const searchConfig = await readResearchSearchConfig(projectRoot);
-      const searchOptions = searchConfig.enabled
-        ? {
-            apiKey: searchConfig.apiKey,
-            apiKeyEnv: searchConfig.apiKeyEnv,
-            baseUrl: searchConfig.baseUrl,
-          }
-        : {};
+      if (!searchConfig.enabled) throw new Error("Web research is disabled in project settings.");
+      const searchOptions = { ...searchConfig, signal, sessionId: researchSessionId };
       const report = await runResearchReport({
         topic: params.topic,
         purpose: params.purpose,
         depth: params.depth ?? "standard",
       }, {
+        signal,
         search: (query, maxResults) => searchWeb(query, maxResults, searchOptions),
+        fetch: url => fetchResearchUrl(url, searchOptions),
       });
+      signal?.throwIfAborted();
       const reportDir = join(projectRoot, ".inkos", "research");
       await mkdir(reportDir, { recursive: true });
       const fileName = `${new Date().toISOString().replace(/[:.]/g, "-")}-${slugResearchTopic(params.topic)}.md`;

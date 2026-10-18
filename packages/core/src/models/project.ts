@@ -88,14 +88,14 @@ export type AgentLLMOverride = z.infer<typeof AgentLLMOverrideSchema>;
 const ModelOverrideValueSchema = z.union([z.string(), AgentLLMOverrideSchema]);
 
 export const ResearchSearchConfigSchema = z.object({
-  enabled: z.boolean().default(false),
-  provider: z.enum(["tavily", "custom"]).default("tavily"),
+  enabled: z.boolean().default(true),
+  provider: z.enum(["auto", "parallel", "tavily", "custom"]).default("auto"),
   baseUrl: z.string().url().optional(),
   apiKey: z.string().optional(),
   apiKeyEnv: z.string().optional(),
 }).strict().default({
-  enabled: false,
-  provider: "tavily",
+  enabled: true,
+  provider: "auto",
 });
 
 export type ResearchSearchConfig = z.infer<typeof ResearchSearchConfigSchema>;
