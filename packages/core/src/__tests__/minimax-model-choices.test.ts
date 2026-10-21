@@ -50,6 +50,42 @@ describe("MiniMax ordinary model choices", () => {
     }
   });
 
+  it.each([
+    ["openrouter", "minimax/minimax-m3", "minimax/minimax-m3.1-flash:free"],
+    ["opencodeCodingPlan", "minimax-m3", "minimax-m3.1-flash-free"],
+  ])("orders only the MiniMax slots for %s, keeping gateway metadata", async (service, m3, flash) => {
+    const other = { id: "unrelated-before", name: "before", contextWindow: 1234 };
+    const media = { id: "minimax/image-01", name: "cover", contextWindow: 0 };
+    const last = { id: "unrelated-after", name: "after", contextWindow: 5678 };
+    const m3Card = { id: m3, name: "gateway M3", contextWindow: 131072 };
+    const flashCard = { id: flash, name: "gateway Flash", contextWindow: 262144 };
+    for (const pair of [[m3Card, flashCard], [flashCard, m3Card]]) {
+      probeModels.mockResolvedValue([other, pair[0], media, pair[1], last]);
+      const models = await listModelsForService(service, "test-key");
+      expect(models.slice(0, 5)).toEqual([other, flashCard, media, m3Card, last]);
+      expect(models.find((model) => model.id === flash)).not.toHaveProperty("maxOutput");
+    }
+  });
+
+  it.each([
+    ["openrouter", "minimax/minimax-m3"],
+    ["opencodeCodingPlan", "minimax-m3"],
+  ])("does not invent Flash when %s only discovers M3", async (service, m3) => {
+    probeModels.mockResolvedValue([{ id: m3, name: m3, contextWindow: 131072 }]);
+    const models = await listModelsForService(service, "test-key");
+    expect(models[0]?.id).toBe(m3);
+    expect(models.some((model) => /minimax-m3\.1-flash/i.test(model.id))).toBe(false);
+  });
+
+  it.each(["custom", "newapi", "ollama", "lmstudio", "minimaxCodingPlan"])(
+    "preserves the explicit catalog order for %s", async (service) => {
+      const saved = ["MiniMax-M2.7", "MiniMax-M3", "image-01", "MiniMax-M3.1-Flash"];
+      probeModels.mockResolvedValue(saved.map((id) => ({ id, name: id, contextWindow: 0 })));
+      const models = await listModelsForService(service, "test-key", "https://custom.example/v1");
+      expect(models.slice(0, saved.length).map((model) => model.id)).toEqual(saved);
+    },
+  );
+
   it("preserves custom catalogs, legacy subscriptions, and nontext IDs", async () => {
     probeModels.mockResolvedValue([{ id: "MiniMax-M2.7", name: "saved", contextWindow: 204800 }]);
     expect((await listModelsForService("custom", "test-key", "https://custom.example/v1"))[0]?.id).toBe("MiniMax-M2.7");

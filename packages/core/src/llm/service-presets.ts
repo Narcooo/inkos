@@ -145,6 +145,15 @@ export async function listModelsForService(
   const models = [...byId.values()];
   if (service === "minimax") {
     models.sort((a, b) => Number(b.id === "MiniMax-M3.1-Flash") - Number(a.id === "MiniMax-M3.1-Flash"));
+  } else if (service === "openrouter" || service === "opencodeCodingPlan") {
+    const flashId = service === "openrouter" ? "minimax-m3.1-flash:free" : "minimax-m3.1-flash-free";
+    const modelId = (model: ModelInfo) => model.id.split("/").at(-1)!.toLowerCase();
+    const isMiniMaxSlot = (model: ModelInfo) => ["minimax-m3", flashId].includes(modelId(model));
+    const miniMaxModels = models.filter(isMiniMaxSlot).sort((a, b) =>
+      Number(modelId(b) === flashId) - Number(modelId(a) === flashId));
+    // Reorder only existing MiniMax text slots; other models and metadata stay put.
+    let next = 0;
+    return models.map((model) => isMiniMaxSlot(model) ? miniMaxModels[next++]! : model);
   }
   return models;
 }
