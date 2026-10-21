@@ -186,11 +186,6 @@ async function applyProjectServiceConfig(
   const selectedEntry = selectServiceEntry(services, options.requestedService ?? llm.service)
     ?? synthesizeServiceEntry(options.requestedService ?? llm.service);
 
-  if (selectedEntry) {
-    applyServiceEntry(llm, selectedEntry);
-    diagnostics.serviceSource = options.requestedService ? diagnostics.serviceSource : "project";
-  }
-
   const modelSource = options.requestedModel ? options.requestedModelSource ?? "env" : "project";
   const model = options.requestedModel
     ?? resolveServiceModel(
@@ -198,6 +193,10 @@ async function applyProjectServiceConfig(
       options.ignoreTopLevelModel ? undefined : stringValue(llm.model),
       stringValue(llm.defaultModel),
     );
+  if (selectedEntry) {
+    applyServiceEntry(llm, selectedEntry, model);
+    diagnostics.serviceSource = options.requestedService ? diagnostics.serviceSource : "project";
+  }
   if (model) {
     assertModelBelongsToService(selectedEntry, model);
     llm.model = model;
@@ -294,10 +293,9 @@ async function applyEnvironmentConfig(
   if (input.cli?.service) {
     const entry = synthesizeServiceEntry(input.cli.service);
     if (entry) {
-      applyServiceEntry(llm, entry);
-      if (!input.cli.model) {
-        llm.model = resolveServiceModel(entry, undefined, stringValue(llm.defaultModel));
-      }
+      const model = input.cli.model ?? resolveServiceModel(entry, undefined, stringValue(llm.defaultModel));
+      applyServiceEntry(llm, entry, model);
+      if (!input.cli.model) llm.model = model;
     } else {
       llm.service = input.cli.service;
     }
@@ -321,12 +319,12 @@ async function applyEnvironmentConfig(
   if (input.cli?.stream !== undefined) llm.stream = input.cli.stream;
 }
 
-function applyServiceEntry(llm: Record<string, unknown>, entry: ServiceConfigEntry): void {
+function applyServiceEntry(llm: Record<string, unknown>, entry: ServiceConfigEntry, model: string): void {
   const endpoint = getEndpoint(entry.service);
   const transportDefaults = endpoint?.transportDefaults;
   llm.service = entry.service;
   llm.provider = deriveProviderFromService(entry.service);
-  llm.baseUrl = entry.baseUrl ?? resolveServicePreset(entry.service)?.baseUrl ?? "";
+  llm.baseUrl = entry.baseUrl ?? resolveServicePreset(entry.service, model)?.baseUrl ?? "";
 
   if (entry.temperature !== undefined) llm.temperature = entry.temperature;
   if (entry.apiFormat !== undefined) llm.apiFormat = entry.apiFormat;

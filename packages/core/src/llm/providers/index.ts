@@ -1,4 +1,7 @@
 import type { InkosEndpoint } from "./types.js";
+import { isCurrentMiniMaxChoice } from "./model-choices.js";
+
+export { isCurrentMiniMaxChoice } from "./model-choices.js";
 import { ANTHROPIC } from "./endpoints/anthropic.js";
 import { OPENAI } from "./endpoints/openai.js";
 import { GOOGLE } from "./endpoints/google.js";
@@ -57,7 +60,13 @@ const ALL_PROVIDERS: readonly InkosEndpoint[] = [
   OLLAMA, LMSTUDIO, OPENROUTER, CUSTOM, MISTRAL, XAI, NEWAPI, GITHUB_COPILOT, KKAIAPI,
   // B6 CodingPlan（8 个）
   KIMI_CODING_PLAN, KIMI_CODE, MINIMAX_CODING_PLAN, BAILIAN_CODING_PLAN, GLM_CODING_PLAN, VOLCENGINE_CODING_PLAN, OPENCODE_CODING_PLAN, ASTRON_CODING_PLAN,
-];
+].map((endpoint) => ({
+  ...endpoint,
+  // Keep legacy cards for saved-model metadata without recommending them.
+  models: endpoint.models.map((model) => isCurrentMiniMaxChoice(endpoint.id, model.id)
+    ? model
+    : { ...model, enabled: false }),
+}));
 
 const PROVIDERS_BY_ID: Map<string, InkosEndpoint> = new Map(
   ALL_PROVIDERS.map((p) => [p.id, p]),
