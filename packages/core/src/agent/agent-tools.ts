@@ -5,6 +5,7 @@ import type { PipelineRunner } from "../pipeline/runner.js";
 import { defaultChapterLength } from "../utils/length-metrics.js";
 import { mkdir, readFile, writeFile, readdir, rm, stat } from "node:fs/promises";
 import { basename, isAbsolute, join, resolve } from "node:path";
+import {createHash} from 'node:crypto';
 import { StateManager } from "../state/manager.js";
 import { deleteLatestChapter } from "../state/chapter-delete.js";
 import { assertSafeBookId, deriveBookIdFromTitle } from "../utils/book-id.js";
@@ -3073,7 +3074,7 @@ export function createReadTool(
   const description = options.allowSystemPaths
     ? "Read a file. Relative paths resolve under works/; absolute paths read from the system filesystem."
     : options.scope === "project"
-      ? "Read a UTF-8 file inside the current InkOS project. Path is relative to the project root."
+      ? "Read UTF-8 text or a PNG/JPEG image inside the current InkOS project. Path is relative to the project root."
     : "Read a file from the Work store. Path is relative to works/.";
 
   return {
@@ -3118,9 +3119,9 @@ export function createReadTool(
         });
       }
       const filePath = resolveReadPath(readRoot, params.path!, options);
-      let content: string;
+      let bytes: Buffer;
       try {
-        content = await readFile(filePath, "utf-8");
+        bytes = await readFile(filePath);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") {
           throw new WorkFileNotFoundError(params.path!);
@@ -3133,7 +3134,23 @@ export function createReadTool(
         }
         throw error;
       }
-      return textResult(content);
+      const checksum=`sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+      const mimeType=bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]))?'image/png'
+        :bytes[0]===255&&bytes[1]===216&&bytes[2]===255?'image/jpeg':undefined;
+      const details={kind:mimeType?'file_image_read':'file_read',path:params.path,checksum,byteLength:bytes.length,contentScope:'full_file'};
+      if(mimeType){
+        if(bytes.length>10*1024*1024)throw Object.assign(new Error('The image exceeds the 10 MiB visual observation limit.'),{code:'FILE_IMAGE_TOO_LARGE',byteLength:bytes.length});
+        const imageDetails={...details,mimeType};
+        return{content:[{type:'text',text:JSON.stringify(imageDetails)},{type:'image',mimeType,data:bytes.toString('base64')}],details:imageDetails};
+      }
+      let content:string;
+      try{
+        if(bytes.includes(0))throw new Error('Binary zero byte');
+        content=new TextDecoder('utf-8',{fatal:true}).decode(bytes);
+      }catch{
+        throw Object.assign(new Error('This file is not UTF-8 text or a supported image. Use its import or artifact viewer instead of reading binary bytes as prose.'),{code:'WORK_FILE_NOT_TEXT',path:params.path,byteLength:bytes.length});
+      }
+      return textResult(content,details);
     },
   };
 }

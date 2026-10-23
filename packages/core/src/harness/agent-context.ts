@@ -13,6 +13,7 @@ import {
 import type { WorkManifest, WorkProfile, RequestDeliveryState } from "./contracts.js";
 import { loadWorkManifest } from "./work-store.js";
 import {executionProgress} from './execution-progress.js';
+import {projectHistoricalReads} from '../interaction/read-observation.js';
 
 export interface ConversationCompactionRequest {
   readonly history: string;
@@ -73,6 +74,7 @@ export function createHarnessContextTransform(input: {
   let cached: {frames:string[];summary:string} | undefined;
   return async (messages, signal) => {
     const lastUserIndex = findLastUserIndex(messages);
+    if(lastUserIndex>0)messages=[...projectHistoricalReads(messages.slice(0,lastUserIndex)),...messages.slice(lastUserIndex)];
     let historicalMessages = lastUserIndex > 0 ? messages.slice(0, lastUserIndex) : [];
     let protectedTail = lastUserIndex >= 0 ? messages.slice(lastUserIndex) : messages;
     // Completed reads in the current tool loop can exceed a model window even

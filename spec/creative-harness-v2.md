@@ -36,6 +36,13 @@ Images retain their native visual representation until the conversational model
 can inspect them. Text compaction receives image identity and byte metadata, not
 Base64 transport data. Context estimates reserve a visual-input allowance rather
 than counting that encoding as language tokens.
+External file reads use the same distinction: supported image signatures produce
+native pixels and a checksum receipt; other binary data cannot become UTF-8 prose.
+Across requests, successful reads retain addressable source/version receipts in
+model context. Their complete bodies remain in the transcript and can be read
+again when needed. A registered source requires its Work identity, since artifact
+IDs alone are not globally unique. Current-request observations and read errors
+retain their full content; loading history does not mutate the stored record.
 Cover delivery is also identified from the current author's request. A saved
 Work-level cover requirement survives partial production, but does not force
 image generation during a later manuscript-only revision or review. Retrying

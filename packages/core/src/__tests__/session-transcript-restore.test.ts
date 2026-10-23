@@ -889,7 +889,8 @@ describe("session transcript restore", () => {
     ]);
     expect(body).toContain("read");
     expect(body).toContain("tool-1");
-    expect(body).toContain("资料");
+    const record=JSON.parse((adapted[0] as any).content[0].text);
+    expect(JSON.parse(record.results[0].text)).toMatchObject({kind:'historical_read_reference',target:{path:'story.md'},contentOmitted:true});
     expect(body).not.toContain("reasoning_content");
     expect(body).not.toContain("\"toolCall\"");
     expect(body).not.toContain("\"toolResult\"");
@@ -1014,7 +1015,8 @@ describe("session transcript restore", () => {
     ]);
     expect(body).toContain("read");
     expect(body).toContain("tool-1");
-    expect(body).toContain("资料");
+    const record=JSON.parse((adapted[0] as any).content[0].text);
+    expect(JSON.parse(record.results[0].text)).toMatchObject({kind:'historical_read_reference',target:{path:'story.md'},contentOmitted:true});
     expect(body).not.toContain("I have processed the tool results.");
   });
 
@@ -1144,8 +1146,9 @@ describe("session transcript restore", () => {
     expect(body).not.toContain("\"toolCall\"");
     expect(body).toContain("先看角色。");
     const record=adapted.find((message:any)=>message.model==='historical-execution-record') as any;
-    expect(JSON.parse(record.content[0].text)).toMatchObject({kind:'historical_tool_results',results:[{toolName:'read',toolCallId:'tool-1',isError:false,text:'林默资料'}]});
-    expect(body).toContain("林默资料");
+    const result=JSON.parse(record.content[0].text);
+    expect(result).toMatchObject({kind:'historical_tool_results',results:[{toolName:'read',toolCallId:'tool-1',isError:false}]});
+    expect(JSON.parse(result.results[0].text)).toMatchObject({kind:'historical_read_reference',target:{path:'story/roles/林默.md'},contentOmitted:true});
   });
 
   it("派生 BookSession 时跳过没有正文的 assistant tool-use message", async () => {

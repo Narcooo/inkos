@@ -41,6 +41,12 @@ it('delivers verified image bytes through the harness and provider wire while pr
     const tool=createCapabilityPiTools({registry,profile:{...profile,capabilityIds:['workspace']},executeAction:(capabilityId,actionId,parameters)=>runtime.executeAction({handle,capabilityId,actionId,parameters,source:'agent'})})[0]!;
     await writeFile(join(root,'works/book/source/cover.png'),'unregistered working copy');
     const result=await tool.execute('image',{artifactId:image.id}),text=await tool.execute('brief',{artifactId:brief.id});
+    await writeFile(join(root,'works/book/source/reference.data'),png);
+    const external=await tool.execute('external-image',{path:'book/source/reference.data'});
+    expect(external.content[1]).toEqual(result.content[1]);
+    expect(JSON.parse((external.content[0] as {text:string}).text).facts).toMatchObject({kind:'file_image_read',path:'book/source/reference.data',checksum:image.revisions[0]!.checksum,byteLength:png.length});
+    await writeFile(join(root,'works/book/source/unreadable.bin'),Buffer.from([0,255,1]));
+    await expect(tool.execute('binary',{path:'book/source/unreadable.bin'})).rejects.toMatchObject({code:'WORK_FILE_NOT_TEXT'});
     expect(result.content[1]).toEqual({type:'image',mimeType:'image/png',data:png.toString('base64')});
     const facts=JSON.parse((result.content[0] as {text:string}).text).facts;
     expect(facts).toMatchObject({kind:'artifact_image_read',artifactId:image.id,revisionId:image.currentRevisionId,checksum:image.revisions[0]!.checksum,byteLength:png.length});
@@ -65,6 +71,40 @@ it('delivers verified image bytes through the harness and provider wire while pr
     runtime.finishEpisode(handle,'completed');
   }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));ledger.close();await rm(root,{recursive:true,force:true});}
 },20000);
+
+it('keeps source receipts across requests while retaining fresh read content and read failures',async()=>{
+  const {adaptRestoredAgentMessagesForModel}=await import('../interaction/session-transcript-restore.js');
+  const profile=createBuiltInWorkProfileRegistry().require('workspace-default');
+  const oldBody='\ufffdPNG\r\n\u0000'.repeat(10000);
+  const history:any[]=[
+    {role:'user',content:'Inspect the reference.',timestamp:1},
+    {role:'assistant',content:[{type:'toolCall',id:'old-read',name:'workspace__read',arguments:{path:'reference.png'}}]},
+    {role:'toolResult',toolCallId:'old-read',toolName:'workspace__read',content:[{type:'text',text:oldBody}],details:{path:'reference.png'},isError:false,timestamp:2},
+    {role:'assistant',content:[{type:'toolCall',id:'failed-read',name:'workspace__read',arguments:{artifactId:'missing'}}]},
+    {role:'toolResult',toolCallId:'failed-read',toolName:'workspace__read',content:[{type:'text',text:JSON.stringify({code:'ARTIFACT_NOT_FOUND'})}],isError:true,timestamp:3},
+    {role:'assistant',content:[{type:'toolCall',id:'unbound-read',name:'workspace__read',arguments:{artifactId:'draft'}}]},
+    {role:'toolResult',toolCallId:'unbound-read',toolName:'workspace__read',content:[{type:'text',text:'Legacy source without a Work identity.'}],isError:false,timestamp:3},
+  ];
+  const fresh:any[]=[
+    {role:'user',content:'Inspect the current cover.',timestamp:4},
+    {role:'assistant',content:[{type:'toolCall',id:'new-read',name:'workspace__read',arguments:{artifactId:'cover'}}]},
+    {role:'toolResult',toolCallId:'new-read',toolName:'workspace__read',content:[{type:'image',mimeType:'image/png',data:Buffer.from('fresh pixels').toString('base64')}],isError:false,timestamp:5},
+  ];
+  const original=JSON.stringify(history);
+  const transform=createHarnessContextTransform({projectRoot:'/tmp',work:null,profile,budgetTokens:8000});
+  const current=await transform([...history,...fresh]);
+  const old=current.find((m:any)=>m.toolCallId==='old-read') as any;
+  expect(JSON.parse(old.content[0].text)).toMatchObject({kind:'historical_read_reference',target:{path:'reference.png'},contentOmitted:true});
+  expect((current.find((m:any)=>m.toolCallId==='new-read') as any).content).toEqual(fresh[2].content);
+  expect((current.find((m:any)=>m.toolCallId==='failed-read') as any).content).toEqual(history[4].content);
+  expect((current.find((m:any)=>m.toolCallId==='unbound-read') as any).content).toEqual(history[6].content);
+  const restored=adaptRestoredAgentMessagesForModel(history,{api:'openai-completions',provider:'openai',id:'fixture'});
+  const records=restored.filter((m:any)=>m.model==='historical-execution-record').flatMap((m:any)=>JSON.parse(m.content[0].text).results);
+  expect(JSON.parse(records[0].text)).toMatchObject({kind:'historical_read_reference',target:{path:'reference.png'},contentOmitted:true});
+  expect(JSON.parse(records[1].text)).toEqual({code:'ARTIFACT_NOT_FOUND'});
+  expect(JSON.stringify(history)).toBe(original);
+  expect(JSON.stringify(restored).length).toBeLessThan(original.length/10);
+});
 
 it("preserves the failed worker stage through the ledger and model-facing tool boundary", async () => {
   const root = await mkdtemp(join(tmpdir(), "inkos-failure-context-"));

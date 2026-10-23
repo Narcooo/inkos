@@ -8,6 +8,7 @@ import {
   type PlayMode,
 } from "./session.js";
 import type { MessageEvent, SessionKind, TranscriptEvent } from "./session-transcript-schema.js";
+import {projectHistoricalReads} from './read-observation.js';
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object";
@@ -136,6 +137,7 @@ export function adaptRestoredAgentMessagesForModel(
   target: TargetModelIdentity,
 ): AgentMessage[] {
   const adapted: AgentMessage[] = [];
+  messages=projectHistoricalReads(messages);
 
   const pushHistoricalToolResults = (toolResults: AgentMessage[]) => {
     const results = toolResults.map((message) => {

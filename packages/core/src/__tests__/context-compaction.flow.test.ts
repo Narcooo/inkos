@@ -41,12 +41,10 @@ describe("context assembly mini-flow", () => {
     const transform=createHarnessContextTransform({projectRoot:'/tmp',work:null,profile:createBuiltInWorkProfileRegistry().require('workspace-default'),budgetTokens:220,
       conversationCompactor:async request=>{history=request.history;return 'The previous image was inspected.';}});
     const current={role:'user',content:'Export the approved files.',timestamp:5};
-    const delivered=await transform([{role:'user',content:'Inspect this image.',timestamp:1},
-      {role:'assistant',content:[{type:'toolCall',id:'read-image',name:'workspace__read',arguments:{artifactId:'cover'}}],timestamp:2},
-      {role:'toolResult',toolCallId:'read-image',toolName:'workspace__read',content:[image],isError:false,timestamp:3},
+    const delivered=await transform([{role:'user',content:[{type:'text',text:'Inspect this image.'},image],timestamp:1},
       {role:'assistant',content:[{type:'text',text:'Image inspection is complete.'}],timestamp:4},current] as never);
     const records=history.split('\n').map(line=>JSON.parse(line));
-    expect(records[2].content).toEqual([{type:'image_reference',mimeType:'image/png',byteLength:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex'),pixelsAvailable:false}]);
+    expect(records[0].content[1]).toEqual({type:'image_reference',mimeType:'image/png',byteLength:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex'),pixelsAvailable:false});
     expect(delivered.at(-1)).toEqual(current);
   });
 
