@@ -547,6 +547,10 @@ function estimateLLMMessagesTokens(messages: ReadonlyArray<LLMMessage>): number 
 
 type PiMessageContent = PiContext["messages"][number]["content"];
 
+// A conservative visual-input allowance, not a billing estimate. Base64 is
+// transport encoding and must never be counted as natural-language tokens.
+export const ESTIMATED_IMAGE_TOKENS = 4096;
+
 function estimatePiContentTokens(content: PiMessageContent): number {
   if (typeof content === "string") return estimateTextTokens(content);
   let total = 0;
@@ -567,7 +571,7 @@ function estimatePiContentTokens(content: PiMessageContent): number {
     }
     if (block.type === "image") {
       total += estimateTextTokens(typeof block.mimeType === "string" ? block.mimeType : "");
-      total += estimateTextTokens(typeof block.data === "string" ? block.data : "");
+      total += ESTIMATED_IMAGE_TOKENS;
       continue;
     }
     total += estimateJsonTokens(block);

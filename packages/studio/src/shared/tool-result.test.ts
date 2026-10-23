@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { summarizeToolResult } from "./tool-result";
+import { summarizeToolResult, exportedRevisionDownloads } from "./tool-result";
 
 describe("summarizeToolResult", () => {
+  it('pins export downloads to committed host revisions',()=>{
+    const facts={kind:'work_package_exported',workId:'book',path:'source/exports/delivery.zip'};
+    expect(exportedRevisionDownloads(facts)).toEqual([]);
+    const artifact={workId:'book',artifactId:'delivery',revisionId:'r1',path:facts.path};
+    expect(exportedRevisionDownloads({...facts,hostExecution:{status:'success',artifacts:[artifact]}})).toEqual([{...artifact,package:true}]);
+    expect(exportedRevisionDownloads({...facts,hostExecution:{status:'failed',artifacts:[artifact]}})).toEqual([]);
+    expect(exportedRevisionDownloads({...facts,hostExecution:{status:'success',artifacts:[{...artifact,workId:'other'}]}})).toEqual([]);
+  });
   it("reads Pi text content blocks", () => {
     expect(summarizeToolResult({ content: [{ type: "text", text: "This operation was aborted" }] }))
       .toBe("This operation was aborted");

@@ -243,7 +243,7 @@ it('regenerates a cover into the active canonical Work and preserves its earlier
     const grounded=await withExecutionEvidence(()=>{},()=>createGenerateCoverTool(root,{activeWorkId:'cover-test'}).execute('grounded',{title:'Fixture'}),undefined,undefined,authorRequest);
     expect(grounded.details).toMatchObject({coverImagePath:'works/cover-test/source/final/cover.png'});
     const renderingInput=JSON.parse(requests.at(-1)!.prompt.split('```json\n').at(-1)!.split('\n```')[0]!);
-    expect(renderingInput).toEqual({version:1,authorRequest,printedTitle:'Fixture',visualBrief:sales.coverPrompt,storyReference:{title:sales.title,synopsis:sales.intro,sellingPoints:sales.sellingPoints,sources:[currentReference]}});
+    expect(renderingInput).toEqual({version:1,authorRequest,printedTitle:'Fixture',visualBrief:sales.coverPrompt,storyReference:{title:sales.title,synopsis:sales.intro,sellingPoints:sales.sellingPoints}});
     expect(await readFile(join(base,'final/cover-request.md'),'utf8')).toBe(requests.at(-1)!.prompt+'\n');
     expect(await readFile(join(base,'final/sales-package.json'),'utf8')).toBe(JSON.stringify(sales));
     expect(requests).toHaveLength(4);

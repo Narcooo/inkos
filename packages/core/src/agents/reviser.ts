@@ -94,23 +94,22 @@ export class ReviserAgent extends BaseAgent {
       if(options.authorSource){
         scopeSource=body(options.authorSource.content);
         authorized=await resolveAuthorTextPermission({projectRoot:this.ctx.projectRoot,...options.authorSource,
-          originalContent:scopeSource,currentContent:chapterContent,authorRequest,selectorVersion:6,select});
+          originalContent:scopeSource,currentContent:chapterContent,authorRequest,selectorVersion:7,select});
       }else if(originalArtifact?.currentRevisionId&&baseline){
         const original=await readArtifactRevision({projectRoot:this.ctx.projectRoot,workId:baseline.id,artifactId:originalArtifact.id,revisionId:originalArtifact.currentRevisionId});
         scopeSource=body(original.bytes.toString('utf8'));
-        authorized=await resolveAuthorTextPermission({projectRoot:this.ctx.projectRoot,workId:baseline.id,artifactId:originalArtifact.id,revisionId:original.revision.id,originalContent:scopeSource,currentContent:chapterContent,authorRequest,selectorVersion:6,select});
+        authorized=await resolveAuthorTextPermission({projectRoot:this.ctx.projectRoot,workId:baseline.id,artifactId:originalArtifact.id,revisionId:original.revision.id,originalContent:scopeSource,currentContent:chapterContent,authorRequest,selectorVersion:7,select});
       }else authorized=authorTextScopeContract(chapterContent,await select(chapterContent,authorRequest));
     }
-    const scopedAuthorRequest = authorRequest && authorized && 'startOffset' in authorized.ranges[0]!
+    const scopedAuthorRequest = authorRequest && authorized
       ? authorRequest : undefined;
     const source=mode==='spot-fix'||authorized?numberReviewSource(chapterContent):chapterContent;
     const userPrompt = scopedAuthorRequest ? JSON.stringify({
       instruction: scopedAuthorRequest,
       chapterNumber,
-      // The coordinator can refine a failed attempt without changing the
-      // author's permission. Keep its advice separate from factual references;
-      // the original source selections below still enforce the edit boundary.
-      ...(options.instruction?.trim() ? {revisionGuidance: {
+      // A localized edit executes the original request directly. A second
+      // creative plan can substitute a different subject within the same bytes.
+      ...(options.instruction?.trim() && !('startOffset' in authorized!.ranges[0]!) ? {revisionGuidance: {
         source: 'coordinator',
         instruction: options.instruction,
         authority: 'advice_within_author_scope',
@@ -133,7 +132,7 @@ export class ReviserAgent extends BaseAgent {
     if(options.candidateText)messages.push({role:'user',content:JSON.stringify({unfinishedCandidate:body(options.candidateText),instruction:'Continue improving this unfinished candidate toward the original request. The original chapter remains authoritative for facts and protected text. Return only the requested replacement fields or complete revision; do not restart from the original when this candidate already addresses part of the task.'})});
     const outputBudget = Math.min(this.ctx.client.defaults.maxTokens, Math.max(8192, Math.ceil((options.lengthSpec?.target ?? chapterContent.length) * 4) + 8192));
     const output = authorized || mode === "spot-fix" || options.targetText!==undefined
-      ? await this.submitSpotFix(messages, scopeSource, outputBudget, options.lengthSpec,options.targetText,options.onCandidate,authorized)
+      ? await this.submitSpotFix(messages, chapterContent, outputBudget, options.lengthSpec,options.targetText,options.onCandidate,authorized)
       : await this.submitRewrite(messages, outputBudget, options.lengthSpec,body,options.onCandidate);
     const wordCount = options.lengthSpec
       ? countChapterLength(output.revisedContent, options.lengthSpec.countingMode)
@@ -202,7 +201,7 @@ export class ReviserAgent extends BaseAgent {
         }
         return result;
       },
-    }, {  maxTokens });
+    }, {maxTokens,professionalGuidance:!(authorized&&'startOffset' in authorized.ranges[0]!)});
     const revisedContent = contract.apply(result);
     return {
       revisedContent,

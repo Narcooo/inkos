@@ -168,7 +168,7 @@ it('preserves inline author permission through a broad manuscript flag, length f
     expect(planningInput.revisionGuidance.authority).toBe('advice_within_author_scope');
     expect(finalInput.instruction).toBe(request);
     expect(finalInput.references.map((reference:any)=>reference.source)).toEqual(['original-manuscript']);
-    expect(finalInput.revisionGuidance.authority).toBe('advice_within_author_scope');
+    expect(finalInput.revisionGuidance).toBeUndefined();
     expect(calls.filter(c=>c.name==='submit_short_revision_title')).toHaveLength(1);
   }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));}
 },20000);
@@ -193,7 +193,9 @@ it('requires package and manuscript evidence before accepting a package issue',a
   try{
     const client=createLLMClient({service:'custom',provider:'openai',configSource:'studio',model:'fixture',apiKey:'fixture',baseUrl:`http://127.0.0.1:${(server.address() as {port:number}).port}/v1`,apiFormat:'chat',stream:false,thinkingBudget:0});
     const before=JSON.stringify({draft,sales});
-    const result=await new ShortFictionDraftReviewerAgent({client,model:'fixture',projectRoot:root}).reviewPackage({draft,sales,language:'en'});
+    const evidence:Array<{type:string;payload:Record<string,unknown>}>=[];
+    const result=await withExecutionEvidence((type,payload)=>evidence.push({type,payload}),()=>new ShortFictionDraftReviewerAgent({client,model:'fixture',projectRoot:root}).reviewPackage({draft,sales,language:'en'}));
+    expect(evidence.filter(event=>event.type==='skills-applied').map(event=>event.payload.skills)).toEqual([[]]);
     const feedback=requests.at(-1).messages.filter((message:any)=>message.role==='tool').map((message:any)=>JSON.parse(message.content));
     expect(feedback.map((value:any)=>value.code)).toEqual(['SHORT_PACKAGE_REVIEW_PAIR_REQUIRED','SHORT_PACKAGE_REVIEW_PAIR_REQUIRED',finding.code]);
     expect(result.observations).toMatchObject([{...finding,sourceRefs:[{sourceId:'package',quote:sales.intro},{sourceId:'manuscript',quote:draft.chapters[0]!.content}]}]);

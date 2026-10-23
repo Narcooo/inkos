@@ -5,6 +5,7 @@ export const TextEditRangeSchema=Type.Object({startLine:Type.Integer({minimum:1}
 export type TextEditRange={startLine:number;endLine:number};
 export const TextEditSelectionSchema=Type.Object({startLine:Type.Integer({minimum:1}),endLine:Type.Integer({minimum:1}),text:Type.String({minLength:1})});
 export type TextEditSelection=TextEditRange&{text:string;singleLine?:boolean};
+type OffsetSelection=TextEditSelection&{content:string;protectedPrefix:string;protectedSuffix:string;startOffset:number;endOffset:number};
 
 /** Line bounds disambiguate repeated phrases; exact text protects other content on the same line. */
 export function textScopedSelectionEditContract(content:string,selections:readonly TextEditSelection[]){
@@ -16,7 +17,23 @@ export function textScopedSelectionEditContract(content:string,selections:readon
     const offset=lines.slice(0,selection.startLine-1).join('').length;
     return{...selection,content:selection.text,protectedPrefix:region.slice(0,local.startOffset),protectedSuffix:region.slice(local.endOffset),startOffset:offset+local.startOffset,endOffset:offset+local.endOffset};
   }).sort((a,b)=>a.startOffset-b.startOffset);
-  if(!spans.length||spans.some((s,i)=>i>0&&s.startOffset<spans[i-1]!.endOffset))throw Object.assign(new Error('Editable text selections must be non-overlapping'),{code:'ARTIFACT_EDIT_RANGE_INVALID'});
+  return selectionContract(content,spans);
+}
+
+/** Recovered permissions already have exact offsets, including empty spans
+ * left by an earlier deletion. They do not require another text search. */
+export function textOffsetSelectionEditContract(content:string,ranges:readonly {startOffset:number;endOffset:number;singleLine?:boolean}[]){
+  const lines=splitSourceLines(content),offsets=[0];for(const line of lines)offsets.push(offsets.at(-1)!+line.length);
+  const lineAt=(offset:number)=>{let index=0;while(index+1<lines.length&&offsets[index+1]!<=offset)index++;return index+1;};
+  return selectionContract(content,ranges.map(range=>{
+    const startLine=lineAt(range.startOffset),endLine=lineAt(Math.max(range.startOffset,range.endOffset-1));
+    const text=content.slice(range.startOffset,range.endOffset);
+    return{...range,startLine,endLine,text,content:text,protectedPrefix:content.slice(offsets[startLine-1],range.startOffset),protectedSuffix:content.slice(range.endOffset,offsets[endLine])};
+  }));
+}
+
+function selectionContract(content:string,spans:readonly OffsetSelection[]){
+  if(!spans.length||spans.some((s,i)=>!Number.isInteger(s.startOffset)||!Number.isInteger(s.endOffset)||s.startOffset<0||s.endOffset<s.startOffset||s.endOffset>content.length||(i>0&&s.startOffset<spans[i-1]!.endOffset)))throw Object.assign(new Error('Editable text selections must be non-overlapping source offsets'),{code:'ARTIFACT_EDIT_RANGE_INVALID'});
   return{
     ranges:spans.map((span,index)=>({...span,index})),
     parameters:Type.Object(Object.fromEntries(spans.map((span,index)=>[`selection_${index}_text`,Type.String({description:'Replacement characters for content only. The protectedPrefix and protectedSuffix are already retained; do not reproduce or rewrite them.'})])),{additionalProperties:false}),

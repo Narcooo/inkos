@@ -12,8 +12,10 @@ import {
   ChevronDown,
   Wrench,
   Check,
+  Download,
 } from "lucide-react";
 import { buildApiUrl } from "../../hooks/use-api";
+import {exportedRevisionDownloads} from '../../shared/tool-result';
 import { tr } from "../../lib/app-language";
 import { chatSelectors, useChatStore } from "../../store/chat";
 import { usePreferencesStore } from "../../store/preferences";
@@ -863,11 +865,25 @@ function PlayEditPreview({ exec }: { exec: ToolExecution }) {
 }
 
 function hasStructuredResultPreview(exec: ToolExecution): boolean {
+  if(exportedRevisionDownloads(exec.details).length)return true;
   if (getProposedActionDetails(exec)) return true;
   if (getPlayToolDetails(exec)?.sceneText) return true;
   if (getChapterRevisionDetails(exec)) return true;
   if (getChapterStateResyncDetails(exec)) return true;
   return Boolean(getPlayEditDetails(exec));
+}
+
+function ExportDownloadPreview({exec}:{exec:ToolExecution}){
+  const artifacts=exec.status==='completed'?exportedRevisionDownloads(exec.details):[];
+  if(!artifacts.length)return null;
+  return <div className="mx-3 mb-3 mt-1 flex flex-wrap gap-2 rounded-xl border border-primary/20 bg-primary/5 px-3 py-3">
+    {artifacts.map(artifact=><a key={`${artifact.workId}/${artifact.artifactId}/${artifact.revisionId}`}
+      href={buildApiUrl(`/works/${encodeURIComponent(artifact.workId)}/artifacts/${encodeURIComponent(artifact.artifactId)}/revisions/${encodeURIComponent(artifact.revisionId)}?download=1`)}
+      download={artifact.path.split('/').pop()} className="inline-flex items-center gap-2 rounded-md border border-primary/30 px-3 py-2 text-sm font-medium text-primary hover:bg-primary/10">
+      <Download size={16}/>{artifact.package?tr('下载交付包','Download package'):tr('下载文件','Download file')}
+      {artifacts.length>1&&<span>{artifact.path.split('/').pop()}</span>}
+    </a>)}
+  </div>;
 }
 
 function isPipelineTool(tool: string): boolean {
@@ -982,6 +998,7 @@ function PipelineExecution({
       <ScriptStoryboardResultPreview exec={exec} onOpenFilmStudio={onOpenFilmStudio} />
       <PlayResultPreview exec={exec} />
       <PlayEditPreview exec={exec} />
+      <ExportDownloadPreview exec={exec}/>
       <ChapterContextTracePreview exec={exec} />
       <ChapterRevisionPreview exec={exec} />
       <ChapterStateResyncPreview exec={exec} />

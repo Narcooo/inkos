@@ -1053,7 +1053,9 @@ export async function generateShortFictionCover(
   const storySources: CoverStorySource[] = [];
   const sourceMaterial = work.artifacts.find(artifact => artifact.revisions.some(revision =>
     revision.id === artifact.currentRevisionId && revision.path === 'source/source-material.md'));
-  if (sourceMaterial) {
+  // A packaged Work already describes its current story. Its imported source
+  // material may instead contain examples or parent stories used during writing.
+  if (sourceMaterial && !persistedPackage) {
     const {bytes, revision} = await readArtifactRevision({projectRoot: options.projectRoot, workId, artifactId: sourceMaterial.id});
     storySources.push({artifactId: sourceMaterial.id, revisionId: revision.id, checksum: revision.checksum, content: bytes.toString('utf8')});
   }
@@ -1239,7 +1241,7 @@ async function generateCoverImageArtifact(input: {
   const size = input.coverSize || process.env.INKOS_COVER_SIZE || "1024x1360";
   const available = await loadAvailableAgentSkills({ projectRoot: input.root });
   const skills = new Map(available.skills.map(skill => [skill.id, skill]));
-  const skillIds = input.outputDir.endsWith("final") ? ["inkos-story-cover", "inkos-short-writing"] : ["inkos-story-cover"];
+  const skillIds = ["inkos-story-cover"];
   const activations = skillIds.map(id => {
     const skill = skills.get(id);
     if (!skill) throw new Error(`Required cover Skill unavailable: ${id}`);

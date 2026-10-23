@@ -10,6 +10,7 @@ export const AuthorTextScopeSchema=Type.Object({
     text:Type.String({description:'Empty selects the complete source unit. For a partial-line edit, copy only the exact editable substring.'}),
   },{additionalProperties:false})),
   reason:Type.String({description:'Identify the author-authorized units and protected boundaries.'}),
+  focus:Type.Optional(Type.Array(Type.Object({id:Type.String(),name:Type.String(),description:Type.String()},{additionalProperties:false}))),
 },{additionalProperties:false});
 export type AuthorTextScope=Static<typeof AuthorTextScopeSchema>;
 
@@ -48,10 +49,12 @@ export function authorTextScopeRequest(content:string,authorRequest:string,docum
   };
 }
 
-export function authorTextScopeContract(content:string,result:AuthorTextScope){
+export type AuthorTextEditContract=(ReturnType<typeof textRangeEditContract>|ReturnType<typeof textScopedSelectionEditContract>)&{focus:NonNullable<AuthorTextScope['focus']>;originalSelectionTexts?:readonly string[]};
+
+export function authorTextScopeContract(content:string,result:AuthorTextScope):AuthorTextEditContract{
   if(result.wholeDocument){
     if(result.selections.length)throw new Error('Whole-document scope must not also select partial text');
-    return textRangeEditContract(content,[{startLine:1,endLine:splitSourceLines(content).length}]);
+    return {...textRangeEditContract(content,[{startLine:1,endLine:splitSourceLines(content).length}]),focus:result.focus??[]};
   }
   const {byId}=sourceUnits(content);
   const selections=result.selections.map(selection=>{
@@ -60,7 +63,7 @@ export function authorTextScopeContract(content:string,result:AuthorTextScope){
     const inlineFragment = Boolean(selection.text && selection.text !== unit.text && unit.startLine === unit.endLine);
     return{...unit,text:selection.text||unit.text,singleLine:selection.unitId.includes('.l')||inlineFragment};
   });
-  return textScopedSelectionEditContract(content,selections);
+  return {...textScopedSelectionEditContract(content,selections),focus:result.focus??[]};
 }
 
 /** Independent requested targets may overlap; their union never adds source bytes. */
@@ -88,5 +91,5 @@ export function mergeAuthorTextScopes(content:string,scopes:readonly AuthorTextS
 /** Report the same source selections enforced by the host to the coordinator. */
 export function authorEditPermission(scope:ReturnType<typeof authorTextScopeContract>|undefined){
   if(!scope||!('startOffset' in scope.ranges[0]!))return undefined;
-  return {basis:'original_author_request' as const,selectedOriginalText:scope.ranges.map(range=>range.content),surroundingText:'protected' as const};
+  return {basis:'original_author_request' as const,selectedOriginalText:scope.originalSelectionTexts??scope.ranges.map(range=>range.content),surroundingText:'protected' as const,...(scope.focus.length?{focus:scope.focus}:{})};
 }

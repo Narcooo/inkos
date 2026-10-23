@@ -1,7 +1,7 @@
 import {authorTextScopeContract,authorEditPermission} from '../../agents/author-edit-scope.js';
 import {SourceLocatorAgent,type SourceIdentity} from '../../agents/source-locator.js';
-import {resolveAuthorTextPermission} from '../author-text-permission.js';
-import {scriptDialogueScopeRequest} from '../../agents/script-edit-scope.js';
+import {resolveAuthorTextPermission,narrowAuthorTextPermission} from '../author-text-permission.js';
+import {scriptDialogueScopeRequest,scriptSelectionContexts,scriptSubjectRequest} from '../../agents/script-edit-scope.js';
 import { numberReviewSource } from "../../models/observation.js";
 import { Type } from "@sinclair/typebox";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
@@ -17,7 +17,7 @@ import { syncWorkSourceArtifacts } from "../source-sync.js";
 import { createReplaceWorkArtifactTool, createExportWorkTool } from "./work-artifacts.js";
 import { validatedArtifactWrites } from "../artifact-validation.js";
 import {assertGenericArtifactEditable} from '../artifact-edit-policy.js';
-import { changedSourceRegion, measureSourceText, splitSourceLines } from "../../utils/source-text.js";
+import { changedSourceRegion, measureSourceText } from "../../utils/source-text.js";
 import {textRangeEditContract,textScopedSelectionEditContract,TextEditRangeSchema,type TextEditRange} from '../../utils/text-range-edits.js';
 import { readArtifactRevision } from "../artifact-reader.js";
 import { currentExecutionBaselineWork, currentExecutionAuthorRequest, updateExecutionWork } from "../execution-evidence.js";
@@ -88,8 +88,10 @@ type EditRange=TextEditRange;
 class ArtifactWorker extends BaseAgent {
   get name() { return "artifact-method"; }
   async selectAuthorScope(content: string, authorRequest: string, script=false,identity:SourceIdentity={kind:'artifact'}) {
-    const dialogue=script?scriptDialogueScopeRequest(content,authorRequest):undefined;
-    if(dialogue){
+    const subjects=script?scriptSubjectRequest(content,authorRequest):undefined;
+    if(subjects){
+      const focus=await this.submitStructured(subjects.messages,subjects.tool,{maxTokens:Math.min(1024,this.ctx.client.defaults.maxTokens),professionalGuidance:false});
+      const dialogue=scriptDialogueScopeRequest(content,authorRequest,focus.result.focusSpeakerIds)!;
       const selected=await this.submitStructured(dialogue.messages,dialogue.tool,{maxTokens:Math.min(4096,this.ctx.client.defaults.maxTokens),professionalGuidance:false});
       return dialogue.toAuthorScope(selected.result);
     }
@@ -124,11 +126,15 @@ class ArtifactWorker extends BaseAgent {
         {role:"system",content:textSelections
           ? 'Revise only each exact selected text fragment. A selection may be part of a source line. The full document and protectedPrefix/protectedSuffix are read-only context and will remain around your replacement. Return only replacement characters for each content value in its named selection_N_text field. Do not repeat the protected prefix/suffix or add surrounding labels, annotations, formatting or line breaks that are outside the selection.'
           : "Revise only the numbered editable ranges using the user's instruction and professional methods. The full document is context. Return each range's replacement in its named range_N_content field, retaining the original trailing newline when present. Do not repeat or modify surrounding text."},
-        {role:"user",content:JSON.stringify({instruction:authorRequest&&textSelections?authorRequest:instruction,
-          ...(authorRequest&&textSelections&&instruction.trim()!==authorRequest.trim()?{revisionGuidance:{source:'coordinator',instruction,authority:'advice_within_author_scope'}}:{}),
+        {role:"user",content:JSON.stringify({instruction:authorRequest??instruction,
+          ...('focus' in contract&&Array.isArray(contract.focus)&&contract.focus.length?{authorFocus:contract.focus}:{}),
+          ...(authorRequest&&!textSelections&&instruction.trim()!==authorRequest.trim()?{revisionGuidance:{source:'coordinator',instruction,authority:'advice_within_author_scope'}}:{}),
           measurements:measureSourceText(content),document:numberReviewSource(content),...(textSelections?{editableSelections:contract.ranges}:{editableRanges:contract.ranges}),references:[...references].map(([sourceId,content])=>({sourceId,content}))})},
       ],{name:"submit_artifact_revision",label:"Submit scoped artifact revision",description:"Submit only replacement text for each authorized range.",parameters:contract.parameters,
-        validate:result=>{contract.apply(result);return result;}},{maxTokens:this.ctx.client.defaults.maxTokens});
+        validate:result=>{
+          contract.apply(result);
+          return result;
+        }},{maxTokens:this.ctx.client.defaults.maxTokens,professionalGuidance:!(authorScope&&textSelections)});
       return{content:contract.apply(response.result)};
     }
     return (await this.submitStructured([
@@ -143,7 +149,7 @@ export function createArtifactMethodTools(pipeline: PipelineRunner, root: string
     artifactsCommitted: true,
     name: `${mode}_work_artifact`, label: `${mode} work artifact`, parameters: Parameters,
     description: mode === 'review'
-      ? "Review a selected artifact without exporting it. If the user requests both review and export, use review_and_export_work_artifact. An explicit candidate/history revisionId records evidence without adopting it."
+      ? "Review a selected text or JSON artifact without exporting it. Inspect image pixels through workspace__read; this text-review action does not accept images. If the user requests both review and export, use review_and_export_work_artifact. An explicit candidate/history revisionId records evidence without adopting it."
       : "Revise a current artifact using this Work's professional Skills. For a localized Markdown edit, first read and supply exact editRanges; the host preserves surrounding bytes. Inspect the returned changedRegion before claiming the requested edit succeeded: it shows actual changes, which may differ from the request.",
     async execute(id, params, signal, onUpdate) {
       const work = await loadWorkManifest(root, workId);
@@ -214,7 +220,14 @@ export function createArtifactMethodTools(pipeline: PipelineRunner, root: string
           if(originalArtifact?.currentRevisionId&&authorRequest?.trim()&&revision.path.endsWith('.md')){
             const original=await readArtifactRevision({projectRoot:root,workId,artifactId:artifact.id,revisionId:originalArtifact.currentRevisionId});
             const selector=new ArtifactWorker(pipeline.createAgentContext('auditor',workId));
-            authorScope=await resolveAuthorTextPermission({projectRoot:root,workId,artifactId:artifact.id,revisionId:original.revision.id,originalContent:original.bytes.toString('utf8'),currentContent:content,authorRequest,selectorVersion:artifact.kind==='script'?8:6,select:(source,request)=>selector.selectAuthorScope(source,request,artifact.kind==='script',{kind:'artifact',title:work.title,path:original.revision.path})});
+            const originalContent=original.bytes.toString('utf8');
+            authorScope=await resolveAuthorTextPermission({projectRoot:root,workId,artifactId:artifact.id,revisionId:original.revision.id,originalContent,currentContent:content,authorRequest,selectorVersion:artifact.kind==='script'?12:7,select:(source,request)=>selector.selectAuthorScope(source,request,artifact.kind==='script',{kind:'artifact',title:work.title,path:original.revision.path})});
+            if(params.editRanges)authorScope=narrowAuthorTextPermission(content,authorScope,params.editRanges);
+            if(artifact.kind==='script'&&'startOffset' in authorScope.ranges[0]!){
+              const selections=authorScope as ReturnType<typeof textScopedSelectionEditContract>;
+              const contexts=scriptSelectionContexts(content,selections.ranges);
+              authorScope={...authorScope,ranges:selections.ranges.map((range,index)=>({...range,...(contexts[index]?{scriptContext:contexts[index]}:{})}))};
+            }
           }
           let result: { content: string };
           try {

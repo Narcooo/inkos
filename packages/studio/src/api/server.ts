@@ -247,6 +247,8 @@ const TOOL_LABELS: Record<string, BilingualLabel> = {
   review_chapter: { zh: "审查章节", en: "Review chapter" },
   revise_chapter: { zh: "修订章节", en: "Revise chapter" },
   export_book: { zh: "导出作品", en: "Export Work" },
+  export_work: { zh: "导出文稿", en: "Export manuscript" },
+  export_work_package: { zh: "导出交付包", en: "Export delivery package" },
   create_narrative_forecast: { zh: "剧情多线推演", en: "Narrative forecast" },
   get_narrative_forecast: { zh: "核验剧情推演", en: "Recheck forecast" },
   select_narrative_branch: { zh: "采用候选分支", en: "Select candidate branch" },
@@ -2799,6 +2801,10 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       if (!artifact || !revision) return c.json({ error: "Artifact revision not found" }, 404);
       const bytes = await readFile(safeChildPath(workDirectory(root, id), revision.snapshotPath ?? revision.path));
       if (`sha256:${createHash("sha256").update(bytes).digest("hex")}` !== revision.checksum) throw new ApiError(409, "ARTIFACT_SNAPSHOT_UNAVAILABLE", "Revision content does not match its recorded checksum");
+      if(c.req.query('download')==='1')return new Response(new Uint8Array(bytes),{headers:{
+        'Content-Type':revision.contentType,
+        'Content-Disposition':attachmentDisposition(revision.path.split('/').pop()||artifact.id),
+      }});
       const textLike = revision.contentType.startsWith("text/")
         || revision.contentType === "application/json";
       return c.json({

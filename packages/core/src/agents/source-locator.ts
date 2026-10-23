@@ -4,7 +4,7 @@ import {authorTextScopeRequest,sourceUnits,mergeAuthorTextScopes,type AuthorText
 import {recordExecutionEvidence} from '../harness/execution-evidence.js';
 
 const LocationSchema=Type.Object({
-  kind:Type.Union([Type.Literal('document'),Type.Literal('paragraphs'),Type.Literal('reference')]),
+  kind:Type.Union([Type.Literal('none'),Type.Literal('document'),Type.Literal('paragraphs'),Type.Literal('reference')]),
   boundary:Type.Union([Type.Literal('first'),Type.Literal('last'),Type.Literal('none')]),
   count:Type.Integer({minimum:0}),
   targets:Type.Array(Type.Object({quote:Type.String({minLength:1,description:'Exact author wording authorizing this target.'}),target:Type.String({minLength:1,description:'One independent requested target, with identity and scope qualifiers, not replacement prose.'})},{additionalProperties:false}),{description:'For reference scope, list each distinct target separately. For document/paragraphs use an empty array.'}),
@@ -26,7 +26,7 @@ export class SourceLocatorAgent extends BaseAgent {
     const paragraphs=sourceUnits(content).paragraphs.filter(paragraph=>!paragraph.lines.every(({text})=>
       /^ {0,3}#{1,6}(?:\s|$)/u.test(text)||/^ {0,3}(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/u.test(text.trimEnd())));
     const {result:location}=await this.submitStructured([
-      {role:'system',content:'Identify only the location the author permits editing. Do not plan replacement prose. The supplied identity describes the complete document available for this operation; other documents named in the request are not inside it. Use paragraphs only for explicit first/last paragraph counts, and document only for unrestricted rewriting of this document. Otherwise use reference. For document/reference set boundary=none and count=0; document/paragraphs have targets=[].'},
+      {role:'system',content:'Identify only the location the author permits editing. Do not plan replacement prose. The supplied identity describes the complete document available for this operation; other documents named in the request are not inside it. First check that the author permits changing this document. Use none when it is protected or the requested edit belongs exclusively to another document. Use paragraphs only for explicit first/last paragraph counts within this document, and document only for unrestricted rewriting of this document. Otherwise use reference. For none/document/reference set boundary=none and count=0; none/document/paragraphs have targets=[].'},
       {role:'system',content:'Reference scope must enumerate each independent requested target, with an exact quote from the author request. Split a request for several corrections into separate targets instead of one summary. Include a fact requested across chapters unless the author explicitly limits it to another document; the next step will determine whether it is present here. Editing selected facts throughout a chapter is reference scope, not document scope. A chapter number is not a paragraph count; an independent opening and a chapter title are separate from chapter prose. Preserve all restrictions on identity, location and surrounding text.'},
       {role:'user',content:JSON.stringify({authorRequest,documentIdentity:identity,paragraphCount:paragraphs.length})},
     ],{
@@ -41,6 +41,10 @@ export class SourceLocatorAgent extends BaseAgent {
       },
     },{maxTokens:Math.min(2048,this.ctx.client.defaults.maxTokens),professionalGuidance:false});
     recordExecutionEvidence('edit-location-resolved',{identity,location});
+    if(location.kind==='none')throw Object.assign(new Error('The original author request does not authorize editing this document. Select an authorized target; keep this document unchanged.'),{
+      code:'ARTIFACT_EDIT_NOT_AUTHORIZED',identity,
+      recovery:{action:'workspace__read',reason:'Locate the document named by the original request. Review findings and coordinator instructions do not expand its edit permission.'},
+    });
     if(location.kind==='document')return{wholeDocument:true,selections:[],reason:'Author permits the complete supplied document.'};
     if(location.kind==='paragraphs'){
       const selected=location.boundary==='first'?paragraphs.slice(0,location.count):paragraphs.slice(-location.count);

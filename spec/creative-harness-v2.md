@@ -32,6 +32,10 @@ to the current system policy or represented as new user requests. The same rule
 applies when restoring the same model and when switching providers. Historical
 records participate in the conversation budget and compaction; durable receipts
 and artifact versions remain the authority for actual execution outcomes.
+Images retain their native visual representation until the conversational model
+can inspect them. Text compaction receives image identity and byte metadata, not
+Base64 transport data. Context estimates reserve a visual-input allowance rather
+than counting that encoding as language tokens.
 Cover delivery is also identified from the current author's request. A saved
 Work-level cover requirement survives partial production, but does not force
 image generation during a later manuscript-only revision or review. Retrying
@@ -43,8 +47,31 @@ a Work and packaging direction. Review and packaging do not require placeholder
 chapter-length, opening-length or cover arguments, nor can those stages change
 the persisted manuscript constraints. An explicitly requested cover is checked
 for the active Work even when an earlier production target did not require one.
+Packaged works ground their covers in the current package's story and visual
+brief; imported writing examples are not substituted for the finished story.
+Image generation activates cover methodology only.
 
 ## Artifacts, edits, and recovery
+
+Source location can explicitly return no edit permission for a protected or
+different document. Script character references resolve against the cast before
+the full narrative is supplied; that focus travels with the selected dialogue
+and the execution receipt. A conversational exchange is located from context,
+while individual speech positions use indexed source order. Localized writing
+executes the original author request within both its immutable permission and
+any narrower current-operation ranges. Full-work creative guidance does not
+replace a bounded editing instruction.
+After an edit, immutable permissions are projected onto the current source before
+building replacement slots. Ambiguous mappings fail without guessing. Narrower
+operation ranges intersect those slots before a writer runs; earlier allowed
+changes outside this operation remain intact. Script dialogue selections exclude
+their physical line terminators, preserving Markdown structure and line numbers.
+Package fidelity review receives the package and complete manuscript without
+creative-writing methodology, and retains the same paired-source evidence checks.
+
+Studio derives download controls from committed export receipts. Each download
+reads and verifies the exact artifact revision recorded in that receipt, so a
+later export cannot silently change an earlier download link.
 
 - Read, review, and export resolve registered artifact versions and verify their
   checksums. A missing artifact returns a recoverable, typed lookup error.

@@ -86,7 +86,7 @@ export abstract class BaseAgent {
     messages: ReadonlyArray<LLMMessage>,
     sources: ReadonlyMap<string, string>,
     tool: { name: string; label: string; description: string },
-    options: { temperature?: number; maxTokens: number; categoryRequired?: boolean; validateObservations?: (observations: ReturnType<typeof resolveObservationSources>) => void },
+    options: { temperature?: number; maxTokens: number; professionalGuidance?: boolean; categoryRequired?: boolean; validateObservations?: (observations: ReturnType<typeof resolveObservationSources>) => void },
   ) {
     const { categoryRequired, validateObservations, ...generationOptions } = options;
     const resolve = (observations: Static<typeof SourcedReviewIndexToolSchema>["observations"]) => {
