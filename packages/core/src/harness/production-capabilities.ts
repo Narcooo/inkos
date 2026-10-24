@@ -55,6 +55,7 @@ import {
   createWriteChaptersTool,
 } from "./tools/longform-production.js";
 import { createExportBookTool } from "./tools/export-book.js";
+import { resolveOperationEvidence } from "./operation-receipts.js";
 import {
   createPatchChapterTextTool,
   createRenameEntityTool,
@@ -67,7 +68,7 @@ import {
   createTranslationRunTool,
   createTranslationRevisionTool,
 } from "./tools/translation.js";
-import { createReplaceWorkArtifactTool, createExportWorkTool } from "./tools/work-artifacts.js";
+import { createReplaceWorkArtifactTool, createExportWorkTool, createExportWorkPackageTool } from "./tools/work-artifacts.js";
 import { createFilmAuthoringTools, filmLLMDepsFromClient } from "../agent/film-authoring-tools.js";
 import {
   createNarrativeForecastCreateTool,
@@ -123,7 +124,7 @@ export interface ProductionCapabilityEnvironment {
   readonly confirmedCreation?: boolean;
 }
 
-type ProductionAgentTool = AgentTool<any, any> & { readonly artifactsCommitted?: boolean; readonly managesWorkLock?: boolean };
+type ProductionAgentTool = AgentTool<any, any> & { readonly artifactsCommitted?: boolean; readonly managesWorkLock?: boolean; readonly draftSourcePaths?:ReadonlyArray<string> };
 
 function withoutInlineImportSource(tool:ReturnType<typeof createImportChaptersTool>):ProductionAgentTool {
   return {...tool,parameters:Type.Omit(tool.parameters,['sourceText'],{additionalProperties:false})};
@@ -224,6 +225,7 @@ export function createProductionCapabilityRegistry(
     workspaceTools.push(committedAction(createReplaceWorkArtifactTool(environment.projectRoot, environment.work.id)));
     workspaceTools.push(committedAction(createDeliverWorkArtifactTool(environment.pipeline, environment.projectRoot, environment.work.id)));
     workspaceTools.push(committedAction(createExportWorkTool(environment.projectRoot, environment.work.id)));
+    workspaceTools.push(committedAction(createExportWorkPackageTool(environment.projectRoot, environment.work.id)));
   }
   if (environment.work) workspaceTools.push(...createArtifactMethodTools(environment.pipeline, environment.projectRoot, environment.work.id).map(committedAction));
   if (environment.intentSkillTool) workspaceTools.push(readAction(environment.intentSkillTool));
@@ -299,13 +301,15 @@ export function createProductionCapabilityRegistry(
     ...(environment.work && createBuiltInWorkProfileRegistry(environment.projectRoot).require(environment.work.profileId).capabilityIds.includes("short-fiction") ? [writeAction(createShortFictionReviseTool(environment.pipeline,environment.projectRoot,environment.work.id,{
       defaultSkills:environment.profileSkills?.(environment.work?.profileId ?? "short-fiction"),activeSkills:environment.activeSkills,
     }))] : []),
-    confirmedAction(createShortFictionRunTool(environment.pipeline, environment.projectRoot, {
+    // Free-text authorship uses explicit stages after Work/source creation.
+    // Keep the combined entry point for the confirmed legacy action only.
+    ...(environment.confirmedCreation ? [confirmedAction(createShortFictionRunTool(environment.pipeline, environment.projectRoot, {
       actionPayload: environment.actionPayload,
       activeWorkId: environment.work?.id,
       language: lang,
       defaultSkills: environment.profileSkills?.(environment.work?.profileId ?? "short-fiction"),
       activeSkills: environment.activeSkills,
-    })),
+    }))] : []),
   ]);
   registerToolCapability(registry, "script", "Script creation", [
     ...scopedProduction(createScriptCreationTool(environment.pipeline, environment.projectRoot, {
@@ -518,6 +522,7 @@ function toolBackedAction(spec: ProductionToolAction) {
     risk,
     requiresConfirmation,
     managesWorkLock: tool.managesWorkLock,
+    draftSourcePaths: tool.draftSourcePaths,
     parameters: tool.parameters ?? Type.Any(),
     async execute(context: CapabilityExecutionContext, input: unknown): Promise<ActionResult> {
       const before = await loadKnownWork(context.projectRoot, context.work?.id);
@@ -560,6 +565,7 @@ async function normalizeToolResult(
     .map((item) => item.text)
     .join("\n")
     .trim();
+  const images = result.content.filter(item => item.type === 'image');
   const details = result.details;
   const isError = (result as { isError?: boolean }).isError === true;
   const workIds = new Set<string>();
@@ -610,14 +616,17 @@ async function normalizeToolResult(
     }
   }
   if (isError) throw new Error(content || "Capability tool execution failed.");
-  const observations = extractObservations(details);
+  const {observations,operationReceipts} = await resolveOperationEvidence(context.projectRoot, details, extractObservations(details));
   return ActionResultSchema.parse({
     status: "success",
     summary,
     ...(content ? { content } : {}),
+    ...(images.length ? {images} : {}),
     artifacts,
     observations,
-    ...(details === undefined ? {} : { data: details }),
+    ...(operationReceipts.length ? {operationReceipts} : {}),
+    ...(details === undefined ? {} : { data: details && typeof details==='object' && 'observations' in details
+      ? {...details,observations}:details }),
   });
 }
 

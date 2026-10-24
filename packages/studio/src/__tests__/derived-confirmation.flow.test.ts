@@ -18,18 +18,18 @@ it('preserves a confirmed source revision and chapter bounds through the actual 
   await writeFile(join(root,'.inkos/secrets.json'),JSON.stringify({services:{'custom:fixture':{apiKey:'fixture'}}}));
   await saveWorkManifest(root,createWorkManifest({id:'parent',title:'Gallery',profileId:'longform-novel',language:'en'}));
   await mkdir(join(root,'works/parent/source'),{recursive:true});
-  const manuscript='Nora returns the borrowed green map.\n';
-  const parent=await syncWorkSourceArtifacts({projectRoot:root,workId:'parent',accept:true,writes:[{relativePath:'works/parent/source/manuscript.md',content:manuscript}]});
-  const artifact=parent.artifacts[0]!;
-  const source={workId:'parent',artifactId:artifact.id,revisionId:artifact.currentRevisionId!};
+  const chapters=['Nora returns the borrowed green map.\n','Eli keeps the map in her office.\n'];
+  const manuscript=chapters.join('\n\n');
+  const parent=await syncWorkSourceArtifacts({projectRoot:root,workId:'parent',accept:true,writes:chapters.map((content,i)=>({relativePath:`works/parent/source/chapter-${i+1}.md`,content}))});
+  const sources=parent.artifacts.map(a=>({workId:'parent',artifactId:a.id,revisionId:a.currentRevisionId!}));
   const app=createStudioServer({} as never,root);
   const post=(body:unknown)=>({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const {session}=await(await app.request('/api/v1/sessions',post({sessionKind:'chat'}))).json();
-  const response=await app.request('/api/v1/agent',post({sessionId:session.sessionId,sessionKind:'chat',instruction:'Create a parallel story from the registered Gallery source. Keep each chapter between20and30words.',actionSource:'button',requestedIntent:'fanfic_init',actionPayload:{fanficCreate:{title:'parallel',source,language:'en',chapterWordCount:25,minChapterLength:20,maxChapterLength:30}},model:'fixture-model',service:'custom:fixture'}));
+  const response=await app.request('/api/v1/agent',post({sessionId:session.sessionId,sessionKind:'chat',instruction:'Create a parallel story from the registered Gallery source. Keep each chapter between20and30words.',actionSource:'button',requestedIntent:'fanfic_init',actionPayload:{fanficCreate:{title:'parallel',sources,language:'en',chapterWordCount:25,minChapterLength:20,maxChapterLength:30}},model:'fixture-model',service:'custom:fixture'}));
   expect(response.status).toBeGreaterThanOrEqual(400);
   expect(calls).toBeGreaterThan(0);
   expect(await new StateManager(root).loadBookConfig('parallel')).toMatchObject({chapterWordCount:25,minChapterLength:20,maxChapterLength:30});
-  expect((await loadWorkManifest(root,'parallel')).lineage).toEqual([{relation:'derived-from',sourceWorkId:source.workId,sourceArtifactId:source.artifactId,sourceRevisionId:source.revisionId}]);
+  expect((await loadWorkManifest(root,'parallel')).lineage).toEqual(sources.map(source=>({relation:'derived-from',sourceWorkId:source.workId,sourceArtifactId:source.artifactId,sourceRevisionId:source.revisionId})));
   expect(await readFile(join(root,'works/parallel/source/source-material.md'),'utf8')).toBe(manuscript);
  }finally{upstream.closeAllConnections();await new Promise<void>(resolve=>upstream.close(()=>resolve()));await rm(root,{recursive:true,force:true});}
 },20000);

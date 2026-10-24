@@ -64,6 +64,11 @@ it("serves actual historical bytes, adopts a revision, and exposes execution and
   const prefix = `/api/v1/works/probe/artifacts/${artifact.id}/revisions`;
   const historical = await (await app.request(`${prefix}/initial`)).json();
   expect(JSON.parse(historical.content)).toEqual({ version: 1 });
+  const download=await app.request(`${prefix}/initial?download=1`);
+  expect(download.status).toBe(200);
+  expect(download.headers.get('content-type')).toBe(historical.revision.contentType);
+  expect(download.headers.get('content-disposition')).toContain('attachment;');
+  expect(Buffer.from(await download.arrayBuffer())).toEqual(Buffer.from(writes[0]!.content));
   const adoption = await app.request(`${prefix}/initial/adopt`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ expectedCurrentRevisionId: artifact.currentRevisionId }) });
   expect(adoption.status).toBe(200);
   const current = (await loadWorkManifest(root, "probe")).artifacts[0]!;

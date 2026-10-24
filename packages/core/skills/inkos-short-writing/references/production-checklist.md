@@ -7,7 +7,9 @@
 - Pressure source has a credible interest, fear, or misunderstanding.
 - Opening creates a concrete emotional or practical deficit.
 - Evidence and setup exist before each major reversal.
-- When timestamps or quantities carry decisive evidence, establish one reference timeline and identify what each record measures. Apply any clock offset consistently, then check that every alleged cause still precedes its effect under the same conversion.
+- Establish the fixed history of recurring evidence once: which object or document it is, the event it records, its date, holder and outcome. Later recollections can change its significance without silently changing that history. Distinguish an object's publication date from the date of its repair, transfer or discovery.
+- When timestamps carry decisive evidence, establish each event's anchor, order and elapsed interval before writing its later recollections. A project's week number, a person's tenure and a chapter number are different clocks; relate their starting points explicitly before comparing them. Carry the same event dates through the opening, scenes, testimony and chapter titles. Check exact intervals including the stated weekdays, and keep each cause before its consequence. Do not add precise dates merely to make a passage sound authoritative.
+- For recurring amounts or counts, identify the payer, recipient, period, included items and whether the value is an estimate, a subset or a final total. Keep those meanings consistent as the story develops. An opening that previews a later reckoning must use that reckoning's established facts; an earlier character estimate can differ when its limited knowledge is clear.
 - Ending delivers the promised emotional result and cost.
 
 ## During whole-story review
@@ -16,20 +18,25 @@
 - Later chapters do not collapse into summary.
 - Chapter transitions preserve causality.
 - Names, facts, objects, and evidence remain consistent.
+- Before comparing two passages, establish whether they refer to the same event, stage, period and quantity. Explicitly distinguished preliminary and final decisions can coexist. Several compatible causes can contribute to one outcome. An age or marriage duration alone does not establish a calendar year; derive dates only from stated anchors.
+- Resolve shared modifiers across coordinated phrases before calculating. Keep counts, durations and monetary values distinct. Interpret approximate expressions and bounds in their original language: a compatible exact value need not be rejected for being more precise. If the text supports a reasonable compatible reading, record any material ambiguity as an observation rather than declaring a contradiction.
+- For a claimed timeline contradiction, first name the event and the starting point used by each passage, then test the strongest compatible reading against the surrounding scenes. A following-week written confirmation can follow an earlier announced decision. A lower bound can remain true even when a more exact interval is available; exact wording such as “exactly” requires the stated interval. Do not replace every repeated number without checking what event it measures. Cite the incompatible claims, not just the passage that looks suspicious.
+- Read the independent opening together with the relevant final scenes. For each concrete promise about a quantity or outcome, compare its scope and certainty with the manuscript evidence, using the calculation tool for arithmetic when available. Report incompatible claims about the same quantity or event with both source passages. A supported estimate becoming precise, a subset differing from a total, or an explicitly mistaken character is not itself a contradiction. Keep unresolved ambiguity as uncertainty rather than inventing a missing explanation.
 - Calculate ages, generations and elapsed years together; a family relationship must be possible on the same timeline as school, work and historical events.
 - Check recurring objects for incompatible locations, holders or uses across the actual scene sequence. Distinguish a contradiction from an ordinary action omitted between scenes. Require added explanation when the omission breaks a decisive cause, character choice or payoff, rather than for every routine movement or technical operation.
 - Mobile paragraphs remain readable without turning prose into fragments.
-- Title and synopsis promise only events the manuscript actually delivers.
 
 ## Packaging
 
 - For amounts, quantities, timing and responsibility, use the manuscript's final evidence-backed conclusion. Earlier estimates and a character's suspicions are not established outcomes. If a precise number cannot be verified, describe the conflict and payoff without inventing or inflating it.
-- Ground sales claims in scenes actually present. Do not market an unresolved review finding as a proven strength or promise unverified quality. Describe the story's concrete conflict and payoff.
+- Check each sales claim against the manuscript's enacted scenes and final state. A character planning, being invited to or hoping for an event does not establish that it happened; retain the future or uncertain status in the copy. Strengthen the pitch through the actual conflict and payoff, not an additional scene or an unsupported quality claim.
 
 ## Revision
 
 - Start from the author's revision request. Preserve the title, conflict, ending and scene functions that the author has not asked to change.
 - Identify affected chapters and a shared correction plan before revising. Keep ages, generations, dates and object transfers consistent across them.
+- Resolve each conflicting event against the enacted scenes and the author's preserved anchors before assigning replacement dates. Carry the chosen event history through every affected recollection, title and opening. Do not retain one incompatible clock in the plan while correcting another in the prose. If an exact date is unsupported and not required, use a supported relative relation instead of inventing precision.
+- For a claimed or repaired interval stated with weeks and weekdays, use `calculate_story_interval` before submitting the plan or replacement. Include known times of day at both ends when exactness depends on them. Read its remainder: a nonzero day, hour or minute remainder cannot be called an exact whole number of weeks. Different clock origins must be reconciled from the story before calculating. Compatible lower bounds remain valid; prefer natural relative language when exact precision does not serve the scene.
 - Preserve the scenes that establish decisive evidence and meaningful handoffs. Repair the actual causal gap with the smallest sufficient change and carry it through adjacent transitions.
 - Judge the whole manuscript against its creative intent; separately verify the latest requested repairs. Label each finding as an issue, a resolved prior issue, or a neutral observation and give concrete evidence.
 

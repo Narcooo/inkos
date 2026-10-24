@@ -1,5 +1,9 @@
 import { Type } from "@sinclair/typebox";
 
+const ReviewCategory=Type.Union([Type.Literal('quality'),Type.Literal('execution'),Type.Literal('scope')],{
+  description:"quality: findings about the artifact's content, including factual and arithmetic errors. execution: evidence of whether a tool or external operation completed, not actions described within the story. scope: verified changes outside the author's authorized revision region, citing before/current sources.",
+});
+
 export const ObservationToolSchema = Type.Object({
   code: Type.String({ minLength: 1 }),
   assessment: Type.Optional(Type.Union([Type.Literal("issue"), Type.Literal("resolved"), Type.Literal("observation")], { description: "Whether the evidence identifies a defect, verifies a previously identified issue was resolved, or records a neutral observation." })),
@@ -27,7 +31,7 @@ export const SourcedReviewIndexToolSchema=Type.Object({
     code:Type.String({minLength:1}),
     summary:Type.String({minLength:1,description:"Explain this finding concisely using the selected evidence and its effect on the story. The explanation and assessment must describe the same finding."}),
     assessment:SourcedReviewToolSchema.properties.observations.items.properties.assessment,
-    category:Type.Optional(Type.Union([Type.Literal("quality"),Type.Literal("execution"),Type.Literal("scope")])),
+    category:Type.Optional(ReviewCategory),
     sourceRefs:Type.Array(Type.Object({sourceId:Type.String(),startLine:Type.Integer({minimum:1}),endLine:Type.Integer({minimum:1})},{additionalProperties:false}),{description:"Select nonempty source line ranges. May be empty only for an unavailable assessment."}),
   },{additionalProperties:false})),
 });
@@ -36,8 +40,6 @@ export const ArtifactReviewIndexToolSchema = Type.Object({
   ...SourcedReviewIndexToolSchema.properties,
   observations: Type.Array(Type.Object({
     ...SourcedReviewIndexToolSchema.properties.observations.items.properties,
-    category: Type.Union([Type.Literal("quality"), Type.Literal("execution"), Type.Literal("scope")], {
-      description: "scope: verified changes outside the author's authorized revision region, citing before/current sources. quality: other content findings. execution: whether an operation completed; source prose cannot establish this.",
-    }),
+    category: ReviewCategory,
   }, { additionalProperties: false })),
 });

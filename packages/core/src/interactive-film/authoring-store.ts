@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join, dirname, relative } from "node:path";
 import { StoryGraphSchema, type StoryGraph } from "./graph-schema.js";
-import { assertVariableTypes } from "./validation.js";
+import { assertVariableTypes, assertDisplayText } from "./validation.js";
 import { z } from "zod";
 import { applyStoryGraphDelta, type StoryGraphDelta } from "./delta.js";
 import { loadStoryGraph, storyGraphPath } from "./graph-store.js";
@@ -109,6 +109,10 @@ export async function applyGraphDelta(params: {
     // Note: no snapshot is written for the latest rev — the live graph file IS the latest rev.
     const graph = applyStoryGraphDelta({ graph: current, delta: params.delta });
     assertVariableTypes(graph);
+    // Validate submitted text while allowing legacy findings to be corrected
+    // incrementally. Export validation checks the complete graph.
+    assertDisplayText({...graph,title:'',nodes:params.delta.nodes?.upsert??[],
+      endings:params.delta.endings?.upsert??[],characters:params.delta.characters?.upsert??[]});
 
     const nextRev = state.rev + 1;
     const nextState: AuthoringState = { phase: params.phase ?? state.phase, rev: nextRev, phaseRevs: state.phaseRevs };

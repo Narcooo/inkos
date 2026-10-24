@@ -206,7 +206,6 @@ export function InkTuiApp(props: InkTuiAppProps): React.JSX.Element {
 
   if (props.chatStreamBridge) {
     props.chatStreamBridge.getChatRequestOptions = () => ({
-      temperature: chatDepthProfile.temperature,
       maxTokens: chatDepthProfile.maxTokens,
     });
   }

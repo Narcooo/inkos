@@ -4,7 +4,7 @@ import { resolveServicePiProvider, resolveServicePreset } from "./service-preset
 import { getServiceApiKey } from "./secrets.js";
 import { getEndpoint } from "./providers/index.js";
 import { lookupModel } from "./providers/lookup.js";
-import type { InkosEndpoint } from "./providers/types.js";
+import { resolveChatCompat } from "./model-request-capabilities.js";
 import { isApiKeyOptionalForEndpoint } from "../utils/llm-endpoint-auth.js";
 import { toPiApi, type LLMApiFormat } from "./api-format.js";
 
@@ -21,17 +21,6 @@ export class ServiceApiKeyNotFoundError extends Error {
     super(`API key not found for service "${service}". Add it in .inkos/secrets.json or set the environment variable.`);
     this.name = "ServiceApiKeyNotFoundError";
   }
-}
-
-function resolveProviderCompat(
-  provider: InkosEndpoint | undefined,
-  baseUrl: string,
-): Record<string, unknown> | undefined {
-  const compat = {
-    ...(provider?.compat ?? {}),
-    ...(baseUrl.includes("generativelanguage.googleapis.com") ? { supportsStore: false } : {}),
-  };
-  return Object.keys(compat).length > 0 ? compat : undefined;
 }
 
 export async function resolveServiceModel(
@@ -60,7 +49,7 @@ export async function resolveServiceModel(
   const piModel = getModel(piProvider as any, modelId as any) as Model<Api> | undefined;
   const effectiveBaseUrl = configuredBaseUrl || piModel?.baseUrl || "";
   const compat = apiType === "openai-completions"
-    ? resolveProviderCompat(endpoint, effectiveBaseUrl)
+    ? resolveChatCompat(endpoint?.compat)
     : undefined;
 
   if (!effectiveBaseUrl) {

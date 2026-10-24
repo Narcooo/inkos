@@ -11,6 +11,13 @@ export const ShortStageSchema = z.object({
   inputHash: z.string(),
   requestHash: z.string().optional(),
   reviewHash:z.string().optional(),
+  reviewedArtifact:z.object({artifactId:z.string(),revisionId:z.string()}).strict().optional(),
+  reviewedReference:z.object({workId:z.string(),artifactId:z.string(),revisionId:z.string(),checksum:z.string()}).strict().optional(),
+  comparison: z.object({
+    scope: z.enum(["episode_start", "parent_revision"]),
+    before: z.object({artifactId:z.string(),revisionId:z.string(),checksum:z.string()}).strict(),
+    after: z.object({artifactId:z.string(),revisionId:z.string(),checksum:z.string()}).strict(),
+  }).strict().optional(),
   updatedAt: z.string(),
   observations: z.array(ObservationSchema),
   error: z.string().optional(),
@@ -18,6 +25,7 @@ export const ShortStageSchema = z.object({
 export const ShortProductionStateSchema = z.object({
   version: z.literal(2),
   intent: z.string(),
+  outlineSource: z.object({workId:z.string(),artifactId:z.string(),revisionId:z.string(),checksum:z.string()}).strict().optional(),
   target: z.object({
     title:z.string().min(1).optional(),
     chapterCount:z.number().int().positive(),
@@ -25,6 +33,7 @@ export const ShortProductionStateSchema = z.object({
     minChapterLength:z.number().int().positive().optional(),
     maxChapterLength:z.number().int().positive().optional(),
     openingHookChars:z.number().int().positive().optional(),
+    coverRequired:z.boolean().optional(),
     language:z.enum(["zh","en"]),
   }).optional(),
   revisionRequest: z.string().optional(),

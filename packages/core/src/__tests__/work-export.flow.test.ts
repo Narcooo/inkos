@@ -10,6 +10,59 @@ import {createContinuationImportTool,createImportChaptersTool} from '../agent/ag
 import {PipelineRunner} from '../pipeline/runner.js';
 import {StateManager} from '../state/manager.js';
 import {writeExportArtifact} from '../interaction/export-artifact.js';
+import {createExportBookTool} from '../harness/tools/export-book.js';
+import {createTurnCompletionTool,TurnArtifactDeliveries} from '../agent/turn-completion.js';
+import {ActionResultSchema} from '../harness/contracts.js';
+
+it('measures actual exported chapters and requires current source receipts and explicit length bounds before delivery',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'inkos-export-delivery-'));
+  try{
+    await saveWorkManifest(root,createWorkManifest({id:'gallery',title:'Gallery',profileId:'longform-novel',language:'en'}));
+    const state=new StateManager(root),now=new Date().toISOString();
+    const config={id:'gallery',title:'Gallery',genre:'general',platform:'other' as const,status:'active' as const,targetChapters:2,chapterWordCount:1000,language:'en' as const,createdAt:now,updatedAt:now};
+    await state.saveBookConfig('gallery',{...config,minChapterLength:2,maxChapterLength:4});
+    await state.saveChapterIndex('gallery',[1,2].map(number=>({number,title:'Scene '+number,wordCount:99,provenance:'imported' as const,observations:[],createdAt:now,updatedAt:now})));
+    const first=join(state.bookDir('gallery'),'chapters/0001_Scene.md'),second=join(state.bookDir('gallery'),'chapters/0002_Scene.md');
+    await writeFile(first,'# Chapter 1: Scene 1\n\nThe visitor arrives.\n');
+    await writeFile(second,'# Chapter 2: Scene 2\n\nThe visitor leaves through the door.\n');
+    const result=(data:unknown)=>ActionResultSchema.parse({status:'success',summary:'Operation completed.',artifacts:[],observations:[],data});
+    const deliveries=new TurnArtifactDeliveries();
+    const finish=createTurnCompletionTool({state:()=>({activeActions:0,hasDelivery:true,deliveryFailed:false}),validateDelivery:()=>deliveries.validate(root),complete:()=>{}});
+    const completed=()=>finish.execute('finish',{status:'delivered',message:'Delivery complete.'});
+    // A chapter-only action checks its own scope, not unrelated existing chapters.
+    deliveries.observe(result({kind:'chapter_revision',workId:'gallery',chapterNumber:1,delivery:{status:'checks_passed'}}));
+    await completed();
+    deliveries.observe(result({kind:'chapters_written',workId:'gallery',chapters:[{chapterNumber:2}],delivery:{status:'needs_revision'}}));
+    await expect(completed()).rejects.toMatchObject({code:'TURN_DELIVERY_CHECKS_FAILED'});
+    const tool=createExportBookTool(state,'gallery');
+    const exportCurrent=async()=>{
+      await deliveries.requireOperations(root,'gallery','longform','export_book',{format:'md'});
+      const exported=await tool.execute('export',{format:'md'});
+      deliveries.observe(result(exported.details));
+      return exported.details as Awaited<ReturnType<typeof writeExportArtifact>>;
+    };
+    const draft=await exportCurrent();
+    expect(draft).toMatchObject({kind:'book_exported',workId:'gallery',totalWords:9,delivery:{status:'needs_revision',chapters:[{chapterNumber:1,measurements:{count:3}},{chapterNumber:2,measurements:{count:6},issues:[{code:'CHAPTER_LENGTH_OUT_OF_RANGE',actual:6,minimum:2,maximum:4}]}]}});
+    expect((await readFile(draft.outputPath)).length).toBeGreaterThan(0);
+    await expect(completed()).rejects.toMatchObject({code:'TURN_DELIVERY_CHECKS_FAILED'});
+    await writeFile(second,'# Chapter 2: Scene 2\n\nThe visitor leaves.\n');
+    await expect(completed()).rejects.toMatchObject({code:'TURN_DELIVERY_STALE'});
+    expect(await exportCurrent()).toMatchObject({totalWords:6,delivery:{status:'checks_passed'}});
+    await completed();
+    await writeFile(first,'# Chapter 1: Scene 1\n\nA stranger arrives.\n');
+    await expect(completed()).rejects.toMatchObject({code:'TURN_DELIVERY_STALE'});
+    await exportCurrent();
+    await completed();
+    await state.saveBookConfig('gallery',config);
+    const approximate=await exportCurrent();
+    expect(approximate.delivery).toEqual({status:'unverified',chapters:[]});
+    await completed();
+    await rm(second);
+    await expect(exportCurrent()).rejects.toMatchObject({code:'CHAPTER_EXPORT_SOURCE_MISMATCH'});
+    await expect(completed()).rejects.toMatchObject({code:'TURN_REQUIRED_OPERATIONS_INCOMPLETE'});
+    expect((await state.loadChapterIndex('gallery')).map(chapter=>chapter.wordCount)).toEqual([99,99]);
+  }finally{await rm(root,{recursive:true,force:true});}
+});
 
 it('refuses an incomplete or ambiguous chapter export before replacing an existing delivery',async()=>{
   const root=await mkdtemp(join(tmpdir(),'inkos-export-sources-'));

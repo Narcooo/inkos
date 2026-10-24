@@ -325,6 +325,7 @@ export function PlayHud(props: {
   readonly onClose: () => void;
   readonly sessionTitle?: string | null;
   readonly imageSettings?: PlayImageSettings;
+  readonly onImageStatusChange?: (status: { pending: boolean; error: string | null }) => void;
 }) {
   const { sessionId, isStreaming, isZh, open, onClose } = props;
   const base = `/play/runs/${encodeURIComponent(sessionId)}/main`;
@@ -337,6 +338,9 @@ export function PlayHud(props: {
   const [generating, setGenerating] = useState<ReadonlySet<string>>(new Set());
   const inFlight = useRef<Set<string>>(new Set());
   const prevStreaming = useRef(isStreaming);
+  useEffect(() => {
+    props.onImageStatusChange?.({pending:generating.size>0,error:imageError});
+  }, [generating, imageError, props.onImageStatusChange]);
 
   const load = useCallback(async () => {
     try {
@@ -423,7 +427,12 @@ export function PlayHud(props: {
 
   return (
     <aside className="absolute bottom-28 right-0 top-0 z-20 flex w-[380px] max-w-[calc(100vw-1rem)] flex-col border-l border-border/40 bg-card/95 backdrop-blur shadow-xl">
-      {imageError ? <div role="alert" className="border-b border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{imageError}</div> : null}
+      {imageError ? <div role="alert" className="border-b border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+        <details><summary>{isZh ? "配图未完成" : "Image generation failed"}</summary>{imageError}</details>
+        <button type="button" disabled={!view || generating.size>0} className="mt-2 underline disabled:opacity-50" onClick={()=>{
+          if(view)buildAutoImageRequests(view,effectiveImageSettings,run?.sceneImageUrl).forEach(request=>void generate(request.key,request.body));
+        }}>{isZh ? "重试配图" : "Retry images"}</button>
+      </div> : null}
       <header className="relative flex min-w-0 items-center gap-2.5 overflow-hidden border-b border-border/40 px-4 py-3">
         <span aria-hidden className="pointer-events-none absolute inset-x-0 -bottom-px h-px bg-gradient-to-r from-transparent via-primary/50 to-transparent" />
         {view?.turn != null ? (

@@ -40,6 +40,8 @@ export interface InkosModel {
    * 不是"推荐值"。普通模型不要设这个字段。
    */
   readonly temperature?: number;
+  /** False when sampling parameters must use the model's server defaults. */
+  readonly supportsSampling?: boolean;
   /** 生命周期状态；enabled=false 仍保留为兼容旧数据的硬下线标记。 */
   readonly status?: "active" | "deprecated" | "disabled" | "nonText";
   readonly replacement?: string;
@@ -53,7 +55,7 @@ export interface InkosModel {
 }
 
 export interface ProviderCompat {
-  /** OpenAI Responses store 参数是否被兼容层接受；Google Gemini OpenAI-compatible 不接受。 */
+  /** Whether the Chat-compatible endpoint accepts the SDK's optional store field. */
   readonly supportsStore?: boolean;
   readonly supportsSystemRole?: boolean;
   readonly supportsDeveloperRole?: boolean;

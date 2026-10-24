@@ -13,6 +13,11 @@ export const CreationSourceReference = Type.Object({
   workId:Type.String(),artifactId:Type.String(),revisionId:Type.Optional(Type.String()),
 },{additionalProperties:false,description:'For an existing Work, select its registered source artifact and exact revision. Never replace its text with a summary.'});
 
+export const CreationSourceReferences = Type.Array(CreationSourceReference, {
+  minItems: 1,
+  description: 'Ordered source artifacts covering the full material requested by the author, such as several chapters. Include every requested artifact; each exact revision is preserved for production and review. Use instead of source, sourceText or sourcePath.',
+});
+
 export interface CreationSource {
   readonly text:string;
   readonly name:string;
@@ -23,6 +28,7 @@ interface CreationArtifactReference {workId:string;artifactId:string;revisionId?
 export async function loadCreationSource(input:{
   projectRoot:string;targetWorkId?:string;
   source?:CreationArtifactReference;
+  sources?:ReadonlyArray<CreationArtifactReference>;
   sourceText?:string;sourcePath?:string;sourceName?:string;purpose:'reference';
 }):Promise<CreationSource>{
   let previous:WorkManifest|undefined;
@@ -30,7 +36,7 @@ export async function loadCreationSource(input:{
     try{previous=await loadWorkManifest(input.projectRoot,input.targetWorkId);}
     catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
   }
-  if([input.source,input.sourceText?.trim(),input.sourcePath?.trim()].filter(Boolean).length>1)throw Object.assign(new Error('Select exactly one creation source.'),{code:'CREATION_SOURCE_CONFLICT'});
+  if([input.source,input.sources,input.sourceText?.trim(),input.sourcePath?.trim()].filter(Boolean).length>1)throw Object.assign(new Error('Select one source input: a reference, ordered references, a file, or supplied text.'),{code:'CREATION_SOURCE_CONFLICT'});
   const readRegistered=async(reference:CreationArtifactReference):Promise<CreationSource>=>{
     const pinned=previous?.lineage.find(item=>item.sourceWorkId===reference.workId&&item.sourceArtifactId===reference.artifactId);
     const source=await readArtifactRevision({projectRoot:input.projectRoot,...reference,revisionId:reference.revisionId??pinned?.sourceRevisionId});
@@ -39,7 +45,13 @@ export async function loadCreationSource(input:{
       lineage:[{relation:'derived-from',sourceWorkId:source.work.id,sourceArtifactId:source.artifact.id,sourceRevisionId:source.revision.id}]};
   };
   let result:CreationSource;
-  if(input.source){
+  if(input.sources){
+    if(!input.sources.length)throw Object.assign(new Error('Select at least one source artifact.'),{code:'CREATION_SOURCE_REQUIRED'});
+    const identities=input.sources.map(source=>JSON.stringify([source.workId,source.artifactId]));
+    if(new Set(identities).size!==identities.length)throw Object.assign(new Error('Select each source artifact once.'),{code:'CREATION_SOURCE_CONFLICT'});
+    const sources=await Promise.all(input.sources.map(readRegistered));
+    result={text:sources.map(source=>source.text).join('\n\n'),name:input.sourceName?.trim()||[...new Set(sources.map(source=>source.name))].join(' / '),lineage:sources.flatMap(source=>source.lineage)};
+  }else if(input.source){
     result=await readRegistered(input.source);
   }else if(input.sourceText?.trim()){
     const author=currentExecutionAuthorRequest();

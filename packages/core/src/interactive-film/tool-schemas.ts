@@ -72,6 +72,7 @@ export const StoryNodeContentToolSchema = Type.Object(StoryNodeFields, {
 });
 
 export const StoryNodeRevisionToolSchema = Type.Object({
+  title: StoryNodeFields.title,
   sceneDesc: StoryNodeFields.sceneDesc,
   dialogue: StoryNodeFields.dialogue,
 }, {additionalProperties: false});

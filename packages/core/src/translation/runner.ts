@@ -33,6 +33,7 @@ export async function runTranslationProject(
     const reportLines = [`# Translation Review`, ""];
     let translatedSegments = 0;
     let reviewedChapters = 0;
+    const reviewSourcePaths:string[]=[];
     const batchSize = Math.max(1, Math.min(options.batchSize ?? 8, 32));
 
   for (const chapterInfo of manifest.chapters) {
@@ -100,16 +101,21 @@ export async function runTranslationProject(
         sourceLanguage: manifest.sourceLanguage,
         targetLanguage: manifest.targetLanguage,
         chapterTitle: completedChapter.title,
+        sourceChapterTitle: source.title,
         segments: completedChapter.segments,
         glossary,
       });
       reviewedChapters++;
+      reviewSourcePaths.push(chapterInfo.translatedPath);
       reviewSummary = review.summary;
       observations = review.observations;
       reportLines.push(`## ${completedChapter.title}`, "", `- summary: ${review.summary}`, "");
       for (const observation of review.observations) {
         reportLines.push(`- ${observation.code}: ${observation.summary}`);
         for (const evidence of observation.evidence) reportLines.push(`  - evidence: ${evidence}`);
+        for (const reference of observation.sourceRefs ?? []) {
+          reportLines.push(`  - source: ${reference.sourceId}`, "", ...reference.quote.split("\n").map(line=>`    > ${line}`));
+        }
       }
       reportLines.push("");
     }
@@ -152,6 +158,7 @@ export async function runTranslationProject(
       projectId,
       translatedSegments,
       reviewedChapters,
+      reviewSourcePaths,
       observations,
       reportPath,
       totalSegments,completedSegments,pendingSegments:totalSegments-completedSegments,

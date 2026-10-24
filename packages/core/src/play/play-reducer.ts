@@ -3,6 +3,7 @@ import {
   PlayMutationSchema,
   isPlayEvidenceEntityType,
   type PlayEdgeInput,
+  type PlayEdge,
   type PlayEntity,
   type PlayEntityInput,
   type PlayEvent,
@@ -129,6 +130,49 @@ export function validatePlayMutation(db: PlayReducerDB, input: PlayMutationInput
       throw new Error(`Play evidence transition goes backwards for ${transition.entityId}: ${current} -> ${transition.to}`);
     }
   }
+  validatePlacementContinuity(db, mutation);
+}
+
+/** Closing a tracked physical placement must not silently erase its outcome.
+ * An explicit status change can record disappearance/consumption; its meaning
+ * remains author/model supplied rather than inferred from action prose. */
+function validatePlacementContinuity(db: PlayReducerDB, mutation: ReturnType<typeof PlayMutationSchema.parse>): void {
+  if (mutation.blocked || !db.snapshot) return;
+  const before = db.snapshot();
+  const entities = new Map(before.entities.map(entity => [entity.id, entity]));
+  for (const entity of mutation.entities.upsert) entities.set(entity.id, entity);
+  const subject = (edge: PlayEdge): string | undefined => {
+    const target = entities.get(edge.toId), source = entities.get(edge.fromId);
+    if (edge.value.role === "placement") return edge.fromId;
+    const held = edge.value.role === "holding" || edge.type === "holding" || edge.type === "holds";
+    if (held && (target?.type === "item" || edge.value.physical === true)) return edge.toId;
+    if ((source?.type === "actor" || source?.type === "item")
+      && (edge.type === "at" && target?.type === "location"
+        || edge.type === "within" && ["location", "item", "actor"].includes(target?.type ?? ""))) return edge.fromId;
+    return undefined;
+  };
+  const active = before.edges.filter(edge => edge.validUntilEventId === null);
+  const expired = new Set(mutation.edges.expire.map(edge => edge.edgeId));
+  const after = new Map(active.filter(edge => !expired.has(edge.id)).map(edge => [edge.id, edge]));
+  for (const edge of mutation.edges.upsert) {
+    if (edge.validUntilEventId === null) after.set(edge.id, edge);
+    else after.delete(edge.id);
+  }
+  const located = new Set([...after.values()].map(subject).filter(id => id !== undefined));
+  const missing = new Map<string, string[]>();
+  for (const edge of active) {
+    const entityId = subject(edge);
+    if (!entityId || located.has(entityId)) continue;
+    const prior = before.entities.find(entity => entity.id === entityId);
+    const updated = mutation.entities.upsert.find(entity => entity.id === entityId);
+    if (updated?.status.trim() && updated.status !== prior?.status) continue;
+    missing.set(entityId, [...(missing.get(entityId) ?? []), edge.id]);
+  }
+  if (missing.size) throw Object.assign(new Error(JSON.stringify({
+    code: "PLAY_PLACEMENT_UNRESOLVED",
+    entities: [...missing].map(([entityId, previousEdgeIds]) => ({entityId, previousEdgeIds})),
+    instruction: "The proposed change removes the only tracked location or holder of these physical entities. Upsert each resulting placement, including return relations that existed earlier: entity -> location/container with value.role=placement, or holder -> item with value.role=holding. The free-form edge type is not a placement discriminator. If an entity intentionally disappears or is consumed, explicitly update its status to record that disposition. Keep the scene consistent with the submitted state. Nothing has been committed; correct this same turn.",
+  })), {code: "PLAY_PLACEMENT_UNRESOLVED"});
 }
 
 function applyGraphChanges(db: PlayReducerDB, mutation: ReturnType<typeof PlayMutationSchema.parse>): void {

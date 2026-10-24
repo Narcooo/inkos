@@ -483,7 +483,7 @@ export class ComposerAgent extends BaseAgent {
         description: "Submit the numbers of the selected entries in candidateIndex.",
         parameters: selectedSourcesToolSchema,
       },
-      { temperature: 0.1, maxTokens },
+      {  maxTokens },
     );
     return result.selectedIndices.map(index=>allowedIds[index-1]!);
   }

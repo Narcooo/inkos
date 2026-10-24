@@ -96,7 +96,7 @@ export function StoryPlayer({
         <div className="space-y-3">
           {dialogue.map((line, i) => (
             <div key={i}>
-              <div className="text-primary text-xs uppercase tracking-wider">{line.speaker}</div>
+              <div className="text-primary text-xs uppercase tracking-wider">{graph.characters.find(character=>character.id===line.speaker)?.name || line.speaker}</div>
               <div className="text-sm">{line.text}</div>
             </div>
           ))}

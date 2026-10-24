@@ -30,7 +30,7 @@ export function createExportBookTool(
       return {
         content: [{
           type: "text",
-          text: `Exported "${bookId}": ${details.chaptersExported} chapters, ${details.totalWords} words to ${details.outputPath}.`,
+          text: `Exported "${bookId}": ${details.chaptersExported} chapters, ${details.totalWords} counted units to ${details.outputPath}. Delivery checks: ${details.delivery.status}.`,
         }],
         details,
       };

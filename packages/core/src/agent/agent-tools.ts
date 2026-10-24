@@ -5,11 +5,13 @@ import type { PipelineRunner } from "../pipeline/runner.js";
 import { defaultChapterLength } from "../utils/length-metrics.js";
 import { mkdir, readFile, writeFile, readdir, rm, stat } from "node:fs/promises";
 import { basename, isAbsolute, join, resolve } from "node:path";
+import {createHash} from 'node:crypto';
 import { StateManager } from "../state/manager.js";
 import { deleteLatestChapter } from "../state/chapter-delete.js";
 import { assertSafeBookId, deriveBookIdFromTitle } from "../utils/book-id.js";
 import { safeChildPath } from "../utils/path-safety.js";
 import { readArtifactRevision } from "../harness/artifact-reader.js";
+import {currentWorkSourceSets} from '../harness/source-sets.js';
 import { currentExecutionAuthorRequest } from "../harness/execution-evidence.js";
 import { createPlayPresentation } from "../play/play-presentation.js";
 import { toPosixPath } from "../utils/posix-path.js";
@@ -52,7 +54,7 @@ import {
 import { listWorkManifests, loadWorkManifest, mergeWorkMetadata,saveWorkManifest } from "../harness/work-store.js";
 import { syncWorkSourceArtifacts } from "../harness/source-sync.js";
 import { StoryNodeToolSchema } from "../interactive-film/tool-schemas.js";
-import {CreationSourceReference,loadCreationSource,bindCreationSource} from './creation-source.js';
+import {CreationSourceReference,CreationSourceReferences,loadCreationSource,bindCreationSource} from './creation-source.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -323,6 +325,7 @@ const ProposeActionParams = Type.Object({
     projectId: Type.Optional(Type.String({ description: "Optional stable Work ID." })),
   }, { description: "Structured execution args for action=interactive_film_create." })),
   translationCreate: Type.Optional(Type.Object({
+    sources: Type.Optional(CreationSourceReferences),
     filePath: Type.Optional(Type.String({ description: "Project-relative EPUB/PDF/TXT/Markdown source file path to translate. Use sourceText for pasted input." })),
     sourceText: Type.Optional(Type.String({ minLength: 1 })),
     glossary: Type.Optional(Type.Array(Type.Object({ source: Type.String(), target: Type.String(), note: Type.Optional(Type.String()) }))),
@@ -333,6 +336,7 @@ const ProposeActionParams = Type.Object({
   }, { description: "Structured execution args for action=translation_create." })),
   fanficCreate: Type.Optional(Type.Object({
     source: Type.Optional(CreationSourceReference),
+    sources: Type.Optional(CreationSourceReferences),
     title: Type.String({ description: "Confirmed fanfiction book title." }),
     sourceText: Type.Optional(Type.String({ description: "Provided canon/source text. Prefer sourcePath for uploaded or long files." })),
     sourcePath: Type.Optional(Type.String({ description: "Project-relative uploaded canon/source file path." })),
@@ -363,6 +367,7 @@ const ProposeActionParams = Type.Object({
   }, { description: "Structured execution args for action=continuation_import. This imports and rebuilds state directly after confirmation." })),
   spinoffCreate: Type.Optional(Type.Object({
     source: Type.Optional(CreationSourceReference),
+    sources: Type.Optional(CreationSourceReferences),
     title: Type.String({ description: "Confirmed side-story title." }),
     parentBookId: Type.String({ description: "Existing InkOS parent book id whose canon is inherited." }),
     direction: Type.Optional(Type.String({ description: "Confirmed standalone side-story direction." })),
@@ -376,6 +381,7 @@ const ProposeActionParams = Type.Object({
   }, { description: "Structured execution args for action=spinoff_create. This creates the side-story directly after confirmation." })),
   imitationCreate: Type.Optional(Type.Object({
     source: Type.Optional(CreationSourceReference),
+    sources: Type.Optional(CreationSourceReferences),
     title: Type.String({ description: "Confirmed original imitation-project title." }),
     referenceText: Type.Optional(Type.String({ description: "Reference prose. Prefer referencePath for uploaded or long files." })),
     referencePath: Type.Optional(Type.String({ description: "Project-relative uploaded reference-work path." })),
@@ -516,12 +522,14 @@ function withSingleAttachmentFallback(
     return !value || (value.startsWith(".inkos/uploads/") && value !== path);
   };
 
-  if (params.action === "translation_create" && payload.translationCreate && useHostAttachment(payload.translationCreate.filePath)) {
+  if (params.action === "translation_create" && payload.translationCreate && !payload.translationCreate.sources?.length && !payload.translationCreate.sourceText?.trim() && useHostAttachment(payload.translationCreate.filePath)) {
     return { ...payload, translationCreate: { ...payload.translationCreate, filePath: path } };
   }
   if (
     params.action === "fanfic_init"
     && payload.fanficCreate
+    && !payload.fanficCreate.source
+    && !payload.fanficCreate.sources?.length
     && !payload.fanficCreate.sourceText?.trim()
     && useHostAttachment(payload.fanficCreate.sourcePath)
   ) {
@@ -537,6 +545,8 @@ function withSingleAttachmentFallback(
   if (
     params.action === "style_imitation"
     && payload.imitationCreate
+    && !payload.imitationCreate.source
+    && !payload.imitationCreate.sources?.length
     && !payload.imitationCreate.referenceText?.trim()
     && useHostAttachment(payload.imitationCreate.referencePath)
   ) {
@@ -583,8 +593,8 @@ function assertExecutableProposedAction(params: ProposeActionParamsType, payload
     return;
   }
   if (params.action === "translation_create") {
-    if (!payload?.translationCreate?.filePath?.trim() && !payload?.translationCreate?.sourceText?.trim()) {
-      throw new Error("propose_action requires translationCreate.filePath or sourceText.");
+    if (!payload?.translationCreate?.sources?.length && !payload?.translationCreate?.filePath?.trim() && !payload?.translationCreate?.sourceText?.trim()) {
+      throw new Error("propose_action requires translationCreate.sources, filePath or sourceText.");
     }
     requireProposedText(payload?.translationCreate?.sourceLanguage, "translationCreate.sourceLanguage");
     requireProposedText(payload?.translationCreate?.targetLanguage, "translationCreate.targetLanguage");
@@ -592,7 +602,7 @@ function assertExecutableProposedAction(params: ProposeActionParamsType, payload
   }
   if (params.action === "fanfic_init") {
     requireProposedText(payload?.fanficCreate?.title, "fanficCreate.title");
-    if (!payload?.fanficCreate?.source && !payload?.fanficCreate?.sourceText?.trim() && !payload?.fanficCreate?.sourcePath?.trim()) {
+    if (!payload?.fanficCreate?.source && !payload?.fanficCreate?.sources?.length && !payload?.fanficCreate?.sourceText?.trim() && !payload?.fanficCreate?.sourcePath?.trim()) {
       throw new Error("propose_action is missing fanficCreate.sourceText/sourcePath; ask for or use the attached source before proposing production.");
     }
     return;
@@ -612,7 +622,7 @@ function assertExecutableProposedAction(params: ProposeActionParamsType, payload
   if (params.action === "style_imitation") {
     requireProposedText(payload?.imitationCreate?.title, "imitationCreate.title");
     requireProposedText(payload?.imitationCreate?.storyIdea, "imitationCreate.storyIdea");
-    if (!payload?.imitationCreate?.source && !payload?.imitationCreate?.referenceText?.trim() && !payload?.imitationCreate?.referencePath?.trim()) {
+    if (!payload?.imitationCreate?.source && !payload?.imitationCreate?.sources?.length && !payload?.imitationCreate?.referenceText?.trim() && !payload?.imitationCreate?.referencePath?.trim()) {
       throw new Error("propose_action is missing imitationCreate.referenceText/referencePath; ask for or use the attached reference before proposing production.");
     }
     return;
@@ -1293,6 +1303,7 @@ export function createRefreshFanficCanonTool(
 const FanficCreateParams = Type.Object({
   title: Type.String({ description: "Fanfiction book title." }),
   source: Type.Optional(CreationSourceReference),
+  sources: Type.Optional(CreationSourceReferences),
   sourceText: Type.Optional(Type.String({ description: "Verbatim source supplied by the author. For existing Works use source, never a summary." })),
   sourcePath: Type.Optional(Type.String({ description: "Project-relative uploaded canon/source path." })),
   sourceName: Type.Optional(Type.String({ description: "Human-readable source work name." })),
@@ -1315,7 +1326,7 @@ export function createFanficBookTool(
 ): AgentTool<typeof FanficCreateParams> {
   return {
     name: "fanfic_create",
-    description: "Create a fanfiction Work from an exact registered source or author-supplied material. Use source for existing Works; do not summarize them into sourceText.",
+    description: "Create a fanfiction Work from exact registered sources or author-supplied material. When the requested material spans multiple artifacts, pass all of them in sources in reading order. Do not summarize them into sourceText.",
     label: "Create Fanfiction",
     parameters: FanficCreateParams,
     async execute(_toolCallId, params: FanficCreateParamsType, signal, onUpdate) {
@@ -1323,6 +1334,7 @@ export function createFanficBookTool(
         projectRoot,
         targetWorkId: deriveBookIdFromTitle(params.title),
         source: params.source,
+        sources: params.sources,
         sourceText: params.sourceText,
         sourcePath: params.sourcePath,
         sourceName: params.sourceName,
@@ -1364,6 +1376,7 @@ const SpinoffCreateParams = Type.Object({
   title: Type.String({ description: "Standalone side-story title." }),
   parentBookId: Type.String({ description: "Existing InkOS parent book id." }),
   source: Type.Optional(CreationSourceReference),
+  sources: Type.Optional(CreationSourceReferences),
   direction: Type.Optional(Type.String({ description: "Side-story direction that must not advance the parent mainline." })),
   genre: Type.Optional(Type.String()),
   platform: Type.Optional(Type.String({ minLength: 1 })),
@@ -1401,9 +1414,9 @@ export function createSpinoffBookTool(
         minChapterLength:params.minChapterLength??parent.minChapterLength,maxChapterLength:params.maxChapterLength??parent.maxChapterLength,
       });
       await assertBookCreatable(projectRoot, book.id);
-      if(params.source){
-        if(params.source.workId!==parentBookId)throw Object.assign(new Error('The selected source must belong to the parent Work.'),{code:'CREATION_SOURCE_CONFLICT'});
-        const source=await loadCreationSource({projectRoot,targetWorkId:book.id,source:params.source,purpose:'reference'});
+      if(params.source||params.sources){
+        if([...(params.sources??[]),...(params.source?[params.source]:[])].some(source=>source.workId!==parentBookId))throw Object.assign(new Error('The selected source must belong to the parent Work.'),{code:'CREATION_SOURCE_CONFLICT'});
+        const source=await loadCreationSource({projectRoot,targetWorkId:book.id,source:params.source,sources:params.sources,purpose:'reference'});
         await pipeline.prepareDraftBook(book);
         await bindCreationSource(projectRoot,book.id,source);
       }
@@ -1432,6 +1445,7 @@ export function createSpinoffBookTool(
 const ImitationCreateParams = Type.Object({
   title: Type.String({ description: "Original imitation-project title." }),
   source: Type.Optional(CreationSourceReference),
+  sources: Type.Optional(CreationSourceReferences),
   referenceText: Type.Optional(Type.String({ description: "Verbatim reference supplied by the author. For existing Works use source, never a summary." })),
   referencePath: Type.Optional(Type.String({ description: "Project-relative uploaded reference-work path." })),
   storyIdea: Type.String({ description: "Original story idea. The reference contributes prose style, not plot or characters." }),
@@ -1462,6 +1476,7 @@ export function createImitationBookTool(
         projectRoot,
         targetWorkId: deriveBookIdFromTitle(params.title),
         source: params.source,
+        sources: params.sources,
         sourceText: params.referenceText,
         sourcePath: params.referencePath,
         sourceName: params.sourceName,
@@ -1797,12 +1812,12 @@ export function createShortFictionRunTool(
 const ShortRevisionParams = Type.Object({
   instruction: Type.Optional(Type.String({minLength:1,description:"New revision instruction. Omit when resuming a saved operation."})),
   resumeOperationId: Type.Optional(Type.String({minLength:1,description:"Continue the saved operation returned in recovery. Supply this alone; its instructions, scope and completed chapters are restored."})),
-  restartPendingRevision: Type.Optional(Type.Boolean({description:"Explicitly replace a pending revision with new instructions and archive its checkpoint. Omit during recovery."})),chapterCount:Type.Optional(Type.Integer({minimum:1,description:"Set only when the author explicitly changes the final chapter count. Omit to preserve it. Requires whole-manuscript scope."})),charsPerChapter:Type.Optional(Type.Integer({minimum:1})),maxChapterLength:Type.Optional(Type.Integer({minimum:1,description:"Explicit new maximum; omit to preserve the Work's existing length limit."})),chapterNumbers:Type.Optional(Type.Array(Type.Integer({minimum:1}),{description:"Only these chapters may change. Use [] to preserve every chapter while revising the independent opening or outline. Omit for whole-manuscript scope."}))});
+  restartPendingRevision: Type.Optional(Type.Boolean({description:"Explicitly replace a pending revision with new instructions and archive its checkpoint. Omit during recovery."})),chapterCount:Type.Optional(Type.Integer({minimum:1,description:"Set only when the author explicitly changes the final chapter count. Omit to preserve it. Requires whole-manuscript scope."})),charsPerChapter:Type.Optional(Type.Integer({minimum:1})),maxChapterLength:Type.Optional(Type.Integer({minimum:1,description:"Explicit new maximum; omit to preserve the Work's existing length limit."})),chapterNumbers:Type.Optional(Type.Array(Type.Integer({minimum:1}),{description:"Only these chapters may change. Use [] to preserve every chapter while revising the book title, independent opening or outline. Omit for whole-manuscript scope."}))});
 
 export function createShortFictionReviseTool(pipeline:PipelineRunner,projectRoot:string,workId:string,options:SkillAwareProductionOptions={}) {
   return {
     name:"revise_short_fiction",label:"Revise short fiction",
-    description:"Revise an existing complete short-fiction Work from its persisted review and user direction, then review and update its sales package.",
+    description:"Revise an existing complete short-fiction Work within the author's requested scope, including book-title-only, opening-only or selected chapter changes, then review the revised manuscript. Use this action for manuscript changes instead of replacing its JSON or rendered copies. Existing sales packages, cover prompts, images and exports remain unchanged. When the author also requests updated packaging or delivery, perform those separately on the revised manuscript using package_short_fiction, the visual action and export_work_package.",
     parameters:ShortRevisionParams,
     async execute(_id:string,params:Static<typeof ShortRevisionParams>,signal?:AbortSignal,onUpdate?:AgentToolUpdateCallback) {
       const skills=resolveProductionToolSkills(options);
@@ -3059,12 +3074,12 @@ export function createReadTool(
   const description = options.allowSystemPaths
     ? "Read a file. Relative paths resolve under works/; absolute paths read from the system filesystem."
     : options.scope === "project"
-      ? "Read a UTF-8 file inside the current InkOS project. Path is relative to the project root."
+      ? "Read UTF-8 text or a PNG/JPEG image inside the current InkOS project. Path is relative to the project root."
     : "Read a file from the Work store. Path is relative to works/.";
 
   return {
     name: "read",
-    description: "Read a registered artifact by ID (defaults to the bound Work and accepted revision). Returns full-document measurements and JSON collection counts alongside a page of text with exact 1-based line numbers. If contentScope is page_excerpt, follow nextRead before claiming content is absent; the page is not the complete document or a parseable JSON replacement. Line-number prefixes are addresses, not part of the source. For external inputs only: " + description,
+    description: "Read a registered artifact by ID (defaults to the bound Work and accepted revision). PNG/JPEG images return the actual pixels with verified source identity for visual inspection. Text returns full-document measurements and JSON collection counts alongside a page with exact 1-based line numbers. If contentScope is page_excerpt, follow nextRead before claiming content is absent; the page is not the complete document or a parseable JSON replacement. Line-number prefixes are addresses, not part of the source. For external inputs only: " + description,
     label: "Read File",
     parameters: ReadParams,
     async execute(
@@ -3078,6 +3093,13 @@ export function createReadTool(
         const workId = params.workId ?? options.workId;
         if (!workId) throw Object.assign(new Error("Select a Work from workspace__list_works."), { code: "WORK_REQUIRED" });
         const { artifact, revision, bytes } = await readArtifactRevision({ projectRoot, workId, artifactId: params.artifactId, revisionId: params.revisionId });
+        if (revision.contentType === 'image/png' || revision.contentType === 'image/jpeg') {
+          if(params.startLine!==undefined||params.lineCount!==undefined)throw Object.assign(new Error('Read the complete image without text pagination.'),{code:'ARTIFACT_IMAGE_PAGINATION'});
+          if(bytes.length>10*1024*1024)throw Object.assign(new Error('The registered image exceeds the 10 MiB visual observation limit.'),{code:'ARTIFACT_IMAGE_TOO_LARGE',byteLength:bytes.length});
+          const details={kind:'artifact_image_read',workId,artifactId:artifact.id,revisionId:revision.id,path:revision.path,
+            status:revision.status,checksum:revision.checksum,mimeType:revision.contentType,byteLength:bytes.length,contentScope:'full_artifact'};
+          return {content:[{type:'text',text:JSON.stringify(details)},{type:'image',mimeType:revision.contentType,data:bytes.toString('base64')}],details};
+        }
         if (!revision.contentType.startsWith("text/") && !["application/json", "application/yaml"].includes(revision.contentType)) {
           throw Object.assign(new Error("Use the artifact viewer for this binary revision."), { code: "ARTIFACT_NOT_TEXT" });
         }
@@ -3097,9 +3119,9 @@ export function createReadTool(
         });
       }
       const filePath = resolveReadPath(readRoot, params.path!, options);
-      let content: string;
+      let bytes: Buffer;
       try {
-        content = await readFile(filePath, "utf-8");
+        bytes = await readFile(filePath);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") {
           throw new WorkFileNotFoundError(params.path!);
@@ -3112,7 +3134,23 @@ export function createReadTool(
         }
         throw error;
       }
-      return textResult(content);
+      const checksum=`sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+      const mimeType=bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]))?'image/png'
+        :bytes[0]===255&&bytes[1]===216&&bytes[2]===255?'image/jpeg':undefined;
+      const details={kind:mimeType?'file_image_read':'file_read',path:params.path,checksum,byteLength:bytes.length,contentScope:'full_file'};
+      if(mimeType){
+        if(bytes.length>10*1024*1024)throw Object.assign(new Error('The image exceeds the 10 MiB visual observation limit.'),{code:'FILE_IMAGE_TOO_LARGE',byteLength:bytes.length});
+        const imageDetails={...details,mimeType};
+        return{content:[{type:'text',text:JSON.stringify(imageDetails)},{type:'image',mimeType,data:bytes.toString('base64')}],details:imageDetails};
+      }
+      let content:string;
+      try{
+        if(bytes.includes(0))throw new Error('Binary zero byte');
+        content=new TextDecoder('utf-8',{fatal:true}).decode(bytes);
+      }catch{
+        throw Object.assign(new Error('This file is not UTF-8 text or a supported image. Use its import or artifact viewer instead of reading binary bytes as prose.'),{code:'WORK_FILE_NOT_TEXT',path:params.path,byteLength:bytes.length});
+      }
+      return textResult(content,details);
     },
   };
 }
@@ -3161,7 +3199,7 @@ export function createInspectWorkTool(projectRoot: string): AgentTool<typeof Ins
     name: "inspect_work",
     description:
       "Inspect one Work manifest and return canonical current and pending candidate artifact paths with revision status. " +
-      "Read with workspace__read using artifactId, workId and optionally revisionId; paths are display references, not identifiers to reconstruct.",
+      "Use sourceSets for complete manuscript inputs when deriving another Work; a brief describes intent and is not the written manuscript. Read with workspace__read using artifactId, workId and optionally revisionId; paths are display references, not identifiers to reconstruct.",
     label: "Inspect Work",
     parameters: InspectWorkParams,
     async execute(
@@ -3169,6 +3207,7 @@ export function createInspectWorkTool(projectRoot: string): AgentTool<typeof Ins
       params: Static<typeof InspectWorkParams>,
     ) {
       const work = await loadWorkManifest(projectRoot, params.workId);
+      const sourceSets=currentWorkSourceSets(work);
       const artifacts = work.artifacts.flatMap((artifact) => {
         const current = artifact.revisions.find((revision) => revision.id === artifact.currentRevisionId);
         const pending = artifact.revisions.filter((revision) => revision.status === "candidate").at(-1);
@@ -3189,12 +3228,14 @@ export function createInspectWorkTool(projectRoot: string): AgentTool<typeof Ins
         `language=${work.language}`,
         `status=${work.status}`,
         `lineage=${JSON.stringify(work.lineage)}`,
+        `sourceSets=${JSON.stringify(sourceSets)}`,
+        "For a manuscript-based derivation, pass the relevant source set's sources unchanged to create_work or the domain creation action. Select a subset only when the author requests that subset.",
         "Artifacts:",
         ...(artifacts.length > 0 ? artifacts.map((artifact) => (
           `- artifact=${JSON.stringify(artifact.artifactId)} | kind=${artifact.kind} | status=${artifact.status} | path=${JSON.stringify(artifact.path)}`
         )) : ["- none"]),
       ].join("\n"), { kind: "work_inspected", workId: work.id, title: work.title,
-        profileId: work.profileId, language: work.language, status: work.status, lineage: work.lineage, artifacts });
+        profileId: work.profileId, language: work.language, status: work.status, lineage: work.lineage, sourceSets, artifacts });
     },
   };
 }

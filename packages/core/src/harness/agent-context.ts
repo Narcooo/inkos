@@ -1,6 +1,7 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { UserMessage } from "@mariozechner/pi-ai";
-import { estimateTextTokens } from "../llm/provider.js";
+import { estimateTextTokens, ESTIMATED_IMAGE_TOKENS } from "../llm/provider.js";
+import { createHash } from "node:crypto";
 import type { ContextCompressionCallback } from "../models/context-compression.js";
 import {
   compileContext,
@@ -9,9 +10,10 @@ import {
   type ContextFragment,
   type SemanticContextCompiler,
 } from "./context-compiler.js";
-import type { WorkManifest, WorkProfile } from "./contracts.js";
+import type { WorkManifest, WorkProfile, RequestDeliveryState } from "./contracts.js";
 import { loadWorkManifest } from "./work-store.js";
 import {executionProgress} from './execution-progress.js';
+import {projectHistoricalReads} from '../interaction/read-observation.js';
 
 export interface ConversationCompactionRequest {
   readonly history: string;
@@ -30,8 +32,13 @@ export function createHarnessContextTransform(input: {
   readonly semanticCompiler?: SemanticContextCompiler;
   readonly conversationCompactor?: ConversationCompactor;
   readonly onContextCompression?: ContextCompressionCallback;
+  readonly requestDelivery?: ()=>Omit<RequestDeliveryState,'authorRequest'|'version'>;
 }): (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]> {
   const sources = new ContextSourceRegistry();
+  sources.register({id:'request-delivery',async load(){return input.requestDelivery?[{
+    id:'request-delivery',source:'Current request delivery record; older requests do not add obligations',
+    protection:'protected' as const,priority:100,content:JSON.stringify(input.requestDelivery()),
+  }]:[];}});
   sources.register({
     id: "work-current",
     async load(request) {
@@ -67,6 +74,7 @@ export function createHarnessContextTransform(input: {
   let cached: {frames:string[];summary:string} | undefined;
   return async (messages, signal) => {
     const lastUserIndex = findLastUserIndex(messages);
+    if(lastUserIndex>0)messages=[...projectHistoricalReads(messages.slice(0,lastUserIndex)),...messages.slice(lastUserIndex)];
     let historicalMessages = lastUserIndex > 0 ? messages.slice(0, lastUserIndex) : [];
     let protectedTail = lastUserIndex >= 0 ? messages.slice(lastUserIndex) : messages;
     // Completed reads in the current tool loop can exceed a model window even
@@ -79,6 +87,15 @@ export function createHarnessContextTransform(input: {
         if(protectedTail[i]?.role==='assistant'&&closedToolExchanges(protectedTail.slice(i))
           &&estimateAgentMessages(protectedTail.slice(i))<input.budgetTokens*0.2)boundary=i;
       }
+      // A just-returned image has not yet been seen by the conversational
+      // model. A text summary cannot replace that visual observation.
+      let latestImage=-1;
+      for(let i=protectedTail.length-1;i>=0;i--)if(imageCount(protectedTail[i]!)>0){latestImage=i;break;}
+      if(latestImage>0&&!protectedTail.slice(latestImage+1).some(message=>message.role==='assistant')){
+        for(let i=latestImage-1;i>=1;i--){
+          if(protectedTail[i]?.role==='assistant') {boundary=Math.min(boundary,i);break;}
+        }
+      }
       historicalMessages = [...historicalMessages, ...protectedTail.slice(1,boundary)];
       protectedTail = [messages[lastUserIndex]!,...protectedTail.slice(boundary)];
     }
@@ -88,7 +105,7 @@ export function createHarnessContextTransform(input: {
 
     const currentWork = input.work ? await loadWorkManifest(input.projectRoot, input.work.id) : null;
     const compiled = await compileContext({
-      recipe: { id: `${input.profile.id}-agent`, sourceIds: ["work-current"] },
+      recipe: { id: `${input.profile.id}-agent`, sourceIds: ["work-current","request-delivery"] },
       sources,
       request: {
         projectRoot: input.projectRoot,
@@ -185,7 +202,12 @@ function findLastUserIndex(messages: ReadonlyArray<AgentMessage>): number {
 }
 
 function estimateAgentMessages(messages: ReadonlyArray<AgentMessage>): number {
-  return estimateTextTokens(renderAgentMessages(messages));
+  return estimateTextTokens(renderAgentMessages(messages)) + messages.reduce((count,message)=>count+imageCount(message),0)*ESTIMATED_IMAGE_TOKENS;
+}
+
+function imageCount(message:AgentMessage):number{
+  const content=(message as {content?:unknown}).content;
+  return Array.isArray(content)?content.filter(block=>block?.type==='image').length:0;
 }
 
 function renderAgentMessages(messages: ReadonlyArray<AgentMessage>): string {
@@ -193,7 +215,12 @@ function renderAgentMessages(messages: ReadonlyArray<AgentMessage>): string {
   // model; counting details/cost/signature metadata can double the budget.
   return messages.map((message) => {
     const raw = message as {role:string;content?:unknown;toolCallId?:string;toolName?:string;isError?:boolean};
-    return JSON.stringify({role:raw.role,content:raw.content,
+    const content=Array.isArray(raw.content)?raw.content.map(block=>{
+      if(!block||typeof block!=='object'||block.type!=='image')return block;
+      const bytes=Buffer.from(typeof block.data==='string'?block.data:'','base64');
+      return{type:'image_reference',mimeType:block.mimeType,byteLength:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex'),pixelsAvailable:false};
+    }):raw.content;
+    return JSON.stringify({role:raw.role,content,
       ...(raw.role === "toolResult" ? {toolCallId:raw.toolCallId,toolName:raw.toolName,isError:raw.isError} : {}),
     });
   }).join("\n");

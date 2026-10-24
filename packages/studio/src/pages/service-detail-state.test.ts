@@ -169,7 +169,7 @@ describe("saveServiceConfig", () => {
     });
   });
 
-  it("validates the upstream service before persisting secrets/config", async () => {
+  it.each(["", "0", "0.7"])("validates the upstream service and preserves optional temperature (%s)", async (temperature) => {
     const calls: string[] = [];
     const bodies: unknown[] = [];
     const fetchJsonImpl = vi.fn(async (path: string, init?: { body?: string }) => {
@@ -197,7 +197,7 @@ describe("saveServiceConfig", () => {
       baseUrl: "",
       apiFormat: "chat",
       stream: true,
-      temperature: "0.7",
+      temperature,
       detectedModel: "",
       fetchJsonImpl: fetchJsonImpl as never,
     });
@@ -214,7 +214,7 @@ describe("saveServiceConfig", () => {
         service: "openai",
         defaultModel: "gpt-5.5",
         services: [
-          { service: "openai", temperature: 0.7, apiFormat: "chat", stream: true, models: ["gpt-5.5"] },
+          { service: "openai", temperature: temperature === "" ? null : Number(temperature), apiFormat: "chat", stream: true, models: ["gpt-5.5"] },
         ],
       },
     ]);

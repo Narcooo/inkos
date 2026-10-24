@@ -3,7 +3,7 @@ import { basename, join, relative, sep } from "node:path";
 import { splitChapters, type SplitChapter } from "../utils/chapter-splitter.js";
 import {loadWorkManifest} from '../harness/work-store.js';
 import {readArtifactRevision} from '../harness/artifact-reader.js';
-import {WorkResourceIdSchema,type WorkLineage} from '../harness/contracts.js';
+import {WorkResourceIdSchema,type WorkLineage,type WorkManifest} from '../harness/contracts.js';
 
 const CHAPTER_FILENAME_COLLATOR = new Intl.Collator("en", {
   numeric: true,
@@ -61,12 +61,33 @@ export async function loadChaptersFromPath(
 export async function loadChapterSource(projectRoot:string,sourcePath:string,splitPattern?:string,previousSources:readonly WorkLineage[]=[]):Promise<{chapters:ReadonlyArray<SplitChapter>;lineage:WorkLineage[]}>{
   const parts=relative(projectRoot,sourcePath).split(sep);
   if(parts[0]==='works'&&WorkResourceIdSchema.safeParse(parts[1]).success){
-    let work;
+    let work:WorkManifest|undefined;
     try{work=await loadWorkManifest(projectRoot,parts[1]!);}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
     const path=parts.slice(2).join('/');
-    const artifact=work?.artifacts.find(item=>item.revisions.some(revision=>revision.id===item.currentRevisionId&&revision.path===path));
-    if(work&&artifact){
-      return loadChapterArtifactSource(projectRoot,{workId:work.id,artifactId:artifact.id},splitPattern,previousSources);
+    if(work){
+      const current=work.artifacts.flatMap(artifact=>{
+        const revision=artifact.revisions.find(item=>item.id===artifact.currentRevisionId);
+        return revision?[{artifactId:artifact.id,revisionId:revision.id,path:revision.path}]:[];
+      });
+      const pinned=previousSources.filter(source=>source.sourceWorkId===work.id&&source.sourceArtifactId&&source.sourceRevisionId).map(source=>{
+        const revision=work.artifacts.find(artifact=>artifact.id===source.sourceArtifactId)?.revisions.find(item=>item.id===source.sourceRevisionId);
+        if(!revision)throw Object.assign(new Error('A pinned chapter source revision is no longer registered.'),{code:'SOURCE_SNAPSHOT_MISSING'});
+        return{artifactId:source.sourceArtifactId!,revisionId:source.sourceRevisionId!,path:revision.path};
+      });
+      const single=pinned.find(source=>source.path===path)??current.find(source=>source.path===path);
+      if(single)return loadChapterArtifactSource(projectRoot,{workId:work.id,artifactId:single.artifactId,revisionId:single.revisionId},splitPattern,previousSources);
+      const prefix=path.endsWith('/')?path:path+'/';
+      const inDirectory=(source:{path:string})=>source.path.startsWith(prefix)&&!source.path.slice(prefix.length).includes('/')&&(source.path.endsWith('.md')||source.path.endsWith('.txt'));
+      const originalMembers=pinned.filter(inDirectory);
+      const members=(originalMembers.length?originalMembers:current.filter(inDirectory)).sort((a,b)=>compareChapterSourceNames(a.path,b.path));
+      if(members.length){
+        const sources=await Promise.all(members.map(source=>readArtifactRevision({projectRoot,workId:work.id,artifactId:source.artifactId,revisionId:source.revisionId})));
+        if(sources.some(source=>!source.revision.contentType.startsWith('text/')&&source.revision.contentType!=='application/json'))throw Object.assign(new Error('Chapter import requires text source artifacts'),{code:'SOURCE_NOT_TEXT'});
+        return{chapters:sources.map(source=>({title:basename(source.revision.path).replace(/\.(md|txt)$/,'').replace(/^\d+[_\-\s]*/,''),content:source.bytes.toString('utf8')})),
+          lineage:sources.map(source=>({relation:'derived-from',sourceWorkId:source.work.id,sourceArtifactId:source.artifact.id,sourceRevisionId:source.revision.id})),
+        };
+      }
+      throw Object.assign(new Error('Select a registered text artifact or a directory containing registered text sources in this Work.'),{code:'SOURCE_ARTIFACT_REQUIRED'});
     }
   }
   return{chapters:await loadChaptersFromPath(sourcePath,splitPattern),lineage:[]};

@@ -7,11 +7,13 @@ import {readArtifactRevision} from '../harness/artifact-reader.js';
 import {currentExecutionBaselineWork} from '../harness/execution-evidence.js';
 import {chapterDocumentBody} from '../utils/chapter-document.js';
 import {changedSourceRegion} from '../utils/source-text.js';
+import {chapterReviewContentHash} from '../utils/chapter-review-hash.js';
 
 export interface AuditResult {
   readonly observations: ReadonlyArray<Observation>;
   readonly summary: string;
   readonly unavailable?: boolean;
+  readonly reviewedContentHash?: string;
   readonly reviewedArtifact?: {workId:string;artifactId:string;revisionId:string};
   readonly tokenUsage?: {
     readonly promptTokens: number;
@@ -86,7 +88,7 @@ export class ContinuityAuditor extends BaseAgent {
           ? "Submit evidence-backed observations only."
           : "只提交有证据的审稿观察。",
       },
-      { temperature: options.temperature ?? 0.3, maxTokens: Math.min(4096, this.ctx.client.defaults.maxTokens),categoryRequired:!!comparison,
+      { temperature: options.temperature, maxTokens: Math.min(4096, this.ctx.client.defaults.maxTokens),categoryRequired:!!comparison,
         validateObservations:observations=>{
           for(const observation of observations.filter(item=>item.category==='scope'&&item.assessment==='issue')){
             const ids=new Set(observation.sourceRefs.map(ref=>ref.sourceId));
@@ -95,10 +97,12 @@ export class ContinuityAuditor extends BaseAgent {
         },
       },
     );
+    const reviewedContentHash = chapterReviewContentHash(chapterContent,chapterNumber);
     return {
-      observations: result.observations,
+      observations: result.observations.map(observation => ({...observation,targetHash:reviewedContentHash})),
       summary: result.summary,
       tokenUsage: usage,
+      reviewedContentHash,
       ...(reviewedArtifact?{reviewedArtifact}:{}),
     };
   }

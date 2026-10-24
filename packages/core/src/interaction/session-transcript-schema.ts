@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { PlayModeSchema, SessionKindSchema, type PlayMode, type SessionKind } from "./session.js";
+import {RequestDeliveryStateSchema} from '../harness/contracts.js';
 export type { SessionKind };
 export type { PlayMode };
 
@@ -62,6 +63,10 @@ export const RequestFailedEventSchema = BaseEventSchema.extend({
   error: z.string(),
 });
 
+export const RequestDeliveryEventSchema=BaseEventSchema.extend({
+  type:z.literal('request_delivery'),requestId:z.string().min(1),state:RequestDeliveryStateSchema,
+});
+
 export const MessageEventSchema = BaseEventSchema.extend({
   type: z.literal("message"),
   requestId: z.string().min(1),
@@ -94,6 +99,7 @@ export const TranscriptEventSchema = z.discriminatedUnion("type", [
   RequestStartedEventSchema,
   RequestCommittedEventSchema,
   RequestFailedEventSchema,
+  RequestDeliveryEventSchema,
   MessageEventSchema,
 ]);
 

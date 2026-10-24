@@ -15,6 +15,7 @@ import type {
 import { resolveServicePreset } from "./service-presets.js";
 import { getEndpoint } from "./providers/index.js";
 import { lookupModel } from "./providers/lookup.js";
+import { applyModelRequestCapabilities, resolveChatCompat } from "./model-request-capabilities.js";
 import { fetchWithProxy } from "../utils/proxy-fetch.js";
 import { isApiKeyOptionalForEndpoint } from "../utils/llm-endpoint-auth.js";
 import { createLeadingThinkTagStripper, stripLeadingThinkBlock } from "./think-tag-stripper.js";
@@ -320,7 +321,7 @@ export interface LLMClient {
   readonly _piModel?: PiModel<PiApi>;
   readonly _apiKey?: string;
   readonly defaults: {
-    readonly temperature: number;
+    readonly temperature?: number;
     /**
      * Per-call fallback: 当 agent 调 chat() 不传 options.maxTokens 时用这个值。
      * 命中模型卡时来自 providers bank 的 modelCard.maxOutput；未知模型走写作兜底预算。
@@ -336,7 +337,7 @@ export interface LLMClient {
 export function createLLMClient(config: LLMConfig): LLMClient {
   const _earlyCard = lookupModel(config.service ?? "custom", config.model);
   const defaults = {
-    temperature: config.temperature ?? 0.7,
+    temperature: config.temperature,
     maxTokens: _earlyCard?.maxOutput ?? UNKNOWN_MODEL_FALLBACK_MAX_TOKENS,
     thinkingBudget: config.thinkingBudget ?? 0,
     extra: config.extra ?? {},
@@ -355,7 +356,7 @@ export function createLLMClient(config: LLMConfig): LLMClient {
   const baseUrl = config.baseUrl || inkosProvider?.baseUrl || preset?.baseUrl || "";
   const extraHeaders = sanitizeHttpHeaders(config.headers ?? parseEnvHeaders());
   const compat = piApi === "openai-completions"
-    ? resolveProviderCompat(inkosProvider, baseUrl)
+    ? resolveChatCompat(inkosProvider?.compat)
     : undefined;
 
   const provider = config.provider === "anthropic" || piApi === "anthropic-messages" ? "anthropic" : "openai";
@@ -412,17 +413,6 @@ function resolvePiApi(
     return apiFormat === "responses" ? "openai-responses" : "openai-completions";
   }
   return (presetApi ?? "openai-completions") as PiApi;
-}
-
-function resolveProviderCompat(
-  provider: ReturnType<typeof getEndpoint>,
-  baseUrl: string,
-): Record<string, unknown> | undefined {
-  const compat = {
-    ...(provider?.compat ?? {}),
-    ...(baseUrl.includes("generativelanguage.googleapis.com") ? { supportsStore: false } : {}),
-  };
-  return Object.keys(compat).length > 0 ? compat : undefined;
 }
 
 function parseEnvHeaders(): Record<string, string> | undefined {
@@ -505,9 +495,8 @@ function stripReservedKeys(extra: Record<string, unknown>): Record<string, unkno
 // 硬要求 temperature === 1，其他值会被直接 400 拒绝（Moonshot 返回
 // `invalid temperature: only 1 is allowed for this model`）。
 //
-// inkos 让 writer/validator/architect 各自带 per-call 温度（0.1~1.5），
-// 所以 provider 层统一夹制：如果 bank 里模型卡标了 temperature 字段，
-// 就把 per-call 温度 clamp 到那个值，并对每个模型名打一次 warning。
+// 仅处理调用方显式指定的温度；未指定时使用服务端默认值。
+// 如果模型卡标了服务端固定温度约束，就统一 clamp 并提示一次。
 //
 // 这个字段只表达"服务端硬约束"，普通模型不要标，避免误伤 per-call 调参。
 
@@ -516,8 +505,9 @@ const warnedFixedTemperatureModels = new Set<string>();
 function clampTemperatureForModel(
   service: string | undefined,
   model: string,
-  requested: number,
-): number {
+  requested: number | undefined,
+): number | undefined {
+  if (requested === undefined) return undefined;
   const card = service ? lookupModel(service, model) : undefined;
   if (card?.temperature === undefined) return requested;
   const locked = card.temperature;
@@ -557,6 +547,10 @@ function estimateLLMMessagesTokens(messages: ReadonlyArray<LLMMessage>): number 
 
 type PiMessageContent = PiContext["messages"][number]["content"];
 
+// A conservative visual-input allowance, not a billing estimate. Base64 is
+// transport encoding and must never be counted as natural-language tokens.
+export const ESTIMATED_IMAGE_TOKENS = 4096;
+
 function estimatePiContentTokens(content: PiMessageContent): number {
   if (typeof content === "string") return estimateTextTokens(content);
   let total = 0;
@@ -577,7 +571,7 @@ function estimatePiContentTokens(content: PiMessageContent): number {
     }
     if (block.type === "image") {
       total += estimateTextTokens(typeof block.mimeType === "string" ? block.mimeType : "");
-      total += estimateTextTokens(typeof block.data === "string" ? block.data : "");
+      total += ESTIMATED_IMAGE_TOKENS;
       continue;
     }
     total += estimateJsonTokens(block);
@@ -1070,7 +1064,7 @@ async function chatCompletionViaCustomAnthropicCompatible(
   client: LLMClient,
   model: string,
   messages: ReadonlyArray<LLMMessage>,
-  resolved: { readonly temperature: number; readonly maxTokens: number; readonly extra: Record<string, unknown> },
+  resolved: { readonly temperature?: number; readonly maxTokens: number; readonly extra: Record<string, unknown> },
   onStreamProgress?: OnStreamProgress,
   onTextDelta?: (text: string) => void,
   signal?: AbortSignal,
@@ -1103,7 +1097,7 @@ async function chatCompletionViaCustomAnthropicCompatible(
       ...(client._piModel?.headers ?? {}),
       ...traceHeaders,
     }) ?? { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(applyModelRequestCapabilities(payload, resolvePiModel(client, model))),
     signal,
   }, client.proxyUrl);
 
@@ -1185,7 +1179,7 @@ async function chatCompletionViaCustomOpenAICompatible(
   client: LLMClient,
   model: string,
   messages: ReadonlyArray<LLMMessage>,
-  resolved: { readonly temperature: number; readonly maxTokens: number; readonly extra: Record<string, unknown> },
+  resolved: { readonly temperature?: number; readonly maxTokens: number; readonly extra: Record<string, unknown> },
   onStreamProgress?: OnStreamProgress,
   onTextDelta?: (text: string) => void,
   signal?: AbortSignal,
@@ -1227,7 +1221,7 @@ async function chatCompletionViaCustomOpenAICompatible(
     const response = await fetchWithProxy(`${baseUrl.replace(/\/$/, "")}/responses`, {
       method: "POST",
       headers,
-      body: JSON.stringify(payload),
+      body: JSON.stringify(applyModelRequestCapabilities(payload, resolvePiModel(client, model))),
       signal,
     }, client.proxyUrl);
     if (!response.ok) {
@@ -1328,7 +1322,7 @@ async function chatCompletionViaCustomOpenAICompatible(
   const response = await fetchWithProxy(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
     method: "POST",
     headers,
-    body: JSON.stringify(payload),
+    body: JSON.stringify(applyModelRequestCapabilities(payload, resolvePiModel(client, model))),
     signal,
   }, client.proxyUrl);
   if (!response.ok) {
@@ -1616,7 +1610,7 @@ async function chatCompletionViaPiAi(
   client: LLMClient,
   model: string,
   messages: ReadonlyArray<LLMMessage>,
-  resolved: { readonly temperature: number; readonly maxTokens: number; readonly extra: Record<string, unknown> },
+  resolved: { readonly temperature?: number; readonly maxTokens: number; readonly extra: Record<string, unknown> },
   onStreamProgress?: OnStreamProgress,
   onTextDelta?: (text: string) => void,
   signal?: AbortSignal,
@@ -1631,6 +1625,7 @@ async function chatCompletionViaPiAi(
     apiKey: client._apiKey,
     headers: mergeUserAgent({ ...(piModel.headers ?? {}), ...traceHeaders }),
     signal,
+    onPayload: (payload: unknown) => applyModelRequestCapabilities(payload, piModel),
   };
 
   if (!client.stream) {

@@ -42,6 +42,8 @@ export interface WorkerResultTool<TParameters extends TSchema> {
   readonly description: string;
   readonly parameters: TParameters;
   readonly validate?: (parameters: Static<TParameters>) => Static<TParameters> | Promise<Static<TParameters>>;
+  readonly supportingTools?: ReadonlyArray<AgentTool>;
+  readonly maxTurns?: number;
 }
 
 const EMPTY_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
@@ -332,28 +334,36 @@ export async function runWorkerAgentTool<TParameters extends TSchema>(
 
   let submitted: Static<TParameters> | undefined;
   let modelTurns = 0;
+  let lastSupportingTurn = -1;
   let resultAttemptsExhausted = false;
-  let lastValidationError: (Error & {code?:string}) | undefined;
-  const maxResultTurns = 3;
-  const { validate, ...toolDefinition } = resultTool;
+  let lastValidationError: (Error & {code?:string;issues?:ReturnType<typeof toolArgumentIssues>}) | undefined;
+  const maxResultTurns = resultTool.maxTurns ?? 3;
+  const temperature = options.temperature ?? client.defaults.temperature;
+  const { validate, supportingTools = [], maxTurns: _maxTurns, ...toolDefinition } = resultTool;
+  const prepareArguments = (schema: TSchema, toolName: string, params: unknown) => {
+      const decodedPaths:string[]=[];
+      params=decodeStructuredFields(schema,params,decodedPaths);
+      if(decodedPaths.length)recordExecutionEvidence('worker-arguments-decoded',{resultTool:toolName,paths:decodedPaths});
+      const issues = toolArgumentIssues(schema, params);
+      if (issues.length) {
+        const failure={code:'WORKER_SCHEMA_INVALID',resultTool:toolName,issues};
+        recordExecutionEvidence('worker-result-invalid',failure);
+        lastValidationError=Object.assign(new Error(JSON.stringify(failure)),failure);
+        throw lastValidationError;
+      }
+      return params;
+  };
   const tool: AgentTool<TParameters, Static<TParameters>> = {
     ...toolDefinition,
-    prepareArguments: (params) => {
-      const decodedPaths:string[]=[];
-      params=decodeStructuredFields(resultTool.parameters,params,decodedPaths) as typeof params;
-      if(decodedPaths.length)recordExecutionEvidence('worker-arguments-decoded',{resultTool:resultTool.name,paths:decodedPaths});
-      const issues = toolArgumentIssues(resultTool.parameters, params);
-      if (issues.length) {
-        const failure={code:'WORKER_SCHEMA_INVALID',resultTool:resultTool.name,issues};
-        recordExecutionEvidence('worker-result-invalid',failure);
-        lastValidationError=undefined;
-        throw new Error(JSON.stringify(failure));
-      }
-      return params as Static<TParameters>;
-    },
+    prepareArguments: params => prepareArguments(resultTool.parameters, resultTool.name, params) as Static<TParameters>,
     execute: async (_toolCallId, params): Promise<AgentToolResult<Static<TParameters>>> => {
+      if (submitted !== undefined) throw Object.assign(new Error('The final result is already recorded; later tool calls cannot change it.'),{code:'WORKER_RESULT_ALREADY_FINALIZED'});
       const parsed = Value.Parse(resultTool.parameters, params) as Static<TParameters>;
       try {
+        if (lastSupportingTurn === modelTurns) throw Object.assign(new Error(JSON.stringify({
+          code:'WORKER_RESULT_READBACK_REQUIRED',
+          instruction:'Read the supporting tool results before finalizing in a later response. Correct or omit unsupported findings, then submit the final result.',
+        })),{code:'WORKER_RESULT_READBACK_REQUIRED'});
         submitted = validate ? await validate(parsed) : parsed;
       } catch(error) {
         lastValidationError=error instanceof Error?error:new Error(String(error));
@@ -371,7 +381,16 @@ export async function runWorkerAgentTool<TParameters extends TSchema>(
     },
   };
   const agent = new Agent({
-    initialState: { model, systemPrompt, tools: [tool], messages: [] },
+    initialState: { model, systemPrompt, tools: [tool, ...supportingTools.map(supporting => ({
+      ...supporting,
+      prepareArguments: (params: unknown) => prepareArguments(supporting.parameters, supporting.name, params),
+      execute: async (...args: Parameters<AgentTool['execute']>) => {
+        if (submitted !== undefined) throw Object.assign(new Error('The final result is already recorded; later tool calls cannot change it.'),{code:'WORKER_RESULT_ALREADY_FINALIZED'});
+        const result=await supporting.execute(...args);
+        lastSupportingTurn=modelTurns;
+        return result;
+      },
+    }))], messages: [] },
     beforeToolCall: preserveToolArgumentTypes,
     toolExecution: "sequential",
     streamFn: (streamModel, context, streamOptions) => {
@@ -381,19 +400,26 @@ export async function runWorkerAgentTool<TParameters extends TSchema>(
         return localStopStream(streamModel);
       }
       modelTurns++;
+      const boundedContext=supportingTools.length?{
+        ...context,
+        systemPrompt:[context.systemPrompt,
+          'Complete the task within the response budget below. Batch independent supporting calls and leave a later response to read their results and submit the final tool. Do not claim incomplete work is complete.',
+          JSON.stringify({workerBudget:{response:modelTurns,maxResponses:maxResultTurns,remainingResponses:maxResultTurns-modelTurns,finalTool:resultTool.name}}),
+        ].join('\n\n'),
+      }:context;
       const resultOptions = {
           ...streamOptions,
-          ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
+          ...(temperature !== undefined ? { temperature } : {}),
           ...(options.maxTokens !== undefined ? { maxTokens: options.maxTokens } : {}),
           signal: combineSignals(streamOptions?.signal, options.signal),
-          // There is exactly one result tool, so required selects it without a
-          // provider-specific named-function envelope.
+          // The host requires a typed result; transport uses default tool
+          // selection and gives bounded feedback when that result is missing.
           toolChoice: "required" as const,
           onPayload: (payload: unknown) => payload && typeof payload === "object" ? { ...client.defaults.extra, ...payload } : payload,
         };
       return client.stream === false
-        ? guardedPiNonStreaming(streamModel, context, resultOptions, client.proxyUrl)
-        : guardedPiStream(streamModel, context, resultOptions, 1, {firstEventTimeoutMs:300_000,idleTimeoutMs:300_000});
+        ? guardedPiNonStreaming(streamModel, boundedContext, resultOptions, client.proxyUrl)
+        : guardedPiStream(streamModel, boundedContext, resultOptions, 1, {firstEventTimeoutMs:300_000,idleTimeoutMs:300_000});
     },
     getApiKey: () => client._apiKey,
   });
@@ -414,6 +440,7 @@ export async function runWorkerAgentTool<TParameters extends TSchema>(
     options.signal?.throwIfAborted();
     if (resultAttemptsExhausted) throw Object.assign(new Error(lastValidationError?.message??'Structured result remained invalid after bounded correction attempts'), {
       code:lastValidationError?.code??'WORKER_RESULT_INVALID',resultTool:resultTool.name,attempts:modelTurns,
+      ...(lastValidationError?.issues ? {issues:lastValidationError.issues} : {}),
       lastToolError:[...agent.state.messages].reverse().find(message=>message.role==='toolResult'&&message.isError),
     });
     const initialResult = agent.state.messages.at(-1);
@@ -446,16 +473,12 @@ export async function runWorkerAgentTool<TParameters extends TSchema>(
         lastAssistantText: last?.content.filter((part)=>part.type==="text").map((part)=>part.text).join(""),
       });
     }
-    const usageMessage = [...agent.state.messages].reverse().find(
-      (message): message is AssistantMessage => message.role === "assistant" && message.usage.totalTokens > 0,
-    );
-    if (usageMessage) {
-      options.onUsage?.({
-        promptTokens: usageMessage.usage.input,
-        completionTokens: usageMessage.usage.output,
-        totalTokens: usageMessage.usage.totalTokens,
-      });
-    }
+    const usage = agent.state.messages.reduce((total,message) => message.role === "assistant" ? {
+      promptTokens: total.promptTokens + message.usage.input,
+      completionTokens: total.completionTokens + message.usage.output,
+      totalTokens: total.totalTokens + message.usage.totalTokens,
+    } : total, {promptTokens:0,completionTokens:0,totalTokens:0});
+    if (usage.totalTokens > 0) options.onUsage?.(usage);
     return submitted;
   } finally {
     unsubscribeProgress();

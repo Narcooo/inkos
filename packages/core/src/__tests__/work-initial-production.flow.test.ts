@@ -1,3 +1,4 @@
+import {fixtureToolCalls} from './tool-call-fixtures.js';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
@@ -22,7 +23,8 @@ it('produces and edits a composed Work by its capabilities while protecting exis
   let executionFindingOnly = false;
   let scopeFinding = false;
   const bodies: Array<{tools:Array<{function:{name:string}}>;messages:Array<{role:string;content:string}>}> = [];
-  const sourceText = 'The volunteer returns the borrowed blue flashlight.\n';
+  const sourceParts = ['The volunteer returns the borrowed blue flashlight.\n','The curator stores it in the west cabinet.\n'];
+  const sourceText = sourceParts.join('\n\n');
   const manuscript = '| Shot | Duration | Action |\n|---|---|---|\n| 1 | 10s | Return the borrowed light. |\n';
   const server = createServer(async (request, response) => {
     const chunks: Buffer[]=[]; for await (const chunk of request) chunks.push(Buffer.from(chunk));
@@ -38,7 +40,7 @@ it('produces and edits a composed Work by its capabilities while protecting exis
         ? {code:'EXPORT_RECEIPT_NOT_SUPPLIED',category:'execution',assessment:'unavailable',summary:'No completed export receipt is supplied to this review.',sourceRefs:[]}
         : {code:'EXTERNAL_HISTORY_UNAVAILABLE',category:'quality',assessment:'unavailable',summary:'External comparison requires its source.',sourceRefs:[]}]};
     response.writeHead(200, {'Content-Type':'text/event-stream'});
-    response.write(`data: ${JSON.stringify({id:'production',object:'chat.completion.chunk',choices:[{index:0,delta:{role:'assistant',tool_calls:[{index:0,id:'production-call',type:'function',function:{name:toolName,arguments:JSON.stringify(args)}}]},finish_reason:null}]})}\n\n`);
+    response.write(`data: ${JSON.stringify({id:'production',object:'chat.completion.chunk',choices:[{index:0,delta:{role:'assistant',tool_calls:fixtureToolCalls(toolName,args,'production-call',body.messages)},finish_reason:null}]})}\n\n`);
     response.end(`data: ${JSON.stringify({id:'production',object:'chat.completion.chunk',choices:[{index:0,delta:{},finish_reason:'tool_calls'}]})}\n\ndata: [DONE]\n\n`);
   });
   server.listen(0,'127.0.0.1'); await once(server,'listening');
@@ -57,14 +59,14 @@ it('produces and edits a composed Work by its capabilities while protecting exis
     const runtime = new CreativeHarnessRuntime(root,registry,profiles,ledger);
     await saveWorkManifest(root,createWorkManifest({id:'origin',title:'Original',profileId:'script',language:'en'}));
     await mkdir(join(root,'works/origin/source'),{recursive:true});
-    const parent = await syncWorkSourceArtifacts({projectRoot:root,workId:'origin',accept:true,writes:[{relativePath:'works/origin/source/script.md',content:sourceText}]});
-    const source = {workId:parent.id,artifactId:parent.artifacts[0]!.id,revisionId:parent.artifacts[0]!.currentRevisionId!};
+    const parent = await syncWorkSourceArtifacts({projectRoot:root,workId:'origin',accept:true,writes:[{relativePath:'works/origin/source/script.md',content:sourceParts[0]!},{relativePath:'works/origin/source/second-scene.md',content:sourceParts[1]!}]});
+    const sources = parent.artifacts.map(a=>({workId:parent.id,artifactId:a.id,revisionId:a.currentRevisionId!}));
     const handle = runtime.startEpisode({profileId:'workspace-default',work:null});
-    await runtime.executeAction({handle,capabilityId:'workspace',actionId:'create_work',source:'agent',parameters:{workId:'derived',profileId,title:'Museum light',intent:'One shot showing a returned flashlight.',language:'en',source}});
+    await runtime.executeAction({handle,capabilityId:'workspace',actionId:'create_work',source:'agent',parameters:{workId:'derived',profileId,title:'Museum light',intent:'One shot showing a returned flashlight.',language:'en',sources}});
     const created = await loadWorkManifest(root,'derived');
     expect(created.status).toBe('active');
     expect(created.profileId).toBe(profileId);
-    expect(created.lineage).toEqual([{relation:'derived-from',sourceWorkId:source.workId,sourceArtifactId:source.artifactId,sourceRevisionId:source.revisionId}]);
+    expect(created.lineage).toEqual(sources.map(source=>({relation:'derived-from',sourceWorkId:source.workId,sourceArtifactId:source.artifactId,sourceRevisionId:source.revisionId})));
     await syncWorkSourceArtifacts({projectRoot:root,workId:'origin',accept:true,writes:[{relativePath:'works/origin/source/script.md',content:'A later source revision.'}]});
     const brief = await readFile(join(root,'works/derived/source/brief.md'));
     const staged=await syncWorkSourceArtifacts({projectRoot:root,workId:'derived',accept:false,writes:[{relativePath:'works/derived/source/notes.md',content:'An unrelated candidate.'}]});
@@ -109,19 +111,23 @@ it('produces and edits a composed Work by its capabilities while protecting exis
       const {actionId,...args}=parameters;
       await expect(bound.executeAction({handle:production,capabilityId:'workspace',actionId,source:'agent',parameters:{artifactId:exportedArtifact.id,...args}})).rejects.toMatchObject({code:'ARTIFACT_DERIVED',authorityPath:'source/storyboard.md',recovery:{action:'workspace__read',parameters:{workId:'derived',artifactId:artifact.id,revisionId:artifact.currentRevisionId}}});
     }
-    expect(requests).toBe(2);
+    expect(requests).toBe(3);
     expect(await readFile(exportPath,'utf8')).toBe(manuscript);
     expect((reviewed.data as {reviewedReferences:unknown[]}).reviewedReferences).toHaveLength(3);
     await expect(bound.executeAction({handle:production,capabilityId:'storyboard',actionId:'generate',source:'agent',parameters})).rejects.toMatchObject({code:'WORK_ALREADY_PRODUCED',recovery:{parameters:{workId:'derived'}}});
     expect(await readFile(join(root,'works/derived/source/storyboard.md'),'utf8')).toBe(manuscript);
-    expect(requests).toBe(2);
+    expect(requests).toBe(3);
     bound.finishEpisode(production,'completed');
     const revisionEpisode=bound.startEpisode({profileId,work:deliveredWork});
     await bound.executeAction({handle:revisionEpisode,capabilityId:'workspace',actionId:'replace_work_artifact',source:'agent',parameters:{artifactId:artifact.id,content:manuscript+'\nA changed final shot.\n',expectedRevisionId:artifact.currentRevisionId}});
     await expect(finish.execute('finish-stale', {status:'delivered',message:'Reviewed and exported.'})).rejects.toMatchObject({code:'TURN_DELIVERY_STALE'});
     failReview = true;
+    await deliveries.requireOperations(root,'derived','workspace','review_and_export_work_artifact',deliveryParameters);
     await expect(bound.executeAction({handle:revisionEpisode,capabilityId:'workspace',actionId:'review_and_export_work_artifact',source:'agent',parameters:deliveryParameters})).rejects.toThrow();
     expect(await readFile(exportPath,'utf8')).toBe(manuscript);
+    const exportOnly=await bound.executeAction({handle:revisionEpisode,capabilityId:'workspace',actionId:'export_work',source:'agent',parameters:{artifactId:artifact.id}});
+    deliveries.observe(exportOnly);
+    await expect(finish.execute('finish-review-missing',{status:'delivered',message:'Export completed.'})).rejects.toMatchObject({code:'TURN_REQUIRED_OPERATIONS_INCOMPLETE'});
     const intermediate=await loadWorkManifest(root,'derived');
     const intermediateId=intermediate.artifacts.find(item=>item.id===artifact.id)!.currentRevisionId!;
     await bound.executeAction({handle:revisionEpisode,capabilityId:'workspace',actionId:'replace_work_artifact',source:'agent',parameters:{artifactId:artifact.id,content:manuscript+'\nThe final shot follows the hand.\n',expectedRevisionId:intermediateId}});

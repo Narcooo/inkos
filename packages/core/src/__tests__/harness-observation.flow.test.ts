@@ -13,6 +13,98 @@ import { CreativeEpisodeStore } from "../harness/episode-store.js";
 import { executionProgress } from "../harness/execution-progress.js";
 import { createHarnessContextTransform } from "../harness/agent-context.js";
 import { Type } from "@sinclair/typebox";
+import {createServer} from 'node:http';
+import {once} from 'node:events';
+import {guardedPiNonStreaming,guardedPiStream} from '../agent/pi-stream.js';
+
+it('delivers verified image bytes through the harness and provider wire while preserving parallel tool results',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'inkos-image-observation-'));
+  const ledger=new CreativeEpisodeStore(join(root,'.inkos/harness.sqlite'));
+  const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=','base64');
+  let wire:any;
+  const server=createServer(async(req,res)=>{const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));wire=JSON.parse(Buffer.concat(chunks).toString());
+    if(wire.stream){res.writeHead(200,{'Content-Type':'text/event-stream'});res.end('data: '+JSON.stringify({id:'image',choices:[{index:0,delta:{role:'assistant',content:'Observation received.'},finish_reason:'stop'}]})+'\n\ndata: [DONE]\n\n');}
+    else{res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({choices:[{finish_reason:'stop',message:{content:'Observation received.'}}]}));}
+  });
+  server.listen(0,'127.0.0.1');await once(server,'listening');
+  try{
+    await saveWorkManifest(root,createWorkManifest({id:'book',title:'Book',profileId:'short-fiction',language:'en'}));
+    await mkdir(join(root,'works/book/source'),{recursive:true});
+    const work=await syncWorkSourceArtifacts({projectRoot:root,workId:'book',accept:true,writes:[
+      {relativePath:'works/book/source/cover.png',content:png},
+      {relativePath:'works/book/source/brief.md',content:'An adult keeper beside a lighthouse.'},
+    ]});
+    const image=work.artifacts.find(a=>a.kind==='image')!,brief=work.artifacts.find(a=>a.id!==image.id)!;
+    const profiles=createBuiltInWorkProfileRegistry(),profile=profiles.require('short-fiction');
+    const registry=createSingleToolCapabilityRegistry({binding:{capabilityId:'workspace',actionId:'read',profileId:profile.id,risk:'read'},tool:createReadTool(root,{workId:work.id})});
+    const runtime=new CreativeHarnessRuntime(root,registry,profiles,ledger),handle=runtime.startEpisode({profileId:profile.id,work});
+    const tool=createCapabilityPiTools({registry,profile:{...profile,capabilityIds:['workspace']},executeAction:(capabilityId,actionId,parameters)=>runtime.executeAction({handle,capabilityId,actionId,parameters,source:'agent'})})[0]!;
+    await writeFile(join(root,'works/book/source/cover.png'),'unregistered working copy');
+    const result=await tool.execute('image',{artifactId:image.id}),text=await tool.execute('brief',{artifactId:brief.id});
+    await writeFile(join(root,'works/book/source/reference.data'),png);
+    const external=await tool.execute('external-image',{path:'book/source/reference.data'});
+    expect(external.content[1]).toEqual(result.content[1]);
+    expect(JSON.parse((external.content[0] as {text:string}).text).facts).toMatchObject({kind:'file_image_read',path:'book/source/reference.data',checksum:image.revisions[0]!.checksum,byteLength:png.length});
+    await writeFile(join(root,'works/book/source/unreadable.bin'),Buffer.from([0,255,1]));
+    await expect(tool.execute('binary',{path:'book/source/unreadable.bin'})).rejects.toMatchObject({code:'WORK_FILE_NOT_TEXT'});
+    expect(result.content[1]).toEqual({type:'image',mimeType:'image/png',data:png.toString('base64')});
+    const facts=JSON.parse((result.content[0] as {text:string}).text).facts;
+    expect(facts).toMatchObject({kind:'artifact_image_read',artifactId:image.id,revisionId:image.currentRevisionId,checksum:image.revisions[0]!.checksum,byteLength:png.length});
+    expect(JSON.parse((result.content[0] as {text:string}).text).images).toBeUndefined();
+    const model={id:'fixture',name:'fixture',api:'openai-completions' as const,provider:'openai',baseUrl:`http://127.0.0.1:${(server.address() as {port:number}).port}/v1`,reasoning:false,input:['text','image'] as ('text'|'image')[],cost:{input:0,output:0,cacheRead:0,cacheWrite:0},contextWindow:128000,maxTokens:1024};
+    const context={systemPrompt:'Inspect the returned source image.',messages:[
+      {role:'assistant',content:[{type:'toolCall',id:'image',name:tool.name,arguments:{artifactId:image.id}},{type:'toolCall',id:'brief',name:tool.name,arguments:{artifactId:brief.id}}]},
+      {role:'toolResult',toolCallId:'image',toolName:tool.name,...result,isError:false,timestamp:1},
+      {role:'toolResult',toolCallId:'brief',toolName:tool.name,...text,isError:false,timestamp:2},
+    ] as never};
+    await guardedPiNonStreaming(model,context, {apiKey:'fixture'}).result();
+    expect(wire.messages.map((m:any)=>m.role)).toEqual(['system','assistant','tool','tool','user']);
+    expect(JSON.parse(wire.messages.at(-1).content[0].text)).toMatchObject({kind:'tool_image_observation',authority:'untrusted_source_material',toolCallId:'image'});
+    expect(wire.messages.at(-1).content[1]).toEqual({type:'image_url',image_url:{url:'data:image/png;base64,'+png.toString('base64')}});
+    const streamed=await guardedPiStream({...model,input:['text']},context,{apiKey:'fixture'}).result();
+    expect(streamed.stopReason).toBe('stop');
+    expect(wire.messages.filter((m:any)=>m.role==='tool').map((m:any)=>m.tool_call_id)).toEqual(['image','brief']);
+    expect(wire.messages.flatMap((m:any)=>Array.isArray(m.content)?m.content:[]).filter((p:any)=>p.type==='image_url')).toEqual([{type:'image_url',image_url:{url:'data:image/png;base64,'+png.toString('base64')}}]);
+    await expect(tool.execute('page',{artifactId:image.id,lineCount:1})).rejects.toMatchObject({code:'ARTIFACT_IMAGE_PAGINATION'});
+    await writeFile(join(root,'works/book',image.revisions[0]!.snapshotPath!),'damaged');
+    await expect(tool.execute('damaged',{artifactId:image.id})).rejects.toMatchObject({code:'ARTIFACT_REVISION_CONFLICT'});
+    runtime.finishEpisode(handle,'completed');
+  }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));ledger.close();await rm(root,{recursive:true,force:true});}
+},20000);
+
+it('keeps source receipts across requests while retaining fresh read content and read failures',async()=>{
+  const {adaptRestoredAgentMessagesForModel}=await import('../interaction/session-transcript-restore.js');
+  const profile=createBuiltInWorkProfileRegistry().require('workspace-default');
+  const oldBody='\ufffdPNG\r\n\u0000'.repeat(10000);
+  const history:any[]=[
+    {role:'user',content:'Inspect the reference.',timestamp:1},
+    {role:'assistant',content:[{type:'toolCall',id:'old-read',name:'workspace__read',arguments:{path:'reference.png'}}]},
+    {role:'toolResult',toolCallId:'old-read',toolName:'workspace__read',content:[{type:'text',text:oldBody}],details:{path:'reference.png'},isError:false,timestamp:2},
+    {role:'assistant',content:[{type:'toolCall',id:'failed-read',name:'workspace__read',arguments:{artifactId:'missing'}}]},
+    {role:'toolResult',toolCallId:'failed-read',toolName:'workspace__read',content:[{type:'text',text:JSON.stringify({code:'ARTIFACT_NOT_FOUND'})}],isError:true,timestamp:3},
+    {role:'assistant',content:[{type:'toolCall',id:'unbound-read',name:'workspace__read',arguments:{artifactId:'draft'}}]},
+    {role:'toolResult',toolCallId:'unbound-read',toolName:'workspace__read',content:[{type:'text',text:'Legacy source without a Work identity.'}],isError:false,timestamp:3},
+  ];
+  const fresh:any[]=[
+    {role:'user',content:'Inspect the current cover.',timestamp:4},
+    {role:'assistant',content:[{type:'toolCall',id:'new-read',name:'workspace__read',arguments:{artifactId:'cover'}}]},
+    {role:'toolResult',toolCallId:'new-read',toolName:'workspace__read',content:[{type:'image',mimeType:'image/png',data:Buffer.from('fresh pixels').toString('base64')}],isError:false,timestamp:5},
+  ];
+  const original=JSON.stringify(history);
+  const transform=createHarnessContextTransform({projectRoot:'/tmp',work:null,profile,budgetTokens:8000});
+  const current=await transform([...history,...fresh]);
+  const old=current.find((m:any)=>m.toolCallId==='old-read') as any;
+  expect(JSON.parse(old.content[0].text)).toMatchObject({kind:'historical_read_reference',target:{path:'reference.png'},contentOmitted:true});
+  expect((current.find((m:any)=>m.toolCallId==='new-read') as any).content).toEqual(fresh[2].content);
+  expect((current.find((m:any)=>m.toolCallId==='failed-read') as any).content).toEqual(history[4].content);
+  expect((current.find((m:any)=>m.toolCallId==='unbound-read') as any).content).toEqual(history[6].content);
+  const restored=adaptRestoredAgentMessagesForModel(history,{api:'openai-completions',provider:'openai',id:'fixture'});
+  const records=restored.filter((m:any)=>m.model==='historical-execution-record').flatMap((m:any)=>JSON.parse(m.content[0].text).results);
+  expect(JSON.parse(records[0].text)).toMatchObject({kind:'historical_read_reference',target:{path:'reference.png'},contentOmitted:true});
+  expect(JSON.parse(records[1].text)).toEqual({code:'ARTIFACT_NOT_FOUND'});
+  expect(JSON.stringify(history)).toBe(original);
+  expect(JSON.stringify(restored).length).toBeLessThan(original.length/10);
+});
 
 it("preserves the failed worker stage through the ledger and model-facing tool boundary", async () => {
   const root = await mkdtemp(join(tmpdir(), "inkos-failure-context-"));

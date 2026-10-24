@@ -142,6 +142,27 @@ export const ActionArtifactRefSchema = z.object({
 }).strict();
 export type ActionArtifactRef = z.infer<typeof ActionArtifactRefSchema>;
 
+export const OperationReceiptSchema = z.object({
+  operation: z.enum(["review", "export"]),
+  sources: z.array(ActionArtifactRefSchema.extend({revisionId: HarnessIdSchema})).min(1),
+}).strict();
+export type OperationReceipt = z.infer<typeof OperationReceiptSchema>;
+
+export const DeliveryTargetSchema=ActionArtifactRefSchema.omit({path:true}).extend({version:z.enum(['current','fixed']).default('current')});
+export const DeliveryRequirementSchema=z.object({
+  id:z.string().min(1),operation:z.enum(['review','export']),sourceQuote:z.string().trim().min(1),
+  beforeDraft:z.literal(true).optional(),
+  targets:z.array(DeliveryTargetSchema).default([]),
+}).strict();
+export const RequestDeliveryStateSchema=z.object({
+  version:z.literal(1),authorRequest:z.string(),declared:z.boolean(),
+  // Historical provenance only; completion does not classify creation to gate quality opinions.
+  newContentQuote:z.string().nullable().optional(),
+  coverQuote:z.string().nullable().optional(),
+  steps:z.array(DeliveryRequirementSchema),receipts:z.array(OperationReceiptSchema),
+}).strict();
+export type RequestDeliveryState=z.infer<typeof RequestDeliveryStateSchema>;
+
 export const ActionObservationSchema = ObservationSchema;
 export type ActionObservation = Observation;
 
@@ -149,8 +170,10 @@ export const ActionResultSchema = z.object({
   status: z.literal("success"),
   summary: z.string().min(1),
   content: z.string().optional(),
+  images: z.array(z.object({type:z.literal('image'),data:z.string().min(1),mimeType:z.string().startsWith('image/')})).optional(),
   artifacts: z.array(ActionArtifactRefSchema),
   observations: z.array(ActionObservationSchema),
+  operationReceipts: z.array(OperationReceiptSchema).optional(),
   data: z.unknown().optional(),
 }).strict();
 export type ActionResult = z.infer<typeof ActionResultSchema>;

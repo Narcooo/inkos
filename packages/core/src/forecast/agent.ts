@@ -45,7 +45,7 @@ export class NarrativeForecastAgent extends BaseAgent {
       description: "Submit the complete non-canonical branch set.",
       parameters: ForecastResultToolSchema,
     } as const;
-    const first = await this.submitStructured(messages, tool, { temperature: 0.6, maxTokens });
+    const first = await this.submitStructured(messages, tool, {  maxTokens });
     let firstError: unknown;
     try {
       return validateGeneratedOutput(ForecastModelOutputSchema.parse(first.result), input.branchCount);
@@ -57,7 +57,7 @@ export class NarrativeForecastAgent extends BaseAgent {
     const retry = await this.submitStructured([
       ...messages,
       { role: "user", content: buildForecastRepairPrompt(String(firstError), input.language) },
-    ], tool, { temperature: 0.4, maxTokens });
+    ], tool, {  maxTokens });
     return validateGeneratedOutput(ForecastModelOutputSchema.parse(retry.result), input.branchCount);
   }
 }

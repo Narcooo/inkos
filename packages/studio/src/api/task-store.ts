@@ -1,11 +1,12 @@
 import { mkdir, readFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
-import type { RequestedIntent } from "@actalk/inkos-core";
+import type { RequestedIntent, AgentSessionConfig } from "@actalk/inkos-core";
 import { commitAtomicFileSet } from "@actalk/inkos-core";
 
 export type StudioTaskExecutionStatus = "running" | "processing" | "completed" | "error";
 
 export interface StudioTaskExecution {
+  readonly deliveryState?:AgentSessionConfig['deliveryState'];
   readonly id: string;
   readonly tool: string;
   readonly agent?: string;

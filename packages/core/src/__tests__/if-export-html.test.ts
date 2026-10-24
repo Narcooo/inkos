@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildPlayableHtml } from "../interactive-film/export-html.js";
 import { StoryGraphSchema } from "../interactive-film/graph-schema.js";
+import {runInNewContext} from 'node:vm';
 
 const graph = StoryGraphSchema.parse({
   schemaVersion: 1, projectId: "p", title: "可玩样例", variables: [{ name: "trust", type: "counter", default: 0, desc: "" }],
@@ -13,6 +14,19 @@ const graph = StoryGraphSchema.parse({
 });
 
 describe("buildPlayableHtml", () => {
+  it('renders a registered character name while retaining direct speaker labels and escaping their markup',()=>{
+    const named=StoryGraphSchema.parse({...graph,characters:[{id:'actor-7',name:'陈姐'}],nodes:[{
+      id:'end',type:'ending',title:'End',choices:[],dialogue:[
+        {speaker:'actor-7',text:'The door closes.'},
+        {speaker:'<narrator>',text:'Silence.'},
+      ],
+    }],endings:[]});
+    const root={innerHTML:'',querySelector:()=>({}),querySelectorAll:()=>[]};
+    const context={document:{getElementById:()=>root}};
+    for(const script of buildPlayableHtml(named).split('<script>').slice(1))runInNewContext(script.split('</script>')[0],context);
+    const labels=[...root.innerHTML.matchAll(/<b>(.*?)<\/b>/g)].map(match=>match[1]);
+    expect(labels).toEqual([named.characters[0].name+'：','&lt;narrator&gt;：']);
+  });
   it("is self-contained (no external http references)", () => {
     const html = buildPlayableHtml(graph);
     expect(html).toContain("<!doctype html>");

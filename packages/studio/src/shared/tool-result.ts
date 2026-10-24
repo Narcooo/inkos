@@ -11,6 +11,19 @@ function textFromContentParts(content: unknown): string {
     .join("\n");
 }
 
+/** Download only an export revision committed by the host, never a model path. */
+export function exportedRevisionDownloads(value:unknown):Array<{workId:string;artifactId:string;revisionId:string;path:string;package:boolean}>{
+  if(!value||typeof value!=='object')return[];
+  const details=value as Record<string,unknown>;
+  const execution=details.hostExecution as {status?:unknown;artifacts?:unknown}|undefined;
+  if(execution?.status!=='success'||!Array.isArray(execution.artifacts))return[];
+  return execution.artifacts.filter(item=>item&&typeof item==='object'
+    &&typeof item.workId==='string'&&(typeof details.workId!=='string'||item.workId===details.workId)
+    &&typeof item.path==='string'&&item.path.startsWith('source/exports/')
+    &&typeof item.artifactId==='string'&&typeof item.revisionId==='string')
+    .map(item=>({workId:item.workId,artifactId:item.artifactId,revisionId:item.revisionId,path:item.path,package:item.path.endsWith('.zip')}));
+}
+
 /** Model observations carry control facts; the author sees their display text. */
 export function toolResultDisplayText(text: string): string {
   try {

@@ -1,4 +1,4 @@
-import type { ActionPayload, ActionSource, AgentSessionResult, PlayMode, RequestedIntent, SessionKind, WorkManifest } from "@actalk/inkos-core";
+import type { ActionPayload, ActionSource, AgentSessionConfig, AgentSessionResult, PlayMode, RequestedIntent, SessionKind, WorkManifest } from "@actalk/inkos-core";
 export type StudioCompletionStatus = NonNullable<AgentSessionResult["completion"]>["status"];
 
 export interface ChatAttachmentPayload {
@@ -63,6 +63,7 @@ export interface ToolExecution {
 export interface StudioChatRequestSnapshot {
   /** Host-owned original revision inventory; never accepted from a request body. */
   readonly baselineWork?: WorkManifest | null;
+  readonly deliveryState?: AgentSessionConfig['deliveryState'];
   readonly sessionId: string;
   readonly requestId: string;
   readonly startedAt: number;

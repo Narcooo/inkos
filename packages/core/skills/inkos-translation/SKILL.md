@@ -12,3 +12,9 @@ Apply this method during translation and translation review.
 - Keep segment boundaries operational, but read neighboring segments and chapter context as one passage so references and cadence survive batching.
 - During review, check fidelity, missing content, added content, terminology, referents, names, numbers, and target-language readability with concrete evidence.
 - A parser or provider failure is not a translation-quality verdict. Preserve completed segments and resume from the first unfinished segment.
+
+## Independent reading and review
+
+- When preparing an independent source reading, translate the requested original segments before examining the existing target. Preserve meaning, quantities, negation, attribution, chronology and uncertainty. Use the full original passage for context.
+- During comparison, check the target against the original meaning, including quantities, negation, attribution, chronology, omissions and terminology. Valid idiomatic or stylistic differences are not errors. The original source is authoritative; retain substantive ambiguity when the context does not resolve it.
+- An independent reading is a fallible comparison aid, not authority or a replacement target. Differences alone do not establish an error. When the two readings differ in meaning, check which agrees with the original; record a substantive unresolved ambiguity as an observation. Support findings with the original and current target, never with the independent reading alone.

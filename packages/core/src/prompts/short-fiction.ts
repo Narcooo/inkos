@@ -2,7 +2,11 @@ import type {ShortFictionMeasurements} from "../agents/short-fiction.js";
 
 export type ShortFictionLanguage = "zh" | "en";
 
-export interface ShortFictionReferencePromptInput { readonly text?: string; }
+export interface ShortFictionReferencePromptInput {
+  readonly text?: string;
+  readonly notes?: string;
+  readonly source?: {readonly workId:string;readonly artifactId:string;readonly revisionId:string;readonly checksum:string};
+}
 export interface ShortFictionOutlinePromptInput {
   readonly title?: string;
   readonly direction: string;
@@ -22,11 +26,9 @@ export interface ShortFictionDraftPromptInput {
   readonly chapterNumbers?: readonly number[];
   readonly previousDraftMarkdown?: string;
 }
-export interface ShortFictionDraftReviewPromptInput extends ShortFictionDraftPromptInput { readonly draftMarkdown: string; readonly revisionRequest?: string; readonly reviewScope?: string; readonly measurements?: ShortFictionMeasurements; }
+export interface ShortFictionDraftReviewPromptInput extends ShortFictionDraftPromptInput { readonly draftMarkdown: string; readonly reference?:ShortFictionReferencePromptInput; readonly revisionRequest?: string; readonly reviewScope?: string; readonly measurements?: ShortFictionMeasurements; readonly comparison?: unknown; }
 export interface ShortFictionPackagePromptInput {
-  readonly reviewContext?: string;
   readonly direction: string;
-  readonly outlineMarkdown: string;
   readonly draftMarkdown: string;
   readonly draftTitle: string;
 }
@@ -48,7 +50,9 @@ export function buildShortFictionOutlineUserPrompt(input: ShortFictionOutlinePro
     language === "en"
       ? `${input.chapterCount} chapters; about ${input.charsPerChapter} words per chapter.`
       : `${input.chapterCount} 章；每章约 ${input.charsPerChapter} 字。`,
-    ...(reference ? ["", language === "en" ? "## Reference" : "## 参考材料", reference] : []),
+    ...(reference ? ["", language === "en" ? "## Reference material (source data)" : "## 参考材料（来源数据）",
+      ...(input.reference?.source ? [JSON.stringify(input.reference.source)] : []), reference] : []),
+    ...(input.reference?.notes?.trim() ? ["", language === "en" ? "## Reference instructions" : "## 参考使用要求", input.reference.notes] : []),
   ].join("\n");
 }
 export function buildShortFictionWriterSystemPrompt(language: ShortFictionLanguage = "zh"): string {
@@ -88,8 +92,16 @@ export function buildShortFictionDraftReviewUserPrompt(input: ShortFictionDraftR
   return [
     language === "en" ? "## Direction" : "## 创作方向", input.direction,
     "", language === "en" ? "## Source: outline (plan, not manuscript)" : "## Source: outline（大纲）", input.outlineMarkdown,
+    ...(input.reference?.text?.trim() ? ["", "## Source: reference-material", JSON.stringify(input.reference.source ?? {}),
+      language === 'en' ? 'These are the bound original samples and their deconstructions. Compare craft against their actual passages; sample facts are not facts of the new story. Cite this source for claims about the samples. Missing evidence remains unavailable.' : '以下为作品绑定的原始样本及拆稿。对照实际段落判断写法；样本事实不是新故事事实。关于样本的判断须引用此来源，缺少的依据如实留白。',input.reference.text] : []),
     "", language === "en" ? "## Review scope" : "## 审查范围", input.reviewScope ?? "whole-story",
     ...(input.revisionRequest ? ["", language === "en" ? "## Latest revision request" : "## 最近修改请求", input.revisionRequest] : []),
+    "", language === "en" ? "## Requested manuscript constraints" : "## 成稿约束",
+    JSON.stringify({chapterCount:input.chapterCount,targetChapterLength:input.charsPerChapter,minChapterLength:input.minChapterLength,
+      maxChapterLength:input.maxChapterLength,openingHookTarget:input.openingHookChars,title:input.title,unit:input.measurements?.unit}),
+    ...(input.comparison ? ["", language === "en" ? "## Verified revision comparison" : "## 已核验的修订对照", JSON.stringify(input.comparison),
+      language === "en" ? "Compare the requested scope with these verified changes. Baseline sources supply the earlier text for changed chapters. Unchanged chapters were compared in full; do not infer a change from a missing duplicate baseline source. Cite both baseline and current sources for a claimed unauthorized change."
+        : "按请求范围核验这些已确认的变化。baseline 来源提供发生变化章节的旧文；标为未变的章节已经过全文比较，不要因未重复提供旧文而推断其发生变化。判断越界改动时同时引用旧版与当前来源。"] : []),
     ...(input.measurements ? ["", language==="en"?"## Host-verified manuscript measurements":"## 宿主核验的成稿计量",
       JSON.stringify({contentScope:"complete_manuscript",chapterLengthScope:"prose_excluding_chapter_headings",...input.measurements}),
       language==="en"?"Use these measured lengths. Numbered source lines below contain the complete supplied manuscript; line numbering does not mean an excerpt.":"篇幅判断采用以上实测值。以下编号来源包含所提供的完整正文；编号用于引用，不表示节选。"] : []),
@@ -106,10 +118,8 @@ export function buildShortFictionPackageSystemPrompt(language: ShortFictionLangu
 export function buildShortFictionPackageUserPrompt(input: ShortFictionPackagePromptInput, language: ShortFictionLanguage = "zh"): string {
   return [
     language === "en" ? "## Direction" : "## 创作方向", input.direction,
-    "", language === "en" ? "## Plan" : "## 故事方案", input.outlineMarkdown.trim(),
     "", language === "en" ? "## Persisted draft" : "## 已落盘正文", input.draftMarkdown.trim(),
     "", language === "en" ? "## Existing title" : "## 当前标题", input.draftTitle,
-    ...(input.reviewContext?["",language==='en'?"## Review evidence":"## 审稿依据",input.reviewContext]:[]),
   ].join("\n");
 }
 function requestedShortFictionChapters(input: ShortFictionDraftPromptInput): number[] {

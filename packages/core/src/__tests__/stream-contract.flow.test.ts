@@ -1,24 +1,34 @@
 import { createServer } from "node:http";
 import { once } from "node:events";
+import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Type } from "@sinclair/typebox";
 import { expect, it } from "vitest";
 import { createLLMClient } from "../llm/provider.js";
+import { resolveServiceModel } from "../llm/service-resolver.js";
 import { BaseAgent } from "../agents/base.js";
 import type { StreamProgress } from "../llm/provider.js";
 import { guardedPiStream, guardedPiNonStreaming } from "../agent/pi-stream.js";
 import { withExecutionEvidence } from "../harness/execution-evidence.js";
 import { compileHarnessContextText } from "../agent/agent-session.js";
-import { runWorkerAgentTool } from "../agent/worker-agent.js";
+import { runWorkerAgent, runWorkerAgentTool } from "../agent/worker-agent.js";
 
-it.each([true, false])('enforces required tool selection without rejecting an ordinary answer (stream=%s)', async (streaming) => {
-  const received: Array<{ tool_choice?: unknown }> = [];
+it.each([
+  { streaming: true, modelId: 'fixture', samplingAllowed: true },
+  { streaming: false, modelId: 'fixture', samplingAllowed: true },
+  { streaming: true, modelId: 'claude-sonnet-5-5', samplingAllowed: false },
+  { streaming: false, modelId: 'claude-sonnet-5-5', samplingAllowed: false },
+])('enforces required tool selection without rejecting an ordinary answer ($modelId, stream=$streaming)', async ({ streaming, modelId, samplingAllowed }) => {
+  const received: Array<{ messages: Array<{role:string}>; stream?: boolean; tool_choice?: unknown; temperature?: number; top_p?: number; top_k?: number }> = [];
+  const preparedKeys:unknown[]=[];
   let completeTool = false;
   const server = createServer(async (request, response) => {
     const chunks = []; for await (const chunk of request) chunks.push(chunk);
     received.push(JSON.parse(Buffer.concat(chunks).toString('utf8')));
     const call = completeTool && received.length === 3
       ? { id: 'result-1', type: 'function', function: { name: 'submit_value', arguments: '{"value":7}' } } : undefined;
-    if (streaming) {
+    if (received.at(-1)?.stream) {
       response.writeHead(200, { 'Content-Type': 'text/event-stream' });
       response.write(`data: ${JSON.stringify({ id: 'selection', object: 'chat.completion.chunk', choices: [{ index: 0,
         delta: call ? { role: 'assistant', tool_calls: [{ ...call, index: 0 }] } : { role: 'assistant', content: 'A response.' },
@@ -31,25 +41,72 @@ it.each([true, false])('enforces required tool selection without rejecting an or
   });
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
   try {
-    const client = createLLMClient({ service: 'custom', provider: 'openai', configSource: 'studio', model: 'fixture', apiKey: 'fixture',
-      baseUrl: `http://127.0.0.1:${(server.address() as { port: number }).port}/v1`, apiFormat: 'chat', stream: streaming, temperature: 0, thinkingBudget: 0 });
+    const client = createLLMClient({ service: 'custom', provider: 'openai', configSource: 'studio', model: modelId, apiKey: 'fixture',
+      baseUrl: `http://127.0.0.1:${(server.address() as { port: number }).port}/v1`, apiFormat: 'chat', stream: streaming, thinkingBudget: 0 });
     const context = { messages: [{ role: 'user' as const, content: 'Submit a value.', timestamp: 1 }],
       tools: [{ name: 'submit_value', description: 'Submit', parameters: Type.Object({ value: Type.Number() }) }] };
-    const run = async (toolChoice?: unknown) => {
-      const options = { apiKey: 'fixture', maxTokens: 128, toolChoice };
+    const run = async (toolChoice?: unknown) => withExecutionEvidence((type,payload)=>{if(type==='model-request-prepared')preparedKeys.push(payload.parameterKeys);},async()=>{
+      const options = { apiKey: 'fixture', maxTokens: 128, toolChoice, temperature: 0.7,
+        onPayload: (payload: unknown) => ({ ...(payload as Record<string, unknown>), top_p: 0.8, top_k: 10 }) };
       const events = streaming ? guardedPiStream(client._piModel!, context, options) : guardedPiNonStreaming(client._piModel!, context, options);
       for await (const _event of events) {}
       return events.result();
-    };
+    });
     expect((await run()).stopReason).toBe('stop');
+    expect(received[0]).not.toHaveProperty('store');
+    if(streaming)expect(preparedKeys[0]).toEqual(Object.keys(received[0]!).sort());
     completeTool = true;
     const completed = await run('required');
     expect(completed).toMatchObject({ stopReason: 'toolUse', content: [{ type: 'toolCall', name: 'submit_value', arguments: { value: 7 } }] });
     expect(received).toHaveLength(3);
-    expect(received.slice(1).map(request => request.tool_choice)).toEqual(['required', 'required']);
+    expect(received.slice(1).map(request => request.tool_choice)).toEqual([undefined, undefined]);
+    expect(received[2].messages.slice(0, -1)).toEqual(received[1].messages);
+    expect(received[2].messages.at(-1)?.role).toBe('user');
+    expect(context.messages).toHaveLength(1);
+    if (!samplingAllowed) {
+      expect(received.every(request => request.temperature === undefined && request.top_p === undefined && request.top_k === undefined)).toBe(true);
+    } else {
+      expect(received[0]).toMatchObject({ temperature: 0.7, top_p: 0.8, top_k: 10 });
+    }
     const failed = await run({ type: 'function', function: { name: 'submit_value' } });
     expect(failed).toMatchObject({ stopReason: 'error', errorCode: 'MODEL_REQUIRED_TOOL_MISSING' });
     expect(received).toHaveLength(5);
+    expect((await run('none')).stopReason).toBe('stop');
+    expect(received.at(-1)?.tool_choice).toBe('none');
+    // Text-producing workers exercise both the custom HTTP and Pi SDK paths.
+    for (const textClient of [client, { ...client, service: 'openai' }]) {
+      const result = await runWorkerAgent(textClient, modelId, [{ role: 'user', content: 'Reply briefly.' }], { temperature: 0.3, maxTokens: 128 });
+      expect(result.content.length).toBeGreaterThan(0);
+      expect(received.at(-1)?.temperature).toBe(!samplingAllowed ? undefined : 0.3);
+    }
+    for (const textClient of [client, { ...client, service: 'openai' }]) {
+      const defaultText = await runWorkerAgent(textClient, modelId, [{role:'user',content:'Reply briefly.'}], {maxTokens:128});
+      expect(defaultText.content.length).toBeGreaterThan(0);
+      for (const option of ['temperature', 'top_p', 'top_k', 'seed', 'reasoning_effort', 'thinking', 'response_format', 'tool_choice', 'store', 'professionalGuidance']) {
+        expect(received.at(-1)).not.toHaveProperty(option);
+      }
+    }
+    // Studio selects models through the service resolver rather than the
+    // worker client factory. Exercise both entry points at the wire boundary.
+    const root = await mkdtemp(join(tmpdir(), 'inkos-studio-transport-'));
+    try {
+      await mkdir(join(root, '.inkos'));
+      await writeFile(join(root, '.inkos/secrets.json'), JSON.stringify({services:{
+        kkaiapi:{apiKey:'fixture'}, 'custom:fixture':{apiKey:'fixture'},
+      }}));
+      for (const service of ['kkaiapi', 'custom:fixture']) {
+        const resolved = await resolveServiceModel(service, modelId, root, client._piModel!.baseUrl, 'chat');
+        const options = {apiKey:resolved.apiKey, maxTokens:128};
+        const events = streaming ? guardedPiStream(resolved.model, context, options)
+          : guardedPiNonStreaming(resolved.model, context, options);
+        for await (const _event of events) {}
+        expect((await events.result()).stopReason).toBe('stop');
+        expect(received.at(-1)).toMatchObject({model:modelId});
+        for (const option of ['temperature','top_p','top_k','seed','reasoning_effort','thinking','response_format','tool_choice','store']) {
+          expect(received.at(-1)).not.toHaveProperty(option);
+        }
+      }
+    } finally { await rm(root, {recursive:true,force:true}); }
   } finally { server.closeAllConnections(); await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
 }, 15000);
 
@@ -140,20 +197,20 @@ it.each(["chat", "responses", "anthropic"] as const)("carries the required resul
     expect(requests).toHaveLength(2);
     expect(requests[0]?.messages).toEqual(requests[1]?.messages);
     if (apiFormat === "anthropic") {
-      expect(requests[0]?.tool_choice).toEqual({ type: "auto" });
+      expect(requests[0]?.tool_choice).toBeUndefined();
       expect(requests[0]?.max_tokens).toBe(128);
       return;
     }
     if (apiFormat === "responses") {
       expect(requests[0]?.input).toEqual(requests[1]?.input);
       expect(requests[0]?.max_output_tokens).toBe(128);
-      expect(requests[0]?.tool_choice).toBe("required");
+      expect(requests[0]?.tool_choice).toBeUndefined();
       return;
     }
     expect(requests[0]?.max_tokens).toBe(128);
     expect(requests[0]?.max_completion_tokens).toBeUndefined();
     expect(requests[0]?.thinking).toEqual({ type: "disabled" });
-    expect(requests[0]?.tool_choice).toBe("required");
+    expect(requests[0]?.tool_choice).toBeUndefined();
   } finally { server.closeAllConnections(); await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
 }, 15000);
 
@@ -193,13 +250,15 @@ it('bounds invalid structured submissions and returns schema paths instead of ec
   server.listen(0,'127.0.0.1');await once(server,'listening');
   try{
     const client=createLLMClient({service:'custom',configSource:'studio',provider:'openai',model:'test-model',baseUrl:`http://127.0.0.1:${(server.address() as {port:number}).port}/v1`,apiKey:'fixture',apiFormat:'chat',stream:true,temperature:0,thinkingBudget:0});
-    await expect(runWorkerAgentTool(client,'test-model',[{role:'user',content:'Submit chapters.'}],{
+    const failure=await runWorkerAgentTool(client,'test-model',[{role:'user',content:'Submit chapters.'}],{
       name:'submit_chapters',label:'Submit',description:'Submit chapter records',parameters:Type.Object({chapters:Type.Array(Type.Object({number:Type.Integer()})),state:Type.Union([Type.Literal('draft'),Type.Literal('ready')])}),
-    },{maxTokens:128})).rejects.toMatchObject({code:'WORKER_RESULT_INVALID',attempts:3});
+    },{maxTokens:128}).then(()=>{throw new Error('Invalid submission was accepted');},error=>error);
+    expect(failure).toMatchObject({code:'WORKER_SCHEMA_INVALID',attempts:3,resultTool:'submit_chapters'});
     expect(requests).toHaveLength(3);
     const feedback=JSON.parse(requests[1].messages.find(message=>message.role==='tool')!.content);
-    expect(feedback).toMatchObject({code:'WORKER_SCHEMA_INVALID',issues:[{path:'/chapters'},{path:'/state',allowedValues:['draft','ready']}]});
-    expect(Object.keys(feedback.issues[0]).sort()).toEqual(['message','path','type']);
+    expect(feedback).toMatchObject({code:'WORKER_SCHEMA_INVALID',issues:[{path:'/chapters',expectedType:'array',actualType:'string'},{path:'/state',actualType:'string',allowedValues:['draft','ready']}]});
+    expect(failure.issues).toEqual(feedback.issues);
+    expect(Object.keys(feedback.issues[0]).sort()).toEqual(['actualType','expectedType','instruction','message','path','type']);
   }finally{server.closeAllConnections();await new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve()));}
 },15000);
 

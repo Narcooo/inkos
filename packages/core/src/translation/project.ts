@@ -1,4 +1,6 @@
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
+import { loadCreationSource } from "../agent/creation-source.js";
+import { safeChildPath } from "../utils/path-safety.js";
 import { toPosixPath } from "../utils/posix-path.js";
 import { commitAtomicFileSet, type AtomicFileWrite } from "../utils/atomic-file-set.js";
 import { createCurrentArtifact } from "../harness/artifact-revisions.js";
@@ -18,6 +20,20 @@ export async function createTranslationProjectFromFile(
   projectRoot: string,
   input: CreateTranslationProjectInput,
 ): Promise<TranslationProjectCreateResult> {
+  if ([input.sources, input.filePath, input.sourceText].filter(value => value !== undefined).length > 1) {
+    throw Object.assign(new Error("Choose registered sources, inline text, or a source file"), { code: "TRANSLATION_SOURCE_AMBIGUOUS" });
+  }
+  const workFile = input.filePath !== undefined
+    && relative(projectRoot, safeChildPath(projectRoot, input.filePath)).split(sep)[0] === "works";
+  const registered = input.sources || workFile ? await loadCreationSource({
+    projectRoot, sources: input.sources, sourcePath: input.filePath, purpose: "reference",
+  }) : undefined;
+  // An agent must pass registered references instead of retyping another Work.
+  // Direct callers and genuinely pasted author text retain inline import.
+  if (!registered && input.sourceText?.trim()) {
+    await loadCreationSource({ projectRoot, sourceText: input.sourceText, purpose: "reference" });
+  }
+  if (registered) input = { ...input, filePath: undefined, sourceText: registered.text, title: input.title ?? registered.name };
   const source = await extractTranslationSource(projectRoot, input);
   const now = new Date().toISOString();
   const id = `${now.replace(/[:.]/g, "-")}-${slug(source.title)}`;
@@ -85,7 +101,7 @@ export async function createTranslationProjectFromFile(
     profileId: "translation",
     language: manifest.targetLanguage,
     now,
-    metadata: { sourceLanguage: manifest.sourceLanguage, targetLanguage: manifest.targetLanguage, sourceOrigin: input.sourceText !== undefined ? "inline" : "file" },
+    metadata: { sourceLanguage: manifest.sourceLanguage, targetLanguage: manifest.targetLanguage, sourceOrigin: registered ? "work" : input.sourceText !== undefined ? "inline" : "file" },
   });
   const artifacts = writes.map((write) => createCurrentArtifact({
     artifactId: toPosixPath(relative(baseDir,write.relativePath)).replace(/\.(json|md)$/,"").replaceAll("/","-"),
@@ -96,7 +112,7 @@ export async function createTranslationProjectFromFile(
     createdAt: now,
     metadata: { sourcePath: toPosixPath(write.relativePath) },
   }));
-  const workContent = `${JSON.stringify(WorkManifestSchema.parse({ ...work, artifacts }), null, 2)}\n`;
+  const workContent = `${JSON.stringify(WorkManifestSchema.parse({ ...work, artifacts, lineage: registered?.lineage ?? work.lineage }), null, 2)}\n`;
   await commitAtomicFileSet({
     rootDir: projectRoot,
     writes: [

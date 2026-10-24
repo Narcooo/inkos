@@ -170,6 +170,10 @@ export async function saveServiceConfig(args: {
   const fetchJsonImpl = args.fetchJsonImpl ?? fetchJson;
   const trimmedKey = args.apiKey.trim();
   const trimmedBaseUrl = args.baseUrl.trim();
+  const temperature = args.temperature.trim() ? Number(args.temperature) : undefined;
+  if (temperature !== undefined && (!Number.isFinite(temperature) || temperature < 0 || temperature > 2)) {
+    return { status: { state: "error", message: "温度须为 0 到 2，留空使用模型默认值" }, detectedModel: "", detectedConfig: null };
+  }
 
   if (!trimmedKey && !args.isCustom && !args.apiKeyOptional) {
     return {
@@ -259,7 +263,7 @@ export async function saveServiceConfig(args: {
       services: [
         {
           service: args.isCustom ? "custom" : args.serviceId,
-          temperature: parseFloat(args.temperature),
+          temperature: temperature ?? null,
           apiFormat: savedApiFormat,
           stream: savedStream,
           models: savedModels.map((model) => model.id),
