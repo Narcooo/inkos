@@ -26,6 +26,22 @@ import { sendCommandNotification } from "../notify-helper.js";
 export const writeCommand = new Command("write")
   .description("Write chapters");
 
+export function buildWriteNextParameters(input: {
+  readonly bookId: string;
+  readonly startChapterNumber: number;
+  readonly chapterCount: number;
+  readonly chapterWordCount?: number;
+  readonly instruction?: string;
+}) {
+  return {
+    instruction: input.instruction || "Write the requested consecutive chapters for the active Work.",
+    bookId: input.bookId,
+    startChapterNumber: input.startChapterNumber,
+    chapterCount: input.chapterCount,
+    ...(input.chapterWordCount ? { chapterWordCount: input.chapterWordCount } : {}),
+  };
+}
+
 writeCommand
   .command("next")
   .description("Write the next chapter for a book")
@@ -46,6 +62,7 @@ writeCommand
       const context = await resolveContext(opts);
       const state = new StateManager(root);
       const book = await state.loadBookConfig(bookId);
+      const startChapterNumber = await state.getNextChapterNumber(bookId);
       const language = resolveCliLanguage(book.language);
       notifyLanguage = language;
       notifyBookName = book.title ?? bookId;
@@ -66,12 +83,13 @@ writeCommand
         binding: { capabilityId: "longform", actionId: "write_chapters", profileId: "longform-novel", risk: "recoverable-write" },
         tool: createWriteChaptersTool(pipeline, bookId, { activeSkills: () => activatedSkills }),
         workId: bookId,
-        parameters: {
-          instruction: context || "Write the requested consecutive chapters for the active Work.",
+        parameters: buildWriteNextParameters({
           bookId,
+          startChapterNumber,
           chapterCount: count,
-          ...(wordCount ? { chapterWordCount: wordCount } : {}),
-        },
+          chapterWordCount: wordCount,
+          instruction: context,
+        }),
       });
       const actionData = action.data as {
         readonly chapters?: ReadonlyArray<{
