@@ -1,4 +1,6 @@
-import { getAllEndpoints, getEndpoint } from "./providers/index.js";
+import { getAllEndpoints, getEndpoint, isCurrentMiniMaxChoice } from "./providers/index.js";
+
+export { isCurrentMiniMaxChoice } from "./providers/index.js";
 import { probeModelsFromUpstream } from "./providers/probe.js";
 import { isApiKeyOptionalForEndpoint } from "../utils/llm-endpoint-auth.js";
 
@@ -14,14 +16,17 @@ export interface ServicePreset {
   readonly modelsBaseUrl?: string;
 }
 
-export function resolveServicePreset(service: string): ServicePreset | undefined {
+export function resolveServicePreset(service: string, model?: string): ServicePreset | undefined {
   const endpoint = getEndpoint(service);
   if (!endpoint) return undefined;
   const providerFamily = endpoint.api === "anthropic-messages" ? "anthropic" : "openai";
   return {
     providerFamily,
     api: endpoint.api,
-    baseUrl: endpoint.baseUrl,
+    // Keep the historical default route for explicitly selected legacy models.
+    baseUrl: service === "minimax" && model && !isCurrentMiniMaxChoice(service, model)
+      ? "https://api.minimaxi.com/v1"
+      : endpoint.baseUrl,
     label: endpoint.label,
     ...(endpoint.temperatureRange ? { temperatureRange: endpoint.temperatureRange } : {}),
     ...(endpoint.defaultTemperature !== undefined ? { defaultTemperature: endpoint.defaultTemperature } : {}),
@@ -64,6 +69,12 @@ export function getWritingTemperature(service: string): number {
 }
 
 export function guessServiceFromBaseUrl(baseUrl: string): string {
+  // Preserve recognition of explicitly configured legacy and international URLs.
+  try {
+    if (["api.minimaxi.com", "api.minimax.io"].includes(new URL(baseUrl).hostname)) return "minimax";
+  } catch {
+    // Keep the existing fallback for incomplete URLs.
+  }
   for (const endpoint of getAllEndpoints()) {
     if (endpoint.id === "custom" || !endpoint.baseUrl) continue;
     try {
@@ -113,7 +124,14 @@ export async function listModelsForService(
     if (probed.length > 0) {
       const { lookupModel } = await import("./providers/lookup.js");
       for (const model of probed) {
-        const card = lookupModel(service, model.id);
+        if (!isCurrentMiniMaxChoice(service, model.id)) continue;
+        // A gateway's MiniMax limits must come from its own contract, not the
+        // direct API card found by the cross-provider lookup fallback.
+        const useGatewayLimits = !["minimax", "custom", "newapi", "ollama", "lmstudio", "minimaxCodingPlan"].includes(service)
+          && /minimax/i.test(model.id);
+        const card = useGatewayLimits
+          ? endpoint.models.find((entry) => entry.id.toLowerCase() === model.id.toLowerCase())
+          : lookupModel(service, model.id);
         byId.set(model.id, card
           ? toModelInfo(card)
           : { id: model.id, name: model.name, contextWindow: model.contextWindow });
@@ -124,7 +142,20 @@ export async function listModelsForService(
     if (model.enabled === false || byId.has(model.id)) continue;
     byId.set(model.id, toModelInfo(model));
   }
-  return [...byId.values()];
+  const models = [...byId.values()];
+  if (service === "minimax") {
+    models.sort((a, b) => Number(b.id === "MiniMax-M3.1-Flash") - Number(a.id === "MiniMax-M3.1-Flash"));
+  } else if (service === "openrouter" || service === "opencodeCodingPlan") {
+    const flashId = service === "openrouter" ? "minimax-m3.1-flash:free" : "minimax-m3.1-flash-free";
+    const modelId = (model: ModelInfo) => model.id.split("/").at(-1)!.toLowerCase();
+    const isMiniMaxSlot = (model: ModelInfo) => ["minimax-m3", flashId].includes(modelId(model));
+    const miniMaxModels = models.filter(isMiniMaxSlot).sort((a, b) =>
+      Number(modelId(b) === flashId) - Number(modelId(a) === flashId));
+    // Reorder only existing MiniMax text slots; other models and metadata stay put.
+    let next = 0;
+    return models.map((model) => isMiniMaxSlot(model) ? miniMaxModels[next++]! : model);
+  }
+  return models;
 }
 
 export async function listServicesWithModelCount(): Promise<ReadonlyArray<{ service: string; label: string; modelCount: number }>> {

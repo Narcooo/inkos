@@ -87,7 +87,7 @@ describe("providers structural integrity", () => {
 
   it("B1：minimax 使用 OpenAI-compatible chat endpoint", () => {
     expect(getEndpoint("minimax")?.api).toBe("openai-completions");
-    expect(getEndpoint("minimax")?.baseUrl).toBe("https://api.minimaxi.com/v1");
+    expect(getEndpoint("minimax")?.baseUrl).toBe("https://api.minimax.cn/v1");
   });
 
   it("B2：小米 MiMo 使用当前 OpenAI-compatible endpoint", () => {

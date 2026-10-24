@@ -71,6 +71,42 @@ function sseResponse(events: string[]): Response {
 }
 
 describe("MiniMax thinking defaults", () => {
+  it.each([
+    undefined,
+    "https://api.minimax.io/v1",
+    "https://api.minimaxi.com/v1",
+    "https://custom.example/v1",
+  ])("keeps Flash adaptive and preserves an explicit base URL (%s)", async (baseUrl) => {
+    fetchCalls.length = 0;
+    const client = createLLMClient({
+      provider: "openai", service: "minimax", model: "MiniMax-M3.1-Flash",
+      apiKey: "sk-test", apiFormat: "chat", stream: false, baseUrl,
+      thinkingBudget: 0, extra: { reasoning_effort: "low" },
+    } as never);
+
+    await chatCompletion(client, "MiniMax-M3.1-Flash", [
+      { role: "user", content: "hi" },
+    ], { retry: false });
+
+    expect(fetchCalls).toHaveLength(1);
+    expect(fetchCalls[0]!.url).toBe(`${baseUrl ?? "https://api.minimax.cn/v1"}/chat/completions`);
+    expect(fetchCalls[0]!.body).toMatchObject({
+      model: "MiniMax-M3.1-Flash", thinking: { type: "adaptive" },
+      reasoning_split: true, reasoning_effort: "low",
+    });
+    expect(fetchCalls[0]!.body).not.toHaveProperty("service_tier");
+  });
+
+  it("uses adaptive thinking with the default Flash request options", async () => {
+    fetchCalls.length = 0;
+    await chatCompletion(minimaxClient("MiniMax-M3.1-Flash"), "MiniMax-M3.1-Flash", [
+      { role: "user", content: "hi" },
+    ], { retry: false });
+    expect(fetchCalls[0]!.body).toMatchObject({ thinking: { type: "adaptive" }, reasoning_split: true });
+    expect(fetchCalls[0]!.body).not.toHaveProperty("reasoning_effort");
+    expect(fetchCalls[0]!.body).not.toHaveProperty("service_tier");
+  });
+
   it("disables MiniMax-M3 thinking and requests reasoning_split by default", async () => {
     fetchCalls.length = 0;
     const client = minimaxClient("MiniMax-M3");
@@ -81,7 +117,7 @@ describe("MiniMax thinking defaults", () => {
 
     expect(result.content).toBe("ok");
     expect(fetchCalls).toHaveLength(1);
-    expect(fetchCalls[0]!.url).toBe("https://api.minimaxi.com/v1/chat/completions");
+    expect(fetchCalls[0]!.url).toBe("https://api.minimax.cn/v1/chat/completions");
     expect(fetchCalls[0]!.body).toMatchObject({
       model: "MiniMax-M3",
       thinking: { type: "disabled" },
