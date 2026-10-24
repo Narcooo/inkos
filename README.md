@@ -65,7 +65,7 @@ InkOS 2.0 把“Chat Agent 调工具”和“各类作品管线”收敛成一�
 
 - **模型配置**：Studio 内置多服务配置、模型路由和封面服务配置；支持 [kkaiapi](https://kkaiapi.com/) / OpenRouter 等全球主流模型聚合入口，以及自定义 OpenAI Chat Completions、OpenAI Responses 和 Anthropic Messages 服务。
 - **单一生产 Harness**：Studio Chat、TUI、`inkos interact` 与生产 worker 共用 pi-agent 工具循环和结构化 action/result；既有 pipeline 降为可直接调用、可中断、可观测的确定性能力，不再维护平行的自然语言决策内核。
-- **19 个内置专业 Skills**：长篇写作 / 审稿、商业短篇、Play、剧本、分镜、互动影游、翻译、拆稿、市场研究、导入、封面与去 AI 味都拥有独立 `SKILL.md`；各作品类型复用 Skill 架构，不复用不适合自己的长篇提示词。
+- **20 个内置专业 Skills**：长篇写作 / 审稿、商业短篇、Play、剧本、分镜、互动影游、翻译、拆稿、市场研究、导入、封面与去 AI 味都拥有独立 `SKILL.md`；各作品类型复用 Skill 架构，不复用不适合自己的长篇提示词。
 - **统一本地检索**：故事记忆、材料库和 Skill 参考资料共用 SQLite FTS5 / BM25 检索投影；原始文件仍是权威来源，索引可重建，检索结果保留来源与位置。
 - **书籍参考资料绑定**：导入材料可以显式绑定到某本书并声明用途，写作时按当前任务检索相关段落，而不是把所有文件全文塞进上下文。
 - **安全章节工作区**：正文、状态、伏笔和运行快照先在章节工作区内校验，再原子提交；失败不会出现“状态已推进、正文未落盘”。Studio 可查看改写工作区和真实审稿问题。
@@ -398,7 +398,7 @@ Play 维护一个可持续推进的世界状态：角色、地点、物品、证
 
 ### 同人创作
 
-`inkos fanfic init --from source.txt --mode canon` 从原作素材创建同人书。支持四种模式：canon（正典延续）、au（架空世界）、ooc（性格重塑）、cp（CP 向）。内置正典导入器、同人专属审计维度和信息边界管控——确保设定不矛盾。
+`inkos fanfic init --from source.txt --mode canon` 从原作素材创建同人书。支持四种模式：canon（正典延续）、au（架空世界）、ooc（性格重塑）、cp（CP 向）。由类型化正典导入器与同人 Skill 保留原作事实与信息边界。
 
 ### 多模型路由
 
@@ -563,7 +563,6 @@ Studio 里的「开放世界」和「分支互动」是交互式创作入口。�
 | `inkos book update [id]`                    | 修改书设置（`--chapter-words`、`--target-chapters`、`--status`）                                    |
 | `inkos book list`                           | 列出所有书籍                                                                                     |
 | `inkos book delete <id>`                    | 删除书籍及全部数据（`--force` 跳过确认）                                                                  |
-| `inkos genre list/show/copy/create`         | 查看、复制、创建题材                                                                                 |
 | `inkos write next [id]`                     | 完整管线写下一章（`--words` 覆盖字数，`--count` 连写，`-q` 静默模式）                                            |
 | `inkos write rewrite [id] <n>`              | 重写第 N 章（恢复状态快照，`--force` 跳过确认，`--words` 覆盖字数）                                              |
 | `inkos revise [id] [n]`                     | 修订指定章节                                                                                     |
