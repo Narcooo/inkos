@@ -216,7 +216,7 @@ export function createProductionCapabilityRegistry(
     readAction(createListWorksTool(environment.projectRoot)),
     readAction(createInspectWorkTool(environment.projectRoot)),
     readAction(createLsTool(environment.projectRoot)),
-    readAction(createResearchWebTool(environment.projectRoot)),
+    readAction(createResearchWebTool(environment.projectRoot, environment.sessionId)),
     writeAction(createIngestMaterialTool(environment.projectRoot)),
     readAction(createRetrieveMaterialTool(environment.projectRoot)),
   ];

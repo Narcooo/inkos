@@ -37,6 +37,8 @@ Claude、GPT、Gemini、DeepSeek などを InkOS の執筆・レビュー・表�
 InkOS は、物語創作と多言語翻訳のための AI Agent システムです。長編小説、独立短編、脚本、絵コンテ、二次創作、番外、文体模倣、続き書き、インタラクティブ影遊、インタラクティブ世界、長文翻訳を同じワークベンチから始められます。Studio Chat、CLI、TUI は同じ action surface を共有し、相談、確認、生成、レビュー、永続編集、言語をまたぐ納品を一つの流れで扱えます。
 
 
+[Web リサーチの検索プロバイダー](docs/research-search.md)
+
 ## v2.0.0 統一 Pi Agent Harness と専門創作カーネル
 
 1.x からの移行は `inkos work migrate --json` で確認し、`inkos work migrate --apply` で実行します。書籍の既定値、ルール、状態スナップショットを変換し、元のディレクトリと未記入の履歴情報を保持します。旧執筆設定は原本に残り、2.0 は Profile の操作方針を使います。実行状態が不足する作品は、再構築が必要な下書きとして登録されます。

@@ -26,6 +26,7 @@ export interface ResearchReport {
 }
 
 export interface ResearchDeps {
+  readonly signal?: AbortSignal;
   readonly search?: (query: string, maxResults: number) => Promise<ReadonlyArray<SearchResult>>;
   readonly fetch?: (url: string) => Promise<string>;
 }
@@ -45,6 +46,7 @@ export async function runResearchReport(
   const found = new Map<string, SearchResult>();
 
   for (const query of queries) {
+    deps.signal?.throwIfAborted();
     queryLog.push(query);
     try {
       const results = await search(query, depth.maxResults);
@@ -53,16 +55,19 @@ export async function runResearchReport(
         found.set(result.url, result);
       }
     } catch (error) {
+      deps.signal?.throwIfAborted();
       partialFailures.push(`search failed for "${query}": ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
   const sources: ResearchSource[] = [];
   for (const result of [...found.values()].slice(0, depth.fetchCount)) {
+    deps.signal?.throwIfAborted();
     let excerpt: string | undefined;
     try {
       excerpt = await fetch(result.url);
     } catch (error) {
+      deps.signal?.throwIfAborted();
       partialFailures.push(`fetch failed for "${result.url}": ${error instanceof Error ? error.message : String(error)}`);
     }
     sources.push({
@@ -74,6 +79,7 @@ export async function runResearchReport(
     });
   }
 
+  deps.signal?.throwIfAborted();
   const report = {
     summary: `Research collected ${sources.length} source(s) for "${topic}" (${input.purpose}, ${input.depth}).`,
     sources,

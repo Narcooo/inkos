@@ -1,9 +1,11 @@
 /**
  * Web search + URL fetch utilities.
  *
- * searchWeb(): Tavily API search (requires TAVILY_API_KEY env var).
+ * searchWeb(): keyless Parallel MCP, or a configured Tavily-compatible API.
  * fetchUrl(): Fetch a specific URL and return plain text.
  */
+
+import { fetchParallel, searchParallel, type ParallelSearchOptions } from "./parallel-search.js";
 
 export interface SearchResult {
   readonly title: string;
@@ -11,22 +13,24 @@ export interface SearchResult {
   readonly snippet: string;
 }
 
-export interface WebSearchOptions {
+export interface WebSearchOptions extends ParallelSearchOptions {
+  readonly provider?: "auto" | "parallel" | "tavily" | "custom";
   readonly apiKey?: string;
   readonly apiKeyEnv?: string;
   readonly baseUrl?: string;
 }
 
 /**
- * Search the web via Tavily API.
- * Requires TAVILY_API_KEY environment variable.
- * Throws if key is not set — caller should catch and fall back to regular chat.
+ * Auto preserves configured Tavily credentials/endpoints, otherwise uses Parallel.
+ * Explicit provider failures surface to the caller without switching providers.
  */
 export async function searchWeb(
   query: string,
   maxResults = 5,
   options: WebSearchOptions = {},
 ): Promise<ReadonlyArray<SearchResult>> {
+  options.signal?.throwIfAborted();
+  if (resolveSearchProvider(options) === "parallel") return searchParallel(query, maxResults, options);
   const apiKey = options.apiKey
     || (options.apiKeyEnv ? process.env[options.apiKeyEnv] : undefined)
     || process.env.TAVILY_API_KEY;
@@ -47,7 +51,7 @@ export async function searchWeb(
       max_results: maxResults,
       search_depth: "basic",
     }),
-    signal: AbortSignal.timeout(15000),
+    signal: researchSignal(options.signal),
   });
 
   if (!res.ok) {
@@ -62,17 +66,35 @@ export async function searchWeb(
   }));
 }
 
+export function resolveSearchProvider(options: WebSearchOptions = {}): "parallel" | "tavily" {
+  if (options.provider === "parallel") return "parallel";
+  if (options.provider === "tavily" || options.provider === "custom") return "tavily";
+  return options.apiKey || options.apiKeyEnv || options.baseUrl || process.env.TAVILY_API_KEY
+    ? "tavily"
+    : "parallel";
+}
+
+export async function fetchResearchUrl(url: string, options: WebSearchOptions): Promise<string> {
+  return resolveSearchProvider(options) === "parallel"
+    ? fetchParallel(url, options)
+    : fetchUrl(url, options.signal);
+}
+
+function researchSignal(signal?: AbortSignal): AbortSignal {
+  return AbortSignal.any([AbortSignal.timeout(15_000), ...(signal ? [signal] : [])]);
+}
+
 /**
  * Fetch a URL and return its complete text content.
  * HTML is stripped to plain text. Context budgeting happens at the consumer.
  */
-export async function fetchUrl(url: string): Promise<string> {
+export async function fetchUrl(url: string, signal?: AbortSignal): Promise<string> {
   const res = await fetch(url, {
     headers: {
       "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
       "Accept": "text/html, application/json, text/plain",
     },
-    signal: AbortSignal.timeout(15000),
+    signal: researchSignal(signal),
   });
 
   if (!res.ok) {

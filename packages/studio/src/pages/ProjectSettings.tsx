@@ -36,18 +36,18 @@ interface SkillsResponse {
 
 interface ResearchSearchDraft {
   readonly enabled: boolean;
-  readonly provider: "tavily" | "custom";
+  readonly provider: "auto" | "parallel" | "tavily" | "custom";
   readonly baseUrl: string;
   readonly apiKey: string;
   readonly apiKeyEnv: string;
 }
 
 const DEFAULT_RESEARCH_SEARCH: ResearchSearchDraft = {
-  enabled: false,
-  provider: "tavily",
+  enabled: true,
+  provider: "auto",
   baseUrl: "",
   apiKey: "",
-  apiKeyEnv: "TAVILY_API_KEY",
+  apiKeyEnv: "",
 };
 
 // Smooth open/close via grid-template-rows (same trick as the sidebar).
@@ -129,10 +129,10 @@ export function ProjectSettings({ nav, theme, t }: { nav: Nav; theme: Theme; t: 
     setResearchSearch({
       ...DEFAULT_RESEARCH_SEARCH,
       ...raw,
-      provider: raw.provider === "custom" ? "custom" : "tavily",
+      provider: raw.provider ?? "auto",
       baseUrl: raw.baseUrl ?? "",
       apiKey: raw.apiKey ?? "",
-      apiKeyEnv: raw.apiKeyEnv ?? "TAVILY_API_KEY",
+      apiKeyEnv: raw.apiKeyEnv ?? "",
     });
   }, [researchSearchData]);
 
@@ -397,7 +397,7 @@ export function ProjectSettings({ nav, theme, t }: { nav: Nav; theme: Theme; t: 
 
       <SettingsCard
         title={isZh ? "联网研究搜索服务" : "Research Search Provider"}
-        description={isZh ? "给 research_web 配置外部搜索 API。未配置时仍可用服务器环境变量 TAVILY_API_KEY 作为兜底。" : "Configure the external search API used by research_web. If unset, the server may still use TAVILY_API_KEY as a fallback."}
+        description={isZh ? "自动模式保留已配置的 Tavily 服务，否则使用无需账号或 API Key 的 Parallel 搜索与网页提取。关闭后停止联网研究。" : "Automatic mode keeps configured Tavily search, otherwise uses Parallel search and page extraction without an account or API key. Disable to stop web research."}
         icon={<Search size={18} />}
       >
         <label className="flex items-center gap-2 text-sm">
@@ -406,7 +406,7 @@ export function ProjectSettings({ nav, theme, t }: { nav: Nav; theme: Theme; t: 
             checked={researchSearch.enabled}
             onChange={(e) => setResearchSearch((prev) => ({ ...prev, enabled: e.target.checked }))}
           />
-          {isZh ? "启用项目级搜索配置" : "Enable project-level search config"}
+          {isZh ? "启用联网研究" : "Enable web research"}
         </label>
         <Collapse open={researchSearch.enabled}>
           <div className="grid gap-2 pt-1 md:grid-cols-2">
@@ -414,9 +414,11 @@ export function ProjectSettings({ nav, theme, t }: { nav: Nav; theme: Theme; t: 
               <span>{isZh ? "搜索服务" : "Provider"}</span>
               <select
                 value={researchSearch.provider}
-                onChange={(e) => setResearchSearch((prev) => ({ ...prev, provider: e.target.value === "custom" ? "custom" : "tavily" }))}
+                onChange={(e) => setResearchSearch((prev) => ({ ...prev, provider: e.target.value as ResearchSearchDraft["provider"] }))}
                 className={fieldClass}
               >
+                <option value="auto">{isZh ? "自动" : "Automatic"}</option>
+                <option value="parallel">Parallel (no API key)</option>
                 <option value="tavily">Tavily</option>
                 <option value="custom">Custom / Tavily-compatible</option>
               </select>
@@ -424,6 +426,7 @@ export function ProjectSettings({ nav, theme, t }: { nav: Nav; theme: Theme; t: 
             <label className="space-y-1 text-xs text-muted-foreground">
               <span>{isZh ? "API Key 环境变量名" : "API key env var"}</span>
               <input
+                disabled={researchSearch.provider === "parallel"}
                 value={researchSearch.apiKeyEnv}
                 onChange={(e) => setResearchSearch((prev) => ({ ...prev, apiKeyEnv: e.target.value }))}
                 placeholder="TAVILY_API_KEY"
@@ -433,6 +436,7 @@ export function ProjectSettings({ nav, theme, t }: { nav: Nav; theme: Theme; t: 
             <label className="space-y-1 text-xs text-muted-foreground md:col-span-2">
               <span>{isZh ? "Base URL（可选，自定义兼容端点）" : "Base URL (optional custom compatible endpoint)"}</span>
               <input
+                disabled={researchSearch.provider === "parallel"}
                 value={researchSearch.baseUrl}
                 onChange={(e) => setResearchSearch((prev) => ({ ...prev, baseUrl: e.target.value }))}
                 placeholder="https://api.tavily.com/search"
@@ -442,6 +446,7 @@ export function ProjectSettings({ nav, theme, t }: { nav: Nav; theme: Theme; t: 
             <label className="space-y-1 text-xs text-muted-foreground md:col-span-2">
               <span>{isZh ? "API Key（可选；留空则读环境变量）" : "API key (optional; leave blank to use env var)"}</span>
               <input
+                disabled={researchSearch.provider === "parallel"}
                 value={researchSearch.apiKey}
                 onChange={(e) => setResearchSearch((prev) => ({ ...prev, apiKey: e.target.value }))}
                 type="password"

@@ -51,6 +51,8 @@ InkOS 是一个面向故事创作与多语言翻译的 AI Agent 系统：长篇�
 
 > 💡 **写小说，先给 Agent 接一层专业数据** —— 写小说不只缺模型，更缺素材。推荐搭配 [**火花数据API（huohuaapi）**](https://huohuaapi.com/)：按调用计费的小说 / 网文创作数据，让 Agent 动笔前先查小说正文、章节结构、人物设定、文风和创作方法等带来源素材，而不是只靠 Prompt 硬凑一份“剧情提纲”。
 
+[联网研究搜索服务配置](docs/research-search.md)
+
 ## v2.0.0 - 统一 Pi Agent Harness 与专业创作内核
 
 本分支为 2.0 开发版本，使用本地构建进行验证。旧项目先运行 `inkos work migrate --json` 查看升级清单，再运行 `inkos work migrate --apply` 导入统一创作库；原目录与早期版本清单备份会保留，冲突不会覆盖已有作品。

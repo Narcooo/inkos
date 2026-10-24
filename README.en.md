@@ -43,6 +43,8 @@ Use Claude, GPT, Gemini, DeepSeek and more for writing, reviewing and cover gene
 [Models and pricing →](https://kkaiapi.com/models?utm_source=inkos&utm_medium=repo&utm_campaign=kk-models-readme&utm_content=en-models) · [InkOS setup guide →](https://kkaiapi.com/docs/inkos?utm_source=inkos&utm_medium=repo&utm_campaign=kk-models-readme&utm_content=en-guide) · [Connect via MCP →](https://kkaiapi.com/api/information/skill?utm_source=inkos&utm_medium=repo&utm_campaign=kk-models-readme&utm_content=en-mcp)
 
 
+[Web research search providers](docs/research-search.md)
+
 ## v2.0.0 Unified Pi Agent Harness and Professional Creation Kernel
 
 Preview a 1.x upgrade with `inkos work migrate --json`, then apply it with `inkos work migrate --apply`. Migration converts book defaults, rules and state snapshots while retaining the original directories and unspecified historical values. The original files retain retired writing settings; 2.0 uses Profile action policies. Projects missing runtime state enter the library as drafts requiring reconstruction.
