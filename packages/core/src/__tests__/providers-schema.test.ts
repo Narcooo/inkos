@@ -57,6 +57,17 @@ describe("providers structural integrity", () => {
     expect(zhipu?.models.some((model) => model.id === "glm-4-flash" && model.enabled !== false)).toBe(true);
   });
 
+  it("OpenRouter exposes GLM 5.2 in the provider bank", () => {
+    const openrouter = getEndpoint("openrouter");
+    expect(openrouter?.models).toContainEqual({
+      id: "z-ai/glm-5.2",
+      maxOutput: 32_768,
+      contextWindowTokens: 1_048_576,
+      enabled: true,
+      releasedAt: "2026-06-16",
+    });
+  });
+
   it("A 组至少有 5 个核心 provider", () => {
     const ids = getAllEndpoints().map((p) => p.id);
     expect(ids).toContain("anthropic");
