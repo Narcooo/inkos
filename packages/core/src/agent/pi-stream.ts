@@ -214,7 +214,7 @@ function observeModelStream(model: Model<Api>, modelCallId: string | undefined, 
           for await (const retried of retry()) forward(retried);
           return;
         }
-        if (event.type === "done"
+        if (event.type === "done" && event.message.stopReason !== "length"
           && !discardedToolOutputs.has(event.message)
           && !lastPartial?.content.some(part => part.type === "toolCall")
           && !event.message.content.some(part => part.type === "toolCall" || (part.type === "text" && part.text.trim().length > 0))) {

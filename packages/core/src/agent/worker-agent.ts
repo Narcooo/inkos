@@ -418,7 +418,7 @@ export async function runWorkerAgentTool<TParameters extends TSchema>(
     });
     const initialResult = agent.state.messages.at(-1);
     if (!submitted && initialResult?.role === "assistant" && initialResult.stopReason === "length") {
-      throw Object.assign(new Error("Worker output reached the configured model output limit"), {
+      throw Object.assign(new Error("Worker output reached the configured model output limit before submitting a complete result. Reasoning and the result share this limit; increase the output budget before retrying the same request."), {
         code: "MODEL_OUTPUT_LIMIT", resultTool: resultTool.name, stopReason: initialResult.stopReason,
       });
     }
