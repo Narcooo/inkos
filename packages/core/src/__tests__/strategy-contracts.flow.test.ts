@@ -126,7 +126,12 @@ it("snapshots committed SQLite state while its WAL connection remains open", asy
   } finally { db.close(); }
 });
 
-it.each([true, false])("composes a new Profile and resumes an outline with explicit direction=%s", async (explicitDirection) => {
+it.each([
+  { explicitDirection: true, briefState: 'updated', expected: 'Updated direction' },
+  { explicitDirection: false, briefState: 'original', expected: 'Fixture direction' },
+  { explicitDirection: false, briefState: 'updated', expected: 'Updated saved direction' },
+  { explicitDirection: false, briefState: 'candidate', expected: 'Fixture direction' },
+])("composes a Profile and resumes with explicit=$explicitDirection, brief=$briefState", async ({explicitDirection, briefState, expected}) => {
   const { root } = await fixture();
   const builtIn = createBuiltInWorkProfileRegistry().require("short-fiction");
   const custom = {...builtIn,id:"mini-fiction",title:"Mini fiction",artifactSchemas:{...builtIn.artifactSchemas,'source/metadata.json':'translation-glossary' as const}};
@@ -138,6 +143,12 @@ it.each([true, false])("composes a new Profile and resumes an outline with expli
   const create = createProfileWorkTools(root,registry).find(tool=>tool.name==='create_work')!;
   await executeExplicitCapabilityTool({projectRoot:root,tool:create,binding:{capabilityId:'workspace',actionId:create.name,profileId:'workspace-default',risk:'recoverable-write'},
     parameters:{workId:'composed',profileId:custom.id,title:'Author title',intent:'Fixture direction',language:'en'}});
+  if (briefState === 'updated') {
+    await createReplaceWorkArtifactTool(root, 'composed').execute('update-brief', { path: 'source/brief.md', content: 'Updated saved direction' }, undefined as never, undefined);
+  } else if (briefState === 'candidate') {
+    await syncWorkSourceArtifacts({projectRoot:root,workId:'composed',accept:false,
+      writes:[{relativePath:'works/composed/source/brief.md',content:'Unaccepted candidate direction'}]});
+  }
   await mkdir(join(root,'works/composed/source/outline'),{recursive:true});
   await writeFile(join(root,'works/composed/source/outline/v001.md'),'Existing outline fixture');
   const stage = createShortProductionStageTools(pipeline,root,'composed')[0]!;
@@ -147,8 +158,13 @@ it.each([true, false])("composes a new Profile and resumes an outline with expli
   const work = await loadWorkManifest(root,'composed');
   expect({profile:work.profileId,title:work.title,language:work.language}).toEqual({profile:custom.id,title:'Author title',language:'en'});
   expect(JSON.parse(await readFile(join(root,'works/composed/source/production-state.json'),'utf8')).target.language).toBe('en');
-  expect(JSON.parse(await readFile(join(root,'works/composed/source/production-state.json'),'utf8')).intent).toBe(explicitDirection?'Updated direction':'Fixture direction');
+  expect(JSON.parse(await readFile(join(root,'works/composed/source/production-state.json'),'utf8')).intent).toBe(expected);
   const bound = createProductionCapabilityRegistry({...environment,work});
+  if (briefState === 'candidate') {
+    // The default intent must come from the accepted snapshot, never the candidate
+    // bytes in source/. Restore those bytes before this unrelated replace check.
+    await writeFile(join(root, 'works/composed/source/brief.md'), 'Fixture direction');
+  }
   const replaced = await bound.invoke('workspace','replace_work_artifact',{projectRoot:root,episodeId:'composed-edit',work,profile:custom},
     {path:'source/brief.md',content:'Updated fixture direction'});
   expect(replaced.artifacts.some(ref=>ref.workId==='composed')).toBe(true);

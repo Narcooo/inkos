@@ -7,10 +7,11 @@ import { readShortProductionState } from "../../pipeline/short-production-state.
 import { loadAvailableAgentSkills } from "../../skills/builtin-loader.js";
 import { resolveProfileSkillActivations } from "../../skills/activations.js";
 import { createBuiltInWorkProfileRegistry } from "../builtin-profiles.js";
+import { readArtifactRevision } from "../artifact-reader.js";
 
 const Parameters = Type.Object({
   workId: Type.String({ minLength: 1 }),
-  direction: Type.Optional(Type.String({description:"Creative direction for outline generation, or additional instructions for the requested packaging stage. When omitted, use the production state's intent or the Work's saved intent. Existing story intent remains unchanged."})),
+  direction: Type.Optional(Type.String({description:"Creative direction for outline generation, or additional instructions for the requested packaging stage. When omitted, use the production state's intent, the accepted current brief, or legacy Work intent metadata, in that order. Existing story intent remains unchanged."})),
   chapters: Type.Optional(Type.Integer({ minimum: 1 })),
   charsPerChapter: Type.Optional(Type.Integer({ minimum: 1 })),
   minChapterLength: Type.Optional(Type.Integer({minimum:1,description:"The lower end of the requested per-chapter range. Omit to preserve the existing Work contract."})),
@@ -32,12 +33,21 @@ export function createShortProductionStageTools(pipeline: PipelineRunner, root: 
       let language: "zh" | "en" = "zh";
       let title:string|undefined;
       let savedIntent:string|undefined;
-      try { const work = await loadWorkManifest(root, params.workId); profileId = work.profileId;title=work.title; language = work.language === "en" ? "en" : "zh"; savedIntent=typeof work.metadata.intent==="string"?work.metadata.intent:undefined; } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+      let savedBriefId:string|undefined;
+      try {
+        const work = await loadWorkManifest(root, params.workId);
+        profileId = work.profileId; title = work.title; language = work.language === "en" ? "en" : "zh";
+        savedIntent = typeof work.metadata.intent === "string" ? work.metadata.intent : undefined;
+        savedBriefId = work.artifacts.find(artifact => artifact.revisions.some(revision =>
+          revision.id === artifact.currentRevisionId && revision.path === "source/brief.md"))?.id;
+      } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
       const profile = createBuiltInWorkProfileRegistry(root).require(profileId);
       if (!profile.capabilityIds.includes("short-fiction")) throw new Error("This Work does not declare short-fiction capability");
       const skills = resolveProfileSkillActivations((await loadAvailableAgentSkills({ projectRoot: root })).skills, profile);
       const existing = await readShortProductionState(root, `works/${params.workId}/source`);
-      const direction = params.direction ?? existing?.intent ?? savedIntent ?? "";
+      const direction = params.direction ?? existing?.intent ?? (savedBriefId
+        ? (await readArtifactRevision({projectRoot:root,workId:params.workId,artifactId:savedBriefId})).bytes.toString("utf8")
+        : savedIntent ?? "");
       if (stage === "outline" && !direction.trim()) throw new Error("An outline needs a creative direction");
       const result = await pipeline.runWithAgentContext({ signal, activatedSkills: skills }, () => runShortFictionStage({
         projectRoot: root, storyId: params.workId, title, direction, stage, language, chapterCount: params.chapters,
