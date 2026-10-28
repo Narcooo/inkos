@@ -3191,7 +3191,7 @@ export function createInspectWorkTool(projectRoot: string): AgentTool<typeof Ins
         `lineage=${JSON.stringify(work.lineage)}`,
         "Artifacts:",
         ...(artifacts.length > 0 ? artifacts.map((artifact) => (
-          `- artifact=${JSON.stringify(artifact.artifactId)} | kind=${artifact.kind} | status=${artifact.status} | path=${JSON.stringify(artifact.path)}`
+          `- artifact=${JSON.stringify(artifact.artifactId)} | revision=${JSON.stringify(artifact.revisionId)} | kind=${artifact.kind} | status=${artifact.status} | path=${JSON.stringify(artifact.path)}`
         )) : ["- none"]),
       ].join("\n"), { kind: "work_inspected", workId: work.id, title: work.title,
         profileId: work.profileId, language: work.language, status: work.status, lineage: work.lineage, artifacts });
