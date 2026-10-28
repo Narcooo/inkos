@@ -129,6 +129,26 @@ export function createAdoptWorkRevisionTool(projectRoot: string, workId: string)
       const writes = revision.contentType.startsWith("text/") || revision.contentType === "application/json"
         ? validatedArtifactWrites(work, revision.path, bytes.toString("utf8"), profile,currentBytes?.toString("utf8"))
         : [{ relativePath: join("works", workId, revision.path), content: bytes }];
+      // A candidate can legitimately occupy source/ while current still points to
+      // an older snapshot. Allow any registered version, but never discard an
+      // unregistered author edit, including edits to regenerated projections.
+      for (const write of writes) {
+        let sourceBytes: Buffer;
+        try { sourceBytes = await readFile(join(projectRoot, write.relativePath)); }
+        catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+          throw error;
+        }
+        const sourcePath = write.relativePath.slice(join("works", workId).length + 1).replaceAll("\\", "/");
+        const checksum = `sha256:${createHash("sha256").update(sourceBytes).digest("hex")}`;
+        if (!work.artifacts.some(item => item.revisions.some(version => version.path === sourcePath && version.checksum === checksum))) {
+          throw Object.assign(new Error(`Source has unregistered changes: ${sourcePath}. Preserve and register these edits before adopting another revision. No text was changed.`), {
+            code: "ARTIFACT_REVISION_CONFLICT",
+            recovery: { action: "workspace__inspect_work", parameters: { workId },
+              reason: "The source file differs from every registered version. Preserve the on-disk edits and reconcile them with the Work before retrying adoption." },
+          });
+        }
+      }
       await syncWorkSourceArtifacts({ projectRoot, workId, accept: true, writes,
         ...(revision.path === "source/final/short-story.json" ? { title: JSON.parse(bytes.toString("utf8")).storyTitle } : {}),
       });
