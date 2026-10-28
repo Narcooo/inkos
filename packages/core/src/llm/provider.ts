@@ -513,14 +513,19 @@ function stripReservedKeys(extra: Record<string, unknown>): Record<string, unkno
 
 const warnedFixedTemperatureModels = new Set<string>();
 
-function clampTemperatureForModel(
+export function clampTemperatureForModel(
   service: string | undefined,
   model: string,
   requested: number,
+  baseUrl?: string,
 ): number {
-  const card = service ? lookupModel(service, model) : undefined;
-  if (card?.temperature === undefined) return requested;
-  const locked = card.temperature;
+  const card = lookupModel(service ?? "custom", model);
+  // Coding Plan model IDs differ from the ordinary Moonshot API. Keep the
+  // fallback scoped to its official endpoint until the catalog includes K3.1.
+  const kimiCodingTemperature = /^k3\.1-pro(?:-highspeed)?$/i.test(model)
+    && /^https:\/\/api\.kimi\.(?:com|ai)\/coding(?:\/|$)/i.test(baseUrl ?? "") ? 1 : undefined;
+  const locked = card?.temperature ?? kimiCodingTemperature;
+  if (locked === undefined) return requested;
   if (requested === locked) return locked;
   if (!warnedFixedTemperatureModels.has(model)) {
     warnedFixedTemperatureModels.add(model);
@@ -1488,6 +1493,7 @@ export async function chatCompletion(
       client.service,
       model,
       options?.temperature ?? client.defaults.temperature,
+      client._piModel?.baseUrl,
     ),
     maxTokens: options?.maxTokens ?? client.defaults.maxTokens,
     extra: client.defaults.extra,

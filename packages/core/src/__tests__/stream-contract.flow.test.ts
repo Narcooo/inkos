@@ -53,7 +53,7 @@ it.each([true, false])('enforces required tool selection without rejecting an or
   } finally { server.closeAllConnections(); await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
 }, 15000);
 
-it.each([true, false])('ends exhausted empty responses at the transport boundary without a schema-repair loop (stream=%s)', async (stream) => {
+it.each([true, false])('distinguishes output limits from empty normal completions without a schema-repair loop (stream=%s)', async (stream) => {
   let requests = 0;
   const server = createServer(async (request, response) => {
     for await (const _chunk of request) { /* consume the request */ }
@@ -71,10 +71,13 @@ it.each([true, false])('ends exhausted empty responses at the transport boundary
   server.listen(0,'127.0.0.1'); await once(server,'listening');
   try {
     const client = createLLMClient({service:'custom',provider:'openai',configSource:'studio',model:'fixture',apiKey:'fixture',baseUrl:`http://127.0.0.1:${(server.address() as {port:number}).port}/v1`,apiFormat:'chat',stream,temperature:0,thinkingBudget:0});
-    await expect(runWorkerAgentTool(client,'fixture',[{role:'user',content:'Submit the value.'}],{
+    const run = () => runWorkerAgentTool(client,'fixture',[{role:'user',content:'Submit the value.'}],{
       name:'submit_value',label:'Submit',description:'Submit the result',parameters:Type.Object({value:Type.Number()}),
-    },{maxTokens:128})).rejects.toMatchObject({code:'MODEL_EMPTY_RESPONSE',attempts:1});
-    expect(requests).toBe(2);
+    },{maxTokens:128});
+    await expect(run()).rejects.toMatchObject({code:'MODEL_OUTPUT_LIMIT',stopReason:'length'});
+    expect(requests).toBe(1);
+    await expect(run()).rejects.toMatchObject({code:'MODEL_EMPTY_RESPONSE',attempts:1});
+    expect(requests).toBe(3);
   } finally {server.closeAllConnections();await new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve()));}
 },15000);
 it.each(["chat", "responses", "anthropic"] as const)("carries the required result tool through the real Pi %s streaming HTTP boundary", async (apiFormat) => {

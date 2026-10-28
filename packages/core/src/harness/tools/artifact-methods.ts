@@ -136,14 +136,23 @@ export function createArtifactMethodTools(pipeline: PipelineRunner, root: string
     name: `${mode}_work_artifact`, label: `${mode} work artifact`, parameters: Parameters,
     description: mode === 'review'
       ? "Review a selected artifact without exporting it. If the user requests both review and export, use review_and_export_work_artifact. An explicit candidate/history revisionId records evidence without adopting it."
-      : "Revise a current artifact using this Work's professional Skills. For a localized Markdown edit, first read and supply exact editRanges; the host preserves surrounding bytes. Inspect the returned changedRegion before claiming the requested edit succeeded: it shows actual changes, which may differ from the request.",
+      : "Revise only the accepted current artifact using this Work's professional Skills. A candidate or historical revision must first be explicitly adopted with adopt_work_revision, when authorized by the user. For a localized Markdown edit, first read and supply exact editRanges; the host preserves surrounding bytes. Inspect the returned changedRegion before claiming the requested edit succeeded: it shows actual changes, which may differ from the request.",
     async execute(id, params, signal, onUpdate) {
       const work = await loadWorkManifest(root, workId);
       const profile = createBuiltInWorkProfileRegistry(root).require(work.profileId);
       const artifact = work.artifacts.find(artifact => artifact.id === params.artifactId);
       const revision = artifact?.revisions.find(revision => revision.id === (params.revisionId ?? artifact.currentRevisionId));
       if (!artifact || !revision) throw Object.assign(new Error("Select a current artifact or supply its exact candidate revisionId"), {code:"ARTIFACT_REVISION_REQUIRED"});
-      if (mode === "revise" && revision.id !== artifact.currentRevisionId) throw Object.assign(new Error("Revision requires the current artifact version"), {code:"ARTIFACT_REVISION_CONFLICT"});
+      if (mode === "revise" && revision.id !== artifact.currentRevisionId) {
+        throw Object.assign(new Error(`Cannot revise ${revision.id}: it is ${revision.status}, while the current revision is ${artifact.currentRevisionId ?? "not set"}. Inspect the versions; to edit this selected revision, first explicitly adopt it with adopt_work_revision. No text was changed.`), {
+          code: "ARTIFACT_REVISION_CONFLICT",
+          recovery: {
+            action: "workspace__inspect_work", parameters: { workId }, artifactId: artifact.id,
+            requestedRevisionId: revision.id, currentRevisionId: artifact.currentRevisionId,
+            reason: "Inspect and read the intended version. Use the current revision, or adopt the inspected revision with an expectedCurrentRevisionId check only when the user's request authorizes adoption. A conflict does not itself authorize replacing current work.",
+          },
+        });
+      }
       if (!revision.contentType.startsWith("text/") && revision.contentType !== "application/json") throw new Error("This action requires a text artifact");
       const { bytes } = await readArtifactRevision({ projectRoot: root, workId, artifactId: artifact.id, revisionId: revision.id });
       const content = bytes.toString("utf8");

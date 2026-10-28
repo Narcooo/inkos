@@ -12,6 +12,7 @@ import type {
 } from "@mariozechner/pi-ai";
 import {
   assertWithinContextWindow,
+  clampTemperatureForModel,
   createRequestDeadline,
   estimatePiContextTokens,
   guardAssistantMessageStream,
@@ -75,10 +76,10 @@ export function guardedPiStream<TApi extends Api>(
             configured = { ...configured as Record<string, unknown>, tool_choice: { type: choice === "none" ? "none" : "auto" } };
           }
         }
-        const prepared = await options?.onPayload?.(configured, activeModel) ?? configured;
+        const prepared = enforceModelTemperature(await options?.onPayload?.(configured, activeModel) ?? configured, activeModel);
         recordExecutionEvidence("model-request-prepared", { modelCallId: modelCall?.modelCallId, model: activeModel.id,
           api: activeModel.api,
-          parameters: prepared && typeof prepared === "object" ? Object.fromEntries(Object.entries(prepared).filter(([key]) => ["stream", "thinking", "max_tokens", "max_completion_tokens", "max_output_tokens", "tool_choice"].includes(key))) : {} });
+          parameters: prepared && typeof prepared === "object" ? Object.fromEntries(Object.entries(prepared).filter(([key]) => ["stream", "thinking", "temperature", "max_tokens", "max_completion_tokens", "max_output_tokens", "tool_choice"].includes(key))) : {} });
         return prepared;
       },
       signal,
@@ -155,7 +156,7 @@ export function guardedPiNonStreaming<TApi extends Api>(
               ...(options?.headers ?? {}),
               ...traceHeaders,
             },
-            body: JSON.stringify(transformed ?? configured),
+            body: JSON.stringify(enforceModelTemperature(transformed ?? configured, model)),
             signal: deadline.signal,
           }, proxyUrl);
           const raw = await response.text();
@@ -214,7 +215,7 @@ function observeModelStream(model: Model<Api>, modelCallId: string | undefined, 
           for await (const retried of retry()) forward(retried);
           return;
         }
-        if (event.type === "done"
+        if (event.type === "done" && event.message.stopReason !== "length"
           && !discardedToolOutputs.has(event.message)
           && !lastPartial?.content.some(part => part.type === "toolCall")
           && !event.message.content.some(part => part.type === "toolCall" || (part.type === "text" && part.text.trim().length > 0))) {
@@ -277,6 +278,14 @@ function emptyAssistantMessage(model: Model<Api>): AssistantMessage {
     stopReason: "stop",
     timestamp: Date.now(),
   };
+}
+
+function enforceModelTemperature(payload: unknown, model: Model<Api>): unknown {
+  if (!payload || typeof payload !== "object") return payload;
+  const body = payload as Record<string, unknown>;
+  if (typeof body.temperature !== "number") return payload;
+  const temperature = clampTemperatureForModel(undefined, model.id, body.temperature, model.baseUrl);
+  return temperature === body.temperature ? payload : { ...body, temperature };
 }
 
 function explicitDeepSeekThinkingMode(payload: unknown, model: Model<Api>): unknown {

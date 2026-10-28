@@ -21,6 +21,9 @@ export async function readArtifactRevision(input: {
       reason: "Select a registered artifact and revision from the current inventory; do not guess a file path.",
     } });
   };
+  if (artifact?.revisions.length && !input.revisionId && artifact.currentRevisionId === null) {
+    return fail("ARTIFACT_REVISION_REQUIRED", "This artifact has no accepted current revision. Supply an explicit revisionId from inspect_work to read a candidate or historical version without adopting it.");
+  }
   if (!artifact || !revision) return fail("ARTIFACT_NOT_FOUND", "The requested artifact revision is not registered.");
   const root = await realpath(join(input.projectRoot, "works", workId));
   let path: string;
