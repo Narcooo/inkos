@@ -1,3 +1,4 @@
+import { WritingLanguageSchema } from "@actalk/inkos-core";
 import { Command } from "commander";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -7,20 +8,20 @@ import { initializeProjectDirectory } from "../project-bootstrap.js";
 export const initCommand = new Command("init")
   .description("Initialize an InkOS project (current directory by default)")
   .argument("[name]", "Project name (creates subdirectory). Omit to init current directory.")
-  .option("--lang <language>", "Default writing language: zh (Chinese) or en (English)", "zh")
+  .option("--lang <language>", "Default writing language: zh (Chinese), en (English), or ru (Russian)", "zh")
   .action(async (name: string | undefined, opts: { lang?: string }) => {
     const projectDir = name ? resolve(process.cwd(), name) : process.cwd();
 
     try {
       await mkdir(projectDir, { recursive: true });
       await initializeProjectDirectory(projectDir, {
-        language: (opts.lang === "en" ? "en" : "zh"),
+        language: WritingLanguageSchema.parse(opts.lang ?? "zh"),
         overwriteSupportFiles: true,
       });
 
       log(`Project initialized at ${projectDir}`);
       log("");
-      const isEnglish = (opts.lang ?? "zh") === "en";
+      const isEnglish = (opts.lang ?? "zh") !== "zh";
       const exampleCreateLines = isEnglish
         ? ["  inkos book create --title 'My Novel' --genre progression --platform royalroad --lang en"]
         : [

@@ -1,6 +1,8 @@
 import { z } from "zod";
 
-export const RuntimeStateLanguageSchema = z.enum(["zh", "en"]);
+import { WritingLanguageSchema } from "./book.js";
+
+export const RuntimeStateLanguageSchema = WritingLanguageSchema;
 export type RuntimeStateLanguage = z.infer<typeof RuntimeStateLanguageSchema>;
 
 export const StateManifestSchema = z.object({

@@ -1,8 +1,9 @@
+import type { WritingLanguage } from "../models/book.js";
 import type { ContextPackage } from "../models/input-governance.js";
 
 export function buildGovernedMemoryEvidenceBlocks(
   contextPackage: ContextPackage,
-  language?: "zh" | "en",
+  language?: WritingLanguage,
 ): {
   readonly referencedHooksBlock?: string;
   readonly hooksBlock?: string;
@@ -39,43 +40,43 @@ export function buildGovernedMemoryEvidenceBlocks(
   return {
     referencedHooksBlock: referencedHookEntries.length > 0
       ? renderReferencedHooksBlock(
-          resolvedLanguage === "en" ? "Memo-referenced hooks" : "备忘引用伏笔",
+          resolvedLanguage !== "zh" ? "Memo-referenced hooks" : "备忘引用伏笔",
           referencedHookEntries,
         )
       : undefined,
     hooksBlock: hookEntries.length > 0
       ? renderEvidenceBlock(
-          resolvedLanguage === "en" ? "Selected Hook Evidence" : "已选伏笔证据",
+          resolvedLanguage !== "zh" ? "Selected Hook Evidence" : "已选伏笔证据",
           hookEntries,
         )
       : undefined,
     summariesBlock: summaryEntries.length > 0
       ? renderEvidenceBlock(
-          resolvedLanguage === "en" ? "Selected Chapter Summary Evidence" : "已选章节摘要证据",
+          resolvedLanguage !== "zh" ? "Selected Chapter Summary Evidence" : "已选章节摘要证据",
           summaryEntries,
         )
       : undefined,
     volumeSummariesBlock: volumeSummaryEntries.length > 0
       ? renderEvidenceBlock(
-          resolvedLanguage === "en" ? "Selected Volume Summary Evidence" : "已选卷级摘要证据",
+          resolvedLanguage !== "zh" ? "Selected Volume Summary Evidence" : "已选卷级摘要证据",
           volumeSummaryEntries,
         )
       : undefined,
     titleHistoryBlock: titleHistoryEntries.length > 0
       ? renderEvidenceBlock(
-          resolvedLanguage === "en" ? "Recent Title History" : "近期标题历史",
+          resolvedLanguage !== "zh" ? "Recent Title History" : "近期标题历史",
           titleHistoryEntries,
         )
       : undefined,
     moodTrailBlock: moodTrailEntries.length > 0
       ? renderEvidenceBlock(
-          resolvedLanguage === "en" ? "Recent Mood / Chapter Type Trail" : "近期情绪/章节类型轨迹",
+          resolvedLanguage !== "zh" ? "Recent Mood / Chapter Type Trail" : "近期情绪/章节类型轨迹",
           moodTrailEntries,
         )
       : undefined,
     canonBlock: canonEntries.length > 0
       ? renderEvidenceBlock(
-          resolvedLanguage === "en" ? "Canon Evidence" : "正典约束证据",
+          resolvedLanguage !== "zh" ? "Canon Evidence" : "正典约束证据",
           canonEntries,
         )
       : undefined,

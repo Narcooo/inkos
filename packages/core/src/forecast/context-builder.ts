@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { readCharacterContext, readStoryFrame, readVolumeMap } from "../utils/outline-paths.js";
 import { loadRuntimeStateSnapshot } from "../state/runtime-state-store.js";
 import { renderChapterSummariesProjection, renderCurrentStateProjection, renderHooksProjection } from "../state/state-projections.js";
-import { BookConfigSchema } from "../models/book.js";
+import { BookConfigSchema, type WritingLanguage } from "../models/book.js";
 import { resolveDurableStoryProgress } from "../state/state-bootstrap.js";
 
 // Read-only view of the canonical book used as forecast input. Everything in
@@ -26,7 +26,7 @@ export interface ForecastContextSections {
 export interface ForecastContext {
   readonly bookId: string;
   readonly bookTitle: string;
-  readonly language: "zh" | "en";
+  readonly language: WritingLanguage;
   readonly baseChapter: number;
   readonly contextFingerprint: string;
   readonly sections: ForecastContextSections;
@@ -192,7 +192,7 @@ export function renderForecastContextMarkdown(context: ForecastContext): string 
   return blocks.join("\n\n");
 }
 
-async function readBookConfig(bookDir: string): Promise<{ readonly title: string; readonly language: "zh" | "en" }> {
+async function readBookConfig(bookDir: string): Promise<{ readonly title: string; readonly language: WritingLanguage }> {
   const raw = await readFile(join(bookDir, "book.json"), "utf-8");
   const parsed = BookConfigSchema.parse(JSON.parse(raw));
   return { title: parsed.title, language: parsed.language ?? "zh" };

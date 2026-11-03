@@ -1,5 +1,8 @@
 import { z } from "zod";
 
+export const WritingLanguageSchema = z.enum(["zh", "en", "ru"]);
+export type WritingLanguage = z.infer<typeof WritingLanguageSchema>;
+
 export const PlatformSchema = z.string().trim().min(1);
 export type Platform = z.infer<typeof PlatformSchema>;
 
@@ -29,7 +32,7 @@ export const BookConfigSchema = z.object({
   chapterWordCount: z.number().int().min(1),
   minChapterLength: z.number().int().min(1).optional(),
   maxChapterLength: z.number().int().min(1).optional(),
-  language: z.enum(["zh", "en"]),
+  language: WritingLanguageSchema,
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
   parentBookId: z.string().optional(),

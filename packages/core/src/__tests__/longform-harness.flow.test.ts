@@ -247,7 +247,7 @@ describe("long-form harness mini-flow", () => {
   it("keeps the chapter persistable when review observation is unavailable", async () => {
     const output = chapterOutput(3);
     const result = await reviewChapterDraft({
-      book: { genre: "other" },
+      book: { genre: "other", language: "en" },
       bookDir: "/tmp/unused",
       chapterNumber: 3,
       output,

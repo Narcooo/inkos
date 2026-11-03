@@ -1,14 +1,18 @@
 import type { LengthCountingMode, LengthSpec } from "../models/length-governance.js";
 
-export type LengthLanguage = "zh" | "en";
+import type { WritingLanguage } from "../models/book.js";
+
+export type LengthLanguage = WritingLanguage;
 
 // Per-chapter length default in the book's native unit: Chinese counts characters (3000字),
 // English counts words (~2000 ≈ a 3000-char chapter). One cross-language number would mis-scale —
 // 3000 read as English words runs ~50% long, and the hard-range guard then force-expands correct chapters.
 export const DEFAULT_CHAPTER_LENGTH_ZH = 3000;
 export const DEFAULT_CHAPTER_LENGTH_EN = 2000;
+export const DEFAULT_CHAPTER_LENGTH_RU = 2000;
 
 export function defaultChapterLength(language: LengthLanguage = "zh"): number {
+  if (language === "ru") return DEFAULT_CHAPTER_LENGTH_RU;
   return language === "en" ? DEFAULT_CHAPTER_LENGTH_EN : DEFAULT_CHAPTER_LENGTH_ZH;
 }
 
@@ -23,20 +27,36 @@ export function countChapterLength(
     return words?.length ?? 0;
   }
 
+  if (countingMode === "ru_words") {
+    // Count hyphenated compounds as one word and keep em dashes as boundaries.
+    const words = normalized.normalize("NFC").match(/[\p{L}\p{N}][\p{L}\p{N}\p{M}]*(?:['’\-\u2010\u2011][\p{L}\p{N}][\p{L}\p{N}\p{M}]*)*/gu);
+    return words?.length ?? 0;
+  }
+
   return normalized.replace(/\s+/g, "").length;
 }
 
 export function resolveLengthCountingMode(
   language: LengthLanguage = "zh",
 ): LengthCountingMode {
+  if (language === "ru") return "ru_words";
   return language === "en" ? "en_words" : "zh_chars";
+}
+
+export function lengthCountingUnit(countingMode: LengthCountingMode): string {
+  if (countingMode === "ru_words") return "слов";
+  return countingMode === "en_words" ? "words" : "字";
 }
 
 export function formatLengthCount(
   count: number,
   countingMode: LengthCountingMode,
 ): string {
-  return countingMode === "en_words" ? `${count} words` : `${count}字`;
+  if (countingMode === "ru_words") {
+    const form = new Intl.PluralRules("ru").select(count);
+    return `${count} ${form === "one" ? "слово" : form === "few" ? "слова" : "слов"}`;
+  }
+  return countingMode === "zh_chars" ? `${count}字` : `${count} ${lengthCountingUnit(countingMode)}`;
 }
 
 export function buildLengthSpec(

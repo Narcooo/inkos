@@ -4,6 +4,8 @@ import { createInterface } from "node:readline";
 import { join, resolve } from "node:path";
 import {
   createBookFoundationTool,
+  WritingLanguageSchema,
+  defaultChapterLength,
   deriveBookIdFromTitle,
   executeExplicitCapabilityTool,
   PlatformSchema,
@@ -36,9 +38,9 @@ bookCommand
   .option("--genre <genre>", "Genre", "xuanhuan")
   .option("--platform <platform>", "Target platform", "tomato")
   .option("--target-chapters <n>", "Target chapter count", "200")
-  .option("--chapter-words <n>", "Words per chapter", "3000")
+  .option("--chapter-words <n>", "Target chapter length in the book language")
   .option("--brief <path>", "Path to creative brief file (.md/.txt) — Architect builds from your ideas instead of generating from scratch")
-  .option("--lang <language>", "Writing language: zh (Chinese) or en (English). Defaults from genre.")
+  .option("--lang <language>", "Writing language: zh (Chinese), en (English), or ru (Russian). Defaults from the project.")
   .option("--json", "Output JSON")
   .action(async (opts) => {
     try {
@@ -61,6 +63,7 @@ bookCommand
 
       const config = await loadConfig();
       const now = new Date().toISOString();
+      const writingLanguage = WritingLanguageSchema.parse(opts.lang ?? config.language);
       const book: BookConfig = {
         id: bookId,
         title: opts.title,
@@ -68,8 +71,9 @@ bookCommand
         genre: opts.genre,
         status: "outlining",
         targetChapters: parseInt(opts.targetChapters, 10),
-        chapterWordCount: parseInt(opts.chapterWords, 10),
-        language: resolveCliLanguage(opts.lang ?? config.language),
+        chapterWordCount: opts.chapterWords ? parseInt(opts.chapterWords, 10)
+          : writingLanguage === "ru" ? defaultChapterLength(writingLanguage) : 3000,
+        language: writingLanguage,
         createdAt: now,
         updatedAt: now,
       };
@@ -145,7 +149,7 @@ bookCommand
   .option("--chapter-words <n>", "Words per chapter")
   .option("--target-chapters <n>", "Target chapter count")
   .option("--status <status>", "Book status (outlining/active/paused/completed)")
-  .option("--lang <language>", "Writing language: zh or en")
+  .option("--lang <language>", "Writing language: zh, en, or ru")
   .option("--json", "Output JSON")
   .action(async (bookIdArg: string | undefined, opts) => {
     try {
@@ -158,7 +162,7 @@ bookCommand
       if (opts.chapterWords) updates.chapterWordCount = parseInt(opts.chapterWords, 10);
       if (opts.targetChapters) updates.targetChapters = parseInt(opts.targetChapters, 10);
       if (opts.status) updates.status = opts.status;
-      if (opts.lang) updates.language = opts.lang;
+      if (opts.lang) updates.language = WritingLanguageSchema.parse(opts.lang);
 
       if (Object.keys(updates).length === 0) {
         if (opts.json) {

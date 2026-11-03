@@ -113,7 +113,7 @@ export async function buildExportArtifact(
     const raw = await readFile(join(chaptersDir, file), 'utf-8');
     const heading = readChapterHeading(raw.trimStart().split(/\r?\n/u)[0] ?? '');
     return renderChapterDocument(chapter.number, chapter.title ?? heading?.title ?? file.replace(/^\d+_/u,'').replace(/\.md$/u,''), raw,
-      book.language === 'en' || book.language === undefined && heading?.language === 'en' ? 'en' : 'zh');
+      book.language === "ru" || book.language === "en" ? book.language : book.language === undefined ? heading?.language ?? "zh" : "zh");
   };
 
   if (format === "epub") {
@@ -128,7 +128,7 @@ export async function buildExportArtifact(
       epubChapters.push({ title, content: html });
     }
     const epubInstance = new EPub(
-      { title: book.title, lang: book.language === "en" ? "en" : "zh-CN" },
+      { title: book.title, lang: book.language === "en" || book.language === "ru" ? book.language : "zh-CN" },
       epubChapters,
     );
     return {

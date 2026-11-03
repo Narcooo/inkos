@@ -1,5 +1,6 @@
+import { RUSSIAN_OUTPUT_INSTRUCTION } from "../utils/language.js";
 import { BaseAgent } from "./base.js";
-import type { FanficMode } from "../models/book.js";
+import type { FanficMode, WritingLanguage } from "../models/book.js";
 import { FanficCanonToolSchema } from "./fanfic-canon-tool.js";
 import { estimateTextTokens } from "../llm/provider.js";
 import { semanticInputBudget, splitTextByEstimatedTokens } from "../llm/semantic-input.js";
@@ -17,17 +18,17 @@ export class FanficCanonImporter extends BaseAgent {
     sourceText: string,
     sourceName: string,
     fanficMode: FanficMode,
-    language: "zh" | "en" = "zh",
+    language: WritingLanguage = "zh",
   ): Promise<FanficCanonOutput> {
     const source = await this.prepareSourceText(sourceText, sourceName, language);
-    const systemPrompt = language === "en"
+    const systemPrompt = language !== "zh"
       ? `Compile source-grounded fan-fiction canon with the activated import and fan-fiction Skills. Mode: ${fanficMode}. Submit one readable Markdown canon document through the result tool. Include only source-evidenced sections relevant to this work; do not manufacture a genre-specific system.${source.compiled ? " The input is a traceable semantic source package." : ""}`
       : `按已激活的导入与同人 Skills 编译有来源依据的同人正典。模式：${fanficMode}。通过结果工具提交一份可读 Markdown 正典文档；只保留原作有证据且对本作有用的内容，不强造题材专属体系。${source.compiled ? "输入是可追溯的语义资料包。" : ""}`;
 
     const { result } = await this.submitStructured(
       [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: language === "en"
+        { role: "system", content: language === "ru" ? `${systemPrompt}\n\n${RUSSIAN_OUTPUT_INSTRUCTION}` : systemPrompt },
+        { role: "user", content: language !== "zh"
           ? `Source material for "${sourceName}":\n\n${source.text}`
           : `原作《${sourceName}》素材：\n\n${source.text}` },
       ],
@@ -42,7 +43,7 @@ export class FanficCanonImporter extends BaseAgent {
 
     const canonMarkdown = result.canonMarkdown.trim();
     if (!canonMarkdown) throw new Error("Fanfic canon compiler returned an empty document.");
-    const headings = language === "en"
+    const headings = language !== "zh"
       ? ["Fan-fiction Canon", "Source", "Material", "Mode", "Canon"]
       : ["同人正典", "来源", "素材", "同人模式", "正典内容"];
     const fullDocument = [
@@ -62,7 +63,7 @@ export class FanficCanonImporter extends BaseAgent {
   private async prepareSourceText(
     sourceText: string,
     sourceName: string,
-    language: "zh" | "en",
+    language: WritingLanguage,
   ): Promise<{ readonly text: string; readonly compiled: boolean }> {
     const budget = semanticInputBudget(this.ctx.client, { reservedOutputTokens: 16_384 });
     if (budget === undefined || estimateTextTokens(sourceText) <= budget) {
@@ -76,15 +77,15 @@ export class FanficCanonImporter extends BaseAgent {
         [
           {
             role: "system",
-            content: language === "en"
-              ? "Compile the complete source chunk into a traceable Markdown evidence package with the activated import Skill."
+            content: language !== "zh"
+              ? "Compile the complete source chunk into a traceable Markdown evidence package with the activated import Skill." + (language === "ru" ? ` ${RUSSIAN_OUTPUT_INSTRUCTION}` : "")
               : "按已激活的导入 Skill，把完整原作片段编译为可追溯 Markdown 资料包。",
           },
           {
             role: "user",
             content: [
-              language === "en" ? `Source: ${sourceName}` : `原作：${sourceName}`,
-              language === "en" ? `Chunk: ${index + 1}/${chunks.length}` : `片段：${index + 1}/${chunks.length}`,
+              language !== "zh" ? `Source: ${sourceName}` : `原作：${sourceName}`,
+              language !== "zh" ? `Chunk: ${index + 1}/${chunks.length}` : `片段：${index + 1}/${chunks.length}`,
               "",
               chunks[index],
             ].join("\n"),
@@ -100,9 +101,9 @@ export class FanficCanonImporter extends BaseAgent {
     return {
       compiled: true,
       text: [
-        language === "en" ? `# ${sourceName} semantic source package` : `# 《${sourceName}》语义资料包`,
+        language !== "zh" ? `# ${sourceName} semantic source package` : `# 《${sourceName}》语义资料包`,
         "",
-        language === "en"
+        language !== "zh"
           ? "Compiled from every source chunk for traceable canon extraction."
           : "逐段读取完整原作素材后编译，用于可追溯正典抽取。",
         "",

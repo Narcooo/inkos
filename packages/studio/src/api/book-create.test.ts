@@ -13,6 +13,14 @@ describe("normalizeStudioPlatform", () => {
 });
 
 describe("buildStudioBookConfig", () => {
+  it("accepts Russian writing language and keeps the Cyrillic book ID", () => {
+    const config = buildStudioBookConfig(
+      { title: "Последний поезд", genre: "other", language: "ru" },
+      "2026-03-30T00:00:00.000Z",
+    );
+    expect(config).toMatchObject({ id: "последний-поезд", language: "ru", chapterWordCount: 2000 });
+  });
+
   it("preserves supported platform selections from studio create requests", () => {
     const config = buildStudioBookConfig(
       {

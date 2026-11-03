@@ -1,7 +1,10 @@
 // Bilingual prompt builders for the narrative forecast agent, organized the
 // same way as prompts/short-fiction.ts: each builder switches on language.
 
-export type ForecastLanguage = "zh" | "en";
+import type { WritingLanguage } from "../models/book.js";
+import { RUSSIAN_OUTPUT_INSTRUCTION } from "../utils/language.js";
+
+export type ForecastLanguage = WritingLanguage;
 
 export interface ForecastPromptInput {
   readonly contextMarkdown: string;
@@ -12,6 +15,7 @@ export interface ForecastPromptInput {
 }
 
 export function buildForecastSystemPrompt(language: ForecastLanguage): string {
+  if (language === "ru") return `Предложите независимые варианты развития сюжета. Сохраняйте установленные факты и отмечайте возможные противоречия. ${RUSSIAN_OUTPUT_INSTRUCTION}`;
   return language === "en"
     ? "Project mutually isolated, non-canonical futures with the activated long-writing Skill. Preserve canon and surface conflicts as risks."
     : "按已激活的长篇写作 Skill 推演相互隔离的非正史候选未来。保留正典，把冲突明确列为风险。";
@@ -19,7 +23,7 @@ export function buildForecastSystemPrompt(language: ForecastLanguage): string {
 
 export function buildForecastUserPrompt(input: ForecastPromptInput, language: ForecastLanguage): string {
   const firstChapter = input.baseChapter + 1;
-  if (language === "en") {
+  if (language !== "zh") {
     return [
       input.contextMarkdown,
       "",
@@ -48,7 +52,7 @@ export function buildForecastUserPrompt(input: ForecastPromptInput, language: Fo
 }
 
 export function buildForecastRepairPrompt(validationError: string, language: ForecastLanguage): string {
-  if (language === "en") {
+  if (language !== "zh") {
     return [
       `Your previous output failed validation: ${validationError}`,
       "Submit the corrected complete branch set through the result tool.",

@@ -1,5 +1,6 @@
+import { RUSSIAN_OUTPUT_INSTRUCTION } from "../utils/language.js";
 import { BaseAgent } from "./base.js";
-import type { BookConfig, FanficMode } from "../models/book.js";
+import type { BookConfig, FanficMode, WritingLanguage } from "../models/book.js";
 import { join } from "node:path";
 import { readdir } from "node:fs/promises";
 import { renderHooksProjection } from "../state/state-projections.js";
@@ -58,14 +59,16 @@ export class ArchitectAgent extends BaseAgent {
       ? this.buildRevisePrompt(options.reviseFrom)
       : "";
 
-    const systemPrompt = resolvedLanguage === "en"
+    const systemPrompt = resolvedLanguage !== "zh"
       ? this.buildEnglishFoundationPrompt(book, contextBlock, reviewFeedbackBlock)
       : this.buildChineseFoundationPrompt(book, contextBlock, reviewFeedbackBlock);
 
     const langPrefix = resolvedLanguage === "en"
       ? "【LANGUAGE OVERRIDE】All submitted foundation content, character names, place names, and prose must be in English.\n\n"
       : "";
-    const userMessage = resolvedLanguage === "en"
+    const userMessage = resolvedLanguage === "ru"
+      ? `Разработайте основу романа «${book.title}».`
+      : resolvedLanguage === "en"
       ? `Generate the complete foundation for the ${book.genre} Work titled "${book.title}". Write everything in English.`
       : `请为标题为"${book.title}"的${book.genre}作品生成完整基础设定。`;
 
@@ -129,20 +132,20 @@ ${reviseFrom.userFeedback || "（无）"}
     readonly book: BookConfig;
     readonly contextBlock: string;
     readonly reviewFeedbackBlock: string;
-    readonly language: "zh" | "en";
+    readonly language: WritingLanguage;
   }): string {
     const { book, contextBlock, reviewFeedbackBlock, language } = params;
-    const metadata = language === "en"
-      ? `Platform: ${book.platform}\nGenre: ${book.genre}\nTarget chapters: ${book.targetChapters}\nChapter length: ${book.chapterWordCount}\nTitle: ${book.title}`
+    const metadata = language !== "zh"
+      ? `Platform: ${book.platform}\nGenre: ${book.genre}\nTarget chapters: ${book.targetChapters}\nChapter length: ${book.chapterWordCount}${book.language === "ru" ? " слов" : ""}\nTitle: ${book.title}`
       : `平台：${book.platform}\n题材：${book.genre}\n目标章数：${book.targetChapters}\n每章字数：${book.chapterWordCount}\n标题：${book.title}`;
-    return language === "en"
+    return language !== "zh"
       ? `Create the Work foundation using the activated professional Skills and supplied authority.${contextBlock}${reviewFeedbackBlock}\n\n## Work metadata\n${metadata}\n\nSubmit readable foundation artifacts and the small structured rules surface through the required tools.`
       : `按已激活的专业 Skill 和输入权威生成作品基础设定。${contextBlock}${reviewFeedbackBlock}\n\n## 作品元信息\n${metadata}\n\n通过指定工具提交可读基础资产和少量结构化规则。`;
   }
   async writeFoundationFiles(
     bookDir: string,
     output: ArchitectOutput,
-    language: "zh" | "en",
+    language: WritingLanguage,
     mode: "init" | "revise" = "init",
   ): Promise<void> {
     const writes: AtomicFileWrite[] = [
@@ -203,7 +206,7 @@ ${reviseFrom.userFeedback || "（无）"}
 
     const isSeries = options?.importMode === "series";
 
-    const continuationDirective = resolvedLanguage === "en"
+    const continuationDirective = resolvedLanguage !== "zh"
       ? `## Import mode\n${isSeries ? "series" : "continuation"}`
       : `## 导入模式\n${isSeries ? "系列新作" : "原线续写"}`;
 
@@ -212,11 +215,15 @@ ${reviseFrom.userFeedback || "（无）"}
       contextBlock,
       reviewFeedbackBlock,
       language: resolvedLanguage,
-    }) + (resolvedLanguage === "en"
+    }) + (resolvedLanguage === "ru"
+      ? `\n\nРежим импорта: ${isSeries ? "новая книга серии" : "продолжение"}. Отделите установленные события от будущих. Считайте каноном только то, что подтверждено рукописью. Будущее определяют явные указания автора.`
+      : resolvedLanguage === "en"
       ? `\n\n${continuationDirective}\nDerive established facts from the source package. Explicit continuation instructions control future plot and ending. Never infer a mandatory future event from tone or a mystery alone; keep unprescribed futures open. A compressed package is evidence, not permission to invent missing canon. ALL output MUST be written in English.`
       : `\n\n${continuationDirective}\n既成事实从资料包推导；未来剧情和结局服从明确的续写指令。不能仅凭文风或悬念推导必须发生的未来事件，未指定的发展保留开放。压缩资料包是证据，不是臆造缺失正典的许可。`);
 
-    const userMessage = resolvedLanguage === "en"
+    const userMessage = resolvedLanguage === "ru"
+      ? `Восстановите основу романа «${book.title}» по этому материалу.\n\n${chaptersText}`
+      : resolvedLanguage === "en"
       ? `Generate the complete foundation for the imported ${book.genre} Work titled "${book.title}". Write everything in English.\n\n${chaptersText}`
       : `以下是《${book.title}》的已有正文资料包，请从中反向推导完整基础设定：\n\n${chaptersText}`;
 
@@ -252,7 +259,7 @@ ${reviseFrom.userFeedback || "（无）"}
 
     return this.generateFoundationInStages({
       systemPrompt,
-      userMessage: `请为标题为"${book.title}"的${fanficMode}模式同人小说生成基础设定。目标${book.targetChapters}章，每章${book.chapterWordCount}字。`,
+      userMessage: resolvedLanguage === "ru" ? `Разработайте основу романа «${book.title}» на основе исходного канона. Цель: ${book.targetChapters} глав по ${book.chapterWordCount} слов.` : `请为标题为"${book.title}"的${fanficMode}模式同人小说生成基础设定。目标${book.targetChapters}章，每章${book.chapterWordCount}字。`,
       language: resolvedLanguage,
       temperature: 0.7,
       onOutline: options?.onOutline,
@@ -262,19 +269,20 @@ ${reviseFrom.userFeedback || "（无）"}
   private async generateFoundationInStages(input: {
     readonly systemPrompt: string;
     readonly userMessage: string;
-    readonly language: "zh" | "en";
+    readonly language: WritingLanguage;
     readonly temperature: number;
     readonly onOutline?: (outline: { readonly storyFrame: string; readonly volumeMap: string }) => void | Promise<void>;
   }): Promise<ArchitectOutput> {
+    const languageInstruction = input.language === "ru" ? `\n\n${RUSSIAN_OUTPUT_INSTRUCTION}` : "";
     const { result: outline } = await this.submitStructured(
       [
-        { role: "system", content: input.systemPrompt },
+        { role: "system", content: input.systemPrompt + languageInstruction },
         { role: "user", content: input.userMessage },
       ],
       {
         name: "submit_foundation_outline",
-        label: input.language === "en" ? "Submit foundation outline" : "提交基础框架",
-        description: input.language === "en"
+        label: input.language !== "zh" ? "Submit foundation outline" : "提交基础框架",
+        description: input.language !== "zh"
           ? "Submit the readable story frame and volume map."
           : "提交可读的故事框架与卷纲。",
         parameters: FoundationOutlineToolSchema,
@@ -285,18 +293,18 @@ ${reviseFrom.userFeedback || "（无）"}
       storyFrame: outline.storyFrame.trim(),
       volumeMap: outline.volumeMap.trim(),
     });
-    const detailsPrompt = input.language === "en"
+    const detailsPrompt = input.language !== "zh"
       ? `${input.userMessage}\n\n<story_frame>\n${outline.storyFrame}\n</story_frame>\n\n<volume_map>\n${outline.volumeMap}\n</volume_map>\n\nComplete the readable book rules, structured rule data, and initial unresolved hooks.`
       : `${input.userMessage}\n\n<story_frame>\n${outline.storyFrame}\n</story_frame>\n\n<volume_map>\n${outline.volumeMap}\n</volume_map>\n\n继续完成可读本书规则、结构化规则数据和初始未解伏笔。`;
     const { result: details } = await this.submitStructured(
       [
-        { role: "system", content: input.systemPrompt },
+        { role: "system", content: input.systemPrompt + languageInstruction },
         { role: "user", content: detailsPrompt },
       ],
       {
         name: "submit_foundation_details",
-        label: input.language === "en" ? "Submit foundation details" : "提交基础详情",
-        description: input.language === "en"
+        label: input.language !== "zh" ? "Submit foundation details" : "提交基础详情",
+        description: input.language !== "zh"
           ? "Submit book rules and initial unresolved hooks. Arrays and objects must be native tool arguments, never JSON strings."
           : "提交本书规则与初始未解伏笔。数组和对象必须是工具参数的原生类型，不要放入字符串。",
         parameters: FoundationDetailsToolSchema,
@@ -317,17 +325,17 @@ ${reviseFrom.userFeedback || "（无）"}
 
     const castContext=`${input.userMessage}\n\n${outline.storyFrame}\n\n${outline.volumeMap}\n\n${details.bookRules}`;
     const {result:cast} = await this.submitStructured([
-      {role:"system",content:input.language==="en"
+      {role:"system",content:input.language!=="zh"
         ? "List the named people who shape the opening conflict. Submit only their names and major/minor roles. Do not expand unnamed occupational groups into invented biographies."
         : "列出影响开篇冲突的具名人物，只提交姓名和主要/次要角色级别，不把无名岗位群体扩写成虚构人物。"},
-      {role:"user",content:castContext},
+      {role:"user",content:castContext+languageInstruction},
     ],{name:"submit_foundation_cast_index",label:"Identify opening cast",description:"Submit the names and tiers of the opening cast.",parameters:FoundationCastIndexToolSchema},
     {temperature:input.temperature,maxTokens:Math.min(2048,this.ctx.client.defaults.maxTokens)});
     const {result:cards} = await this.submitStructured([
-      {role:"system",content:input.language==="en"
+      {role:"system",content:input.language!=="zh"
         ? "Create concise character cards for the named people who shape the opening conflict. Ground each card in the supplied story. Give present motive, knowledge, relationship pressure and limits in about 80–120 words; avoid repeating the plot or expanding unnamed occupational groups into full biographies."
         : "为影响开篇冲突的具名人物写简明角色卡。每人约150—250字，写清当下动机、已知信息、关系压力与能力边界，依据已给定故事，不重复整篇情节，不把无名岗位群体扩写成完整传记。"},
-      {role:"user",content:castContext},
+      {role:"user",content:castContext+languageInstruction},
     ],{name:"submit_foundation_cast_documents",label:"Submit opening character cards",description:"Submit each character card as text in its named field.",parameters:foundationCastDocumentsToolSchema(cast.roles)},
     {temperature:input.temperature,maxTokens:Math.min(8192,this.ctx.client.defaults.maxTokens)});
     const roles: ArchitectRole[] = cast.roles.map((role,index)=>({tier:role.tier,name:role.name.trim(),content:cards[`role_${index+1}_content`]!.trim()}));
@@ -344,7 +352,7 @@ ${reviseFrom.userFeedback || "（无）"}
   }
   private buildReviewFeedbackBlock(
     reviewFeedback: string | undefined,
-    language: "zh" | "en",
+    language: WritingLanguage,
   ): string {
     const trimmed = reviewFeedback?.trim();
     if (!trimmed) return "";

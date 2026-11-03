@@ -2,7 +2,7 @@ import { ownsWorkMutation } from "../utils/work-mutation-scope.js";
 import { readFile, writeFile, mkdir, readdir, rm, stat, unlink, open } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join, resolve } from "node:path";
-import { BookConfigSchema, type BookConfig } from "../models/book.js";
+import { BookConfigSchema, type BookConfig, type WritingLanguage } from "../models/book.js";
 import { ChapterMetaSchema, type ChapterMeta } from "../models/chapter.js";
 import { resolveDurableStoryProgress } from "./state-bootstrap.js";
 import {
@@ -56,13 +56,13 @@ export class BookWriteLockError extends Error {
 export class StateManager {
   constructor(private readonly projectRoot: string) {}
 
-  private static defaultAuthorIntent(language: "zh" | "en"): string {
+  private static defaultAuthorIntent(language: WritingLanguage): string {
     return language === "zh"
       ? "# 作者意图\n\n（在这里描述这本书的长期创作方向。）\n"
       : "# Author Intent\n\n(Describe the long-horizon vision for this book here.)\n";
   }
 
-  private static defaultCurrentFocus(language: "zh" | "en"): string {
+  private static defaultCurrentFocus(language: WritingLanguage): string {
     return language === "zh"
       ? "# 当前聚焦\n\n## 当前重点\n\n（描述接下来 1-3 章最需要优先推进的内容。）\n"
       : "# Current Focus\n\n## Active Focus\n\n(Describe what the next 1-3 chapters should prioritize.)\n";
@@ -75,7 +75,7 @@ export class StateManager {
 
   async ensureControlDocumentsAt(
     bookDir: string,
-    language: "zh" | "en",
+    language: WritingLanguage,
     authorIntent?: string,
   ): Promise<void> {
     const storyDir = join(bookDir, "story");
@@ -121,7 +121,7 @@ export class StateManager {
     return { authorIntent, currentFocus, runtimeDir };
   }
 
-  private async resolveControlDocumentLanguage(bookId: string): Promise<"zh" | "en"> {
+  private async resolveControlDocumentLanguage(bookId: string): Promise<WritingLanguage> {
     const raw = await readFile(join(this.bookDir(bookId), "book.json"), "utf-8");
     return BookConfigSchema.parse(JSON.parse(raw)).language;
   }
@@ -404,7 +404,7 @@ export class StateManager {
         },
       }));
     }
-    await syncWorkSourceArtifacts({ projectRoot: this.projectRoot, workId: bookId, updatedAt: config.updatedAt, accept: true, acceptPaths: ["source/book.json"] });
+    await syncWorkSourceArtifacts({ projectRoot: this.projectRoot, workId: bookId, language: config.language, updatedAt: config.updatedAt, accept: true, acceptPaths: ["source/book.json"] });
   }
 
   async saveBookConfigAt(bookDir: string, config: BookConfig): Promise<void> {

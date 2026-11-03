@@ -268,7 +268,14 @@ inkos review my-book              # Inspect persisted review observations
 inkos export my-book --format epub  # Export EPUB (read on phone/Kindle)
 ```
 
-Language is set per-genre by default. Override explicitly with `--lang en` or `--lang zh`. Use `inkos genre list` to see all available genres and their default languages.
+Set a novel’s writing language with `--lang zh`, `--lang en`, or `--lang ru`. Studio also offers a writing-language selector when creating a book.
+
+```bash
+inkos book create --title "Последний поезд" --genre other --platform other --lang ru
+inkos write next последний-поезд
+```
+
+Russian novel foundations, chapter drafts, revisions, and continuity reports use Russian. Chapter targets and bounds count words, with a default target of 2,000. Hyphenated words such as «всё-таки» count as one word.
 
 ### Write Complete Short Fiction
 
@@ -532,7 +539,7 @@ The first image is a local Studio screenshot. The other images are real local ou
 | Command | Description |
 |---------|-------------|
 | `inkos init [name]` | Initialize project (omit name to init current directory) |
-| `inkos book create` | Create a new book (`--genre`, `--chapter-words`, `--target-chapters`, `--brief <file>`, `--lang en/zh`) |
+| `inkos book create` | Create a new book (`--genre`, `--chapter-words`, `--target-chapters`, `--brief <file>`, `--lang en/zh/ru`) |
 | `inkos book update [id]` | Update book settings (`--chapter-words`, `--target-chapters`, `--status`, `--lang`) |
 | `inkos book list` | List all books |
 | `inkos book delete <id>` | Delete a book and all its data (`--force` to skip confirmation) |

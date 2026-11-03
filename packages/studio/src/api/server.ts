@@ -17,6 +17,8 @@ import {
   createLogger,
   computeAnalytics,
   loadProjectConfig,
+  WritingLanguageSchema,
+  type WritingLanguage,
   listBookSessions,
   loadBookSession,
   appendManualSessionMessages,
@@ -1123,6 +1125,7 @@ async function executeConfirmedProductionAction(args: {
   readonly disabledSkills?: ReadonlyArray<string>;
   readonly playMode?: PlayMode;
   readonly language?: StudioLanguage;
+  readonly writingLanguage?: WritingLanguage;
   readonly taskId: string;
   readonly sourceRequestId?: string;
   readonly signal: AbortSignal;
@@ -1176,7 +1179,7 @@ async function executeConfirmedProductionAction(args: {
     const payload = actionPayload?.createBook;
     const title = requirePayloadText(payload?.title, pick(lang, "确认建书缺少书名，请重新生成确认卡。", "The book creation confirmation is missing a title. Regenerate the confirmation card."));
     tool = createBookFoundationTool(args.pipeline, {
-      language: lang,
+      language: args.writingLanguage ?? lang,
       actionPayload,
       workerSkills: (worker) => worker === "architect" ? profileSkills("longform-novel") : [],
     });
@@ -2931,7 +2934,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       createBook: {
         title: body.title,
         ...(body.genre ? { genre: body.genre } : {}),
-        ...(body.language === "en" || body.language === "zh" ? { language: body.language } : {}),
+        language: bookConfig.language,
         ...(body.platform ? { platform: normalizeStudioPlatform(body.platform) } : {}),
         ...(body.chapterWordCount ? { chapterWordCount: body.chapterWordCount } : {}),
         ...(body.targetChapters ? { targetChapters: body.targetChapters } : {}),
@@ -2939,7 +2942,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     };
     const tool = createBookFoundationTool(pipeline, {
       actionPayload,
-      language: body.language === "en" ? "en" : "zh",
+      language: bookConfig.language,
       workerSkills: () => foundationSkills,
     });
     const binding = confirmedCapabilityBinding("create_book")!;
@@ -2952,7 +2955,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
         title: body.title,
         ...(body.genre ? { genre: body.genre } : {}),
         ...(body.platform ? { platform: normalizeStudioPlatform(body.platform) } : {}),
-        ...(body.language === "en" || body.language === "zh" ? { language: body.language } : {}),
+        language: bookConfig.language,
         ...(body.targetChapters ? { targetChapters: body.targetChapters } : {}),
         ...(body.chapterWordCount ? { chapterWordCount: body.chapterWordCount } : {}),
       },
@@ -4122,7 +4125,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       if (updates.stream !== undefined) {
         existing.llm.stream = updates.stream;
       }
-      if (updates.language === "zh" || updates.language === "en") {
+      if (updates.language === "zh" || updates.language === "en" || updates.language === "ru") {
         existing.language = updates.language;
       }
       const { writeFile: writeFileFs } = await import("node:fs/promises");
@@ -4801,12 +4804,10 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
           else throw new ApiError(404, "BOOK_NOT_FOUND", `Book not found: ${agentBookId}`);
         }
       }
-      const configLanguage = config.language === "en" ? "en" : "zh";
-      const bookLanguage = activeBookConfig?.language === "en" ? "en" : activeBookConfig?.language === "zh" ? "zh" : undefined;
+      const bookLanguage = WritingLanguageSchema.safeParse(activeBookConfig?.language).data;
       const requestedLanguage = actionPayload?.shortRun?.language ?? actionPayload?.createBook?.language;
-      const surfaceLanguage = agentBookId
-        ? (bookLanguage ?? configLanguage)
-        : (requestedLanguage ?? configLanguage);
+      const writingLanguage = (agentBookId ? bookLanguage : requestedLanguage) ?? config.language;
+      const surfaceLanguage: StudioLanguage = writingLanguage === "zh" ? "zh" : "en";
       const streamSessionId = loadedBookSession.sessionId;
       const titleBeforeRun = bookSession.title;
       let sessionTitleBroadcasted = false;
@@ -5022,6 +5023,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
             requestedSkills,
             disabledSkills,
             language: surfaceLanguage,
+            writingLanguage,
             taskId,
             sourceRequestId,
             signal: taskController.signal,
@@ -5817,7 +5819,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
         ...(updates.chapterWordCount !== undefined ? { chapterWordCount: Number(updates.chapterWordCount) } : {}),
         ...(updates.targetChapters !== undefined ? { targetChapters: Number(updates.targetChapters) } : {}),
         ...(updates.status !== undefined ? { status: updates.status as typeof book.status } : {}),
-        ...(updates.language !== undefined ? { language: updates.language as "zh" | "en" } : {}),
+        ...(updates.language !== undefined ? { language: WritingLanguageSchema.parse(updates.language) } : {}),
         updatedAt: new Date().toISOString(),
       };
       await state.saveBookConfig(id, updated);
