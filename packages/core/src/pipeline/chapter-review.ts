@@ -1,3 +1,4 @@
+import type { BookConfig } from "../models/book.js";
 import type { AuditResult } from "../agents/continuity.js";
 import type { WriteChapterOutput } from "../agents/writer.js";
 import type { ContextPackage } from "../models/input-governance.js";
@@ -22,7 +23,7 @@ export interface ChapterReviewResult {
 }
 
 export async function reviewChapterDraft(params: {
-  readonly book: Pick<{ genre: string }, "genre">;
+  readonly book: Pick<BookConfig, "genre" | "language">;
   readonly bookDir: string;
   readonly chapterNumber: number;
   readonly output: Pick<WriteChapterOutput, "content">;
@@ -36,7 +37,7 @@ export async function reviewChapterDraft(params: {
       chapterNumber: number,
       genre: string | undefined,
       options: {
-        readonly language: "zh" | "en";
+        readonly language: BookConfig["language"];
         readonly contextPackage: ContextPackage;
         readonly temperature?: number;
       },
@@ -56,13 +57,13 @@ export async function reviewChapterDraft(params: {
       params.chapterNumber,
       params.book.genre,
       {
-        language: params.lengthSpec.countingMode === "en_words" ? "en" : "zh",
+        language: params.book.language,
         contextPackage: params.controlInput.contextPackage,
         temperature: 0.3,
       },
     );
   } catch (error) {
-    const isEnglish = params.lengthSpec.countingMode === "en_words";
+    const isEnglish = params.book.language !== "zh";
     modelReview = {
       unavailable: true,
       observations: [{

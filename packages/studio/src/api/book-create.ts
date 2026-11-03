@@ -1,4 +1,4 @@
-import { PlatformSchema, defaultChapterLength, type Platform } from "@actalk/inkos-core";
+import { PlatformSchema, WritingLanguageSchema, defaultChapterLength, deriveBookIdFromTitle, inferLanguage, type Platform, type WritingLanguage } from "@actalk/inkos-core";
 export { waitForStudioBookReady } from "../lib/book-ready.js";
 export type { StudioBookDetail, WaitForStudioBookReadyOptions } from "../lib/book-ready.js";
 
@@ -24,7 +24,7 @@ export interface StudioBookConfigDraft {
   readonly chapterWordCount: number;
   readonly minChapterLength?: number;
   readonly maxChapterLength?: number;
-  readonly language: "zh" | "en";
+  readonly language: WritingLanguage;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -34,21 +34,19 @@ export function normalizeStudioPlatform(platform?: string): Platform {
 }
 
 export function buildStudioBookConfig(body: StudioCreateBookBody, now: string): StudioBookConfigDraft {
+  const inferred = inferLanguage(`${body.title}\n${body.blurb ?? ""}`);
+  const language = WritingLanguageSchema.safeParse(body.language).data ?? (inferred === "ru" ? "ru" : "zh");
   return {
-    id: body.title
-      .toLowerCase()
-      .replace(/[^a-z0-9\u4e00-\u9fff]/g, "-")
-      .replace(/-+/g, "-")
-      .slice(0, 30),
+    id: deriveBookIdFromTitle(body.title),
     title: body.title,
     platform: normalizeStudioPlatform(body.platform),
     genre: body.genre,
     status: "outlining",
     targetChapters: body.targetChapters ?? 200,
-    chapterWordCount: body.chapterWordCount ?? defaultChapterLength(body.language === "en" ? "en" : "zh"),
+    chapterWordCount: body.chapterWordCount ?? defaultChapterLength(language),
     ...(body.minChapterLength!==undefined?{minChapterLength:body.minChapterLength}:{}),
     ...(body.maxChapterLength!==undefined?{maxChapterLength:body.maxChapterLength}:{}),
-    language: body.language === "en" ? "en" : "zh",
+    language,
     createdAt: now,
     updatedAt: now,
   };

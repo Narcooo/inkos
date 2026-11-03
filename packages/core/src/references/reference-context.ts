@@ -1,3 +1,4 @@
+import type { WritingLanguage } from "../models/book.js";
 import { readFile } from "node:fs/promises";
 import type { ContextPackage } from "../models/input-governance.js";
 import { safeChildPath } from "../utils/path-safety.js";
@@ -8,7 +9,7 @@ export interface BookReferenceSelectionTask {
   readonly goal: string;
   readonly outlineNode: string;
   readonly mustKeep: ReadonlyArray<string>;
-  readonly language: "zh" | "en";
+  readonly language: WritingLanguage;
 }
 
 export interface ReferenceSectionCandidate {

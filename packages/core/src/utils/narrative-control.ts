@@ -1,3 +1,4 @@
+import type { WritingLanguage } from "../models/book.js";
 import type { ChapterIntent, ChapterMemo, ContextPackage } from "../models/input-governance.js";
 
 /**
@@ -9,9 +10,9 @@ import type { ChapterIntent, ChapterMemo, ContextPackage } from "../models/input
 export function renderMemoAsNarrativeBlock(
   memo: ChapterMemo,
   intent: ChapterIntent | undefined,
-  language: "zh" | "en" = "zh",
+  language: WritingLanguage = "zh",
 ): string {
-  const isEn = language === "en";
+  const isEn = language !== "zh";
   const sections: string[] = [];
 
   sections.push(`## ${isEn ? "Goal" : "目标"}\n- ${memo.goal}`);
@@ -31,18 +32,18 @@ export function renderMemoAsNarrativeBlock(
 
 export function buildNarrativeIntentBrief(
   chapterIntent: string,
-  _language: "zh" | "en" = "zh",
+  _language: WritingLanguage = "zh",
 ): string {
   return chapterIntent.trim();
 }
 
 export function renderNarrativeSelectedContext(
   entries: ReadonlyArray<ContextPackage["selectedContext"][number]>,
-  language: "zh" | "en" = "zh",
+  language: WritingLanguage = "zh",
 ): string {
-  const heading = language === "en" ? "Evidence" : "证据";
-  const reasonLabel = language === "en" ? "reason" : "原因";
-  const detailLabel = language === "en" ? "detail" : "细节";
+  const heading = language !== "zh" ? "Evidence" : "证据";
+  const reasonLabel = language !== "zh" ? "reason" : "原因";
+  const detailLabel = language !== "zh" ? "detail" : "细节";
 
   return entries
     .map((entry, index) => {

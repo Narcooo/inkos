@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { PlayModeSchema, type PlayMode } from "./session.js";
-import { PlatformSchema } from "../models/book.js";
+import { PlatformSchema, WritingLanguageSchema } from "../models/book.js";
 import { StoryNodeSchema } from "../interactive-film/graph-schema.js";
 
 export const ActionSourceSchema = z.enum(["free-text", "button", "slash", "quick-action"]);
@@ -36,7 +36,7 @@ export const CreateBookActionPayloadSchema = z.object({
   title: z.string().min(1).optional(),
   genre: z.string().min(1).optional(),
   platform: PlatformSchema.optional(),
-  language: z.enum(["zh", "en"]).optional(),
+  language: WritingLanguageSchema.optional(),
   targetChapters: z.number().int().min(1).optional(),
   chapterWordCount: z.number().int().min(1).optional(),
   minChapterLength:z.number().int().min(1).optional(),
@@ -144,7 +144,7 @@ export const FanficCreateActionPayloadSchema = z.object({
   mode: z.string().trim().min(1).optional(),
   genre: z.string().min(1).optional(),
   platform: PlatformSchema.optional(),
-  language: z.enum(["zh", "en"]).optional(),
+  language: WritingLanguageSchema.optional(),
   targetChapters: z.number().int().min(1).optional(),
   chapterWordCount: z.number().int().min(1).optional(),
   minChapterLength:z.number().int().min(1).optional(),
@@ -163,7 +163,7 @@ export const ContinuationImportActionPayloadSchema = z.object({
   resumeFrom: z.number().int().min(1).optional(),
   genre: z.string().min(1).optional(),
   platform: PlatformSchema.optional(),
-  language: z.enum(["zh", "en"]).optional(),
+  language: WritingLanguageSchema.optional(),
   targetChapters: z.number().int().min(1).optional(),
   chapterWordCount: z.number().int().min(1).optional(),
   minChapterLength:z.number().int().min(1).optional(),
@@ -177,7 +177,7 @@ export const SpinoffCreateActionPayloadSchema = z.object({
   direction: z.string().min(1).optional(),
   genre: z.string().min(1).optional(),
   platform: PlatformSchema.optional(),
-  language: z.enum(["zh", "en"]).optional(),
+  language: WritingLanguageSchema.optional(),
   targetChapters: z.number().int().min(1).optional(),
   chapterWordCount: z.number().int().min(1).optional(),
   minChapterLength:z.number().int().min(1).optional(),
@@ -193,7 +193,7 @@ export const ImitationCreateActionPayloadSchema = z.object({
   sourceName: z.string().min(1).optional(),
   genre: z.string().min(1).optional(),
   platform: PlatformSchema.optional(),
-  language: z.enum(["zh", "en"]).optional(),
+  language: WritingLanguageSchema.optional(),
   targetChapters: z.number().int().min(1).optional(),
   chapterWordCount: z.number().int().min(1).optional(),
   minChapterLength:z.number().int().min(1).optional(),

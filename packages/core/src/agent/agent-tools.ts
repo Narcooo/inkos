@@ -16,6 +16,7 @@ import { toPosixPath } from "../utils/posix-path.js";
 import {
   type Platform,
   type BookConfig,
+  type WritingLanguage,
   type FanficMode,
 } from "../models/book.js";
 import { generateShortFictionCover, runShortFictionProduction, reviseShortFictionProduction } from "../pipeline/short-fiction-runner.js";
@@ -92,7 +93,7 @@ function buildAgentBookConfig(input: {
   readonly title: string;
   readonly genre?: string;
   readonly platform?: Platform;
-  readonly language?: "zh" | "en";
+  readonly language?: WritingLanguage;
   readonly targetChapters?: number;
   readonly chapterWordCount?: number;
   readonly minChapterLength?: number;
@@ -112,7 +113,7 @@ function buildAgentBookConfig(input: {
     targetChapters: input.targetChapters ?? defaults.targetChapters ?? 200,
     chapterWordCount: input.chapterWordCount
       ?? defaults.chapterWordCount
-      ?? defaultChapterLength(input.language === "en" ? "en" : "zh"),
+      ?? defaultChapterLength(input.language),
     ...(input.minChapterLength!==undefined?{minChapterLength:input.minChapterLength}:{}),
     ...(input.maxChapterLength!==undefined?{maxChapterLength:input.maxChapterLength}:{}),
     language: input.language ?? "zh",
@@ -215,7 +216,8 @@ const ProposeActionParams = Type.Object({
     language: Type.Optional(Type.Union([
       Type.Literal("zh"),
       Type.Literal("en"),
-    ], { description: "Confirmed writing language." })),
+      Type.Literal("ru"),
+    ], { description: "Confirmed novel writing language." })),
     targetChapters: Type.Optional(Type.Number({
       description: "Confirmed total chapter count.",
     })),
@@ -2972,7 +2974,7 @@ const ResyncChapterStateParams = Type.Object({
 export function createResyncChapterStateTool(
   pipeline: PipelineRunner,
   activeBookId: string | null,
-  options: SkillAwareProductionOptions & { readonly language?: "zh" | "en" } = {},
+  options: SkillAwareProductionOptions & { readonly language?: WritingLanguage } = {},
 ): AgentTool<typeof ResyncChapterStateParams> {
   return {
     name: "resync_chapter_state",
@@ -2993,7 +2995,7 @@ export function createResyncChapterStateTool(
         }),
       );
       const observations = result.audit.observations;
-      const zh = options.language !== "en";
+      const zh = (options.language ?? "zh") === "zh";
       const summary = [
         zh
           ? `第 ${result.chapter.chapterNumber} 章正文未改动；状态、摘要与伏笔已重建，记录 ${observations.length} 条审查观察。`

@@ -28,7 +28,7 @@ export interface BookCreatePayload {
   readonly title: string;
   readonly genre: string;
   readonly platform: string;
-  readonly language: "zh" | "en";
+  readonly language: "zh" | "en" | "ru";
   readonly targetChapters: number;
   readonly chapterWordCount: number;
   readonly blurb: string;
@@ -107,8 +107,8 @@ export function pickValidValue(current: string, available: ReadonlyArray<string>
   return current && available.includes(current) ? current : available[0] ?? "";
 }
 
-export function defaultChapterWordsForLanguage(language: "zh" | "en"): string {
-  return language === "en" ? "2000" : "3000";
+export function defaultChapterWordsForLanguage(language: BookCreatePayload["language"]): string {
+  return language === "zh" ? "3000" : "2000";
 }
 
 export function platformOptionsForLanguage(language: "zh" | "en"): ReadonlyArray<PlatformOption> {
@@ -142,7 +142,7 @@ export function isBookCreateFormReady(form: BookCreateFormState): boolean {
   );
 }
 
-export function buildBookCreatePayload(form: BookCreateFormState, language: "zh" | "en"): BookCreatePayload {
+export function buildBookCreatePayload(form: BookCreateFormState, language: BookCreatePayload["language"]): BookCreatePayload {
   const targetChapters = parsePositiveInteger(form.targetChapters);
   const chapterWordCount = parsePositiveInteger(form.chapterWordCount);
   if (!targetChapters || !chapterWordCount || !isBookCreateFormReady(form)) {
@@ -201,10 +201,14 @@ export async function waitForBookReady(bookId: string, options: WaitForBookReady
 export function BookCreate({ nav, theme, t: _t }: { nav: Nav; theme: Theme; t: TFunction }) {
   const c = useColors(theme);
   const { data: project } = useApi<{ language: string }>("/project");
-  const projectLang = project?.language === "en" ? "en" : "zh";
+  const projectLang = project?.language === "en" || project?.language === "ru" ? "en" : "zh";
   const copy = PAGE_COPY[projectLang];
   const platformChoices = platformOptionsForLanguage(projectLang);
-  const [form, setForm] = useState<BookCreateFormState>(() => defaultBookCreateForm(projectLang));
+  const [form, setForm] = useState<Omit<BookCreateFormState, "chapterWordCount"> & { chapterWordCount?: string }>(
+    () => ({ ...defaultBookCreateForm(projectLang), chapterWordCount: undefined }),
+  );
+  const [selectedLanguage, setSelectedLanguage] = useState<BookCreatePayload["language"]>();
+  const writingLanguage = selectedLanguage ?? (project?.language === "ru" ? "ru" : projectLang);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
@@ -213,14 +217,14 @@ export function BookCreate({ nav, theme, t: _t }: { nav: Nav; theme: Theme; t: T
     setForm((current) => ({
       ...current,
       platform: pickValidValue(current.platform, platformOptionsForLanguage(projectLang).map((option) => option.value)),
-      chapterWordCount: current.chapterWordCount || defaultChapterWordsForLanguage(projectLang),
     }));
   }, [projectLang]);
 
+  const submittedForm = { ...form, chapterWordCount: form.chapterWordCount ?? defaultChapterWordsForLanguage(writingLanguage) };
   const updateForm = (patch: Partial<BookCreateFormState>) => setForm((current) => ({ ...current, ...patch }));
 
   const create = async () => {
-    if (!isBookCreateFormReady(form)) return;
+    if (!isBookCreateFormReady(submittedForm)) return;
     setCreating(true);
     setError(null);
     setStatus(copy.creationStatus);
@@ -228,7 +232,7 @@ export function BookCreate({ nav, theme, t: _t }: { nav: Nav; theme: Theme; t: T
       const data = await fetchJson<{ bookId?: string }>("/books/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(buildBookCreatePayload(form, projectLang)),
+        body: JSON.stringify(buildBookCreatePayload(submittedForm, writingLanguage)),
       });
       if (!data.bookId) throw new Error(projectLang === "zh" ? "创建动作没有返回 Work ID。" : "Creation did not return a Work ID.");
       await waitForBookReady(data.bookId);
@@ -251,6 +255,18 @@ export function BookCreate({ nav, theme, t: _t }: { nav: Nav; theme: Theme; t: T
         <section className="space-y-5 rounded-xl border border-border/60 bg-card/80 p-6">
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="space-y-2">
+              <span className="text-xs font-medium text-muted-foreground">{projectLang === "zh" ? "写作语言" : "Writing language"}</span>
+              <select
+                value={writingLanguage}
+                onChange={(event) => setSelectedLanguage(event.target.value as BookCreatePayload["language"])}
+                className={`w-full ${c.input} rounded-md px-3 py-2.5 text-sm focus:outline-none`}
+              >
+                <option value="zh">中文</option>
+                <option value="en">English</option>
+                <option value="ru">Русский</option>
+              </select>
+            </label>
+            <label className="space-y-2">
               <span className="text-xs font-medium text-muted-foreground">{copy.titleLabel}</span>
               <input value={form.title} onChange={(event) => updateForm({ title: event.target.value })} className={`w-full ${c.input} rounded-md px-3 py-2.5 text-sm focus:outline-none`} placeholder={copy.titlePlaceholder} />
             </label>
@@ -272,7 +288,7 @@ export function BookCreate({ nav, theme, t: _t }: { nav: Nav; theme: Theme; t: T
             </label>
             <label className="space-y-2">
               <span className="text-xs font-medium text-muted-foreground">{copy.chapterWordCountLabel}</span>
-              <input type="number" min={1} value={form.chapterWordCount} onChange={(event) => updateForm({ chapterWordCount: event.target.value })} className={`w-full ${c.input} rounded-md px-3 py-2.5 text-sm focus:outline-none`} />
+              <input type="number" min={1} value={submittedForm.chapterWordCount} onChange={(event) => updateForm({ chapterWordCount: event.target.value })} className={`w-full ${c.input} rounded-md px-3 py-2.5 text-sm focus:outline-none`} />
             </label>
           </div>
           <label className="block space-y-2">
@@ -282,7 +298,7 @@ export function BookCreate({ nav, theme, t: _t }: { nav: Nav; theme: Theme; t: T
           {creating ? <div className="grid gap-2 sm:grid-cols-3">{copy.creationSteps.map((step) => <div key={step} className="flex items-center gap-2 rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-primary"><CheckCircle2 size={14} /><span>{step}</span></div>)}</div> : null}
           {status ? <p className="text-sm text-primary">{status}</p> : null}
           {error ? <p className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">{error}</p> : null}
-          <button onClick={create} disabled={!isBookCreateFormReady(form) || creating} className={`inline-flex items-center gap-2 rounded-md px-5 py-3 text-sm font-medium disabled:opacity-50 ${c.btnPrimary}`}>
+          <button onClick={create} disabled={!isBookCreateFormReady(submittedForm) || creating} className={`inline-flex items-center gap-2 rounded-md px-5 py-3 text-sm font-medium disabled:opacity-50 ${c.btnPrimary}`}>
             <BookPlus size={16} />
             {creating ? copy.creatingBook : copy.createBook}
           </button>

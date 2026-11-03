@@ -1,3 +1,5 @@
+import { RUSSIAN_OUTPUT_INSTRUCTION } from "../utils/language.js";
+import type { WritingLanguage } from "../models/book.js";
 import type { LLMClient } from "../llm/provider.js";
 import { runWorkerAgent } from "../agent/worker-agent.js";
 import { prepareWorkerMessages } from "./base.js";
@@ -10,7 +12,7 @@ export async function compileStyleGuide(input: {
   readonly projectRoot: string;
   readonly referenceText: string;
   readonly sourceName?: string;
-  readonly language?: "zh" | "en";
+  readonly language?: WritingLanguage;
   readonly activeSkills?: ReadonlyArray<ActivatedSkillGuidance>;
   readonly signal?: AbortSignal;
 }): Promise<string> {
@@ -26,13 +28,13 @@ export async function compileStyleGuide(input: {
   const response = await runWorkerAgent(input.client, input.model, await prepareWorkerMessages({ ...input, activatedSkills: mergeActivatedSkillGuidance(input.activeSkills ?? [], skills) }, [
     {
       role: "system",
-      content: language === "en"
-        ? "Compile the reference into an evidence-backed operational style guide. Return Markdown only."
+      content: language !== "zh"
+        ? "Compile the reference into an evidence-backed operational style guide. Return Markdown only." + (language === "ru" ? ` ${RUSSIAN_OUTPUT_INSTRUCTION}` : "")
         : "把参考文本编译为有证据、可执行的文风指南，只返回 Markdown。",
     },
     {
       role: "user",
-      content: language === "en"
+      content: language !== "zh"
         ? `Source: ${input.sourceName?.trim() || "reference"}\n\n${sample}`
         : `来源：${input.sourceName?.trim() || "参考文本"}\n\n${sample}`,
     },

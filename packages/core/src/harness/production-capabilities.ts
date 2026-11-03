@@ -186,6 +186,7 @@ export function createProductionCapabilityRegistry(
 ): CapabilityRegistry {
   const registry = new CapabilityRegistry();
   const lang = environment.language === "en" ? "en" : "zh";
+  const bookLanguage = environment.language === "ru" ? "ru" : lang;
   const profile = createBuiltInWorkProfileRegistry(environment.projectRoot).require(environment.work?.profileId ?? environment.profileId);
   // The same policy governs execution and the offered confirmation action space.
   const allowedProposals = Object.entries(CONFIRMED_CAPABILITY_BINDINGS).flatMap(([intent, binding]) => {
@@ -232,7 +233,7 @@ export function createProductionCapabilityRegistry(
   const longformTools: ProductionToolAction[] = environment.work
     ? [
         ...(!existsSync(join(environment.projectRoot,"works",environment.work.id,"source/book.json")) || environment.work.status==="draft"
-          ? [writeAction(createBookFoundationTool(environment.pipeline,{language:lang,activeSkills:environment.activeSkills,workerSkills:environment.workerSkills,activeWork:{work:environment.work,projectRoot:environment.projectRoot}}))]
+          ? [writeAction(createBookFoundationTool(environment.pipeline,{language:bookLanguage,activeSkills:environment.activeSkills,workerSkills:environment.workerSkills,activeWork:{work:environment.work,projectRoot:environment.projectRoot}}))]
           : []),
         writeAction(createFoundationRevisionTool(environment.pipeline, environment.work.id, {
           language: lang, activeSkills: environment.activeSkills, workerSkills: environment.workerSkills,
@@ -286,7 +287,7 @@ export function createProductionCapabilityRegistry(
       ]
     : [confirmedAction(createBookFoundationTool(environment.pipeline, {
         actionPayload: environment.actionPayload,
-        language: lang,
+        language: bookLanguage,
         activeSkills: environment.activeSkills,
         workerSkills: environment.workerSkills,
       })), writeAction(createWriteChaptersTool(environment.pipeline, null, {

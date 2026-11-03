@@ -1,3 +1,5 @@
+import type { WritingLanguage } from "../models/book.js";
+
 export interface SplitChapter {
   readonly title: string;
   readonly content: string;
@@ -6,8 +8,10 @@ export interface SplitChapter {
 const NUMBERED_HEADING = /^#{0,6}\s*(?:第([零〇○Ｏ０一二三四五六七八九十百千万\d]+)(章|回)(?:[:：]|\s+)?\s*(.*)|Chapter\s+(\d+|[IVXLCDM]+)[.:]?\s*(.*))$/i;
 
 /** Numbered document syntax shared by persistence, export and import. */
-export function readChapterHeading(line: string): {number:number;title:string;language:'zh'|'en'} | undefined {
-  const match=NUMBERED_HEADING.exec(line.trim());
+export function readChapterHeading(line: string): {number:number;title:string;language:WritingLanguage} | undefined {
+  const text = line.trim();
+  const russian = /^#{0,6}\s*Глава\s+(\d+|[IVXLCDM]+)(?=$|[\s.:])(?:[.:]|[ \t]+[–—-])?\s*(.*)$/iu.exec(text);
+  const match=NUMBERED_HEADING.exec(russian ? `Chapter ${russian[1]}: ${russian[2]}` : text);
   if(!match)return undefined;
   const ordinal=match[1]??match[4]!;
   let number=Number(ordinal);
@@ -30,7 +34,7 @@ export function readChapterHeading(line: string): {number:number;title:string;la
     }
   }
   if(!Number.isSafeInteger(number)||number<0)return undefined;
-  return{number,title:(match[3]??match[5]??'').trim(),language:match[1]?'zh':'en'};
+  return{number,title:(match[3]??match[5]??'').trim(),language:russian?'ru':match[1]?'zh':'en'};
 }
 
 /**
@@ -98,6 +102,8 @@ export function splitChapters(
 }
 
 function inferFallbackTitle(headingLine: string, chapterNumber: number): string {
+  if (readChapterHeading(headingLine)?.language === "ru") return `Глава ${chapterNumber}`;
+
   if (/chapter\s+(?:\d+|[ivxlcdm]+)/i.test(headingLine)) {
     return `Chapter ${chapterNumber}`;
   }

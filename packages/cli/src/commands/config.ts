@@ -96,7 +96,7 @@ configCommand
   .option("--max-tokens <n>", "Max output tokens")
   .option("--thinking-budget <n>", "Anthropic thinking budget")
   .option("--api-format <format>", "API format (chat / responses)")
-  .option("--lang <language>", "Default writing language: zh (Chinese) or en (English)")
+  .option("--lang <language>", "Default novel writing language: zh (Chinese), en (English), or ru (Russian)")
   .action(async (opts) => {
     try {
       await mkdir(GLOBAL_CONFIG_DIR, { recursive: true });

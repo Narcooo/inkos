@@ -75,6 +75,7 @@ export async function syncWorkSourceArtifacts(input: {
   readonly updatedAt?: string;
   readonly writes?: ReadonlyArray<AtomicFileWrite>;
   readonly title?: string;
+  readonly language?: WorkManifest["language"];
   readonly lineage?: WorkManifest["lineage"];
   readonly status?: WorkManifest["status"];
 }): Promise<WorkManifest> {
@@ -216,6 +217,7 @@ export async function syncWorkSourceArtifacts(input: {
   const next = WorkManifestSchema.parse({
     ...manifest,
     title: input.title ?? manifest.title,
+    language: input.language ?? manifest.language,
     lineage: input.lineage ?? manifest.lineage,
     status: input.status ?? (manifest.status === "archived" ? "archived" : input.accept ? "active" : manifest.status),
     artifacts,

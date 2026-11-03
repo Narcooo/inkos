@@ -4,7 +4,7 @@ import { BaseAgent } from "./base.js";
 import { SemanticContextCompilerAgent } from "./semantic-context-compiler.js";
 import type { ContextFragment } from "../harness/context-compiler.js";
 import { semanticInputBudget, splitTextByEstimatedTokens } from "../llm/semantic-input.js";
-import type { BookConfig } from "../models/book.js";
+import type { BookConfig, WritingLanguage } from "../models/book.js";
 import {
   ContextPackageSchema,
   type ChapterTrace,
@@ -59,7 +59,7 @@ export interface ContextBudget {
 export interface CompressibleContextCompileRequest {
   readonly chapterNumber: number;
   readonly goal: string;
-  readonly language: "zh" | "en";
+  readonly language: WritingLanguage;
   readonly maxInputTokens: number;
   readonly protectedEntries: ContextPackage["selectedContext"];
   readonly compressibleEntries: ContextPackage["selectedContext"];
@@ -73,7 +73,7 @@ export interface OutlineSectionSelectionRequest {
   readonly chapterNumber: number;
   readonly goal: string;
   readonly outlineNode: string;
-  readonly language: "zh" | "en";
+  readonly language: WritingLanguage;
   readonly candidates: ReadonlyArray<{
     readonly source: string;
     readonly heading: string;
@@ -163,7 +163,7 @@ async function applyContextBudgetIfNeeded(params: {
   readonly contextPackage: ContextPackage;
   readonly chapterNumber: number;
   readonly goal: string;
-  readonly language: "zh" | "en";
+  readonly language: WritingLanguage;
   readonly contextBudget?: ContextBudget;
   readonly compiler?: CompressibleContextCompiler;
   readonly onContextCompression?: ContextCompressionCallback;
@@ -335,7 +335,7 @@ export class ComposerAgent extends BaseAgent {
     readonly bookDir: string;
     readonly chapterNumber: number;
     readonly goal: string;
-    readonly language: "zh" | "en";
+    readonly language: WritingLanguage;
     readonly contextBudget?: ContextBudget;
   }): Promise<ContextPackage> {
     const plan: PlanChapterOutput = {
@@ -366,7 +366,7 @@ export class ComposerAgent extends BaseAgent {
   }
 
   private async completeContextWithinBudget(
-    bookDir: string, plan: PlanChapterOutput, language: "zh" | "en", budget: ContextBudget,
+    bookDir: string, plan: PlanChapterOutput, language: WritingLanguage, budget: ContextBudget,
     references: ContextPackage["selectedContext"] = [],
   ): Promise<Awaited<ReturnType<typeof collectSelectedContext>> | undefined> {
     // Reserve the other half for the consumer's instructions, methods, current
@@ -426,7 +426,7 @@ export class ComposerAgent extends BaseAgent {
     return this.submitSelectedSources([
       {
         role: "system",
-        content: request.language === "en"
+        content: request.language !== "zh"
           ? `Select the ${semanticCandidateLabel(request.kind, "en")} needed for the current chapter.`
           : `选择当前章节需要的${semanticCandidateLabel(request.kind, "zh")}。`,
       },
@@ -454,7 +454,7 @@ export class ComposerAgent extends BaseAgent {
     return this.submitSelectedSources([
       {
         role: "system",
-        content: request.language === "en"
+        content: request.language !== "zh"
           ? "Select user-bound reference sections useful for the current task. References are guidance, not canon."
           : "选择当前任务需要的用户绑定参考段落。参考资料不是正典。",
       },
@@ -508,9 +508,9 @@ export class ComposerAgent extends BaseAgent {
 
 function semanticCandidateLabel(
   kind: OutlineSectionSelectionRequest["kind"],
-  language: "zh" | "en",
+  language: WritingLanguage,
 ): string {
-  if (language === "en") {
+  if (language !== "zh") {
     if (kind === "role-card") return "role cards";
     if (kind === "current-state") return "current-state facts";
     return "outline sections";
@@ -591,7 +591,7 @@ export function contextBudgetFromClient(client: LLMClient): ContextBudget | unde
 async function collectSelectedContext(
   storyDir: string,
   plan: PlanChapterOutput,
-  language: "zh" | "en",
+  language: WritingLanguage,
   outlineSectionSelector?: OutlineSectionSelector,
   memorySemanticSelector?: MemorySemanticSelector,
 ): Promise<{
@@ -739,7 +739,7 @@ async function collectSelectedContext(
 async function selectCurrentStateEntries(params: {
   readonly storyDir: string;
   readonly plan: PlanChapterOutput;
-  readonly language: "zh" | "en";
+  readonly language: WritingLanguage;
   readonly selector?: OutlineSectionSelector;
 }): Promise<ContextPackage["selectedContext"]> {
   const snapshot = await loadRuntimeStateSnapshot(dirname(params.storyDir));
@@ -780,7 +780,7 @@ async function selectCurrentStateEntries(params: {
 async function selectRoleCardEntries(params: {
   readonly storyDir: string;
   readonly plan: PlanChapterOutput;
-  readonly language: "zh" | "en";
+  readonly language: WritingLanguage;
   readonly selector?: OutlineSectionSelector;
 }): Promise<ContextPackage["selectedContext"]> {
   const candidates: Array<{ source: string; heading: string; excerpt: string }> = [];
@@ -845,7 +845,7 @@ async function buildReferencedHookEntries(
       readonly notes: string;
     }>,
   summaries: MemorySelection["lookupSummaries"],
-  language: "zh" | "en",
+  language: WritingLanguage,
 ): Promise<ContextPackage["selectedContext"]> {
     const targetHookIds = [...new Set(plan.memo.threadRefs)];
     if (targetHookIds.length === 0) {
@@ -860,8 +860,8 @@ async function buildReferencedHookEntries(
 
       const seedSummary = findHookSummary(summaries, hook.hookId, hook.startChapter, "seed");
       const latestSummary = findHookSummary(summaries, hook.hookId, hook.lastAdvancedChapter, "latest");
-      const role = language === "en" ? "memo-referenced hook" : "备忘引用伏笔";
-      const promise = hook.expectedPayoff || (language === "en" ? "(unspecified)" : "（未写明）");
+      const role = language !== "zh" ? "memo-referenced hook" : "备忘引用伏笔";
+      const promise = hook.expectedPayoff || (language !== "zh" ? "(unspecified)" : "（未写明）");
       const seedBeat = seedSummary
         ? renderHookTraceBeat(seedSummary)
         : (hook.notes || promise);
@@ -871,10 +871,10 @@ async function buildReferencedHookEntries(
 
       return [{
         source: `runtime/referenced_hook#${hook.hookId}`,
-        reason: language === "en"
+        reason: language !== "zh"
           ? "Traceable history for a hook referenced by the chapter memo."
           : "章节备忘引用伏笔的可追溯历史。",
-        excerpt: language === "en"
+        excerpt: language !== "zh"
           ? [
               `${hook.hookId} (${hook.type}, ${role}, status=${hook.status})`,
               `reader promise: ${promise}`,
@@ -917,7 +917,7 @@ async function maybeOutlineSectionSources(
   reason: string,
   plan: PlanChapterOutput,
   kind: "story-frame" | "volume-map",
-  language: "zh" | "en",
+  language: WritingLanguage,
   outlineSectionSelector?: OutlineSectionSelector,
 ): Promise<ContextPackage["selectedContext"]> {
     const path = join(storyDir, fileName);
@@ -942,7 +942,7 @@ async function selectOutlineSectionEntries(params: {
   readonly reason: string;
   readonly plan: PlanChapterOutput;
   readonly kind: "story-frame" | "volume-map";
-  readonly language: "zh" | "en";
+  readonly language: WritingLanguage;
   readonly outlineSectionSelector?: OutlineSectionSelector;
 }): Promise<ContextPackage["selectedContext"]> {
   const sections = splitMarkdownSections(params.content);

@@ -1,3 +1,5 @@
+import { RUSSIAN_OUTPUT_INSTRUCTION } from "../utils/language.js";
+import type { WritingLanguage } from "../models/book.js";
 import { BaseAgent } from "./base.js";
 import type { ContextPackage } from "../models/input-governance.js";
 import { renderNarrativeSelectedContext } from "../utils/narrative-control.js";
@@ -31,13 +33,15 @@ export class ContinuityAuditor extends BaseAgent {
     chapterNumber: number,
     _genre: string | undefined,
     options: {
-      readonly language: "zh" | "en";
+      readonly language: WritingLanguage;
       readonly contextPackage: ContextPackage;
       readonly temperature?: number;
     },
   ): Promise<AuditResult> {
-    const isEnglish = options.language === "en";
-    const systemPrompt = isEnglish
+    const isEnglish = options.language !== "zh";
+    const systemPrompt = options.language === "ru"
+      ? `Проверьте главу по выбранным материалам и правилам книги. Проверьте последовательность событий, знания и состояние персонажей, причинность и открытые сюжетные линии. Приведите точные номера строк источника для каждого замечания. Длину вычисляет программа. Если расхождений нет, верните пустой список замечаний. ${RUSSIAN_OUTPUT_INSTRUCTION}`
+      : isEnglish
       ? "Audit this chapter against the activated review Skill and supplied governed context. Identify each observation with a code, assessment and exact numbered source lines. Do not estimate length; the host computes it. Return a concise overall summary. An empty observations array is valid."
       : "按已激活的审稿 Skill 和权威上下文审查本章。为每条观察提交代码、判断以及所给编号原文中的确切证据行。不估算字数，字数由宿主计算。提交简短总结，observations 为空是合法结果。";
     const governedContext = renderNarrativeSelectedContext(
