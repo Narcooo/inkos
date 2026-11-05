@@ -3044,11 +3044,39 @@ export class WorkFileNotFoundError extends Error {
   }
 }
 
-function resolveReadPath(readRoot: string, requestedPath: string, options: ReadToolOptions): string {
-  if (options.allowSystemPaths && isAbsolute(requestedPath)) {
-    return resolve(requestedPath);
+const CREDENTIAL_FILE_NAMES = new Set([
+  "credentials.json",
+  "secrets.json",
+  "token.json",
+  "id_rsa",
+  "id_ed25519",
+]);
+
+function isCredentialFilePath(filePath: string): boolean {
+  const segments = resolve(filePath).split(/[\\/]/u).filter(Boolean);
+  const fileName = basename(filePath).toLowerCase();
+  if (/^\.env(?:\..*)?$/iu.test(fileName) || CREDENTIAL_FILE_NAMES.has(fileName)) {
+    return true;
   }
-  return safeChildPath(readRoot, requestedPath);
+  return segments.some((segment, index) =>
+    segment.toLowerCase() === ".inkos" && segments[index + 1]?.toLowerCase() === "secrets.json",
+  );
+}
+
+function resolveReadPath(
+  readRoot: string,
+  requestedPath: string,
+  options: ReadToolOptions,
+): string {
+  const filePath = options.allowSystemPaths && isAbsolute(requestedPath)
+    ? resolve(requestedPath)
+    : safeChildPath(readRoot, requestedPath);
+  if (isCredentialFilePath(filePath)) {
+    throw Object.assign(new Error("Reading credential files is blocked."), {
+      code: "READ_CREDENTIAL_FILE_BLOCKED",
+    });
+  }
+  return filePath;
 }
 
 export function createReadTool(
