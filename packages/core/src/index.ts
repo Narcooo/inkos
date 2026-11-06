@@ -384,6 +384,7 @@ export {
   resolveServiceModelsBaseUrl,
   guessServiceFromBaseUrl,
   listModelsForService,
+  isCurrentMiniMaxChoice,
   listServicesWithModelCount,
   type ServicePreset,
   type ModelInfo,

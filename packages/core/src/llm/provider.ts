@@ -347,7 +347,7 @@ export function createLLMClient(config: LLMConfig): LLMClient {
 
   // --- Build pi-ai Model object ---
   const serviceName = config.service ?? "custom";
-  const preset = resolveServicePreset(serviceName);
+  const preset = resolveServicePreset(serviceName, config.model);
   const inkosProvider = getEndpoint(serviceName);
   const modelCard = lookupModel(serviceName, config.model);
 
@@ -881,14 +881,13 @@ function buildCustomHeaders(client: LLMClient, traceHeaders: Record<string, stri
 
 function defaultOpenAIChatExtra(client: LLMClient, model: string): Record<string, unknown> {
   if (client.service !== "minimax") return {};
-  // MiniMax OpenAI 兼容端点（issue #329）：
-  // - reasoning_split: true 让 thinking 拆分到 reasoning_content / reasoning_details，
-  //   不再以 <think>...</think> 内联在 content 里。M2.x 系列的 thinking 无法关闭，
-  //   不拆分的话思考内容会混进章节/对话正文。
-  // - M3 系列额外默认关闭 thinking（M2.x 不支持 thinking 参数，不能发送）。
+  // Separate thinking from prose. Flash requires adaptive thinking; retain the
+  // existing M3 default and omit thinking controls for explicit legacy models.
   return {
     reasoning_split: true,
-    ...(/^minimax-m3(?:$|[-_.])/i.test(model) ? { thinking: { type: "disabled" } } : {}),
+    ...(/^minimax-m3\.1-flash$/i.test(model)
+      ? { thinking: { type: "adaptive" } }
+      : /^minimax-m3(?:$|[-_.])/i.test(model) ? { thinking: { type: "disabled" } } : {}),
   };
 }
 

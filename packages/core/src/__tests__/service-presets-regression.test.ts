@@ -52,9 +52,7 @@ describe("service-presets regression", () => {
 
     it("returns endpoint registry models for minimax", async () => {
       const models = await listModelsForService("minimax");
-      expect(models.length).toBeGreaterThanOrEqual(7);
-      expect(models.some((m) => m.id === "MiniMax-M3")).toBe(true);
-      expect(models.some((m) => m.id === "MiniMax-M2.7")).toBe(true);
+      expect(models.map((m) => m.id)).toEqual(["MiniMax-M3.1-Flash", "MiniMax-M3"]);
     });
 
     it("returns empty for custom service without apikey + baseUrl", async () => {

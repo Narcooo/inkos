@@ -43,7 +43,7 @@ export async function resolveServiceModel(
 ): Promise<ResolvedModel> {
   // Determine pi-ai provider
   const baseService = service.startsWith("custom:") ? "custom" : service;
-  const preset = resolveServicePreset(baseService);
+  const preset = resolveServicePreset(baseService, modelId);
   const endpoint = getEndpoint(baseService);
   const piProvider = baseService === "ollama"
     ? "ollama"

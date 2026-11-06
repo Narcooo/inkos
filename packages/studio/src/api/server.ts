@@ -39,6 +39,7 @@ import {
   loadSecrets,
   saveSecrets,
   listModelsForService,
+  isCurrentMiniMaxChoice,
   isApiKeyOptionalForEndpoint,
   getAllEndpoints,
   probeModelsFromUpstream,
@@ -2035,7 +2036,6 @@ function buildModelCandidates(args: {
     "gpt-5.4",
     "gpt-4o",
     "claude-sonnet-4-6",
-    "MiniMax-M2.7",
     "kimi-k2.5",
   ].slice(0, MAX_GENERIC_FALLBACK_MODELS_TO_PING)) {
     push(fallback);
@@ -2265,7 +2265,9 @@ async function fetchModelsFromServiceBaseUrl(
     }
     const json = await res.json() as { data?: Array<{ id: string }> };
     return {
-      models: (json.data ?? []).map((m) => ({ id: m.id, name: m.id })),
+      models: (json.data ?? [])
+        .filter((m) => isCurrentMiniMaxChoice(serviceId, m.id))
+        .map((m) => ({ id: m.id, name: m.id })),
     };
   } catch (error) {
     return {
