@@ -35,7 +35,7 @@ describe("MiniMax configuration to request boundary", () => {
     expect(llm.model).toBe("MiniMax-M3.1-Flash");
     await chatCompletion(createLLMClient(llm), llm.model, [{ role: "user", content: "hi" }], { retry: false });
     expect(requests[0]).toMatchObject({
-      url: "https://api.minimax.cn/v1/chat/completions",
+      url: "https://api.minimaxi.com/v1/chat/completions",
       body: { model: "MiniMax-M3.1-Flash", thinking: { type: "adaptive" }, reasoning_split: true },
     });
   });

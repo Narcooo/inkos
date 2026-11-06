@@ -89,7 +89,7 @@ describe("MiniMax thinking defaults", () => {
     ], { retry: false });
 
     expect(fetchCalls).toHaveLength(1);
-    expect(fetchCalls[0]!.url).toBe(`${baseUrl ?? "https://api.minimax.cn/v1"}/chat/completions`);
+    expect(fetchCalls[0]!.url).toBe(`${baseUrl ?? "https://api.minimaxi.com/v1"}/chat/completions`);
     expect(fetchCalls[0]!.body).toMatchObject({
       model: "MiniMax-M3.1-Flash", thinking: { type: "adaptive" },
       reasoning_split: true, reasoning_effort: "low",
@@ -117,7 +117,7 @@ describe("MiniMax thinking defaults", () => {
 
     expect(result.content).toBe("ok");
     expect(fetchCalls).toHaveLength(1);
-    expect(fetchCalls[0]!.url).toBe("https://api.minimax.cn/v1/chat/completions");
+    expect(fetchCalls[0]!.url).toBe("https://api.minimaxi.com/v1/chat/completions");
     expect(fetchCalls[0]!.body).toMatchObject({
       model: "MiniMax-M3",
       thinking: { type: "disabled" },

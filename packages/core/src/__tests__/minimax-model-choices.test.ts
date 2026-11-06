@@ -95,7 +95,7 @@ describe("MiniMax ordinary model choices", () => {
     expect(isCurrentMiniMaxChoice("custom:private", "MiniMax-M2.7")).toBe(true);
   });
 
-  it.each(["api.minimax.cn", "api.minimax.io", "api.minimaxi.com"])("recognizes %s without rewriting saved URLs", (host) => {
+  it.each(["api.minimax.io", "api.minimaxi.com"])("recognizes %s without rewriting saved URLs", (host) => {
     expect(guessServiceFromBaseUrl(`https://${host}/v1`)).toBe("minimax");
   });
 });

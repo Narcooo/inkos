@@ -22,7 +22,7 @@ describe("service-presets regression", () => {
     it("has correct domestic MiniMax OpenAI-compatible baseUrl", () => {
       const preset = resolveServicePreset("minimax");
       expect(preset).toBeDefined();
-      expect(preset!.baseUrl).toBe("https://api.minimax.cn/v1");
+      expect(preset!.baseUrl).toBe("https://api.minimaxi.com/v1");
     });
 
     it("uses openai-completions api format", () => {
