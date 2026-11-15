@@ -29,7 +29,7 @@ const SERVICE_QUICK_LINKS: Record<string, ReadonlyArray<{ zh: string; en: string
   ],
   requesty: [
     { zh: "API Keys", en: "API Keys", href: "https://app.requesty.ai/api-keys" },
-    { zh: "模型", en: "Models", href: "https://app.requesty.ai/model-library" },
+    { zh: "模型", en: "Models", href: "https://www.requesty.ai/models" },
     { zh: "文档", en: "Docs", href: "https://docs.requesty.ai/" },
   ],
 };
