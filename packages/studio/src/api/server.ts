@@ -1222,6 +1222,7 @@ async function executeConfirmedProductionAction(args: {
     params = {
       bookId: args.bookId,
       instruction: args.instruction,
+      startChapterNumber: await new StateManager(args.root).getNextChapterNumber(args.bookId),
       chapterCount,
     };
   } else if (args.requestedIntent === "generate_cover") {
@@ -3346,6 +3347,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       parameters: {
         instruction: "Write the next chapter for the active Work.",
         bookId: id,
+        startChapterNumber: await state.getNextChapterNumber(id),
         chapterCount: 1,
         ...(body.wordCount ? { chapterWordCount: body.wordCount } : {}),
       },

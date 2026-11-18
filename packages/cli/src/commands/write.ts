@@ -69,6 +69,7 @@ writeCommand
         parameters: {
           instruction: context || "Write the requested consecutive chapters for the active Work.",
           bookId,
+          startChapterNumber: await state.getNextChapterNumber(bookId),
           chapterCount: count,
           ...(wordCount ? { chapterWordCount: wordCount } : {}),
         },
@@ -235,6 +236,7 @@ writeCommand
         parameters: {
           instruction: opts.brief?.trim() || `Rewrite chapter ${chapter}.`,
           bookId,
+          startChapterNumber: chapter,
           chapterCount: 1,
           ...(wordCount ? { chapterWordCount: wordCount } : {}),
         },

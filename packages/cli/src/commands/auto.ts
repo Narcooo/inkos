@@ -87,6 +87,7 @@ export const autoCommand = new Command("auto")
         parameters: {
           instruction: `Write consecutive chapters through chapter ${targetChapter}.`,
           bookId,
+          startChapterNumber: startChapter,
           chapterCount: count,
           ...(wordCount ? { chapterWordCount: wordCount } : {}),
         },
